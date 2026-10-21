@@ -145,6 +145,28 @@ func (s *Store) SessionThreads(ctx context.Context, userID int64, provider strin
 	return out
 }
 
+// SessionThread is the thread that shows a CLI session, and how it started.
+type SessionThread struct{ ID, Source string }
+
+// SessionThreadsAll maps "provider:session id" to a person's thread for it.
+func (s *Store) SessionThreadsAll(ctx context.Context, userID int64) map[string]SessionThread {
+	out := map[string]SessionThread{}
+	rows, err := s.DB.QueryContext(ctx, `SELECT provider, provider_session_id, id, source FROM threads WHERE user_id = ? AND provider_session_id <> '' ORDER BY created_at`, userID)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var p, sid, id, src string
+		if rows.Scan(&p, &sid, &id, &src) == nil {
+			if _, ok := out[p+":"+sid]; !ok {
+				out[p+":"+sid] = SessionThread{id, src}
+			}
+		}
+	}
+	return out
+}
+
 // ResetRunning marks threads left running by a previous process as idle.
 func (s *Store) ResetRunning(ctx context.Context) {
 	_, _ = s.DB.ExecContext(ctx, `UPDATE threads SET status = 'idle' WHERE status IN ('running', 'waiting')`)

@@ -119,6 +119,7 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
         <button type="button" className="btn primary create-btn" onClick={() => go('/')}><Icon name="plus" size={16} />New thread<Kbd>⌘ N</Kbd></button>
       </div>
       <nav className="sb-nav">
+        {(user?.role === 'admin' || user?.can_run) && nav('/today', 'today', 'Today')}
         {nav('/recipes', 'zap', 'Recipes')}
         {nav('/schedules', 'clock', 'Schedules')}
         {(user?.role === 'admin' || user?.can_run) && nav('/history', 'history', 'On this server')}

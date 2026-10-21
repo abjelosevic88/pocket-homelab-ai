@@ -293,3 +293,62 @@ func TestQueuedCommandAndLogImages(t *testing.T) {
 		t.Fatalf("missing image: %v", err)
 	}
 }
+
+func TestSessionScanRuns(t *testing.T) {
+	dir := t.TempDir()
+	claude := filepath.Join(dir, "c.jsonl")
+	lines := []string{
+		`{"type":"user","uuid":"p1","timestamp":"2026-10-21T10:00:00Z","entrypoint":"cli","cwd":"/w","message":{"role":"user","content":"first"}}`,
+		`{"type":"assistant","uuid":"a1","timestamp":"2026-10-21T10:00:05Z","message":{"id":"m1","model":"claude-x","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}],"stop_reason":"tool_use","usage":{"output_tokens":10}}}`,
+		`{"type":"user","uuid":"r1","timestamp":"2026-10-21T10:00:06Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"grep found [Request interrupted in a file"}]}}`,
+		`{"type":"attachment","uuid":"q1","timestamp":"2026-10-21T10:00:07Z","attachment":{"type":"queued_command","prompt":"and this"}}`,
+		`{"type":"assistant","uuid":"a2","timestamp":"2026-10-21T10:01:00Z","message":{"id":"m2","model":"claude-x","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"output_tokens":5}}}`,
+		`{"type":"user","uuid":"p2","timestamp":"2026-10-21T11:00:00Z","message":{"role":"user","content":"second"}}`,
+		`{"type":"user","uuid":"r2","timestamp":"2026-10-21T11:00:09Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t9","content":"[Request interrupted by user for tool use]"}]}}`,
+	}
+	if err := os.WriteFile(claude, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, _ := os.Stat(claude)
+	sc := scanSession("claude", claude, info)
+	if len(sc.runs) != 2 || sc.entry != "cli" {
+		t.Fatalf("runs: %d entry %q", len(sc.runs), sc.entry)
+	}
+	r := sc.runs[0]
+	if r.Status != "done" || r.DurationMS != 60000 || r.Tools != 1 || r.FollowUps != 1 || r.OutputTokens != 15 || r.Model != "claude-x" || r.Key != "u-p1" {
+		t.Fatalf("run 1: %+v", *r)
+	}
+	if sc.runs[1].Status != "interrupted" || sc.runs[1].DurationMS != 9000 {
+		t.Fatalf("run 2: %+v", *sc.runs[1])
+	}
+
+	codex := filepath.Join(dir, "x.jsonl")
+	lines = []string{
+		`{"timestamp":"2026-10-21T10:00:00Z","type":"session_meta","payload":{"id":"cx1","cwd":"/w","originator":"codex-tui"}}`,
+		`{"timestamp":"2026-10-21T10:00:01Z","type":"turn_context","payload":{"model":"gpt-x"}}`,
+		`{"timestamp":"2026-10-21T10:00:02Z","type":"event_msg","payload":{"type":"task_started"}}`,
+		`{"timestamp":"2026-10-21T10:00:02Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>x</environment_context>"}]}}`,
+		`{"timestamp":"2026-10-21T10:00:02Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"check it"}]}}`,
+		`{"timestamp":"2026-10-21T10:00:03Z","type":"response_item","payload":{"type":"function_call","name":"shell"}}`,
+		`{"timestamp":"2026-10-21T10:00:22Z","type":"event_msg","payload":{"type":"task_complete","duration_ms":20000}}`,
+	}
+	if err := os.WriteFile(codex, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, _ = os.Stat(codex)
+	cx := scanSession("codex", codex, info)
+	if len(cx.runs) != 1 || cx.sessionID != "cx1" || cx.originName(nil) != "terminal" {
+		t.Fatalf("codex: %d %q %q", len(cx.runs), cx.sessionID, cx.originName(nil))
+	}
+	if r := cx.runs[0]; r.Prompt != "check it" || r.Status != "done" || r.DurationMS != 20000 || r.Tools != 1 || r.Model != "gpt-x" {
+		t.Fatalf("codex run: %+v", *r)
+	}
+	// appending continues from where the scan stopped
+	fh, _ := os.OpenFile(codex, os.O_APPEND|os.O_WRONLY, 0)
+	fh.WriteString(`{"timestamp":"2026-10-21T11:00:00Z","type":"event_msg","payload":{"type":"task_started"}}` + "\n")
+	fh.Close()
+	info, _ = os.Stat(codex)
+	if cx2 := scanSession("codex", codex, info); len(cx2.runs) != 2 || len(cx.runs) != 1 {
+		t.Fatalf("incremental: %d (old copy %d)", len(cx2.runs), len(cx.runs))
+	}
+}

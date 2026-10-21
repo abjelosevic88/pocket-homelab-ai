@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -15,39 +16,94 @@ import (
 
 func (s *Server) historyRoutes(r chi.Router) {
 	r.Get("/history", s.handleHistory)
+	r.Get("/runs", s.handleRuns)
 	r.Post("/history/import", s.handleImport)
 }
 
-// handleHistory lists the sessions the CLIs keep on the server.
+// handleHistory lists the sessions both CLIs keep on the server (read from
+// their session files: origin, runs, time worked, running now), newest first.
+// ?provider=claude|codex, ?origin=paseo|terminal|pocket-ai|schedule|app,
+// ?q= (title, folder, last prompt), ?limit= (default 300).
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	if !s.requireRun(w, r) {
 		return
 	}
 	ctx := r.Context()
-	q := r.URL.Query().Get("q")
+	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	provider, origin := r.URL.Query().Get("provider"), r.URL.Query().Get("origin")
 	limit := queryInt(r, "limit")
-	if limit <= 0 || limit > 300 {
-		limit = 100
+	if limit <= 0 || limit > 1000 {
+		limit = 300
 	}
-	var list []agent.Past
-	var err error
-	provider := r.URL.Query().Get("provider")
-	switch provider {
-	case "codex":
-		list, err = agent.ListCodex(ctx, s.cfg.CodexBin, q, limit)
-	default:
-		provider = "claude"
-		list, err = agent.ListClaude(s.cfg.ClaudeHome, q, limit)
+	known := s.store.SessionThreadsAll(ctx, me(r))
+	out := []agent.ServerSession{}
+	total := 0
+	for _, x := range agent.Sessions(s.cfg.ClaudeHome, s.cfg.CodexHome, s.cfg.PaseoHome) {
+		if th, ok := known[x.Provider+":"+x.SessionID]; ok {
+			x.ThreadID = th.ID
+			x.Origin = threadOrigin(th.Source, x.Origin)
+		}
+		if (provider != "" && provider != "all" && x.Provider != provider) || (origin != "" && x.Origin != origin) {
+			continue
+		}
+		if q != "" && !strings.Contains(strings.ToLower(x.Title+" "+x.Cwd+" "+x.LastPrompt), q) {
+			continue
+		}
+		total++
+		if len(out) < limit {
+			out = append(out, x)
+		}
 	}
-	if err != nil {
-		s.fail(w, err, "history")
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": out, "total": total})
+}
+
+// threadOrigin: a session Pocket AI started itself is "pocket-ai" (or
+// "schedule"), whatever the CLI wrote; imported ones keep where they came from.
+func threadOrigin(source, origin string) string {
+	switch source {
+	case "import", "":
+		return origin
+	case "schedule":
+		return "schedule"
+	}
+	return "pocket-ai"
+}
+
+// handleRuns lists every prompt the agents worked on between ?from and ?to
+// (RFC 3339; default: the server's today), across Pocket AI, Paseo, the
+// terminal and other apps.
+func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRun(w, r) {
 		return
 	}
-	known := s.store.SessionThreads(ctx, me(r), provider)
-	for i := range list {
-		list[i].ThreadID = known[list[i].SessionID]
+	y, m, d := time.Now().Date()
+	from := time.Date(y, m, d, 0, 0, 0, 0, time.Local)
+	to := from.AddDate(0, 0, 1)
+	if v := r.URL.Query().Get("from"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "from must be an RFC 3339 time")
+			return
+		}
+		from, to = t, t.AddDate(0, 0, 1)
 	}
-	writeJSON(w, http.StatusOK, list)
+	if v := r.URL.Query().Get("to"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil || !t.After(from) || t.Sub(from) > 32*24*time.Hour {
+			writeErr(w, http.StatusBadRequest, "to must be an RFC 3339 time after from, at most a month later")
+			return
+		}
+		to = t
+	}
+	known := s.store.SessionThreadsAll(r.Context(), me(r))
+	runs := agent.Runs(s.cfg.ClaudeHome, s.cfg.CodexHome, s.cfg.PaseoHome, from, to)
+	for i := range runs {
+		if th, ok := known[runs[i].Provider+":"+runs[i].SessionID]; ok {
+			runs[i].ThreadID = th.ID
+			runs[i].Origin = threadOrigin(th.Source, runs[i].Origin)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"from": from.Format(time.RFC3339), "to": to.Format(time.RFC3339), "runs": runs})
 }
 
 // handleImport creates a thread that shows a CLI session's transcript and

@@ -173,7 +173,7 @@ func claudeState(path string, tailBytes int64) (ActiveSession, bool) {
 				continue
 			}
 			if bytes.Contains(m.Message.Content, []byte(`"tool_result"`)) {
-				if bytes.Contains(m.Message.Content, []byte("[Request interrupted")) {
+				if interruptedResult(m.Message.Content) {
 					running = false
 				} else {
 					running = true
@@ -272,11 +272,30 @@ func codexState(path string) (ActiveSession, bool) {
 			Timestamp string `json:"timestamp"`
 			Type      string `json:"type"`
 			Payload   struct {
-				Type    string `json:"type"`
-				Message string `json:"message"`
+				Type    string          `json:"type"`
+				Message string          `json:"message"`
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
 			} `json:"payload"`
 		}
-		if json.Unmarshal(sc.Bytes(), &m) != nil || m.Type != "event_msg" {
+		if json.Unmarshal(sc.Bytes(), &m) != nil {
+			continue
+		}
+		if m.Type == "response_item" && m.Payload.Type == "message" && m.Payload.Role == "user" {
+			// newer Codex logs carry the prompt only as a conversation item
+			var parts []struct {
+				Text string `json:"text"`
+			}
+			_ = json.Unmarshal(m.Payload.Content, &parts)
+			for _, x := range parts {
+				if t := strings.TrimSpace(x.Text); t != "" && !strings.HasPrefix(t, "<") {
+					s.Prompt, s.PromptAt = oneLine(t, 400), m.Timestamp
+					break
+				}
+			}
+			continue
+		}
+		if m.Type != "event_msg" {
 			continue
 		}
 		switch m.Payload.Type {
@@ -308,7 +327,11 @@ var (
 
 // paseoSessions maps session ids to the Paseo agents that drive them (from
 // PASEO_HOME/agents, recently changed files only).
-func paseoSessions(home string) map[string]paseoAgent {
+func paseoSessions(home string) map[string]paseoAgent { return paseoSessionsWithin(home, 48*time.Hour) }
+
+// paseoSessionsWithin is paseoSessions over agent files changed within maxAge
+// (0 = all of them).
+func paseoSessionsWithin(home string, maxAge time.Duration) map[string]paseoAgent {
 	out := map[string]paseoAgent{}
 	if home == "" {
 		return out
@@ -331,7 +354,7 @@ func paseoSessions(home string) map[string]paseoAgent {
 				continue
 			}
 			info, err := e.Info()
-			if err != nil || now.Sub(info.ModTime()) > 48*time.Hour {
+			if err != nil || (maxAge > 0 && now.Sub(info.ModTime()) > maxAge) {
 				continue
 			}
 			path := filepath.Join(dir, e.Name())

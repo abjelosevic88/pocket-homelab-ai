@@ -43,6 +43,10 @@ type Settings struct {
 	// ("provider:window id"; empty = all of them).
 	UsageWidget bool     `json:"usage_widget"`
 	UsagePinned []string `json:"usage_pinned"`
+
+	// Open threads as tabs along the top (the tabs themselves live in the
+	// browser).
+	ThreadTabs bool `json:"thread_tabs"`
 }
 
 func defaults() Settings {
@@ -53,6 +57,7 @@ func defaults() Settings {
 		NotifyKind: "apprise", NotifyFinished: true, NotifyInput: true, NotifyFailed: true, NotifyOnlyAway: true,
 		EnterSends:  true,
 		UsageWidget: true,
+		ThreadTabs:  true,
 	}
 }
 
@@ -120,6 +125,8 @@ func (s *Store) GetSettings(ctx context.Context, userID int64) (Settings, error)
 			st.ShowThinking = v == "1"
 		case "usage_widget":
 			st.UsageWidget = v != "0"
+		case "thread_tabs":
+			st.ThreadTabs = v != "0"
 		case "usage_pinned":
 			st.UsagePinned = splitList(v)
 		}
@@ -145,7 +152,7 @@ func (s *Store) SaveSettings(ctx context.Context, userID int64, st Settings) err
 		"notify_kind":   st.NotifyKind, "notify_url": st.NotifyURL, "notify_finished": b2s(st.NotifyFinished),
 		"notify_input": b2s(st.NotifyInput), "notify_failed": b2s(st.NotifyFailed), "notify_only_away": b2s(st.NotifyOnlyAway),
 		"enter_sends": b2s(st.EnterSends), "show_thinking": b2s(st.ShowThinking),
-		"usage_widget": b2s(st.UsageWidget), "usage_pinned": strings.Join(st.UsagePinned, ","),
+		"usage_widget": b2s(st.UsageWidget), "thread_tabs": b2s(st.ThreadTabs), "usage_pinned": strings.Join(st.UsagePinned, ","),
 	})
 }
 

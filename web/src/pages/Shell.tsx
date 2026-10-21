@@ -7,12 +7,14 @@ import { ErrorBoundary } from '../components/ErrorBoundary'
 import { RecipeRunnerProvider, useRunRecipe } from '../components/RecipeRunner'
 import { ShortcutsSheet } from '../components/ShortcutsSheet'
 import { Sidebar } from '../components/Sidebar'
+import { TabBar, useTabs } from '../components/TabBar'
 import { modalOpen, useIsMobile, useMediaQuery } from '../components/ui'
 import HomePage from './HomePage'
 import ThreadPage from './ThreadPage'
 import RecipesPage from './RecipesPage'
 import SchedulesPage from './SchedulesPage'
 import HistoryPage from './HistoryPage'
+import TodayPage from './TodayPage'
 import UsagePage from './UsagePage'
 
 function typing(e: KeyboardEvent) {
@@ -21,7 +23,7 @@ function typing(e: KeyboardEvent) {
 }
 
 function ShellInner() {
-  const { setThemeMode, theme } = useApp()
+  const { setThemeMode, theme, settings } = useApp()
   const navigate = useNavigate()
   const loc = useLocation()
   const mobile = useIsMobile()
@@ -31,6 +33,8 @@ function ShellInner() {
   const [palette, setPalette] = useState(false)
   const [shortcuts, setShortcuts] = useState(false)
   const runRecipe = useRunRecipe()
+  const tabsOn = settings?.thread_tabs !== false && !mobile
+  const tabs = useTabs(tabsOn)
   useEffect(() => setDrawerOpen(false), [drawer, loc.pathname])
   useEffect(() => { if ((loc.state as { shortcuts?: boolean } | null)?.shortcuts) setShortcuts(true) }, [loc.state])
 
@@ -69,6 +73,7 @@ function ShellInner() {
       </div>
       {drawer && drawerOpen && <div className="drawer-backdrop" onClick={() => setDrawerOpen(false)} />}
       <main className="main">
+        {tabsOn && <TabBar {...tabs} />}
         <ErrorBoundary where="page" key={loc.pathname.split('/')[1] || 'home'}>
           <Routes>
             <Route path="/" element={<HomePage onMenu={onMenu} />} />
@@ -76,6 +81,7 @@ function ShellInner() {
             <Route path="/recipes" element={<RecipesPage onMenu={onMenu} />} />
             <Route path="/schedules" element={<SchedulesPage onMenu={onMenu} />} />
             <Route path="/history" element={<HistoryPage onMenu={onMenu} />} />
+            <Route path="/today" element={<TodayPage onMenu={onMenu} />} />
             <Route path="/usage" element={<UsagePage onMenu={onMenu} />} />
             <Route path="*" element={<HomePage onMenu={onMenu} />} />
           </Routes>

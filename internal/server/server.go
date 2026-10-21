@@ -109,7 +109,8 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	s.rt.start(ctx)
 	go s.housekeeping(ctx)
 	go s.scheduleLoop(ctx)
-	go func() { s.providers(ctx, true) }() // warm the provider cache
+	go agent.WarmSessions(s.cfg.ClaudeHome, s.cfg.CodexHome) // first parse of every session file takes a while
+	go func() { s.providers(ctx, true) }()                   // warm the provider cache
 	if s.core.Configured() {
 		go s.coreLoop(ctx)
 	}

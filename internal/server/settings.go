@@ -63,6 +63,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		EnterSends      *bool                `json:"enter_sends"`
 		ShowThinking    *bool                `json:"show_thinking"`
 		UsageWidget     *bool                `json:"usage_widget"`
+		ThreadTabs      *bool                `json:"thread_tabs"`
 		UsagePinned     *[]string            `json:"usage_pinned"`
 	}
 	if err := decode(r, &in); err != nil {
@@ -121,7 +122,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		out *bool
 	}{{in.NotifyFinished, &st.NotifyFinished}, {in.NotifyInput, &st.NotifyInput}, {in.NotifyFailed, &st.NotifyFailed},
 		{in.NotifyOnlyAway, &st.NotifyOnlyAway}, {in.EnterSends, &st.EnterSends}, {in.ShowThinking, &st.ShowThinking},
-		{in.UsageWidget, &st.UsageWidget}} {
+		{in.UsageWidget, &st.UsageWidget}, {in.ThreadTabs, &st.ThreadTabs}} {
 		if b.in != nil {
 			*b.out = *b.in
 		}

@@ -17,7 +17,7 @@ function LimitBar({ w, pinned, onPin }: { w: LimitWindow; pinned?: boolean; onPi
         <span>{w.name}</span>
         <span className="tnum"><b>{Math.round(used * 100)}%</b> used{w.resets_at && <span className="muted" title={when(w.resets_at)}> · {resetsIn(w.resets_at)}</span>}</span>
         {onPin && <button type="button" className={`btn ghost icon-only xs limit-pin ${pinned ? 'on' : ''}`} onClick={onPin} aria-pressed={pinned}
-          title={pinned ? 'Shown in the sidebar — click to hide it there' : 'Show in the sidebar'} aria-label={pinned ? 'Unpin from the sidebar' : 'Pin to the sidebar'}><Icon name="pin" size={14} /></button>}
+          title={pinned ? 'Shown in the sidebar — click to hide it there' : 'Show in the sidebar'} aria-label={pinned ? 'Unpin from the sidebar' : 'Pin to the sidebar'}><Icon name="pushpin" size={14} /></button>}
       </div>
       <div className={`limit-bar ${limitTone(used)}`}><span style={{ width: `${Math.max(1, used * 100)}%` }} /></div>
     </div>

@@ -43,6 +43,7 @@ export interface Settings {
   enter_sends: boolean
   show_thinking: boolean
   usage_widget: boolean
+  thread_tabs: boolean
   usage_pinned: string[]
   system_prompt: string
 }
@@ -238,14 +239,45 @@ export interface SchedulePreview { ok: boolean; next: string[]; error: string }
 
 // ---------- history, search, usage ----------
 
-export interface HistorySession {
+export type Origin = 'pocket-ai' | 'schedule' | 'paseo' | 'terminal' | 'app'
+
+/** A session either CLI keeps on the server ("On this server"). */
+export interface ServerSession {
   provider: ProviderId
   session_id: string
-  cwd: string
   title: string
+  last_prompt: string
+  cwd: string
+  origin: Origin
+  model?: string
+  started_at: string
   updated_at: string
-  messages: number
+  runs: number
+  work_ms: number
+  running: boolean
+  running_at?: string
   thread_id: string
+}
+
+/** One prompt and the agent's work on it (the Today page). */
+export interface Run {
+  provider: ProviderId
+  session_id: string
+  key?: string
+  title: string
+  prompt: string
+  images?: number
+  cwd: string
+  origin: Origin
+  model?: string
+  started_at: string
+  ended_at?: string
+  duration_ms: number
+  status: 'running' | 'done' | 'interrupted' | 'unfinished'
+  tools: number
+  follow_ups?: number
+  output_tokens?: number
+  thread_id?: string
 }
 
 export interface SearchHit { thread_id: string; title: string; provider: ProviderId; snippet: string; item_key: string; activity_at: string }
