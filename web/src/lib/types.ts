@@ -283,7 +283,10 @@ export interface Run {
 export interface SearchHit { thread_id: string; title: string; provider: ProviderId; snippet: string; item_key: string; activity_at: string }
 
 export interface LimitWindow { id?: string; name: string; used: number; resets_at: string }
-export interface ProviderLimits { windows: LimitWindow[]; updated_at: string; note?: string; error?: string }
+export interface ResetCredit { title: string; granted_at?: string; expires_at?: string }
+/** Codex's free "reset my limits" credits; each one expires. */
+export interface Resets { available: number; credits?: ResetCredit[] }
+export interface ProviderLimits { windows: LimitWindow[]; updated_at: string; note?: string; error?: string; resets?: Resets }
 export type Limits = Partial<Record<ProviderId, ProviderLimits>>
 
 export interface UsageReport {

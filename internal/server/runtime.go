@@ -718,6 +718,7 @@ func (k *runSink) Context(c agent.Context) {
 type provLimits struct {
 	Windows   []agent.Window `json:"windows"`
 	Note      string         `json:"note,omitempty"`
+	Resets    *agent.Resets  `json:"resets,omitempty"` // Codex free resets
 	UpdatedAt string         `json:"updated_at"`
 	Error     string         `json:"error,omitempty"`
 }
@@ -804,13 +805,20 @@ func (rt *engine) refreshLimits(wait bool) {
 		}()
 		go func() {
 			defer wg.Done()
-			w, note, err := agent.CodexLimits(ctx, rt.s.cfg.CodexBin)
+			w, resets, err := agent.CodexLimits(ctx, rt.s.cfg.CodexBin)
 			if err != nil {
 				rt.s.log.Debug("codex limits", "err", err)
 				rt.setLimits("codex", nil, nil, false, err.Error())
 				return
 			}
-			rt.setLimits("codex", w, &note, true, "")
+			rt.mu.Lock() // before setLimits, which sends the update
+			if rt.limits["codex"] == nil {
+				rt.limits["codex"] = &provLimits{}
+			}
+			rt.limits["codex"].Resets = resets
+			rt.mu.Unlock()
+			none := ""
+			rt.setLimits("codex", w, &none, true, "")
 		}()
 		wg.Wait()
 		rt.mu.Lock()

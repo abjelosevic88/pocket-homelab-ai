@@ -121,20 +121,35 @@ func ClaudeLimits(ctx context.Context, bin, cwd string) ([]Window, string, error
 }
 
 // CodexLimits reads every Codex rate-limit bucket of the account.
-func CodexLimits(ctx context.Context, bin string) ([]Window, string, error) {
+// Resets are the free "reset my limits" credits Codex grants now and then;
+// each one expires.
+type Resets struct {
+	Available int           `json:"available"`
+	Credits   []ResetCredit `json:"credits,omitempty"` // soonest to expire first
+}
+
+// ResetCredit is one free reset.
+type ResetCredit struct {
+	Title     string `json:"title"`
+	GrantedAt string `json:"granted_at,omitempty"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+}
+
+// CodexLimits reads the plan limits and the free resets Codex has granted.
+func CodexLimits(ctx context.Context, bin string) ([]Window, *Resets, error) {
 	c, err := startRPC(bin, os.TempDir(), nil)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	defer c.close()
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if err := c.initialize(ctx, Version); err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	res, err := c.call(ctx, "account/rateLimits/read", nil)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	type snap struct {
 		LimitID   string       `json:"limitId"`
@@ -147,10 +162,16 @@ func CodexLimits(ctx context.Context, bin string) ([]Window, string, error) {
 		RateLimitsByLimitID   map[string]snap `json:"rateLimitsByLimitId"`
 		RateLimitResetCredits *struct {
 			AvailableCount int `json:"availableCount"`
+			Credits        []struct {
+				Status    string `json:"status"`
+				Title     string `json:"title"`
+				GrantedAt int64  `json:"grantedAt"`
+				ExpiresAt *int64 `json:"expiresAt"`
+			} `json:"credits"`
 		} `json:"rateLimitResetCredits"`
 	}
 	if err := json.Unmarshal(res, &r); err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	buckets := r.RateLimitsByLimitID
 	if len(buckets) == 0 {
@@ -178,14 +199,25 @@ func CodexLimits(ctx context.Context, bin string) ([]Window, string, error) {
 			}
 		}
 	}
-	note := ""
-	if c := r.RateLimitResetCredits; c != nil && c.AvailableCount > 0 {
-		note = fmt.Sprintf("%d free limit resets available", c.AvailableCount)
-		if c.AvailableCount == 1 {
-			note = "1 free limit reset available"
+	var rs *Resets
+	if c := r.RateLimitResetCredits; c != nil {
+		rs = &Resets{Available: c.AvailableCount}
+		for _, x := range c.Credits {
+			if x.Status != "" && x.Status != "available" {
+				continue
+			}
+			rc := ResetCredit{Title: firstNonEmpty(x.Title, "Free reset"), GrantedAt: unixISO(x.GrantedAt)}
+			if x.ExpiresAt != nil {
+				rc.ExpiresAt = unixISO(*x.ExpiresAt)
+			}
+			rs.Credits = append(rs.Credits, rc)
 		}
+		sort.SliceStable(rs.Credits, func(i, j int) bool {
+			a, b := rs.Credits[i].ExpiresAt, rs.Credits[j].ExpiresAt
+			return a != "" && (b == "" || a < b)
+		})
 	}
-	return out, note, nil
+	return out, rs, nil
 }
 
 func codexWindowID(bucket string, mins int64) string {

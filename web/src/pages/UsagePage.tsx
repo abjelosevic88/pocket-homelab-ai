@@ -4,7 +4,7 @@ import { api, qs, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { fmtCost, fmtTokens, providerName, resetsIn, when } from '../lib/format'
 import { isPinned, limitKey, limitRows, limitTone, usedFrac } from '../components/UsageWidget'
-import type { LimitWindow, ProviderId, UsageReport } from '../lib/types'
+import type { LimitWindow, ProviderId, Resets, UsageReport } from '../lib/types'
 import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
 import { Loading, Segmented, useAsync } from '../components/ui'
@@ -20,6 +20,31 @@ function LimitBar({ w, pinned, onPin }: { w: LimitWindow; pinned?: boolean; onPi
           title={pinned ? 'Shown in the sidebar — click to hide it there' : 'Show in the sidebar'} aria-label={pinned ? 'Unpin from the sidebar' : 'Pin to the sidebar'}><Icon name="pushpin" size={14} /></button>}
       </div>
       <div className={`limit-bar ${limitTone(used)}`}><span style={{ width: `${Math.max(1, used * 100)}%` }} /></div>
+    </div>
+  )
+}
+
+// Codex's free resets: how many, and when each one runs out (they expire).
+function FreeResets({ r }: { r: Resets }) {
+  const soon = (iso?: string) => !!iso && new Date(iso).getTime() - Date.now() < 48 * 3600e3
+  return (
+    <div className="resets">
+      <div className="resets-h">
+        <Icon name="refresh" size={14} />
+        <span><b className="tnum">{r.available}</b> free {r.available === 1 ? 'reset' : 'resets'} available</span>
+      </div>
+      {r.available === 0 ? <p className="muted xsmall" style={{ margin: 0 }}>None right now — Codex grants one now and then.</p> : (
+        <ul className="resets-list">
+          {(r.credits || []).map((c, i) => (
+            <li key={i} className={soon(c.expires_at) ? 'soon' : ''}>
+              <span>{c.title}</span>
+              <span className="tnum" title={c.expires_at ? new Date(c.expires_at).toLocaleString() : ''}>
+                {c.expires_at ? <>{soon(c.expires_at) && <Icon name="alert" size={11} />}expires {when(c.expires_at)} · {resetsIn(c.expires_at, Date.now(), 'in ')}</> : 'does not expire'}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
@@ -66,6 +91,7 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
                       {l?.windows?.length ? l.windows.map(w => <LimitBar key={w.id || w.name} w={w}
                         pinned={isPinned(settings?.usage_pinned, limitKey(p, w))} onPin={settings?.usage_widget !== false ? () => togglePin(limitKey(p, w)) : undefined} />) : <p className="muted small" style={{ margin: 0 }}>{l?.error ? 'Could not read the limits: ' + l.error : 'Reading the limits…'}</p>}
                       {l?.note && <p className="muted xsmall" style={{ margin: 0 }}><Icon name="info" size={12} className="inline-ico" />{l.note}</p>}
+                      {l?.resets && <FreeResets r={l.resets} />}
                     </div>
                   )
                 })}

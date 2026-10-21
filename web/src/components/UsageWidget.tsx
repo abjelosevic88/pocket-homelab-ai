@@ -32,6 +32,8 @@ export function UsageWidget({ onNavigate }: { onNavigate?: () => void }) {
   if (!settings || settings.usage_widget === false) return null
   const rows = limitRows(limits).filter(r => isPinned(settings.usage_pinned, r.key))
   if (!rows.length) return null
+  const resets = rows.some(r => r.p === 'codex') ? limits.codex?.resets : undefined
+  const next = resets?.credits?.find(c => c.expires_at)?.expires_at
   return (
     <button type="button" className="usage-widget" onClick={() => { navigate('/usage'); onNavigate?.() }} title="Plan limits — open Usage">
       {rows.map(({ p, w, key }) => {
@@ -46,6 +48,12 @@ export function UsageWidget({ onNavigate }: { onNavigate?: () => void }) {
           </span>
         )
       })}
+      {!!resets?.available && (
+        <span className="uw-h uw-resets" title={next ? `The next one expires ${new Date(next).toLocaleString()}` : ''}>
+          <span className="ellipsis"><b>Codex</b> free resets</span>
+          <span className="tnum uw-num">{resets.available}{next && <span className="muted"> · next expires {resetsIn(next, Date.now(), 'in ')}</span>}</span>
+        </span>
+      )}
     </button>
   )
 }
