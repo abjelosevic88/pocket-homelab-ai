@@ -29,6 +29,7 @@ func (s *Server) threadRoutes(r chi.Router) {
 	r.Post("/threads/{id}/read", s.handleMarkRead)
 	r.Post("/threads/{id}/fork", s.handleFork)
 	r.Get("/threads/{id}/export.md", s.handleExport)
+	r.Get("/threads/{id}/log-image", s.handleLogImage)
 	r.Get("/running", s.handleRunning)
 	r.Get("/search", s.handleSearch)
 	r.Get("/usage", s.handleUsage)

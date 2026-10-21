@@ -218,17 +218,23 @@ type ToolResult struct {
 	Output    string
 	IsError   bool
 	Diff      string
+	Images    int
 }
 
 // Feed parses one line.
 func (l *ClaudeLog) Feed(line []byte) []LogOp {
 	var m struct {
-		Type        string    `json:"type"`
-		UUID        string    `json:"uuid"`
-		Timestamp   time.Time `json:"timestamp"`
-		Cwd         string    `json:"cwd"`
-		IsMeta      bool      `json:"isMeta"`
-		IsSidechain bool      `json:"isSidechain"`
+		Type       string    `json:"type"`
+		UUID       string    `json:"uuid"`
+		Timestamp  time.Time `json:"timestamp"`
+		Cwd        string    `json:"cwd"`
+		Attachment struct {
+			Type        string          `json:"type"`
+			Prompt      json.RawMessage `json:"prompt"`
+			CommandMode string          `json:"commandMode"`
+		} `json:"attachment"`
+		IsMeta      bool `json:"isMeta"`
+		IsSidechain bool `json:"isSidechain"`
 		Message     struct {
 			Content    json.RawMessage `json:"content"`
 			StopReason string          `json:"stop_reason"`
@@ -261,15 +267,26 @@ func (l *ClaudeLog) Feed(line []byte) []LogOp {
 				}
 				results = true
 				ops = append(ops, LogOp{Result: &ToolResult{ToolUseID: b.ToolUseID, Output: clip(toolResultText(b.Content), 20000),
-					IsError: b.IsError, Diff: structuredDiff(m.ToolUseResult)}})
+					IsError: b.IsError, Diff: structuredDiff(m.ToolUseResult), Images: countImages(b.Content)}})
 			}
 			if results {
 				return ops
 			}
 		}
-		if t := userText(m.Message.Content); t != "" {
-			ops = append(ops, LogOp{Item: &Item{Key: "u-" + m.UUID, Kind: "user", Text: t}, TurnStarted: true})
+		t, n := userText(m.Message.Content), countImages(m.Message.Content)
+		if t != "" || n > 0 {
+			ops = append(ops, LogOp{Item: &Item{Key: "u-" + m.UUID, Kind: "user", Text: t, LogImages: n}, TurnStarted: true})
 			l.promptKey, l.promptAt = m.UUID, m.Timestamp
+		}
+	case "attachment":
+		// A message sent while the agent was working: Claude Code hands it to
+		// the running turn as a queued command instead of a new prompt.
+		a := m.Attachment
+		if a.Type != "queued_command" || (a.CommandMode != "" && a.CommandMode != "prompt") {
+			return nil
+		}
+		if t, n := userText(a.Prompt), countImages(a.Prompt); t != "" || n > 0 {
+			ops = append(ops, LogOp{Item: &Item{Key: "u-" + m.UUID, Kind: "user", Text: t, LogImages: n}})
 		}
 	case "assistant":
 		var blocks []struct {
@@ -312,6 +329,7 @@ func (l *ClaudeLog) Feed(line []byte) []LogOp {
 // Apply adds a tool result to the tool item it belongs to.
 func (r *ToolResult) Apply(t *Tool) {
 	t.Output = r.Output
+	t.Images = r.Images
 	t.Status = "done"
 	if r.IsError {
 		t.Status = "error"
@@ -330,7 +348,7 @@ func ReadClaude(path string) (items []Item, cwd string, size int64, err error) {
 	}
 	defer fh.Close()
 	r := bufio.NewReaderSize(fh, 1<<20)
-	index := map[string]int{} // tool_use id → position in items
+	index := map[string]int{} // item key (tool_use id for tools) → position in items
 	var log ClaudeLog
 	for {
 		line, rerr := r.ReadBytes('\n')
@@ -344,9 +362,15 @@ func ReadClaude(path string) (items []Item, cwd string, size int64, err error) {
 						t := *it.Tool
 						t.Status = "done"
 						it.Tool = &t
-						index[it.Key] = len(items)
 					}
-					items = append(items, it)
+					// one entry per key: a later version (a turn that ended
+					// twice) replaces the earlier one in place
+					if i, ok := index[it.Key]; ok {
+						items[i] = it
+					} else {
+						index[it.Key] = len(items)
+						items = append(items, it)
+					}
 				case op.Result != nil:
 					if i, ok := index[op.Result.ToolUseID]; ok && items[i].Tool != nil {
 						t := *items[i].Tool

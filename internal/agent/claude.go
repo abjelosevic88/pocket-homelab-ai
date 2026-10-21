@@ -667,6 +667,7 @@ func (s *claudeSession) handleUser(raw, result json.RawMessage) {
 			continue
 		}
 		t.Output = clip(toolResultText(b.Content), 60000)
+		t.Images = countImages(b.Content)
 		switch {
 		case denied:
 			t.Status = "denied"
@@ -708,6 +709,23 @@ func structuredDiff(raw json.RawMessage) string {
 		}
 	}
 	return clip(b.String(), 60000)
+}
+
+// countImages counts the image blocks in message content.
+func countImages(raw json.RawMessage) int {
+	var parts []struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(raw, &parts) != nil {
+		return 0
+	}
+	n := 0
+	for _, p := range parts {
+		if p.Type == "image" {
+			n++
+		}
+	}
+	return n
 }
 
 func toolResultText(raw json.RawMessage) string {

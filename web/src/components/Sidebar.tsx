@@ -1,6 +1,6 @@
 // Threads, grouped by time, with search (titles here, all messages on Enter), folder filter and archive.
 import type React from 'react'
-import { RunningList } from './RunningList'
+import { RunningList, elapsed, useNow } from './RunningList'
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { api, qs, V1 } from '../lib/api'
@@ -26,9 +26,21 @@ function groupOf(t: Thread): string {
   return 'Older'
 }
 
+// The live run time in a thread row (its own component, so only rows that
+// are working tick every second).
+function RowTimer({ since }: { since?: string }) {
+  const now = useNow(1000)
+  return <span className="th-time run-time tnum">{elapsed(since, now)}</span>
+}
+
 export function ThreadRow({ t, active, onOpen }: { t: Thread; active: boolean; onOpen: () => void }) {
+  const { running } = useApp()
+  // working in Pocket AI, or in Paseo / a terminal on the same session
+  const run = running.find(r => r.thread_id === t.id || (!!t.provider_session_id && r.session_id === t.provider_session_id))
+  const waiting = t.status === 'waiting' || t.pending > 0 || run?.status === 'waiting'
+  const working = waiting || t.status === 'running' || !!run
   return (
-    <button type="button" className={`th-row ${active ? 'active' : ''} ${t.unread ? 'unread' : ''}`} onClick={onOpen} title={t.cwd}>
+    <button type="button" className={`th-row ${active ? 'active' : ''} ${t.unread ? 'unread' : ''} ${working ? 'is-working' : ''}`} onClick={onOpen} title={t.cwd}>
       <span className="th-main">
         <span className="th-title ellipsis">{threadTitle(t)}</span>
         <span className="th-meta">
@@ -38,8 +50,8 @@ export function ThreadRow({ t, active, onOpen }: { t: Thread; active: boolean; o
         </span>
       </span>
       <span className="th-side">
-        <span className="th-time">{stamp(t.activity_at)}</span>
-        <ThreadStatus t={t} />
+        {working ? <RowTimer since={run?.prompt_at || t.prompt_at || t.activity_at} /> : <span className="th-time">{stamp(t.activity_at)}</span>}
+        <ThreadStatus t={working ? { ...t, status: waiting ? 'waiting' : 'running' } : t} />
       </span>
     </button>
   )

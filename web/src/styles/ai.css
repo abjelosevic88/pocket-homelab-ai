@@ -262,7 +262,7 @@
 .queued-tag { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); margin-top: 4px; }
 .msg-imgs { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 .msg-img { padding: 0; border: 0; border-radius: 10px; overflow: hidden; cursor: zoom-in; background: var(--surface-2); line-height: 0; }
-.msg-img img { max-width: 220px; max-height: 180px; object-fit: cover; display: block; }
+.msg-img img { max-width: min(100%, 300px); max-height: 180px; min-height: 72px; object-fit: cover; display: block; }
 .lightbox { background: transparent !important; box-shadow: none !important; width: auto !important; max-width: 96vw !important; position: relative; }
 .lightbox img { max-width: 94vw; max-height: 88vh; border-radius: 12px; display: block; margin: 0 auto; }
 .lightbox-x { position: absolute; top: 8px; right: 8px; background: rgba(0, 0, 0, .55) !important; color: #fff !important; border: 0 !important; border-radius: 50% !important; }
@@ -441,3 +441,7 @@
 
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); flex-shrink: 0; animation: live-pulse 1.6s ease-in-out infinite; }
 @keyframes live-pulse { 50% { opacity: .35; } }
+
+/* pictures a tool returned (Read of an image), under its row */
+.tool-imgs { margin: -2px 0 8px 30px; }
+.tool-imgs .msg-imgs { justify-content: flex-start; }

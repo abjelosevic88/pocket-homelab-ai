@@ -15,16 +15,19 @@ import (
 // Item is one timeline entry. Key is stable per thread: streaming updates
 // and the final version of a message replace the entry with the same key.
 type Item struct {
-	Key     string    `json:"key"`
-	Kind    string    `json:"kind"` // user | assistant | thinking | tool | todos | request | notice | turn
-	Text    string    `json:"text,omitempty"`
-	Images  []Image   `json:"images,omitempty"`
-	Queued  bool      `json:"queued,omitempty"`
-	Tool    *Tool     `json:"tool,omitempty"`
-	Todos   []Todo    `json:"todos,omitempty"`
-	Request *Request  `json:"request,omitempty"`
-	Level   string    `json:"level,omitempty"` // notice: info | warn | error
-	Turn    *TurnInfo `json:"turn,omitempty"`
+	Key    string  `json:"key"`
+	Kind   string  `json:"kind"` // user | assistant | thinking | tool | todos | request | notice | turn
+	Text   string  `json:"text,omitempty"`
+	Images []Image `json:"images,omitempty"`
+	// LogImages counts images that live only in the CLI's session file (a
+	// screenshot pasted in Paseo); the web app fetches them by item key.
+	LogImages int       `json:"log_images,omitempty"`
+	Queued    bool      `json:"queued,omitempty"`
+	Tool      *Tool     `json:"tool,omitempty"`
+	Todos     []Todo    `json:"todos,omitempty"`
+	Request   *Request  `json:"request,omitempty"`
+	Level     string    `json:"level,omitempty"` // notice: info | warn | error
+	Turn      *TurnInfo `json:"turn,omitempty"`
 }
 
 // Image is an attachment shown on a user message.
@@ -44,6 +47,7 @@ type Tool struct {
 	Status   string          `json:"status"` // running | done | error | denied
 	ExitCode *int            `json:"exit_code,omitempty"`
 	Diff     string          `json:"diff,omitempty"`
+	Images   int             `json:"images,omitempty"` // images in the result (Read of a picture), served from the session file
 }
 
 // Todo is one line of the agent's plan / to-do list.

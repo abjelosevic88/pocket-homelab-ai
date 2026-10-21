@@ -13,10 +13,6 @@
 .run-dots.waiting span { background: var(--warning); animation: dot-wait 1.8s ease-in-out infinite; }
 @keyframes dot-wait { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
 
-/* spinning ring in the composer while the agent works */
-.run-ring { width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0; margin: 0 6px;
-  border: 2.5px solid color-mix(in srgb, #f59e0b 22%, transparent); border-top-color: #f59e0b; animation: spin .8s linear infinite; }
-
 /* round red stop button */
 .stop-round { width: 34px; height: 34px; border-radius: 50%; border: 0; background: #dc2626; display: grid; place-items: center; cursor: pointer; flex-shrink: 0;
   box-shadow: 0 4px 14px -4px rgba(220, 38, 38, .6); transition: transform .12s, background .12s; animation: pop-in .18s var(--ease); }

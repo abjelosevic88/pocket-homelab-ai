@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -251,5 +252,44 @@ func TestRealPromptSkipsPaseoSummary(t *testing.T) {
 	}
 	if got := realPrompt("<chat-history-summary>never closed"); got != "" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestQueuedCommandAndLogImages(t *testing.T) {
+	png := "iVBORw0KGgo="
+	lines := []string{
+		`{"type":"user","uuid":"p1","timestamp":"2026-10-21T10:00:00Z","message":{"role":"user","content":[{"type":"text","text":"look"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"` + png + `"}}]}}`,
+		`{"type":"assistant","uuid":"a1","timestamp":"2026-10-21T10:00:01Z","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":"/x.png"}}],"stop_reason":"tool_use"}}`,
+		`{"type":"user","uuid":"r1","timestamp":"2026-10-21T10:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"` + png + `"}}]}]}}`,
+		`{"type":"attachment","uuid":"q1","timestamp":"2026-10-21T10:00:03Z","attachment":{"type":"queued_command","prompt":[{"type":"text","text":"also this"}],"commandMode":"prompt"}}`,
+	}
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	items, _, _, err := ReadClaude(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, it := range items {
+		switch {
+		case it.Kind == "user":
+			got = append(got, it.Key+":"+it.Text+":"+strconv.Itoa(it.LogImages))
+		case it.Tool != nil:
+			got = append(got, it.Key+":"+strconv.Itoa(it.Tool.Images))
+		}
+	}
+	if strings.Join(got, ",") != "u-p1:look:1,toolu_1:1,u-q1:also this:0" {
+		t.Fatalf("items: %v", got)
+	}
+	for _, key := range []string{"u-p1", "toolu_1"} {
+		data, mime, err := LogImage(path, key, 0)
+		if err != nil || mime != "image/png" || len(data) == 0 {
+			t.Fatalf("%s: %v %q %d", key, err, mime, len(data))
+		}
+	}
+	if _, _, err := LogImage(path, "u-p1", 1); err != ErrNoImage {
+		t.Fatalf("missing image: %v", err)
 	}
 }

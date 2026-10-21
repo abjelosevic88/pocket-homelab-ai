@@ -225,7 +225,6 @@ export const Composer = React.forwardRef<ComposerHandle, {
         <input ref={fileInput} type="file" accept="image/*" multiple hidden onChange={e => { addFiles(Array.from(e.target.files || [])); e.target.value = '' }} />
         <button type="button" className="btn ghost icon-only sm attach-btn" aria-label="Attach images" title="Attach images (or paste / drop them)" disabled={disabled} onClick={() => fileInput.current?.click()}><Icon name="plus" size={18} /></button>
         <div className="composer-extra">{footer}</div>
-        {running && <span className="run-ring" title="The agent is working" aria-hidden="true" />}
         {Speech && <button type="button" className={`btn ghost icon-only sm mic-btn ${listening ? 'rec' : ''}`} aria-label={listening ? 'Stop dictation' : 'Dictate'} title={listening ? 'Stop dictation' : 'Dictate'} disabled={disabled} onClick={toggleDictation}><Icon name="mic" size={17} /></button>}
         {running && onStop && !text.trim() && atts.length === 0 ? (
           <button type="button" className="stop-round" aria-label="Stop" title="Stop (⌘.)" onClick={onStop}><span /></button>

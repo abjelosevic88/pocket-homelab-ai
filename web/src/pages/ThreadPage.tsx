@@ -227,7 +227,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
             <>
               {items.length === 0 && <div className="muted center small" style={{ padding: 30 }}>Nothing here yet.</div>}
               {t.source === 'import' && items.length > 0 && <div className="notice info"><Icon name="history" size={14} /><span>Imported from the server’s {providerName(t.provider)} history — sending a message continues that session.</span></div>}
-              <Timeline key={id} items={visible} showThinking={!!settings?.show_thinking} streamingKey={streamingKey}
+              <Timeline key={id} threadId={t.provider === 'claude' ? id : undefined} items={visible} showThinking={!!settings?.show_thinking} streamingKey={streamingKey}
                 onFork={t.provider_session_id && canRun && !running ? forkNewTab : undefined} />
               {t.status === 'error' && t.error && <div className="notice error"><Icon name="alert" size={14} /><span>{t.error}</span></div>}
             </>
@@ -255,7 +255,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
             <Composer ref={composer} draftKey={id} autoFocus onSend={send} running={running} onStop={t.external && !t.live ? undefined : interrupt} disabled={!!t.external && !t.live}
               placeholder={running ? 'Add a message — it is sent when the agent is done…' : pending.length ? 'Or type an answer…' : `Reply to ${providerName(t.provider)}…`}
               footer={<>
-                {running ? <span className="composer-status"><Spinner size={11} />Working</span> : t.live ? <span className="composer-status muted" title="The CLI process is running and keeps its context">Session live</span> : null}
+                {!running && t.live ? <span className="composer-status muted" title="The CLI process is running and keeps its context">Session live</span> : null}
                 {p && <span className="thread-pickers"><AgentPicker compact showProvider={false} value={{ provider: t.provider, model: t.model, effort: t.effort, mode: t.mode, speed: t.speed || '' }}
                   onChange={ch => patch(ch as Partial<Thread>)} /></span>}
               </>} />

@@ -1,21 +1,25 @@
 // A thread's items, in order: what you said, what the agent said and did.
 import { memo, useRef, useState } from 'react'
 import { fmtCost, fmtDuration, fmtTokens } from '../lib/format'
-import type { Item, ItemImage, Todo, TurnInfo } from '../lib/types'
+import { V1 } from '../lib/api'
+import type { Item, ItemImage, Todo, ToolInfo, TurnInfo } from '../lib/types'
 import { Icon } from './icons'
 import { Markdown } from './Markdown'
 import { RequestSummary } from './RequestCard'
 import { ToolRow } from './ToolRow'
 import { Modal } from './ui'
 
-function Images({ images }: { images: ItemImage[] }) {
+export function Images({ images }: { images: ItemImage[] }) {
   const [big, setBig] = useState<ItemImage | null>(null)
+  const [gone, setGone] = useState<Set<string>>(new Set())
+  const shown = images.filter(im => !gone.has(im.id))
+  if (!shown.length) return null
   return (
     <>
       <div className="msg-imgs">
-        {images.map(im => (
+        {shown.map(im => (
           <button key={im.id} type="button" className="msg-img" onClick={() => setBig(im)} aria-label={`Open ${im.name}`}>
-            <img src={im.url} alt={im.name} loading="lazy" />
+            <img src={im.url} alt={im.name} loading="lazy" onError={() => setGone(g => new Set(g).add(im.id))} />
           </button>
         ))}
       </div>
@@ -59,24 +63,44 @@ function Todos({ todos }: { todos: Todo[] }) {
   )
 }
 
-export const ItemView = memo(function ItemView({ item, showThinking }: { item: Item; showThinking: boolean }) {
+// Pictures that live only in the CLI's session file (a screenshot pasted in
+// Paseo, what a Read of an image returned): the server reads them from there.
+function logImages(threadId: string | undefined, key: string, n: number): ItemImage[] {
+  if (!threadId || n <= 0) return []
+  return Array.from({ length: Math.min(n, 12) }, (_, i) => ({
+    id: `${key}-${i}`, name: `image ${i + 1}`, url: `${V1}/threads/${threadId}/log-image?key=${encodeURIComponent(key)}&n=${i}`,
+  }) as ItemImage)
+}
+
+// Older tool rows only have "[image]" lines in their output.
+const imageCount = (t: ToolInfo) => t.images ?? (t.output || '').split('\n').filter(l => l === '[image]').length
+
+export const ItemView = memo(function ItemView({ item, showThinking, threadId }: { item: Item; showThinking: boolean; threadId?: string }) {
   switch (item.kind) {
-    case 'user':
+    case 'user': {
+      const pics = [...(item.images || []), ...logImages(threadId, item.key, item.log_images || 0)]
       return (
         <div className={`msg user ${item.queued ? 'queued' : ''}`} id={`item-${item.key}`}>
           <div className="bubble">
-            {item.images && item.images.length > 0 && <Images images={item.images} />}
+            {pics.length > 0 && <Images images={pics} />}
             {item.text && <div className="user-text">{item.text}</div>}
           </div>
           {item.queued && <div className="queued-tag"><Icon name="clock" size={11} />queued — sent when the agent is done</div>}
         </div>
       )
+    }
     case 'assistant':
       return <div className="msg assistant" id={`item-${item.key}`}><Markdown text={item.text || ''} /></div>
     case 'thinking':
       return <Thinking text={item.text || ''} defaultOpen={showThinking} />
     case 'tool':
-      return item.tool ? <ToolRow tool={item.tool} /> : null
+      if (!item.tool) return null
+      return (
+        <>
+          <ToolRow tool={item.tool} />
+          {threadId && imageCount(item.tool) > 0 && <div className="tool-imgs"><Images images={logImages(threadId, item.key, imageCount(item.tool))} /></div>}
+        </>
+      )
     case 'todos':
       return item.todos?.length ? <Todos todos={item.todos} /> : null
     case 'request':
@@ -112,7 +136,7 @@ function TurnFoot({ t, onFork }: { t: TurnInfo; onFork?: () => void }) {
   )
 }
 
-export function Timeline({ items, showThinking, streamingKey, onFork }: { items: Item[]; showThinking: boolean; streamingKey?: string; onFork?: () => void }) {
+export function Timeline({ items, showThinking, streamingKey, onFork, threadId }: { items: Item[]; showThinking: boolean; streamingKey?: string; onFork?: () => void; threadId?: string }) {
   // Items there when the thread opened render still; anything that arrives
   // while you watch slides in.
   const initial = useRef<Set<string> | null>(null)
@@ -130,7 +154,7 @@ export function Timeline({ items, showThinking, streamingKey, onFork }: { items:
       {shown.map(it => (
         <div key={it.key} className={`tl-item ${initial.current!.has(it.key) ? '' : 'appear'} ${it.key === streamingKey ? 'streaming' : ''}`}>
           {it.kind === 'turn' && it.turn ? <TurnFoot t={it.turn} onFork={it.key === lastTurn ? onFork : undefined} />
-            : <ItemView item={it} showThinking={showThinking} />}
+            : <ItemView item={it} showThinking={showThinking} threadId={threadId} />}
         </div>
       ))}
     </div>

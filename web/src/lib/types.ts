@@ -146,6 +146,7 @@ export interface ToolInfo {
   status: 'running' | 'done' | 'error' | 'denied'
   exit_code?: number
   diff?: string
+  images?: number
 }
 
 export interface Todo { text: string; status: 'pending' | 'in_progress' | 'completed' }
@@ -188,6 +189,7 @@ export interface Item {
   request?: AgentRequest
   level?: 'info' | 'warn' | 'error'
   turn?: TurnInfo
+  log_images?: number
 }
 
 export interface ThreadDetail { thread: Thread; items: Item[] }
