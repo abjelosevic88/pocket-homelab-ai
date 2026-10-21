@@ -322,7 +322,7 @@ func (rt *engine) startRun(t *store.Thread) (*run, error) {
 	ctx, cancel := context.WithCancel(rt.ctx)
 	r := &run{threadID: t.ID, userID: t.UserID, provider: t.Provider, cancel: cancel, pending: map[string]bool{},
 		live: map[string]*agent.Item{}, dirty: map[string]bool{}, lastUsed: time.Now()}
-	o := agent.Options{Cwd: t.Cwd, Model: t.Model, Effort: t.Effort, Mode: t.Mode, ResumeID: t.ProviderSessionID,
+	o := agent.Options{Cwd: t.Cwd, Model: t.Model, Effort: t.Effort, Mode: t.Mode, Speed: t.Speed, ResumeID: t.ProviderSessionID,
 		SystemPrompt: rt.systemPrompt(ctx, t.UserID), Env: []string{"POCKET_AI=1"}, Log: rt.s.log}
 	if o.ResumeID == "" && strings.HasPrefix(t.SourceRef, "fork:") {
 		o.ResumeID, o.Fork = strings.TrimPrefix(t.SourceRef, "fork:"), true

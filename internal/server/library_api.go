@@ -321,13 +321,21 @@ func (s *Server) handleRunRecipe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	t, err := s.createThread(ctx, userFrom(ctx), newThread{Provider: rc.Provider, Model: rc.Model, Effort: rc.Effort, Mode: rc.Mode,
-		Cwd: rc.Cwd, Text: prompt, Title: rc.Name}, "recipe", strconv.FormatInt(rc.ID, 10))
+		Speed: optSpeed(rc.Speed), Cwd: rc.Cwd, Text: prompt, Title: rc.Name}, "recipe", strconv.FormatInt(rc.ID, 10))
 	if err != nil && t == nil {
 		s.fail(w, err, "run recipe")
 		return
 	}
 	s.store.CountRecipeRun(ctx, rc.ID)
 	writeJSON(w, http.StatusCreated, t)
+}
+
+// optSpeed: an empty saved speed means "my default", not "standard".
+func optSpeed(v string) *string {
+	if v == "" {
+		return nil
+	}
+	return &v
 }
 
 // handleRecipeSuggestions offers starter recipes for looking after a server.

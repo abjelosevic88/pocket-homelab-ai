@@ -104,6 +104,7 @@
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
+html, body { overflow: hidden; overscroll-behavior: none; }
 html { -webkit-text-size-adjust: 100%; }
 body {
   font-family: var(--font); background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.45;

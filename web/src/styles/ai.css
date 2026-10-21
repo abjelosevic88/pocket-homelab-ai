@@ -375,7 +375,11 @@
 
 /* Phones: the model / effort / permission pickers get their own row under
    the composer buttons instead of being squeezed into "Eff…" and "A…". */
-@media (max-width: 600px) {
+/* model / effort / mode / speed of a thread live in the header on wide
+   screens and in the composer on phones (the header has no room) */
+.thread-pickers { display: none; }
+@media (max-width: 760px) { .thread-pickers { display: contents; } }
+@media (max-width: 760px) {
   .composer-bar:has(.agent-chips) { flex-wrap: wrap; row-gap: 2px; }
   .composer-bar:has(.agent-chips) .composer-extra { order: 10; flex: 1 1 100%; overflow: visible; border-top: 1px solid var(--border); padding-top: 4px; margin-top: 2px; }
   .composer-bar:has(.agent-chips) .send-btn { margin-left: auto; }

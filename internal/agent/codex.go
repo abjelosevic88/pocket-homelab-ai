@@ -300,6 +300,9 @@ func StartCodex(ctx context.Context, o Options, sink Sink) (Session, error) {
 	if strings.TrimSpace(o.SystemPrompt) != "" {
 		params["developerInstructions"] = o.SystemPrompt
 	}
+	if o.Speed != "" {
+		params["serviceTier"] = o.Speed
+	}
 	method := "thread/start"
 	if o.ResumeID != "" {
 		params["threadId"] = o.ResumeID
@@ -379,6 +382,9 @@ func (s *codexSession) Send(in Input) error {
 	params := map[string]any{"threadId": s.threadID, "input": input}
 	if s.opts.Effort != "" {
 		params["effort"] = s.opts.Effort
+	}
+	if s.opts.Speed != "" {
+		params["serviceTier"] = s.opts.Speed
 	}
 	s.mu.Lock()
 	if s.running {

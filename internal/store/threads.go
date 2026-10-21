@@ -8,14 +8,14 @@ import (
 	"strings"
 )
 
-const threadCols = `id, user_id, title, provider, model, effort, mode, cwd, workspace_id, provider_session_id, status, error,
+const threadCols = `id, user_id, title, provider, model, effort, mode, speed, cwd, workspace_id, provider_session_id, status, error,
 	pinned, archived, unread, source, source_ref, preview, usage, created_at, updated_at, activity_at`
 
 func scanThread(row interface{ Scan(...any) error }) (*Thread, error) {
 	var t Thread
 	var ws sql.NullInt64
 	var usage string
-	if err := row.Scan(&t.ID, &t.UserID, &t.Title, &t.Provider, &t.Model, &t.Effort, &t.Mode, &t.Cwd, &ws, &t.ProviderSessionID,
+	if err := row.Scan(&t.ID, &t.UserID, &t.Title, &t.Provider, &t.Model, &t.Effort, &t.Mode, &t.Speed, &t.Cwd, &ws, &t.ProviderSessionID,
 		&t.Status, &t.Error, &t.Pinned, &t.Archived, &t.Unread, &t.Source, &t.SourceRef, &t.Preview, &usage,
 		&t.CreatedAt, &t.UpdatedAt, &t.ActivityAt); err != nil {
 		return nil, notFound(err)
@@ -37,10 +37,10 @@ func (s *Store) CreateThread(ctx context.Context, t *Thread) error {
 	if t.Source == "" {
 		t.Source = "web"
 	}
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO threads (id, user_id, title, provider, model, effort, mode, cwd, workspace_id,
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO threads (id, user_id, title, provider, model, effort, mode, speed, cwd, workspace_id,
 		provider_session_id, status, source, source_ref, usage, created_at, updated_at, activity_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.ID, t.UserID, t.Title, t.Provider, t.Model, t.Effort, t.Mode, t.Cwd, nullInt(t.WorkspaceID), t.ProviderSessionID,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.UserID, t.Title, t.Provider, t.Model, t.Effort, t.Mode, t.Speed, t.Cwd, nullInt(t.WorkspaceID), t.ProviderSessionID,
 		t.Status, t.Source, t.SourceRef, jsonMarshal(t.Usage), now, now, now)
 	return err
 }
@@ -101,10 +101,10 @@ func (s *Store) ListThreads(ctx context.Context, userID int64, f ThreadFilter) (
 // UpdateThread writes the editable and runtime fields of a thread.
 func (s *Store) UpdateThread(ctx context.Context, t *Thread) error {
 	t.UpdatedAt = Now()
-	_, err := s.DB.ExecContext(ctx, `UPDATE threads SET title = ?, model = ?, effort = ?, mode = ?, cwd = ?, workspace_id = ?,
+	_, err := s.DB.ExecContext(ctx, `UPDATE threads SET title = ?, model = ?, effort = ?, mode = ?, speed = ?, cwd = ?, workspace_id = ?,
 		provider_session_id = ?, status = ?, error = ?, pinned = ?, archived = ?, unread = ?, preview = ?, usage = ?,
 		updated_at = ?, activity_at = ? WHERE id = ?`,
-		t.Title, t.Model, t.Effort, t.Mode, t.Cwd, nullInt(t.WorkspaceID), t.ProviderSessionID, t.Status, t.Error,
+		t.Title, t.Model, t.Effort, t.Mode, t.Speed, t.Cwd, nullInt(t.WorkspaceID), t.ProviderSessionID, t.Status, t.Error,
 		boolInt(t.Pinned), boolInt(t.Archived), boolInt(t.Unread), t.Preview, jsonMarshal(t.Usage), t.UpdatedAt, t.ActivityAt, t.ID)
 	return err
 }

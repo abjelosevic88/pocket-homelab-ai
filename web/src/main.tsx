@@ -8,6 +8,9 @@ import './styles/settings.css'
 import { AppProvider, useApp } from './lib/app-context'
 import { Loading, ToastProvider } from './components/ui'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { trackViewport } from './lib/viewport'
+
+trackViewport()
 import Login from './pages/Login'
 import Shell from './pages/Shell'
 import Settings from './pages/Settings'

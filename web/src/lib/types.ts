@@ -26,7 +26,7 @@ export interface AuthStatus {
 export type ProviderId = 'claude' | 'codex'
 export type NotifyKind = 'apprise' | 'ntfy' | 'webhook'
 
-export interface AgentDefaults { model: string; effort: string; mode: string }
+export interface AgentDefaults { model: string; effort: string; mode: string; speed?: string }
 
 export interface Settings {
   title: string
@@ -67,7 +67,8 @@ export interface APIToken {
 
 // ---------- providers ----------
 
-export interface ProviderModel { id: string; name: string; description?: string; efforts?: string[] }
+export interface ProviderModel { id: string; name: string; description?: string; efforts?: string[]; fast?: boolean }
+export interface ProviderSpeed { id: string; name: string; description?: string; available: boolean; note?: string }
 export interface ProviderMode { id: string; name: string; description?: string }
 
 export interface Provider {
@@ -79,6 +80,7 @@ export interface Provider {
   models: ProviderModel[]
   efforts: string[]
   modes: ProviderMode[]
+  speeds?: ProviderSpeed[]
   default_model: string
   default_effort: string
   default_mode: string
@@ -106,6 +108,7 @@ export interface Thread {
   model: string
   effort: string
   mode: string
+  speed?: string
   cwd: string
   workspace_id: number | null
   provider_session_id: string
@@ -193,7 +196,7 @@ export interface Workspace { id: number; name: string; path: string; color: stri
 
 export interface DirListing { path: string; parent: string; dirs: { name: string; path: string; git: boolean }[]; roots: string[] }
 
-export interface AgentChoice { provider: ProviderId | ''; model: string; effort: string; mode: string; cwd: string }
+export interface AgentChoice { provider: ProviderId | ''; model: string; effort: string; mode: string; speed?: string; cwd: string }
 
 export interface Recipe extends AgentChoice {
   id: number

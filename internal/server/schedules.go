@@ -282,7 +282,7 @@ func (s *Server) runSchedule(ctx context.Context, sc *store.Schedule) (*store.Th
 	sc.LastRunAt = store.Now()
 	sc.LastStatus, sc.LastSummary = "running", ""
 	title := sc.Name + " · " + time.Now().In(loc).Format("Jan 2 15:04")
-	t, err := s.createThread(ctx, u, newThread{Provider: sc.Provider, Model: sc.Model, Effort: sc.Effort, Mode: sc.Mode, Cwd: sc.Cwd,
+	t, err := s.createThread(ctx, u, newThread{Provider: sc.Provider, Model: sc.Model, Effort: sc.Effort, Mode: sc.Mode, Speed: optSpeed(sc.Speed), Cwd: sc.Cwd,
 		Text: sc.Prompt + scheduleSuffix, Title: title}, "schedule", strconv.FormatInt(sc.ID, 10))
 	if t != nil {
 		sc.LastThreadID = t.ID

@@ -38,6 +38,13 @@ Errors: `{"error": "message"}` with a 4xx/5xx status.
 }]
 ```
 
+`speeds`: `[{id: "", name: "Standard", available: true}, {id: "fast" | "<codex tier>", name, description, available, note}]` —
+models with `fast: true` can use the non-standard one. Claude's `fast` is Claude Code fast mode (opt-in via
+`--settings {"fastMode":true}`; `available: false` with a `note` when the account cannot use it, e.g. extra usage
+off). Codex speeds are the model's service tiers (`priority` = "Fast"). Threads, recipes, schedules and the
+per-provider defaults carry `speed` (`""` = standard); `PATCH /threads/{id}` with `{speed}` resumes the session
+at that speed.
+
 Claude modes: `default` (asks before edits/commands), `acceptEdits`, `plan`, `auto`, `bypassPermissions`.
 Codex modes: `untrusted` (asks for everything but reads), `on-request` (asks when it wants to leave the sandbox),
 `full-access` (no sandbox, never asks), `read-only`.

@@ -43,7 +43,8 @@ func ProbeClaude(ctx context.Context, bin, cwd string) Provider {
 
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-prompt-tool", "stdio")
+	cmd := exec.CommandContext(ctx, bin, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-prompt-tool", "stdio",
+		"--settings", `{"fastMode":true}`)
 	cmd.Dir = cwd
 	cmd.Env = os.Environ()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -71,8 +72,11 @@ func ProbeClaude(ctx context.Context, bin, cwd string) Provider {
 						DisplayName           string   `json:"displayName"`
 						Description           string   `json:"description"`
 						SupportedEffortLevels []string `json:"supportedEffortLevels"`
+						SupportsFastMode      bool     `json:"supportsFastMode"`
 					} `json:"models"`
-					Account struct {
+					FastModeState          string `json:"fast_mode_state"`
+					FastModeDisabledReason string `json:"fast_mode_disabled_reason"`
+					Account                struct {
 						Email            string `json:"email"`
 						SubscriptionType string `json:"subscriptionType"`
 					} `json:"account"`
@@ -85,14 +89,37 @@ func ProbeClaude(ctx context.Context, bin, cwd string) Provider {
 		if len(m.Response.Response.Models) > 0 {
 			p.Models = nil
 			for _, md := range m.Response.Response.Models {
-				p.Models = append(p.Models, Model{ID: md.Value, Name: md.DisplayName, Description: md.Description, Efforts: md.SupportedEffortLevels})
+				p.Models = append(p.Models, Model{ID: md.Value, Name: md.DisplayName, Description: md.Description, Efforts: md.SupportedEffortLevels, Fast: md.SupportsFastMode})
 			}
 		}
+		fast := Speed{ID: "fast", Name: "Fast", Description: "Claude Code fast mode: quicker output, billed as extra usage.", Available: true}
+		if r := m.Response.Response.FastModeDisabledReason; r != "" {
+			fast.Available, fast.Note = false, claudeFastNote(r)
+		}
+		p.Speeds = []Speed{{ID: "", Name: "Standard", Available: true}, fast}
 		a := m.Response.Response.Account
 		p.Account = strings.Trim(strings.Join([]string{a.SubscriptionType, a.Email}, " · "), " ·")
 		break
 	}
 	return p
+}
+
+func claudeFastNote(reason string) string {
+	switch reason {
+	case "extra_usage_disabled":
+		return "Fast mode needs extra usage turned on for this Claude account."
+	case "model_not_allowed":
+		return "Fast mode is not allowed for this model on this account."
+	case "not_first_party":
+		return "Fast mode only works with the Anthropic API directly."
+	case "free":
+		return "Fast mode is not part of this Claude plan."
+	case "disabled_by_env", "preference":
+		return "Fast mode is switched off in the Claude Code settings on the server."
+	case "network_error", "pending", "unknown":
+		return "Claude Code could not confirm fast mode right now."
+	}
+	return "Fast mode is not available (" + reason + ")."
 }
 
 // ProbeCodex asks the Codex app-server for its models and account.
@@ -123,11 +150,16 @@ func ProbeCodex(ctx context.Context, bin, cwd string) Provider {
 	if res, err := c.call(ctx, "model/list", map[string]any{}); err == nil {
 		var r struct {
 			Data []struct {
-				ID                        string `json:"id"`
-				DisplayName               string `json:"displayName"`
-				Description               string `json:"description"`
-				Hidden                    bool   `json:"hidden"`
-				IsDefault                 bool   `json:"isDefault"`
+				ID           string `json:"id"`
+				DisplayName  string `json:"displayName"`
+				Description  string `json:"description"`
+				Hidden       bool   `json:"hidden"`
+				IsDefault    bool   `json:"isDefault"`
+				ServiceTiers []struct {
+					ID          string `json:"id"`
+					Name        string `json:"name"`
+					Description string `json:"description"`
+				} `json:"serviceTiers"`
 				SupportedReasoningEfforts []struct {
 					ReasoningEffort string `json:"reasoningEffort"`
 				} `json:"supportedReasoningEfforts"`
@@ -138,7 +170,15 @@ func ProbeCodex(ctx context.Context, bin, cwd string) Provider {
 				if m.Hidden {
 					continue
 				}
-				md := Model{ID: m.ID, Name: m.DisplayName, Description: m.Description}
+				md := Model{ID: m.ID, Name: m.DisplayName, Description: m.Description, Fast: len(m.ServiceTiers) > 0}
+				for _, t := range m.ServiceTiers {
+					if !hasSpeed(p.Speeds, t.ID) {
+						if len(p.Speeds) == 0 {
+							p.Speeds = []Speed{{ID: "", Name: "Standard", Available: true}}
+						}
+						p.Speeds = append(p.Speeds, Speed{ID: t.ID, Name: t.Name, Description: t.Description, Available: true})
+					}
+				}
 				for _, e := range m.SupportedReasoningEfforts {
 					md.Efforts = append(md.Efforts, e.ReasoningEffort)
 				}
@@ -165,4 +205,13 @@ func ProbeCodex(ctx context.Context, bin, cwd string) Provider {
 		}
 	}
 	return p
+}
+
+func hasSpeed(list []Speed, id string) bool {
+	for _, s := range list {
+		if s.ID == id {
+			return true
+		}
+	}
+	return false
 }

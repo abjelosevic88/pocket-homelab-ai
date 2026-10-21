@@ -75,11 +75,11 @@ func (s *Store) WorkspaceForPath(ctx context.Context, userID int64, path string)
 
 // ---------- recipes ----------
 
-const recipeCols = `id, user_id, name, prompt, icon, provider, model, effort, mode, cwd, pinned, sort_order, runs, created_at, updated_at`
+const recipeCols = `id, user_id, name, prompt, icon, provider, model, effort, mode, speed, cwd, pinned, sort_order, runs, created_at, updated_at`
 
 func scanRecipe(row interface{ Scan(...any) error }) (*Recipe, error) {
 	var r Recipe
-	if err := row.Scan(&r.ID, &r.UserID, &r.Name, &r.Prompt, &r.Icon, &r.Provider, &r.Model, &r.Effort, &r.Mode, &r.Cwd,
+	if err := row.Scan(&r.ID, &r.UserID, &r.Name, &r.Prompt, &r.Icon, &r.Provider, &r.Model, &r.Effort, &r.Mode, &r.Speed, &r.Cwd,
 		&r.Pinned, &r.SortOrder, &r.Runs, &r.CreatedAt, &r.UpdatedAt); err != nil {
 		return nil, notFound(err)
 	}
@@ -115,8 +115,8 @@ func (s *Store) SaveRecipe(ctx context.Context, r *Recipe) error {
 	r.UpdatedAt = now
 	if r.ID == 0 {
 		r.CreatedAt = now
-		res, err := s.DB.ExecContext(ctx, `INSERT INTO recipes (user_id, name, prompt, icon, provider, model, effort, mode, cwd, pinned, sort_order, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, r.UserID, r.Name, r.Prompt, r.Icon, r.Provider, r.Model, r.Effort, r.Mode, r.Cwd,
+		res, err := s.DB.ExecContext(ctx, `INSERT INTO recipes (user_id, name, prompt, icon, provider, model, effort, mode, speed, cwd, pinned, sort_order, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, r.UserID, r.Name, r.Prompt, r.Icon, r.Provider, r.Model, r.Effort, r.Mode, r.Speed, r.Cwd,
 			boolInt(r.Pinned), r.SortOrder, now, now)
 		if err != nil {
 			return err
@@ -124,8 +124,8 @@ func (s *Store) SaveRecipe(ctx context.Context, r *Recipe) error {
 		r.ID, _ = res.LastInsertId()
 		return nil
 	}
-	_, err := s.DB.ExecContext(ctx, `UPDATE recipes SET name = ?, prompt = ?, icon = ?, provider = ?, model = ?, effort = ?, mode = ?, cwd = ?,
-		pinned = ?, sort_order = ?, updated_at = ? WHERE id = ? AND user_id = ?`, r.Name, r.Prompt, r.Icon, r.Provider, r.Model, r.Effort, r.Mode, r.Cwd,
+	_, err := s.DB.ExecContext(ctx, `UPDATE recipes SET name = ?, prompt = ?, icon = ?, provider = ?, model = ?, effort = ?, mode = ?, speed = ?, cwd = ?,
+		pinned = ?, sort_order = ?, updated_at = ? WHERE id = ? AND user_id = ?`, r.Name, r.Prompt, r.Icon, r.Provider, r.Model, r.Effort, r.Mode, r.Speed, r.Cwd,
 		boolInt(r.Pinned), r.SortOrder, now, r.ID, r.UserID)
 	return err
 }
@@ -149,12 +149,12 @@ func (s *Store) CountRecipeRun(ctx context.Context, id int64) {
 
 // ---------- schedules ----------
 
-const scheduleCols = `id, user_id, name, prompt, provider, model, effort, mode, cwd, spec, notify, enabled, next_run_at, last_run_at,
+const scheduleCols = `id, user_id, name, prompt, provider, model, effort, mode, speed, cwd, spec, notify, enabled, next_run_at, last_run_at,
 	last_thread_id, last_status, last_summary, created_at, updated_at`
 
 func scanSchedule(row interface{ Scan(...any) error }) (*Schedule, error) {
 	var sc Schedule
-	if err := row.Scan(&sc.ID, &sc.UserID, &sc.Name, &sc.Prompt, &sc.Provider, &sc.Model, &sc.Effort, &sc.Mode, &sc.Cwd, &sc.Spec,
+	if err := row.Scan(&sc.ID, &sc.UserID, &sc.Name, &sc.Prompt, &sc.Provider, &sc.Model, &sc.Effort, &sc.Mode, &sc.Speed, &sc.Cwd, &sc.Spec,
 		&sc.Notify, &sc.Enabled, &sc.NextRunAt, &sc.LastRunAt, &sc.LastThreadID, &sc.LastStatus, &sc.LastSummary,
 		&sc.CreatedAt, &sc.UpdatedAt); err != nil {
 		return nil, notFound(err)
@@ -205,8 +205,8 @@ func (s *Store) SaveSchedule(ctx context.Context, sc *Schedule) error {
 	sc.UpdatedAt = now
 	if sc.ID == 0 {
 		sc.CreatedAt = now
-		res, err := s.DB.ExecContext(ctx, `INSERT INTO schedules (user_id, name, prompt, provider, model, effort, mode, cwd, spec, notify, enabled, next_run_at, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sc.UserID, sc.Name, sc.Prompt, sc.Provider, sc.Model, sc.Effort, sc.Mode, sc.Cwd,
+		res, err := s.DB.ExecContext(ctx, `INSERT INTO schedules (user_id, name, prompt, provider, model, effort, mode, speed, cwd, spec, notify, enabled, next_run_at, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sc.UserID, sc.Name, sc.Prompt, sc.Provider, sc.Model, sc.Effort, sc.Mode, sc.Speed, sc.Cwd,
 			sc.Spec, sc.Notify, boolInt(sc.Enabled), sc.NextRunAt, now, now)
 		if err != nil {
 			return err
@@ -214,9 +214,9 @@ func (s *Store) SaveSchedule(ctx context.Context, sc *Schedule) error {
 		sc.ID, _ = res.LastInsertId()
 		return nil
 	}
-	_, err := s.DB.ExecContext(ctx, `UPDATE schedules SET name = ?, prompt = ?, provider = ?, model = ?, effort = ?, mode = ?, cwd = ?, spec = ?,
+	_, err := s.DB.ExecContext(ctx, `UPDATE schedules SET name = ?, prompt = ?, provider = ?, model = ?, effort = ?, mode = ?, speed = ?, cwd = ?, spec = ?,
 		notify = ?, enabled = ?, next_run_at = ?, last_run_at = ?, last_thread_id = ?, last_status = ?, last_summary = ?, updated_at = ?
-		WHERE id = ? AND user_id = ?`, sc.Name, sc.Prompt, sc.Provider, sc.Model, sc.Effort, sc.Mode, sc.Cwd, sc.Spec, sc.Notify,
+		WHERE id = ? AND user_id = ?`, sc.Name, sc.Prompt, sc.Provider, sc.Model, sc.Effort, sc.Mode, sc.Speed, sc.Cwd, sc.Spec, sc.Notify,
 		boolInt(sc.Enabled), sc.NextRunAt, sc.LastRunAt, sc.LastThreadID, sc.LastStatus, sc.LastSummary, now, sc.ID, sc.UserID)
 	return err
 }

@@ -79,6 +79,10 @@ func StartClaude(ctx context.Context, o Options, sink Sink) (Session, error) {
 	if o.Effort != "" {
 		args = append(args, "--effort", o.Effort)
 	}
+	if o.Speed == "fast" {
+		// fast mode is opt-in for SDK-style clients, through flag settings
+		args = append(args, "--settings", `{"fastMode":true}`)
+	}
 	mode := o.Mode
 	if mode == "" {
 		mode = "default"

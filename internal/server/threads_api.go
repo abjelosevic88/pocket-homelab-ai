@@ -101,6 +101,7 @@ type newThread struct {
 	Model       string   `json:"model"`
 	Effort      string   `json:"effort"`
 	Mode        string   `json:"mode"`
+	Speed       *string  `json:"speed"`
 	Cwd         string   `json:"cwd"`
 	WorkspaceID *int64   `json:"workspace_id"`
 	Title       string   `json:"title"`
@@ -134,6 +135,16 @@ func (s *Server) createThread(ctx context.Context, u *store.User, in newThread, 
 	if !validMode(t.Provider, t.Mode) {
 		return nil, badRequest("unknown mode " + t.Mode)
 	}
+	t.Speed = def.Speed
+	if in.Speed != nil {
+		t.Speed = *in.Speed
+	}
+	if err := checkSpeed(prov, t.Model, t.Speed); err != nil {
+		if in.Speed != nil && source == "web" {
+			return nil, err
+		}
+		t.Speed = "" // a saved speed the account cannot use right now: run at standard speed
+	}
 	if in.WorkspaceID != nil && *in.WorkspaceID > 0 {
 		ws, err := s.store.GetWorkspace(ctx, u.ID, *in.WorkspaceID)
 		if err != nil {
@@ -163,6 +174,29 @@ func (s *Server) createThread(ctx context.Context, u *store.User, in newThread, 
 		return t, err
 	}
 	return s.rt.decorate(t), nil
+}
+
+// checkSpeed accepts "" (standard) or a speed the provider offers, is usable
+// and the model supports.
+func checkSpeed(p agent.Provider, model, speed string) error {
+	if speed == "" {
+		return nil
+	}
+	for _, sp := range p.Speeds {
+		if sp.ID != speed {
+			continue
+		}
+		if !sp.Available {
+			return badRequest(firstNonEmpty(sp.Note, sp.Name+" is not available right now"))
+		}
+		for _, m := range p.Models {
+			if m.ID == model && !m.Fast {
+				return badRequest(firstNonEmpty(m.Name, model) + " has no " + sp.Name + " speed")
+			}
+		}
+		return nil
+	}
+	return badRequest("unknown speed " + speed)
 }
 
 func validMode(provider, mode string) bool {
@@ -277,12 +311,25 @@ func (s *Server) handlePatchThread(w http.ResponseWriter, r *http.Request) {
 		Model    *string `json:"model"`
 		Effort   *string `json:"effort"`
 		Mode     *string `json:"mode"`
+		Speed    *string `json:"speed"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
 	restart := false
+	if in.Speed != nil && *in.Speed != t.Speed {
+		model := t.Model
+		if in.Model != nil {
+			model = *in.Model
+		}
+		prov, _ := s.agentProvider(r.Context(), t.Provider)
+		if err := checkSpeed(prov, model, *in.Speed); err != nil {
+			s.fail(w, err, "speed")
+			return
+		}
+		t.Speed, restart = *in.Speed, true
+	}
 	if in.Title != nil && strings.TrimSpace(*in.Title) != "" {
 		t.Title = oneLine(*in.Title, 200)
 	}
@@ -459,7 +506,7 @@ func (s *Server) handleFork(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	n := &store.Thread{ID: uuid.NewString(), UserID: t.UserID, Title: "Fork of " + t.Title, Provider: t.Provider, Model: t.Model,
-		Effort: t.Effort, Mode: t.Mode, Cwd: t.Cwd, WorkspaceID: t.WorkspaceID, Source: "fork", SourceRef: "fork:" + t.ProviderSessionID}
+		Effort: t.Effort, Mode: t.Mode, Speed: t.Speed, Cwd: t.Cwd, WorkspaceID: t.WorkspaceID, Source: "fork", SourceRef: "fork:" + t.ProviderSessionID}
 	if err := s.store.CreateThread(ctx, n); err != nil {
 		s.fail(w, err, "fork")
 		return

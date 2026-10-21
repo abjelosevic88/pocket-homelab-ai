@@ -12,9 +12,9 @@ import { PageHead } from '../components/PageHead'
 import { Confirm, Empty, errMsg, Field, Loading, MenuButton, Modal, Segmented, Spinner, Switch, useAsync, useDebounce, useToast } from '../components/ui'
 import { AgentSummary } from './RecipesPage'
 
-type Draft = Pick<Schedule, 'name' | 'prompt' | 'provider' | 'model' | 'effort' | 'mode' | 'cwd' | 'spec' | 'notify' | 'enabled'> & { id?: number }
+type Draft = Pick<Schedule, 'name' | 'prompt' | 'provider' | 'model' | 'effort' | 'mode' | 'speed' | 'cwd' | 'spec' | 'notify' | 'enabled'> & { id?: number }
 
-const blank: Draft = { name: '', prompt: '', provider: '', model: '', effort: '', mode: '', cwd: '', spec: 'daily 08:00', notify: 'attention', enabled: true }
+const blank: Draft = { name: '', prompt: '', provider: '', model: '', effort: '', mode: '', speed: '', cwd: '', spec: 'daily 08:00', notify: 'attention', enabled: true }
 
 const STATUS: Record<string, { label: string; cls: string; icon: string }> = {
   ok: { label: 'OK', cls: 'ok', icon: 'check-circle' },

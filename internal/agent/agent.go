@@ -147,6 +147,7 @@ type Options struct {
 	Model        string
 	Effort       string
 	Mode         string
+	Speed        string // "" standard, "fast" (Claude fast mode) or a Codex service tier id
 	ResumeID     string // provider session to continue
 	Fork         bool   // continue ResumeID under a new id
 	SystemPrompt string
@@ -176,6 +177,7 @@ type Provider struct {
 	Models        []Model  `json:"models"`
 	Efforts       []string `json:"efforts"`
 	Modes         []Mode   `json:"modes"`
+	Speeds        []Speed  `json:"speeds"`
 	DefaultModel  string   `json:"default_model"`
 	DefaultEffort string   `json:"default_effort"`
 	DefaultMode   string   `json:"default_mode"`
@@ -188,6 +190,17 @@ type Model struct {
 	Name        string   `json:"name"`
 	Description string   `json:"description"`
 	Efforts     []string `json:"efforts"`
+	Fast        bool     `json:"fast"` // the model has a faster speed
+}
+
+// Speed is a service speed. Available is false when the account cannot use
+// it right now; Note says why.
+type Speed struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Available   bool   `json:"available"`
+	Note        string `json:"note,omitempty"`
 }
 
 // Mode is a permission mode.

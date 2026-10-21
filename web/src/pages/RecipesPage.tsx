@@ -13,7 +13,7 @@ import { Confirm, Empty, errMsg, Field, Loading, MenuButton, Modal, Spinner, Swi
 
 type Draft = Omit<Recipe, 'id' | 'runs' | 'created_at' | 'updated_at' | 'sort_order'> & { id?: number; sort_order?: number }
 
-const blank: Draft = { name: '', prompt: '', icon: '', provider: '', model: '', effort: '', mode: '', cwd: '', pinned: true }
+const blank: Draft = { name: '', prompt: '', icon: '', provider: '', model: '', effort: '', mode: '', speed: '', cwd: '', pinned: true }
 
 export function AgentSummary({ c }: { c: AgentChoice }) {
   const bits = [c.provider ? providerName(c.provider) : 'Default agent']

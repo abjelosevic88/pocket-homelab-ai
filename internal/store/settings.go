@@ -13,6 +13,7 @@ type AgentDefaults struct {
 	Model  string `json:"model"`
 	Effort string `json:"effort"`
 	Mode   string `json:"mode"`
+	Speed  string `json:"speed"`
 }
 
 // Settings are the box settings plus one person's preferences.
@@ -80,6 +81,10 @@ func (s *Store) GetSettings(ctx context.Context, userID int64) (Settings, error)
 			st.Claude.Effort = v
 		case "claude.mode":
 			st.Claude.Mode = v
+		case "claude.speed":
+			st.Claude.Speed = v
+		case "codex.speed":
+			st.Codex.Speed = v
 		case "codex.model":
 			st.Codex.Model = v
 		case "codex.effort":
@@ -124,6 +129,7 @@ func (s *Store) SaveSettings(ctx context.Context, userID int64, st Settings) err
 		"default_provider": st.DefaultProvider, "default_cwd": st.DefaultCwd,
 		"claude.model": st.Claude.Model, "claude.effort": st.Claude.Effort, "claude.mode": st.Claude.Mode,
 		"codex.model": st.Codex.Model, "codex.effort": st.Codex.Effort, "codex.mode": st.Codex.Mode,
+		"claude.speed": st.Claude.Speed, "codex.speed": st.Codex.Speed,
 		"system_prompt": st.SystemPrompt,
 		"notify_kind":   st.NotifyKind, "notify_url": st.NotifyURL, "notify_finished": b2s(st.NotifyFinished),
 		"notify_input": b2s(st.NotifyInput), "notify_failed": b2s(st.NotifyFailed), "notify_only_away": b2s(st.NotifyOnlyAway),

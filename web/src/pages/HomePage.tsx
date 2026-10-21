@@ -46,6 +46,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
       model: same && saved.model && p?.models.some(m => m.id === saved.model) ? saved.model : d.model,
       effort: same && saved.effort ? saved.effort : d.effort,
       mode: same && saved.mode && p?.modes.some(m => m.id === saved.mode) ? saved.mode : d.mode,
+      speed: same && saved.speed !== undefined && (saved.speed === '' || p?.speeds?.some(s => s.id === saved.speed && s.available)) ? saved.speed : d.speed,
       cwd: saved.cwd || settings.default_cwd || '',
     })
   }, [settings, providers, providersReady])
@@ -61,6 +62,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
     try {
       const t = await api.post<Thread>(`${V1}/threads`, {
         provider: choice.provider, model: choice.model || undefined, effort: choice.effort || undefined, mode: choice.mode || undefined,
+        speed: choice.speed ?? undefined,
         cwd: choice.cwd || undefined, workspace_id: ws?.id, text, upload_ids: uploadIds,
       })
       upsertThread(t)

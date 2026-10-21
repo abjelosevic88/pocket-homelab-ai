@@ -68,6 +68,7 @@ type Thread struct {
 	Model             string `json:"model"`
 	Effort            string `json:"effort"`
 	Mode              string `json:"mode"`
+	Speed             string `json:"speed"`
 	Cwd               string `json:"cwd"`
 	WorkspaceID       *int64 `json:"workspace_id"`
 	ProviderSessionID string `json:"provider_session_id"`
@@ -125,6 +126,7 @@ type Recipe struct {
 	Model     string  `json:"model"`
 	Effort    string  `json:"effort"`
 	Mode      string  `json:"mode"`
+	Speed     string  `json:"speed"`
 	Cwd       string  `json:"cwd"`
 	Pinned    bool    `json:"pinned"`
 	SortOrder float64 `json:"sort_order"`
@@ -143,6 +145,7 @@ type Schedule struct {
 	Model        string `json:"model"`
 	Effort       string `json:"effort"`
 	Mode         string `json:"mode"`
+	Speed        string `json:"speed"`
 	Cwd          string `json:"cwd"`
 	Spec         string `json:"spec"`
 	Notify       string `json:"notify"`

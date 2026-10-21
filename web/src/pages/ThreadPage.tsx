@@ -6,7 +6,7 @@ import { useApp } from '../lib/app-context'
 import { fmtCost, providerName, shortPath, threadTitle } from '../lib/format'
 import { openSSE } from '../lib/sse'
 import type { Item, Thread, ThreadDetail } from '../lib/types'
-import { effortOptions, modelOptions, modeOptions } from '../components/AgentPicker'
+import { effortOptions, modelOptions, modeOptions, AgentPicker, speedOptions } from '../components/AgentPicker'
 import { ContextMeter, ProviderBadge } from '../components/bits'
 import { Composer, type ComposerHandle } from '../components/Composer'
 import { Icon } from '../components/icons'
@@ -132,7 +132,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const pending = useMemo(() => (items || []).filter(i => i.kind === 'request' && i.request?.status === 'pending'), [items])
   const visible = useMemo(() => (items || []).filter(i => !(i.kind === 'request' && i.request?.status === 'pending')), [items])
 
-  const patch = async (p: Partial<Pick<Thread, 'title' | 'pinned' | 'archived' | 'model' | 'effort' | 'mode'>>) => {
+  const patch = async (p: Partial<Pick<Thread, 'title' | 'pinned' | 'archived' | 'model' | 'effort' | 'mode' | 'speed'>>) => {
     if (!t) return
     setThread({ ...t, ...p })
     try { const th = await api.patch<Thread>(`${V1}/threads/${id}`, p); setThread(th); upsertThread(th); return th } catch (e) { toast(errMsg(e), 'err'); load() }
@@ -216,6 +216,8 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
               <Select size="sm" className="inline ghost" label="Effort" value={t.effort} options={effortOptions(p, t.model, false).concat(t.effort && !(p.efforts || []).includes(t.effort) ? [{ value: t.effort, label: t.effort }] : [])} onChange={v => patch({ effort: v })} width={180} />
               <Select size="sm" className="inline ghost" label="Permissions" value={t.mode} options={modeOptions(p, false).concat(t.mode && !p.modes.some(m => m.id === t.mode) ? [{ value: t.mode, label: t.mode }] : [])} onChange={v => patch({ mode: v })} width={300}
                 renderValue={o => <span className="ellipsis"><Icon name="shield" size={12} className="inline-ico" />{o?.label || 'Mode'}</span>} />
+              {speedOptions(p, t.model, false).length > 0 && <Select size="sm" className="inline ghost" label="Speed" value={t.speed || ''} options={speedOptions(p, t.model, false)} onChange={v => patch({ speed: v })} width={300}
+                renderValue={o => <span className="ellipsis"><Icon name="zap" size={12} className="inline-ico" />{o?.label || 'Speed'}</span>} />}
             </div>
           )}
           <MenuButton items={menu} label="Thread menu" align="right"><Icon name="more" size={17} /></MenuButton>
@@ -251,7 +253,11 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
           {canRun ? (
             <Composer ref={composer} draftKey={id} autoFocus onSend={send} running={running} onStop={interrupt}
               placeholder={running ? 'Add a message — it is sent when the agent is done…' : pending.length ? 'Or type an answer…' : `Reply to ${providerName(t.provider)}…`}
-              footer={running ? <span className="composer-status"><Spinner size={11} />Working</span> : t.live ? <span className="composer-status muted" title="The CLI process is running and keeps its context">Session live</span> : null} />
+              footer={<>
+                {running ? <span className="composer-status"><Spinner size={11} />Working</span> : t.live ? <span className="composer-status muted" title="The CLI process is running and keeps its context">Session live</span> : null}
+                {p && <span className="thread-pickers"><AgentPicker compact showProvider={false} value={{ provider: t.provider, model: t.model, effort: t.effort, mode: t.mode, speed: t.speed || '' }}
+                  onChange={ch => patch(ch as Partial<Thread>)} /></span>}
+              </>} />
           ) : (
             <div className="callout info"><Icon name="lock" size={15} /><span>An admin has to allow you to run agents before you can reply.</span></div>
           )}
