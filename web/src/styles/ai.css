@@ -391,3 +391,4 @@
   .agent-chips .lbl-long { display: none; }
   .agent-chips .lbl-short { display: inline-block; }
 }
+.mic-btn { flex-shrink: 0; margin-right: 2px; }
