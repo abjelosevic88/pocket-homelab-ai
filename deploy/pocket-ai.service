@@ -1,0 +1,27 @@
+# Pocket AI as a systemd *user* service: it runs as you, so the agents it
+# starts have your files, your PATH and your `claude` / `codex` logins.
+#   make install service      (binary → ~/.local/bin, unit → ~/.config/systemd/user)
+#   loginctl enable-linger $USER   so it runs without an open session
+[Unit]
+Description=Pocket AI — Claude Code and Codex from the browser
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/pocket-ai/env
+Environment=DATA_DIR=%h/.local/share/pocket-ai
+# The agents need the same PATH as your shell (nix, ~/.local/bin, …).
+Environment=PATH=%h/.nix-profile/bin:/nix/var/nix/profiles/default/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=%h
+ExecStart=%h/.local/bin/pocket-ai
+Restart=always
+RestartSec=5
+# Stopping the service stops the agents it started (they are its children).
+KillMode=control-group
+TimeoutStopSec=30
+MemoryMax=8G
+
+[Install]
+WantedBy=default.target

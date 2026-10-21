@@ -1,0 +1,34 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json }
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod, cache: true }
+      - name: Verify the reviewed Pocket Core SDK snapshot
+        run: cd third_party/pocket-core && sha256sum -c SHA256SUMS
+      - name: Build web UI
+        run: cd web && npm ci --no-audit --no-fund && npm run build
+      - name: Vet & test
+        run: |
+          test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+          go vet ./...
+          go test ./...
+      - name: Build binary
+        run: CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o pocket-ai ./cmd/pocket-ai
+      - name: Smoke test
+        run: |
+          DATA_DIR=/tmp/pt AUTH_MODE=none HOST=127.0.0.1 PORT=8195 ./pocket-ai &
+          sleep 2
+          curl -fsS http://127.0.0.1:8195/healthz
+          curl -fsS http://127.0.0.1:8195/api/v1/threads | grep -q '^\['
+          curl -fsS http://127.0.0.1:8195/api/v1/recipes | grep -q 'Server health check'
+          curl -fsS http://127.0.0.1:8195/api/v1/providers | grep -q '"id":"claude"'
+          curl -fsS http://127.0.0.1:8195/ | grep -q '<div id="root">'

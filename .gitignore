@@ -1,0 +1,14 @@
+/pocket-ai
+/data/
+/dist/
+.env
+*.db
+*.db-wal
+*.db-shm
+web/node_modules/
+web/dist/*
+!web/dist/.gitkeep
+.DS_Store
+*.log
+/tmp/
+__pycache__/

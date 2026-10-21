@@ -1,0 +1,100 @@
+<p align="center"><img src="web/public/favicon.svg" width="72" alt=""></p>
+<h1 align="center">Pocket AI</h1>
+<p align="center">Claude Code and Codex on your own server, from any browser or phone: ask it to check your apps and your box, watch what it does, approve what it wants to run, paste a screenshot into the prompt — and let saved checks run on a schedule and tell you when something needs attention.<br>One Go binary, one SQLite file. It drives the CLIs already installed and logged in on the server.</p>
+
+<p align="center"><img src="docs/screenshots/thread.png" width="900" alt="Claude Code reading a compose file and a log, then fixing the port, with the diff expanded"></p>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/permission.png" alt="A permission request: Allow, Allow for session, Deny"></td>
+    <td width="50%"><img src="docs/screenshots/home.png" alt="New thread: Claude Code or Codex, model, effort, permission mode, folder, recipes"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>The agent asks before it runs something; answer from wherever you are.</sub></td>
+    <td align="center"><sub>Start a thread with either CLI, or tap a recipe.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/schedules.png" alt="Schedules with their last verdict"></td>
+    <td width="50%" align="center">
+      <img src="docs/screenshots/phone-image.png" width="190" alt="A screenshot sent to Codex from a phone">&nbsp;
+      <img src="docs/screenshots/phone-permission-dark.png" width="190" alt="A permission request on a phone, dark">
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Scheduled checks answer OK or ATTENTION; you hear only about the second.</sub></td>
+    <td align="center"><sub>On the phone: send a screenshot, approve a command.</sub></td>
+  </tr>
+</table>
+
+## What it does
+
+**Your agents, not a new one**
+- Talks to the `claude` and `codex` CLIs that are already installed and signed in on the server: Claude Code
+  through its stream-json protocol, Codex through `codex app-server`. Your subscriptions, your `CLAUDE.md` /
+  `AGENTS.md`, MCP servers, skills and settings all apply, exactly as in a terminal.
+- Model, effort and permission mode per thread (Claude: ask first, accept edits, plan, auto, full access; Codex:
+  ask first, sandboxed, read only, full access), changeable mid-thread — the session is resumed with the new flags.
+- Every thread is a real CLI session: it resumes after a restart, and **On this server** lists the sessions you
+  started in a terminal (or in another tool) so you can open and continue them here.
+
+**Made for the phone**
+- Streams text, thinking, tool calls with their output, diffs of edited files, and the agent's to-do list as it
+  works. Collapsed one-line rows for tools, expandable when you care.
+- Permission prompts, questions (`AskUserQuestion`, Codex `request_user_input`) and plans to approve appear as
+  cards above the composer. Allow once, allow for the session, or deny with a note.
+- **Images in the prompt**: paste a screenshot, drag one in, or use the camera/photo library on an iPhone. Claude
+  gets image blocks, Codex local image inputs. Large photos are shrunk in the browser first.
+- Type while it works: messages queue and go out when the turn ends. Stop any time.
+- A push through Apprise / ntfy / a webhook when a turn finishes, fails or waits for you — only when you are not
+  already looking at that thread. Browser notifications and an app badge when installed as a PWA.
+
+**Checks that run themselves**
+- **Recipes** are saved prompts with their agent settings and `{{placeholders}}` ("Check an app: {{app}}"); one
+  tap to run. Starter recipes for server health, a misbehaving app, disk space, container updates, recent errors.
+- **Schedules** run a prompt every N minutes/hours, daily, on weekdays, weekly or on a cron line. The agent ends
+  with `OK: …` or `ATTENTION: …`; you are notified always, only on attention, or never.
+
+**And**
+- Full-text search over everything said, usage per day and per provider (cost for Claude, tokens for both) and the
+  live 5-hour / weekly limit windows both CLIs report.
+- Fork a thread (the agent session is forked too), export it as Markdown, pin, archive, workspaces for the folders
+  you use most, a folder picker limited to the folders you allow.
+- Per person, like every Pocket app: nobody sees anyone else's threads, admins included. Members may only run
+  agents when an admin allows it (agents run as the server's Unix user). Sign in with Pocket Core, API tokens,
+  Pocket Core events (`ai.turn_finished`, `ai.needs_input`, `ai.schedule_attention`).
+
+## Compared with Paseo
+
+Pocket AI started as "Paseo, for this homelab". Paseo is a daemon with its own app and a hosted web client
+reached through a relay, many agent providers, git worktrees and terminals — a coding cockpit. Pocket AI is
+narrower and lives with the other Pocket apps:
+
+- a plain web app/PWA on your own domain and network — no relay, no separate account;
+- Pocket accounts and Sign in with Pocket Core, per-person data, an admin switch for who may run agents;
+- built around looking after a server: recipes with placeholders on the start screen, schedules that answer
+  OK / ATTENTION and only notify on attention, pushes through the Apprise / ntfy route the box already uses;
+- every Claude Code and Codex session on the server listed and resumable, full-text search, usage per day;
+- only Claude Code and Codex.
+
+## Run it
+
+Pocket AI must run **on the host, as the user whose CLIs it drives** — not in a container. Agents get that user's
+files, PATH and logins, so treat access to it like SSH access.
+
+```sh
+make all                       # web UI + binary (Go 1.26, Node 22)
+make install                   # → ~/.local/bin/pocket-ai
+make service                   # systemd user unit; edit ~/.config/pocket-ai/env first (see .env.example)
+loginctl enable-linger $USER   # keep it running without a login session
+```
+
+Put it behind your reverse proxy with TLS (it streams Server-Sent Events; Caddy and nginx with
+`proxy_buffering off` work) and keep it on a private network. It listens on `127.0.0.1:8195` by default; `HOST`
+takes several addresses (`127.0.0.1,172.17.0.1` lets a proxy in Docker reach it). `AUTH_MODE=none` is refused on
+anything but loopback. All options: [docs/configuration.md](docs/configuration.md). API: [docs/api.md](docs/api.md).
+How it talks to the CLIs: [docs/design.md](docs/design.md).
+
+## Built with
+
+Go (chi, modernc SQLite with FTS5), React 19 + Vite, marked + DOMPurify. The Pocket Core SDK snapshot is vendored
+in `third_party/pocket-core` and checked by hash in CI. MIT licensed.
