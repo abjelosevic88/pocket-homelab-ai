@@ -547,6 +547,56 @@ func (rt *engine) respond(t *store.Thread, reqID string, resp agent.Response) er
 	return nil
 }
 
+// setMode switches the permission mode of a live thread and answers the
+// pending permission requests the new mode would have allowed.
+func (rt *engine) setMode(t *store.Thread, mode string) {
+	r := rt.get(t.ID)
+	if r == nil {
+		return // the next process starts with the new mode
+	}
+	if err := r.sess.SetMode(mode); err != nil {
+		rt.s.log.Warn("set mode", "thread", t.ID, "err", err)
+		r.mu.Lock()
+		r.stale = true // restart with the new flags after this turn
+		r.mu.Unlock()
+		return
+	}
+	r.mu.Lock()
+	ids := make([]string, 0, len(r.pending))
+	for id := range r.pending {
+		ids = append(ids, id)
+	}
+	r.mu.Unlock()
+	for _, id := range ids {
+		st, err := rt.s.store.GetItem(rt.ctx, t.ID, "req-"+id)
+		if err != nil {
+			continue
+		}
+		var it agent.Item
+		_ = json.Unmarshal(st.Data, &it)
+		if it.Request == nil || it.Request.Type != "permission" || !modeAllows(mode, it.Request.ToolName) {
+			continue
+		}
+		if err := rt.respond(t, id, agent.Response{Decision: "allow"}); err != nil {
+			rt.s.log.Warn("auto-allow after mode change", "thread", t.ID, "err", err)
+		}
+	}
+}
+
+// modeAllows reports whether a permission mode would not have asked for this tool.
+func modeAllows(mode, tool string) bool {
+	switch mode {
+	case "bypassPermissions", "full-access":
+		return true
+	case "acceptEdits":
+		switch tool {
+		case "Edit", "MultiEdit", "Write", "NotebookEdit", "Edit files":
+			return true
+		}
+	}
+	return false
+}
+
 func (rt *engine) interrupt(threadID string) error {
 	r := rt.get(threadID)
 	if r == nil {

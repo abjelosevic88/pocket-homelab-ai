@@ -90,7 +90,8 @@ func StartClaude(ctx context.Context, o Options, sink Sink) (Session, error) {
 	if mode == "bypassPermissions" {
 		args = append(args, "--dangerously-skip-permissions")
 	} else {
-		args = append(args, "--permission-mode", mode)
+		// allow switching to full access later without a restart
+		args = append(args, "--permission-mode", mode, "--allow-dangerously-skip-permissions")
 	}
 	if o.ResumeID != "" {
 		args = append(args, "--resume", o.ResumeID)
@@ -186,6 +187,15 @@ func (s *claudeSession) Interrupt() error {
 	id := fmt.Sprintf("int-%d", s.reqSeq)
 	s.mu.Unlock()
 	return s.write(map[string]any{"type": "control_request", "request_id": id, "request": map[string]any{"subtype": "interrupt"}})
+}
+
+func (s *claudeSession) SetMode(mode string) error {
+	s.mu.Lock()
+	s.reqSeq++
+	id := fmt.Sprintf("mode-%d", s.reqSeq)
+	s.opts.Mode = mode
+	s.mu.Unlock()
+	return s.write(map[string]any{"type": "control_request", "request_id": id, "request": map[string]any{"subtype": "set_permission_mode", "mode": mode}})
 }
 
 func (s *claudeSession) Close() error {

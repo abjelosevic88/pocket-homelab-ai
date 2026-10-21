@@ -25,6 +25,18 @@ var CodexModes = []Mode{
 	{ID: "full-access", Name: "Full access", Description: "No sandbox, never asks. Runs anything as the server user."},
 }
 
+// codexSandboxPolicy is the per-turn form of the sandbox for a mode.
+func codexSandboxPolicy(mode string) map[string]any {
+	_, sb := codexPolicy(mode)
+	switch sb {
+	case "danger-full-access":
+		return map[string]any{"type": "dangerFullAccess"}
+	case "read-only":
+		return map[string]any{"type": "readOnly"}
+	}
+	return map[string]any{"type": "workspaceWrite"}
+}
+
 func codexPolicy(mode string) (approval, sandbox string) {
 	switch mode {
 	case "untrusted":
@@ -380,6 +392,12 @@ func (s *codexSession) Send(in Input) error {
 		input = append(input, map[string]any{"type": "localImage", "path": im.Path})
 	}
 	params := map[string]any{"threadId": s.threadID, "input": input}
+	s.mu.Lock()
+	mode := s.opts.Mode
+	s.mu.Unlock()
+	approval, _ := codexPolicy(mode)
+	params["approvalPolicy"] = approval
+	params["sandboxPolicy"] = codexSandboxPolicy(mode)
 	if s.opts.Effort != "" {
 		params["effort"] = s.opts.Effort
 	}
@@ -416,6 +434,14 @@ func (s *codexSession) Send(in Input) error {
 	if s.turnID == "" || r.Turn.ID != "" {
 		s.turnID = r.Turn.ID
 	}
+	s.mu.Unlock()
+	return nil
+}
+
+// SetMode takes effect with the next turn (the policy is sent on turn/start).
+func (s *codexSession) SetMode(mode string) error {
+	s.mu.Lock()
+	s.opts.Mode = mode
 	s.mu.Unlock()
 	return nil
 }

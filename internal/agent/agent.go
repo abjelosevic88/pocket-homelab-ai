@@ -161,6 +161,9 @@ type Session interface {
 	Send(in Input) error
 	Interrupt() error
 	Respond(requestID string, r Response) error
+	// SetMode changes the permission mode of the live session (Claude at
+	// once, Codex from its next turn).
+	SetMode(mode string) error
 	Close() error
 	Done() <-chan struct{}
 }

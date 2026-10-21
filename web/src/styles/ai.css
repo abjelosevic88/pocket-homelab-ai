@@ -284,7 +284,19 @@
 .md pre:hover .code-copy, .code-copy:focus-visible { opacity: 1; }
 @media (hover: none) { .code-copy { opacity: .85; } }
 .md table { border-collapse: collapse; margin: 0 0 12px; font-size: 13px; display: block; overflow-x: auto; max-width: 100%; }
-.md th, .md td { border: 1px solid var(--border); padding: 5px 9px; text-align: left; }
+.md th, .md td { border: 1px solid var(--border); padding: 5px 9px; text-align: left; vertical-align: top;
+  /* the message's overflow-wrap:anywhere would let a column shrink to one
+     letter ("T/i/m/e"); in tables break between words, scroll if too wide */
+  overflow-wrap: normal; word-break: normal; min-width: 4.5em; }
+.md th { white-space: nowrap; }
+.md td:first-child { white-space: nowrap; }
+.md td code { white-space: nowrap; }
+.md table { -webkit-overflow-scrolling: touch; }
+@media (max-width: 760px) {
+  .md table { font-size: 12.5px; }
+  .md th, .md td { padding: 5px 7px; }
+  .md td { min-width: 6em; }
+}
 .md th { background: var(--surface-2); font-weight: 600; }
 .md hr { margin: 14px 0; }
 .md a { text-decoration: underline; text-underline-offset: 2px; }
@@ -411,3 +423,13 @@
   .bars { gap: 2px; }
 }
 .spin { animation: spin 1s linear infinite; }
+
+/* Single-column grids size their column to the widest child unless told
+   otherwise — one long thread title then made the whole page scroll
+   sideways on a phone. Every list/stack grid gets a shrinkable column. */
+.sb-nav, .sb-list, .list-cards, .hist-list, .limit-box, .limit, .home-recent, .dir-list,
+.tool-body, .tool-sec, .todos ul, .req-card, .req-q, .req-opts, .set-stat, .set-fresh, .set-dl {
+  grid-template-columns: minmax(0, 1fr);
+}
+/* and the scrolling areas never scroll sideways as a whole */
+.home-scroll, .page-scroll, .thread-scroll { overflow-x: hidden; }

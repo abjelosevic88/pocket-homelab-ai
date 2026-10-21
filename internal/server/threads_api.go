@@ -345,12 +345,13 @@ func (s *Server) handlePatchThread(w http.ResponseWriter, r *http.Request) {
 	if in.Effort != nil && *in.Effort != t.Effort {
 		t.Effort, restart = *in.Effort, true
 	}
+	modeChanged := false
 	if in.Mode != nil && *in.Mode != t.Mode {
 		if !validMode(t.Provider, *in.Mode) {
 			writeErr(w, http.StatusBadRequest, "unknown mode")
 			return
 		}
-		t.Mode, restart = *in.Mode, true
+		t.Mode, modeChanged = *in.Mode, true
 	}
 	if err := s.store.UpdateThread(r.Context(), t); err != nil {
 		s.fail(w, err, "update thread")
@@ -368,9 +369,15 @@ func (s *Server) handlePatchThread(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if modeChanged && !restart {
+		// Applied to the live session; requests the new mode would allow
+		// are answered right away.
+		s.rt.setMode(t, t.Mode)
+	}
 	if t.Archived {
 		s.rt.stop(t.ID)
 	}
+	t, _ = s.store.GetThread(r.Context(), me(r), t.ID)
 	s.rt.publishThread(t)
 	writeJSON(w, http.StatusOK, t)
 }
