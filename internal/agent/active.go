@@ -24,7 +24,8 @@ type ActiveSession struct {
 	Prompt    string `json:"prompt"`    // the message the agent is working on
 	PromptAt  string `json:"prompt_at"` // when it was sent
 	UpdatedAt string `json:"updated_at"`
-	Origin    string `json:"origin"` // pocket-ai | paseo | terminal | app
+	Origin    string `json:"origin"`              // pocket-ai | paseo | terminal | app
+	Subagents int    `json:"subagents,omitempty"` // background sub-agents still working
 }
 
 // Running sessions older than this without a write are treated as dead
@@ -115,6 +116,7 @@ func activeClaude(home string, paseo map[string]paseoAgent) []ActiveSession {
 			promptMu.Lock()
 			promptCache[path] = [2]string{s.Prompt, s.PromptAt}
 			promptMu.Unlock()
+			s.Subagents = len(ExternalSubagents(path))
 			past := claudePast(path, info)
 			s.Provider, s.SessionID, s.UpdatedAt = "claude", strings.TrimSuffix(e.Name(), ".jsonl"), info.ModTime().UTC().Format(time.RFC3339)
 			s.Cwd = firstNonEmpty(s.Cwd, past.Cwd)

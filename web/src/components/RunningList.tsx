@@ -66,7 +66,7 @@ export function RunningList({ compact = false, onOpened }: { compact?: boolean; 
             <RunDots waiting={r.status === 'waiting'} size={12} />
             <span className="th-main">
               <span className="th-title ellipsis">{r.title || r.prompt || 'Session'}</span>
-              <span className="th-meta"><span className="ellipsis">{ORIGIN[r.origin] || r.origin} · {baseName(r.cwd)}</span></span>
+              <span className="th-meta"><span className="ellipsis">{ORIGIN[r.origin] || r.origin} · {baseName(r.cwd)}{!!r.subagents && ` · ${r.subagents} sub-agent${r.subagents === 1 ? '' : 's'}`}</span></span>
             </span>
             <span className="run-time tnum">{elapsed(r.prompt_at, now)}</span>
           </button>
@@ -89,7 +89,7 @@ export function RunningList({ compact = false, onOpened }: { compact?: boolean; 
             </span>
             <span className="run-title">{r.title || 'Session'}</span>
             {r.prompt && r.prompt !== r.title && <span className="run-prompt">“{r.prompt}”</span>}
-            <span className="run-foot muted xsmall"><Icon name="folder" size={11} />{baseName(r.cwd) || '~'}{r.status === 'waiting' && <b className="warn-text"> · needs you</b>}{!r.thread_id && <span> · tap to follow live</span>}</span>
+            <span className="run-foot muted xsmall"><Icon name="folder" size={11} />{baseName(r.cwd) || '~'}{r.status === 'waiting' && <b className="warn-text"> · needs you</b>}{!!r.subagents && <span> · {r.subagents} sub-agent{r.subagents === 1 ? '' : 's'} working</span>}{!r.thread_id && <span> · tap to follow live</span>}</span>
           </button>
         ))}
       </div>

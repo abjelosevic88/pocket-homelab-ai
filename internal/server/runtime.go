@@ -39,6 +39,7 @@ type engine struct {
 	starting  map[string]chan struct{}              // thread id → start in progress
 	followers map[string]*follower                  // thread id → log follower (follow.go)
 	external  map[string]bool                       // thread id → running somewhere else
+	extSubs   map[string][]agent.Subagent           // thread id → sub-agents of a session run elsewhere
 	active    []agent.ActiveSession                 // last scan of the CLIs' session files (running.go)
 }
 
@@ -71,7 +72,7 @@ type queued struct {
 func newRuntime(s *Server) *engine {
 	return &engine{s: s, runs: map[string]*run{}, watchers: map[string]map[chan sseEvent]struct{}{},
 		userSubs: map[int64]map[chan sseEvent]struct{}{}, limits: map[string]*provLimits{}, starting: map[string]chan struct{}{},
-		followers: map[string]*follower{}, external: map[string]bool{}}
+		followers: map[string]*follower{}, external: map[string]bool{}, extSubs: map[string][]agent.Subagent{}}
 }
 
 func (rt *engine) start(ctx context.Context) {
@@ -101,6 +102,7 @@ func (rt *engine) get(threadID string) *run {
 
 // decorate fills a thread's live fields.
 func (rt *engine) decorate(t *store.Thread) *store.Thread {
+	ownSubs := false
 	if r := rt.get(t.ID); r != nil {
 		r.mu.Lock()
 		t.Live = true
@@ -108,10 +110,16 @@ func (rt *engine) decorate(t *store.Thread) *store.Thread {
 		t.Queued = len(r.queue)
 		if len(r.subs) > 0 {
 			t.Subagents = append([]agent.Subagent(nil), r.subs...)
+			ownSubs = true
 		}
 		r.mu.Unlock()
 	}
 	t.External = rt.isExternal(t.ID)
+	rt.mu.Lock()
+	if subs := rt.extSubs[t.ID]; len(subs) > 0 && !ownSubs {
+		t.Subagents = append([]agent.Subagent(nil), subs...)
+	}
+	rt.mu.Unlock()
 	return t
 }
 

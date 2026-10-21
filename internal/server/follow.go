@@ -88,6 +88,8 @@ func (rt *engine) followClaude(ctx context.Context, threadID string) {
 	var path, sid string
 	var lastLine time.Time
 	log := &agent.ClaudeLog{}
+	n := 0
+	defer rt.setExtSubs(threadID, nil)
 	for {
 		t, err := rt.s.store.GetThreadAny(ctx, threadID)
 		if err != nil {
@@ -101,11 +103,58 @@ func (rt *engine) followClaude(ctx context.Context, threadID string) {
 		}
 		if path != "" {
 			rt.claudeTick(ctx, t, path, log, &lastLine)
+			n++
+			rt.claudeElsewhere(t, path, n%3 == 1)
 		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
+		}
+	}
+}
+
+// claudeElsewhere: for a session another program drives, Claude Code's own
+// process registry says whether it is working — also while it only waits for
+// background sub-agents, when its log stays quiet. Those sub-agents are read
+// from their own transcripts (every few seconds: scan).
+func (rt *engine) claudeElsewhere(t *store.Thread, path string, scan bool) {
+	if rt.get(t.ID) != nil {
+		rt.setExtSubs(t.ID, nil) // Pocket AI drives it: its own events say it all
+		return
+	}
+	procs, ok := agent.ClaudeProcs(rt.s.cfg.ClaudeHome)
+	if !ok {
+		return // no registry (older Claude Code): the log-based guess stands
+	}
+	p, found := procs[t.ProviderSessionID]
+	busy := found && p.Busy()
+	if !busy {
+		rt.setExtSubs(t.ID, nil)
+	} else if scan {
+		rt.setExtSubs(t.ID, agent.ExternalSubagents(path))
+	}
+	rt.setExternal(t.ID, busy)
+}
+
+// setExtSubs stores the sub-agents of a session run elsewhere and tells the
+// people watching when they change.
+func (rt *engine) setExtSubs(threadID string, subs []agent.Subagent) {
+	rt.mu.Lock()
+	old := rt.extSubs[threadID]
+	same := len(old) == len(subs)
+	for i := 0; same && i < len(subs); i++ {
+		same = old[i].ID == subs[i].ID && old[i].Activity == subs[i].Activity
+	}
+	if len(subs) == 0 {
+		delete(rt.extSubs, threadID)
+	} else {
+		rt.extSubs[threadID] = subs
+	}
+	rt.mu.Unlock()
+	if !same {
+		if t, err := rt.s.store.GetThreadAny(rt.ctx, threadID); err == nil {
+			rt.publishThread(t)
 		}
 	}
 }

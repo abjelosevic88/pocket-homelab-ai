@@ -321,6 +321,7 @@ export interface RunningItem {
   prompt_at: string
   updated_at: string
   origin: 'pocket-ai' | 'paseo' | 'terminal' | 'app'
+  subagents?: number
   thread_id: string
   status: 'running' | 'waiting'
 }
