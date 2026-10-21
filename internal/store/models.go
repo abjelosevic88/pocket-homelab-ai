@@ -72,6 +72,7 @@ type Thread struct {
 	Cwd               string `json:"cwd"`
 	WorkspaceID       *int64 `json:"workspace_id"`
 	ProviderSessionID string `json:"provider_session_id"`
+	LogOffset         int64  `json:"-"`
 	Status            string `json:"status"` // idle | running | waiting | error
 	Error             string `json:"error"`
 	Pinned            bool   `json:"pinned"`
@@ -89,6 +90,9 @@ type Thread struct {
 	Live    bool `json:"live"`    // a CLI process is attached
 	Pending int  `json:"pending"` // requests waiting for an answer
 	Queued  int  `json:"queued"`  // messages waiting for the turn to end
+	// External: the session is being driven somewhere else right now (a
+	// terminal, another app) and Pocket AI is following its log.
+	External bool `json:"external"`
 }
 
 // Item is one stored timeline entry; Data is the JSON the runtime wrote.

@@ -29,14 +29,16 @@ type engine struct {
 	s   *Server
 	ctx context.Context
 
-	mu       sync.Mutex
-	runs     map[string]*run                       // thread id → live process
-	watchers map[string]map[chan sseEvent]struct{} // thread id → SSE clients of that thread
-	userSubs map[int64]map[chan sseEvent]struct{}  // user id → SSE clients of /events
-	limits   map[string]*provLimits                // provider → plan limit windows
-	limitsAt time.Time                             // last full read (both CLIs)
-	limitsMu sync.Mutex                            // one full read at a time
-	starting map[string]chan struct{}              // thread id → start in progress
+	mu        sync.Mutex
+	runs      map[string]*run                       // thread id → live process
+	watchers  map[string]map[chan sseEvent]struct{} // thread id → SSE clients of that thread
+	userSubs  map[int64]map[chan sseEvent]struct{}  // user id → SSE clients of /events
+	limits    map[string]*provLimits                // provider → plan limit windows
+	limitsAt  time.Time                             // last full read (both CLIs)
+	limitsMu  sync.Mutex                            // one full read at a time
+	starting  map[string]chan struct{}              // thread id → start in progress
+	followers map[string]*follower                  // thread id → log follower (follow.go)
+	external  map[string]bool                       // thread id → running somewhere else
 }
 
 // run is one live CLI process attached to a thread.
@@ -66,7 +68,8 @@ type queued struct {
 
 func newRuntime(s *Server) *engine {
 	return &engine{s: s, runs: map[string]*run{}, watchers: map[string]map[chan sseEvent]struct{}{},
-		userSubs: map[int64]map[chan sseEvent]struct{}{}, limits: map[string]*provLimits{}, starting: map[string]chan struct{}{}}
+		userSubs: map[int64]map[chan sseEvent]struct{}{}, limits: map[string]*provLimits{}, starting: map[string]chan struct{}{},
+		followers: map[string]*follower{}, external: map[string]bool{}}
 }
 
 func (rt *engine) start(ctx context.Context) {
@@ -102,6 +105,7 @@ func (rt *engine) decorate(t *store.Thread) *store.Thread {
 		t.Queued = len(r.queue)
 		r.mu.Unlock()
 	}
+	t.External = rt.isExternal(t.ID)
 	return t
 }
 
@@ -962,6 +966,10 @@ func (k *runSink) TurnDone(ti agent.TurnInfo) {
 func (k *runSink) Exited(err error) {
 	rt := k.rt
 	r := k.r
+	// what our process wrote to the CLI's log is on the timeline already
+	if t, e := rt.s.store.GetThreadAny(rt.ctx, r.threadID); e == nil {
+		rt.endOffset(t)
+	}
 	rt.mu.Lock()
 	if rt.runs[r.threadID] == r {
 		delete(rt.runs, r.threadID)

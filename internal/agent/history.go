@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -183,104 +184,212 @@ func FindClaude(claudeHome, sessionID string) (string, error) {
 	return m[0], nil
 }
 
-// ReadClaude turns a Claude Code session file into timeline items.
-func ReadClaude(path string) (items []Item, cwd string, err error) {
+// ClaudeLog turns lines of a Claude Code session file into timeline
+// changes, one line at a time (import reads a whole file; following a live
+// session feeds the lines as they are appended).
+type ClaudeLog struct {
+	Cwd string
+}
+
+// LogOp is one change a session-file line makes to the timeline.
+type LogOp struct {
+	Item        *Item       // insert or replace by key
+	Result      *ToolResult // fill in the output of an earlier tool call
+	TurnStarted bool        // someone sent a message
+	TurnEnded   bool        // the agent finished its turn
+}
+
+// ToolResult is what came back for a tool call.
+type ToolResult struct {
+	ToolUseID string
+	Output    string
+	IsError   bool
+	Diff      string
+}
+
+// Feed parses one line.
+func (l *ClaudeLog) Feed(line []byte) []LogOp {
+	var m struct {
+		Type        string `json:"type"`
+		UUID        string `json:"uuid"`
+		Cwd         string `json:"cwd"`
+		IsMeta      bool   `json:"isMeta"`
+		IsSidechain bool   `json:"isSidechain"`
+		Message     struct {
+			Content    json.RawMessage `json:"content"`
+			StopReason string          `json:"stop_reason"`
+		} `json:"message"`
+		ToolUseResult json.RawMessage `json:"toolUseResult"`
+	}
+	if json.Unmarshal(line, &m) != nil || m.IsSidechain {
+		return nil
+	}
+	if l.Cwd == "" && m.Cwd != "" {
+		l.Cwd = m.Cwd
+	}
+	var ops []LogOp
+	switch m.Type {
+	case "user":
+		if m.IsMeta {
+			return nil
+		}
+		var blocks []struct {
+			Type      string          `json:"type"`
+			ToolUseID string          `json:"tool_use_id"`
+			Content   json.RawMessage `json:"content"`
+			IsError   bool            `json:"is_error"`
+		}
+		if json.Unmarshal(m.Message.Content, &blocks) == nil {
+			results := false
+			for _, b := range blocks {
+				if b.Type != "tool_result" {
+					continue
+				}
+				results = true
+				ops = append(ops, LogOp{Result: &ToolResult{ToolUseID: b.ToolUseID, Output: clip(toolResultText(b.Content), 20000),
+					IsError: b.IsError, Diff: structuredDiff(m.ToolUseResult)}})
+			}
+			if results {
+				return ops
+			}
+		}
+		if t := userText(m.Message.Content); t != "" {
+			ops = append(ops, LogOp{Item: &Item{Key: "u-" + m.UUID, Kind: "user", Text: t}, TurnStarted: true})
+		}
+	case "assistant":
+		var blocks []struct {
+			Type  string          `json:"type"`
+			Text  string          `json:"text"`
+			ID    string          `json:"id"`
+			Name  string          `json:"name"`
+			Input json.RawMessage `json:"input"`
+		}
+		if json.Unmarshal(m.Message.Content, &blocks) != nil {
+			return nil
+		}
+		for i, b := range blocks {
+			switch b.Type {
+			case "text":
+				if strings.TrimSpace(b.Text) != "" {
+					ops = append(ops, LogOp{Item: &Item{Key: "a-" + m.UUID + "-" + itoa(i), Kind: "assistant", Text: b.Text}})
+				}
+			case "tool_use":
+				if b.Name == "TodoWrite" {
+					ops = append(ops, LogOp{Item: &Item{Key: b.ID, Kind: "todos", Todos: claudeTodos(b.Input)}})
+					continue
+				}
+				ops = append(ops, LogOp{Item: &Item{Key: b.ID, Kind: "tool", Tool: claudeTool(b.Name, b.Input)}})
+			}
+		}
+		if m.Message.StopReason == "end_turn" || m.Message.StopReason == "stop_sequence" {
+			ops = append(ops, LogOp{TurnEnded: true})
+		}
+	}
+	return ops
+}
+
+// Apply adds a tool result to the tool item it belongs to.
+func (r *ToolResult) Apply(t *Tool) {
+	t.Output = r.Output
+	t.Status = "done"
+	if r.IsError {
+		t.Status = "error"
+	}
+	if r.Diff != "" && (t.Kind == "edit" || t.Kind == "write") {
+		t.Diff = r.Diff
+	}
+}
+
+// ReadClaude turns a Claude Code session file into timeline items; size is
+// how many bytes were read (where following the file continues).
+func ReadClaude(path string) (items []Item, cwd string, size int64, err error) {
 	fh, err := os.Open(path)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	defer fh.Close()
-	sc := bufio.NewScanner(fh)
-	sc.Buffer(make([]byte, 0, 1<<20), 64<<20)
+	r := bufio.NewReaderSize(fh, 1<<20)
 	index := map[string]int{} // tool_use id → position in items
-	for sc.Scan() {
-		var m struct {
-			Type        string `json:"type"`
-			UUID        string `json:"uuid"`
-			Cwd         string `json:"cwd"`
-			IsMeta      bool   `json:"isMeta"`
-			IsSidechain bool   `json:"isSidechain"`
-			Message     struct {
-				ID      string          `json:"id"`
-				Content json.RawMessage `json:"content"`
-			} `json:"message"`
-			ToolUseResult json.RawMessage `json:"toolUseResult"`
-		}
-		if json.Unmarshal(sc.Bytes(), &m) != nil || m.IsSidechain {
-			continue
-		}
-		if cwd == "" && m.Cwd != "" {
-			cwd = m.Cwd
-		}
-		switch m.Type {
-		case "user":
-			if m.IsMeta {
-				continue
-			}
-			var blocks []struct {
-				Type      string          `json:"type"`
-				ToolUseID string          `json:"tool_use_id"`
-				Content   json.RawMessage `json:"content"`
-				IsError   bool            `json:"is_error"`
-			}
-			if json.Unmarshal(m.Message.Content, &blocks) == nil {
-				handled := false
-				for _, b := range blocks {
-					if b.Type != "tool_result" {
-						continue
-					}
-					handled = true
-					if i, ok := index[b.ToolUseID]; ok && items[i].Tool != nil {
-						t := *items[i].Tool
-						t.Output = clip(toolResultText(b.Content), 20000)
+	var log ClaudeLog
+	for {
+		line, rerr := r.ReadBytes('\n')
+		if len(line) > 0 && line[len(line)-1] == '\n' {
+			size += int64(len(line))
+			for _, op := range log.Feed(line) {
+				switch {
+				case op.Item != nil:
+					it := *op.Item
+					if it.Tool != nil {
+						t := *it.Tool
 						t.Status = "done"
-						if b.IsError {
-							t.Status = "error"
-						}
-						if d := structuredDiff(m.ToolUseResult); d != "" && (t.Kind == "edit" || t.Kind == "write") {
-							t.Diff = d
-						}
+						it.Tool = &t
+						index[it.Key] = len(items)
+					}
+					items = append(items, it)
+				case op.Result != nil:
+					if i, ok := index[op.Result.ToolUseID]; ok && items[i].Tool != nil {
+						t := *items[i].Tool
+						op.Result.Apply(&t)
 						items[i].Tool = &t
 					}
 				}
-				if handled {
-					continue
-				}
-			}
-			if t := userText(m.Message.Content); t != "" {
-				items = append(items, Item{Key: "u-" + m.UUID, Kind: "user", Text: t})
-			}
-		case "assistant":
-			var blocks []struct {
-				Type  string          `json:"type"`
-				Text  string          `json:"text"`
-				ID    string          `json:"id"`
-				Name  string          `json:"name"`
-				Input json.RawMessage `json:"input"`
-			}
-			if json.Unmarshal(m.Message.Content, &blocks) != nil {
-				continue
-			}
-			for i, b := range blocks {
-				switch b.Type {
-				case "text":
-					if strings.TrimSpace(b.Text) != "" {
-						items = append(items, Item{Key: "a-" + m.UUID + "-" + itoa(i), Kind: "assistant", Text: b.Text})
-					}
-				case "tool_use":
-					if b.Name == "TodoWrite" {
-						items = append(items, Item{Key: b.ID, Kind: "todos", Todos: claudeTodos(b.Input)})
-						continue
-					}
-					t := claudeTool(b.Name, b.Input)
-					t.Status = "done"
-					index[b.ID] = len(items)
-					items = append(items, Item{Key: b.ID, Kind: "tool", Tool: t})
-				}
 			}
 		}
+		if rerr != nil {
+			if rerr == io.EOF {
+				break
+			}
+			return items, log.Cwd, size, rerr
+		}
 	}
-	return items, cwd, sc.Err()
+	return items, log.Cwd, size, nil
+}
+
+// ClaudeTail reads complete lines appended to a session file after offset.
+// It returns the lines and the new offset (a partial last line stays unread).
+func ClaudeTail(path string, offset int64) ([][]byte, int64, error) {
+	fh, err := os.Open(path)
+	if err != nil {
+		return nil, offset, err
+	}
+	defer fh.Close()
+	fi, err := fh.Stat()
+	if err != nil {
+		return nil, offset, err
+	}
+	if fi.Size() < offset { // rewritten: start over at its end
+		return nil, fi.Size(), nil
+	}
+	if fi.Size() == offset {
+		return nil, offset, nil
+	}
+	if _, err := fh.Seek(offset, io.SeekStart); err != nil {
+		return nil, offset, err
+	}
+	data, err := io.ReadAll(io.LimitReader(fh, 64<<20))
+	if err != nil {
+		return nil, offset, err
+	}
+	end := bytes.LastIndexByte(data, '\n')
+	if end < 0 {
+		return nil, offset, nil
+	}
+	var lines [][]byte
+	for _, l := range bytes.Split(data[:end], []byte{'\n'}) {
+		if len(l) > 0 {
+			lines = append(lines, l)
+		}
+	}
+	return lines, offset + int64(end) + 1, nil
+}
+
+// FileSize is the size of a file (-1 when it is missing).
+func FileSize(path string) int64 {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return -1
+	}
+	return fi.Size()
 }
 
 // ListCodex lists Codex threads through the app-server, newest first.

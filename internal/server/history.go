@@ -80,13 +80,16 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 func (s *Server) importSession(ctx context.Context, u *store.User, provider, sessionID string) (*store.Thread, error) {
 	var items []agent.Item
 	var cwd, title string
+	logOffset := int64(-1)
 	switch provider {
 	case "claude":
 		path, err := agent.FindClaude(s.cfg.ClaudeHome, sessionID)
 		if err != nil {
 			return nil, badRequest("that Claude Code session is not on this server")
 		}
-		items, cwd, err = agent.ReadClaude(path)
+		var size int64
+		items, cwd, size, err = agent.ReadClaude(path)
+		logOffset = size
 		if err != nil {
 			return nil, err
 		}
@@ -116,7 +119,7 @@ func (s *Server) importSession(ctx context.Context, u *store.User, provider, ses
 		cwd = s.cfg.Home
 	}
 	t := &store.Thread{ID: uuid.NewString(), UserID: u.ID, Provider: provider, ProviderSessionID: sessionID, Cwd: cwd,
-		Model: def.Model, Effort: def.Effort, Mode: def.Mode, Source: "import", Title: titleFrom(title)}
+		Model: def.Model, Effort: def.Effort, Mode: def.Mode, Source: "import", Title: titleFrom(title), LogOffset: logOffset}
 	t.WorkspaceID = s.store.WorkspaceForPath(ctx, u.ID, cwd)
 	if err := s.store.CreateThread(ctx, t); err != nil {
 		return nil, err

@@ -250,8 +250,11 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
           {t.queued > 0 && (
             <div className="queue-bar"><Icon name="clock" size={13} /><span className="grow">{t.queued === 1 ? '1 message queued' : `${t.queued} messages queued`} — sent when the agent is done</span><button type="button" className="link-btn small" onClick={clearQueue}>Clear</button></div>
           )}
+          {t.external && !t.live && (
+            <div className="queue-bar"><span className="live-dot" /><span className="grow">Running in a terminal or another app — following it live. You can reply when it has finished.</span></div>
+          )}
           {canRun ? (
-            <Composer ref={composer} draftKey={id} autoFocus onSend={send} running={running} onStop={interrupt}
+            <Composer ref={composer} draftKey={id} autoFocus onSend={send} running={running} onStop={t.external && !t.live ? undefined : interrupt} disabled={!!t.external && !t.live}
               placeholder={running ? 'Add a message — it is sent when the agent is done…' : pending.length ? 'Or type an answer…' : `Reply to ${providerName(t.provider)}…`}
               footer={<>
                 {running ? <span className="composer-status"><Spinner size={11} />Working</span> : t.live ? <span className="composer-status muted" title="The CLI process is running and keeps its context">Session live</span> : null}

@@ -421,6 +421,10 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "empty message")
 		return
 	}
+	if s.rt.isExternal(t.ID) && s.rt.get(t.ID) == nil {
+		writeErr(w, http.StatusConflict, "this session is running somewhere else right now (a terminal or another app); reply when it has finished")
+		return
+	}
 	if t.Archived {
 		t.Archived = false
 	}

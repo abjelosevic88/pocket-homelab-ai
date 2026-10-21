@@ -128,6 +128,12 @@ when known), `read`, `search` (grep/glob/web search), `web` (fetch), `task` (sub
 - `thread` — `Thread` (status, usage, title, pending, queued changed)
 - `ping` — every 20 s
 
+While a thread's stream is open, Pocket AI also follows the CLI's own session log (Claude Code's `.jsonl`,
+Codex through `codex app-server`), so a session driven from a terminal, another app or another device shows up live
+on every open device, and opening a thread catches up on what was said elsewhere while it was closed. A thread
+that is being driven elsewhere has `external: true` and `status: "running"`; `POST /threads/{id}/messages` answers
+`409` until it is idle.
+
 `GET /events` — everything of mine: `thread` events for all my threads (list badges, notifications),
 `limits` events (`Limits`, below).
 

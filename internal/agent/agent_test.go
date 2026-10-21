@@ -176,7 +176,7 @@ func TestReadClaudeHistory(t *testing.T) {
 	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	items, cwd, err := ReadClaude(path)
+	items, cwd, _, err := ReadClaude(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,5 +185,42 @@ func TestReadClaudeHistory(t *testing.T) {
 	}
 	if items[0].Text != "is jellyfin up?" || items[1].Tool.Output != "active (running)" || items[2].Text != "Yes, it is running." {
 		t.Fatalf("items %+v", items)
+	}
+}
+
+func TestClaudeTailFollowsAppends(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	write := func(s string) {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = f.WriteString(s)
+		f.Close()
+	}
+	write(`{"type":"user","uuid":"u1","message":{"role":"user","content":"check the disks"}}` + "\n")
+	_, _, off, err := ReadClaude(path)
+	if err != nil || off != FileSize(path) {
+		t.Fatalf("offset %d size %d err %v", off, FileSize(path), err)
+	}
+	// another process appends a reply and half of the next line
+	write(`{"type":"assistant","uuid":"a1","message":{"content":[{"type":"text","text":"All disks are fine."}],"stop_reason":"end_turn"}}` + "\n" + `{"type":"user","uu`)
+	lines, next, err := ClaudeTail(path, off)
+	if err != nil || len(lines) != 1 {
+		t.Fatalf("lines %d err %v", len(lines), err)
+	}
+	var log ClaudeLog
+	ops := log.Feed(lines[0])
+	if len(ops) != 2 || ops[0].Item == nil || ops[0].Item.Text != "All disks are fine." || !ops[1].TurnEnded {
+		t.Fatalf("ops %+v", ops)
+	}
+	// the partial line is read once it is complete
+	write(`id":"u2","message":{"role":"user","content":"thanks"}}` + "\n")
+	lines, next2, _ := ClaudeTail(path, next)
+	if len(lines) != 1 || next2 != FileSize(path) {
+		t.Fatalf("second read: %d lines, offset %d of %d", len(lines), next2, FileSize(path))
+	}
+	if ops := log.Feed(lines[0]); len(ops) != 1 || !ops[0].TurnStarted || ops[0].Item.Text != "thanks" {
+		t.Fatalf("ops %+v", ops)
 	}
 }

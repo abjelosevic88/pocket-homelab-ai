@@ -44,6 +44,7 @@ func (s *Server) handleThreadEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	ch := s.rt.subscribeThread(t.ID)
 	defer s.rt.unsubscribeThread(t.ID, ch)
+	defer s.rt.watch(t)() // follow the CLI's log while it is open
 	fl, ok := sseHeaders(w)
 	if !ok {
 		return

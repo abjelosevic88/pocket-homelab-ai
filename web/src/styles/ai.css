@@ -439,3 +439,6 @@
 }
 /* and the scrolling areas never scroll sideways as a whole */
 .home-scroll, .page-scroll, .thread-scroll { overflow-x: hidden; }
+
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); flex-shrink: 0; animation: live-pulse 1.6s ease-in-out infinite; }
+@keyframes live-pulse { 50% { opacity: .35; } }

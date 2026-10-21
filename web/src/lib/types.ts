@@ -127,6 +127,7 @@ export interface Thread {
   live: boolean
   pending: number
   queued: number
+  external?: boolean
 }
 
 export interface ItemImage { id: string; name: string; url: string }
