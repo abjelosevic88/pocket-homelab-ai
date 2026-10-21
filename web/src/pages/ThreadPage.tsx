@@ -255,7 +255,6 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
             <Composer ref={composer} draftKey={id} autoFocus onSend={send} running={running} onStop={t.external && !t.live ? undefined : interrupt} disabled={!!t.external && !t.live}
               placeholder={running ? 'Add a message — it is sent when the agent is done…' : pending.length ? 'Or type an answer…' : `Reply to ${providerName(t.provider)}…`}
               footer={<>
-                {!running && t.live ? <span className="composer-status muted" title="The CLI process is running and keeps its context">Session live</span> : null}
                 {p && <span className="thread-pickers"><AgentPicker compact showProvider={false} value={{ provider: t.provider, model: t.model, effort: t.effort, mode: t.mode, speed: t.speed || '' }}
                   onChange={ch => patch(ch as Partial<Thread>)} /></span>}
               </>} />

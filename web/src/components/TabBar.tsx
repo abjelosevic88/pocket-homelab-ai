@@ -72,8 +72,8 @@ export function TabBar({ tabs, active, close, move }: ReturnType<typeof useTabs>
               onDragEnd={() => setDrag('')}
               onDragOver={e => { if (drag) { e.preventDefault(); if (drag !== id) move(drag, id) } }}>
               <span className={`tab-ico ${t?.provider || ''}`}>
-                <Icon name={t?.provider === 'codex' ? 'codex' : 'claude'} size={13} />
-                {busy && <span className={`tab-busy ${t?.status === 'waiting' || (t?.pending || 0) > 0 ? 'waiting' : ''}`} aria-label="Working" />}
+                {busy ? <span className={`tab-busy ${t?.status === 'waiting' || (t?.pending || 0) > 0 ? 'waiting' : ''}`} role="img" aria-label="Working" />
+                  : <Icon name={t?.provider === 'codex' ? 'codex' : 'claude'} size={13} />}
               </span>
               <span className="tab-title">{t ? threadTitle(t) : '…'}</span>
               <button type="button" className="tab-x" aria-label="Close tab" title="Close tab (middle-click)" onClick={e => { e.stopPropagation(); close([id]) }}><Icon name="x" size={12} /></button>
