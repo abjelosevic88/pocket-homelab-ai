@@ -59,8 +59,8 @@ export default function HistoryPage({ onMenu }: { onMenu?: () => void }) {
                 <button key={s.session_id} type="button" className="hist-row" onClick={() => open(s)} disabled={!!busy}>
                   <span className="hist-ico"><Icon name={s.thread_id ? 'message' : 'history'} size={15} /></span>
                   <span className="grow" style={{ minWidth: 0 }}>
-                    <span className="hist-title ellipsis">{s.title || 'Untitled session'}</span>
-                    <span className="hist-meta"><span className="mono ellipsis">{shortPath(s.cwd)}</span><span>·</span><span>{ago(s.updated_at)}</span>{s.messages > 0 && <><span>·</span><span>{s.messages} messages</span></>}</span>
+                    <span className="hist-title">{s.title || 'Untitled session'}</span>
+                    <span className="hist-meta"><span className="mono ellipsis">{shortPath(s.cwd)}</span><span>·</span><span>{ago(s.updated_at)}</span>{s.messages > 0 && <><span>·</span><span>{s.messages} {s.messages === 1 ? 'message' : 'messages'}</span></>}</span>
                   </span>
                   {busy === s.session_id ? <Spinner /> : <span className={`btn sm ${s.thread_id ? '' : 'primary'}`}>{s.thread_id ? 'Open' : 'Import'}</span>}
                 </button>

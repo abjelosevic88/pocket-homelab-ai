@@ -114,8 +114,14 @@
 .hist-row:hover { background: var(--hover); }
 .hist-row:disabled { cursor: progress; }
 .hist-ico { width: 32px; height: 32px; border-radius: 9px; background: var(--surface-2); color: var(--muted); display: grid; place-items: center; flex-shrink: 0; }
-.hist-title { display: block; font-weight: 550; }
-.hist-meta { display: flex; gap: 6px; color: var(--muted); font-size: 12px; min-width: 0; }
+.hist-title { font-weight: 550; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; line-height: 1.35; }
+.hist-meta { display: flex; flex-wrap: wrap; gap: 2px 6px; color: var(--muted); font-size: 12px; min-width: 0; margin-top: 3px; }
+.hist-meta > span { white-space: nowrap; }
+.hist-meta > .mono { max-width: 100%; }
+@media (max-width: 520px) {
+  .hist-ico { display: none; }
+  .hist-row { gap: 10px; padding: 10px 8px; }
+}
 .hist-row .btn { pointer-events: none; }
 
 /* usage */
