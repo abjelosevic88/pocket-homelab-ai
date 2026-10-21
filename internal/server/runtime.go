@@ -482,9 +482,13 @@ func (rt *engine) next(r *run) {
 	r.lastText = ""
 	r.mu.Unlock()
 	if st, err := rt.s.store.GetItem(rt.ctx, r.threadID, q.key); err == nil {
+		// it goes out now: move it from where it was typed (mid-turn) to the
+		// end of the conversation
 		var it agent.Item
 		_ = json.Unmarshal(st.Data, &it)
 		it.Queued = false
+		_ = rt.s.store.DeleteItem(rt.ctx, r.threadID, q.key)
+		rt.toThread(r.threadID, sseEvent{Name: "item_removed", Data: map[string]string{"key": q.key}})
 		rt.saveItem(r.threadID, it)
 	}
 	if err := r.sess.Send(q.in); err != nil {
@@ -493,6 +497,70 @@ func (rt *engine) next(r *run) {
 		r.mu.Unlock()
 		rt.s.log.Warn("send queued message", "thread", r.threadID, "err", err)
 	}
+}
+
+// busyCount is how many threads have a turn running or messages waiting.
+func (rt *engine) busyCount() int {
+	rt.mu.Lock()
+	runs := make([]*run, 0, len(rt.runs))
+	for _, r := range rt.runs {
+		runs = append(runs, r)
+	}
+	rt.mu.Unlock()
+	n := 0
+	for _, r := range runs {
+		r.mu.Lock()
+		if r.running || len(r.queue) > 0 {
+			n++
+		}
+		r.mu.Unlock()
+	}
+	return n
+}
+
+// sendNow puts a queued message first and stops the current turn, so it goes
+// out right away (next() sends it when the interrupted turn ends).
+func (rt *engine) sendNow(threadID, key string) error {
+	r := rt.get(threadID)
+	if r == nil {
+		return badRequest("that message is no longer queued")
+	}
+	r.mu.Lock()
+	i := -1
+	for j, q := range r.queue {
+		if q.key == key {
+			i = j
+		}
+	}
+	if i < 0 {
+		r.mu.Unlock()
+		return badRequest("that message is no longer queued")
+	}
+	q := r.queue[i]
+	r.queue = append([]queued{q}, append(r.queue[:i:i], r.queue[i+1:]...)...)
+	running := r.running
+	r.mu.Unlock()
+	if !running {
+		rt.next(r)
+		return nil
+	}
+	return r.sess.Interrupt()
+}
+
+// dropQueued removes one queued (or unsent) message.
+func (rt *engine) dropQueued(threadID, key string) {
+	if r := rt.get(threadID); r != nil {
+		r.mu.Lock()
+		for j, q := range r.queue {
+			if q.key == key {
+				r.queue = append(r.queue[:j:j], r.queue[j+1:]...)
+				break
+			}
+		}
+		r.mu.Unlock()
+	}
+	_ = rt.s.store.DeleteItem(rt.ctx, threadID, key)
+	rt.toThread(threadID, sseEvent{Name: "item_removed", Data: map[string]string{"key": key}})
 }
 
 // clearQueue drops queued messages (and their timeline entries).

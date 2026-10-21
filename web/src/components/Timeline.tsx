@@ -80,7 +80,7 @@ export const ItemView = memo(function ItemView({ item, showThinking, threadId }:
     case 'user': {
       const pics = [...(item.images || []), ...logImages(threadId, item.key, item.log_images || 0)]
       return (
-        <div className={`msg user ${item.queued ? 'queued' : ''}`} id={`item-${item.key}`}>
+        <div className={`msg user ${item.queued ? 'queued' : ''} ${item.unsent ? 'unsent' : ''}`} id={`item-${item.key}`}>
           <div className="bubble">
             {pics.length > 0 && <Images images={pics} />}
             {item.text && <div className="user-text">{item.text}</div>}
@@ -136,7 +136,7 @@ function TurnFoot({ t, onFork }: { t: TurnInfo; onFork?: () => void }) {
   )
 }
 
-export function Timeline({ items, showThinking, streamingKey, onFork, threadId }: { items: Item[]; showThinking: boolean; streamingKey?: string; onFork?: () => void; threadId?: string }) {
+export function Timeline({ items, showThinking, streamingKey, onFork, threadId, onResend, onDropUnsent }: { items: Item[]; showThinking: boolean; streamingKey?: string; onFork?: () => void; threadId?: string; onResend?: (it: Item) => void; onDropUnsent?: (it: Item) => void }) {
   // Items there when the thread opened render still; anything that arrives
   // while you watch slides in.
   const initial = useRef<Set<string> | null>(null)
@@ -155,6 +155,12 @@ export function Timeline({ items, showThinking, streamingKey, onFork, threadId }
         <div key={it.key} className={`tl-item ${initial.current!.has(it.key) ? '' : 'appear'} ${it.key === streamingKey ? 'streaming' : ''}`}>
           {it.kind === 'turn' && it.turn ? <TurnFoot t={it.turn} onFork={it.key === lastTurn ? onFork : undefined} />
             : <ItemView item={it} showThinking={showThinking} threadId={threadId} />}
+          {it.kind === 'user' && it.unsent && (
+            <div className="unsent-tag"><Icon name="alert" size={12} /><span>Not sent — Pocket AI restarted before it went out.</span>
+              {onResend && <button type="button" className="btn sm" onClick={() => onResend(it)}>Send again</button>}
+              {onDropUnsent && <button type="button" className="btn ghost sm" onClick={() => onDropUnsent(it)}>Remove</button>}
+            </div>
+          )}
         </div>
       ))}
     </div>

@@ -926,6 +926,7 @@ func (s *claudeSession) handleTask(m map[string]json.RawMessage) {
 		TaskID      string `json:"task_id"`
 		Description string `json:"description"`
 		Type        string `json:"subagent_type"`
+		TaskType    string `json:"task_type"` // local_agent, remote_agent, local_workflow, local_bash
 		Status      string `json:"status"`
 		Patch       struct {
 			Status string `json:"status"`
@@ -935,8 +936,8 @@ func (s *claudeSession) handleTask(m map[string]json.RawMessage) {
 		} `json:"usage"`
 	}
 	raw, _ := json.Marshal(m)
-	if json.Unmarshal(raw, &ev) != nil || ev.TaskID == "" {
-		return
+	if json.Unmarshal(raw, &ev) != nil || ev.TaskID == "" || ev.TaskType == "local_bash" {
+		return // a long shell command reports as a task too; it is not a sub-agent
 	}
 	s.mu.Lock()
 	idx := -1

@@ -72,6 +72,7 @@ func activeClaude(home string, paseo map[string]paseoAgent) []ActiveSession {
 	if err != nil {
 		return nil
 	}
+	procs, registry := ClaudeProcs(home)
 	var out []ActiveSession
 	now := time.Now()
 	for _, d := range dirs {
@@ -90,6 +91,12 @@ func activeClaude(home string, paseo map[string]paseoAgent) []ActiveSession {
 			}
 			path := filepath.Join(dir, e.Name())
 			s, running := claudeState(path, 1<<20)
+			if registry {
+				// the log can end mid-turn for good (a killed process): only a
+				// live process that says it is busy counts
+				p, ok := procs[strings.TrimSuffix(e.Name(), ".jsonl")]
+				running = ok && p.Busy()
+			}
 			if !running {
 				continue
 			}

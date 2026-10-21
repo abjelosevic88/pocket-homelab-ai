@@ -159,6 +159,8 @@ func TestEverythingIsPerPerson(t *testing.T) {
 		{"POST", "/api/v1/threads/" + th.ID + "/fork"},
 		{"GET", "/api/v1/threads/" + th.ID + "/export.md"},
 		{"GET", "/api/v1/threads/" + th.ID + "/log-image?key=u-x&n=0"},
+		{"DELETE", "/api/v1/threads/" + th.ID + "/queue/u-x"},
+		{"POST", "/api/v1/threads/" + th.ID + "/queue/u-x/now"},
 		{"GET", "/api/v1/threads/" + th.ID + "/events"},
 		{"PUT", "/api/v1/recipes/" + itoa(rc.ID)},
 		{"DELETE", "/api/v1/recipes/" + itoa(rc.ID)},

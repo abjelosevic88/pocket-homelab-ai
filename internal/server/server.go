@@ -392,7 +392,21 @@ func (s *Server) handleChanges(w http.ResponseWriter, r *http.Request) {
 // ---------- health / metrics ----------
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"core_outbox": s.coreOutboxHealth(r.Context()), "status": "ok", "version": Version, "uptime": time.Since(s.started).Round(time.Second).String()})
+	writeJSON(w, http.StatusOK, map[string]any{"core_outbox": s.coreOutboxHealth(r.Context()), "status": "ok", "version": Version, "uptime": time.Since(s.started).Round(time.Second).String(),
+		"agents_working": s.rt.busyCount()})
+}
+
+// WaitIdle returns once no thread has a turn running or messages queued (or
+// after max): a restart then cuts nobody off.
+func (s *Server) WaitIdle(ctx context.Context, max time.Duration) {
+	deadline := time.Now().Add(max)
+	for s.rt.busyCount() > 0 && time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(2 * time.Second):
+		}
+	}
 }
 
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {

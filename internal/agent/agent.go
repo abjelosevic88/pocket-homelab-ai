@@ -21,13 +21,16 @@ type Item struct {
 	Images []Image `json:"images,omitempty"`
 	// LogImages counts images that live only in the CLI's session file (a
 	// screenshot pasted in Paseo); the web app fetches them by item key.
-	LogImages int       `json:"log_images,omitempty"`
-	Queued    bool      `json:"queued,omitempty"`
-	Tool      *Tool     `json:"tool,omitempty"`
-	Todos     []Todo    `json:"todos,omitempty"`
-	Request   *Request  `json:"request,omitempty"`
-	Level     string    `json:"level,omitempty"` // notice: info | warn | error
-	Turn      *TurnInfo `json:"turn,omitempty"`
+	LogImages int `json:"log_images,omitempty"`
+	// Unsent: it was waiting in the queue when Pocket AI stopped, so it never
+	// reached the agent.
+	Unsent  bool      `json:"unsent,omitempty"`
+	Queued  bool      `json:"queued,omitempty"`
+	Tool    *Tool     `json:"tool,omitempty"`
+	Todos   []Todo    `json:"todos,omitempty"`
+	Request *Request  `json:"request,omitempty"`
+	Level   string    `json:"level,omitempty"` // notice: info | warn | error
+	Turn    *TurnInfo `json:"turn,omitempty"`
 }
 
 // Image is an attachment shown on a user message.

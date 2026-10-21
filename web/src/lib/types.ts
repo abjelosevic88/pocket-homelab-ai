@@ -193,6 +193,7 @@ export interface Item {
   level?: 'info' | 'warn' | 'error'
   turn?: TurnInfo
   log_images?: number
+  unsent?: boolean
 }
 
 export interface ThreadDetail { thread: Thread; items: Item[] }

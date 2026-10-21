@@ -7,6 +7,7 @@ import { fmtCost, providerName, shortPath, threadTitle } from '../lib/format'
 import { openSSE } from '../lib/sse'
 import type { Item, Thread, ThreadDetail } from '../lib/types'
 import { RunBar, useForkNewTab } from '../components/RunBar'
+import { QueueStrip } from '../components/QueueStrip'
 import { AgentPicker } from '../components/AgentPicker'
 import { ContextMeter, ProviderBadge } from '../components/bits'
 import { Composer, type ComposerHandle } from '../components/Composer'
@@ -134,7 +135,17 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   }, [items]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const pending = useMemo(() => (items || []).filter(i => i.kind === 'request' && i.request?.status === 'pending'), [items])
-  const visible = useMemo(() => (items || []).filter(i => !(i.kind === 'request' && i.request?.status === 'pending')), [items])
+  // queued messages wait above the reply box, not in the conversation
+  const visible = useMemo(() => (items || []).filter(i => !(i.kind === 'request' && i.request?.status === 'pending') && !(i.kind === 'user' && i.queued)), [items])
+  const queuedItems = useMemo(() => (items || []).filter(i => i.kind === 'user' && i.queued), [items])
+  // a message that never went out (Pocket AI restarted while it waited)
+  const resend = useCallback(async (it: Item) => {
+    try {
+      await api.post(`${V1}/threads/${id}/messages`, { text: it.text || '', upload_ids: (it.images || []).map(im => im.id) })
+      await api.del(`${V1}/threads/${id}/queue/${encodeURIComponent(it.key)}`)
+    } catch (e) { toast(errMsg(e), 'err') }
+  }, [id, toast])
+  const dropUnsent = useCallback((it: Item) => { api.del(`${V1}/threads/${id}/queue/${encodeURIComponent(it.key)}`).catch(e => toast(errMsg(e), 'err')) }, [id, toast])
 
   const patch = async (p: Partial<Pick<Thread, 'title' | 'pinned' | 'archived' | 'model' | 'effort' | 'mode' | 'speed'>>) => {
     if (!t) return
@@ -227,7 +238,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
             <>
               {items.length === 0 && <div className="muted center small" style={{ padding: 30 }}>Nothing here yet.</div>}
               {t.source === 'import' && items.length > 0 && <div className="notice info"><Icon name="history" size={14} /><span>Imported from the server’s {providerName(t.provider)} history — sending a message continues that session.</span></div>}
-              <Timeline key={id} threadId={t.provider === 'claude' ? id : undefined} items={visible} showThinking={!!settings?.show_thinking} streamingKey={streamingKey}
+              <Timeline key={id} threadId={t.provider === 'claude' ? id : undefined} items={visible} onResend={canRun ? resend : undefined} onDropUnsent={dropUnsent} showThinking={!!settings?.show_thinking} streamingKey={streamingKey}
                 onFork={t.provider_session_id && canRun && !running ? forkNewTab : undefined} />
               {t.status === 'error' && t.error && <div className="notice error"><Icon name="alert" size={14} /><span>{t.error}</span></div>}
             </>
@@ -239,14 +250,12 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
         {newBelow && !atBottom && <button type="button" className="new-below" onClick={() => { toBottom(true); setNewBelow(false) }}><Icon name="arrow-down" size={13} />New messages</button>}
         <div className="thread-bottom-inner">
           {(running || t.status === 'waiting' || !!t.subagents?.length) && items && <RunBar t={t} items={items} />}
+          <QueueStrip threadId={id} queued={queuedItems} agent={t.provider === 'codex' ? 'Codex' : 'Claude'} onClearAll={clearQueue} />
           {pending.length > 0 && (
             <div className="req-dock">
               <RequestCard key={pending[0].key} threadId={id} req={pending[0].request!} onDone={() => setItems(list => list && list.map(x => x.key === pending[0].key && x.request ? { ...x, request: { ...x.request, status: 'answered' } } : x))} />
               {pending.length > 1 && <div className="muted xsmall center">{pending.length - 1} more waiting after this one</div>}
             </div>
-          )}
-          {t.queued > 0 && (
-            <div className="queue-bar"><Icon name="clock" size={13} /><span className="grow">{t.queued === 1 ? '1 message queued' : `${t.queued} messages queued`} — sent when the agent is done</span><button type="button" className="link-btn small" onClick={clearQueue}>Clear</button></div>
           )}
           {t.external && !t.live && (
             <div className="queue-bar"><span className="live-dot" /><span className="grow">Running in a terminal or another app — following it live. You can reply when it has finished.</span></div>

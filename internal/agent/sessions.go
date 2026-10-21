@@ -443,11 +443,18 @@ func (sc *sessionScan) originName(paseo map[string]paseoAgent) string {
 	return "app"
 }
 
-// finish settles a run that has not ended: still running while the file is
-// fresh, otherwise it stopped without saying so.
-func finish(r Run, mod time.Time) Run {
+// finish settles a run that has not ended: still running while a process
+// works on it (Claude Code's registry, when there is one) or, failing that,
+// while the file is fresh; otherwise it stopped without saying so.
+func finish(r Run, mod time.Time, live liveFn) Run {
 	if r.Status == "" {
-		if time.Since(mod) < activeWindow {
+		if busy, known := live(r.Provider, r.SessionID); known {
+			if busy {
+				r.Status = "running"
+			} else {
+				r.Status = "unfinished"
+			}
+		} else if time.Since(mod) < activeWindow {
 			r.Status = "running"
 		} else {
 			r.Status = "unfinished"
@@ -456,9 +463,24 @@ func finish(r Run, mod time.Time) Run {
 	return r
 }
 
+// liveFn says whether a session's process is busy, and whether that is known.
+type liveFn func(provider, sessionID string) (busy, known bool)
+
+func liveCheck(claudeHome string) liveFn {
+	procs, ok := ClaudeProcs(claudeHome)
+	return func(provider, sessionID string) (bool, bool) {
+		if provider != "claude" || !ok {
+			return false, false
+		}
+		p, found := procs[sessionID]
+		return found && p.Busy(), true
+	}
+}
+
 // Runs lists every run started in [from, to), newest first.
 func Runs(claudeHome, codexHome, paseoHome string, from, to time.Time) []Run {
 	paseo := paseoSessionsWithin(paseoHome, time.Since(from)+48*time.Hour)
+	live := liveCheck(claudeHome)
 	out := []Run{}
 	for _, f := range sessionFiles(claudeHome, codexHome, from) {
 		sc := scanSession(f.provider, f.path, f.info)
@@ -472,8 +494,9 @@ func Runs(claudeHome, codexHome, paseoHome string, from, to time.Time) []Run {
 			if st.Before(from) || !st.Before(to) {
 				continue
 			}
-			x := finish(*r, f.info.ModTime())
+			x := *r
 			x.Provider, x.SessionID, x.Cwd, x.Origin, x.Title = f.provider, sc.sessionID, sc.cwd, origin, title
+			x = finish(x, f.info.ModTime(), live)
 			if x.Prompt == "" {
 				x.Prompt = "(no prompt text)"
 			}
@@ -488,6 +511,7 @@ func Runs(claudeHome, codexHome, paseoHome string, from, to time.Time) []Run {
 // newest activity first.
 func Sessions(claudeHome, codexHome, paseoHome string) []ServerSession {
 	paseo := paseoSessionsWithin(paseoHome, 0)
+	live := liveCheck(claudeHome)
 	out := []ServerSession{}
 	for _, f := range sessionFiles(claudeHome, codexHome, time.Time{}) {
 		sc := scanSession(f.provider, f.path, f.info)
@@ -502,7 +526,9 @@ func Sessions(claudeHome, codexHome, paseoHome string) []ServerSession {
 		for _, r := range sc.runs {
 			s.WorkMS += r.DurationMS
 		}
-		last := finish(*sc.runs[len(sc.runs)-1], f.info.ModTime())
+		last := *sc.runs[len(sc.runs)-1]
+		last.Provider, last.SessionID = f.provider, sc.sessionID
+		last = finish(last, f.info.ModTime(), live)
 		s.LastPrompt = last.Prompt
 		if last.Status == "running" {
 			s.Running, s.RunningAt = true, last.StartedAt

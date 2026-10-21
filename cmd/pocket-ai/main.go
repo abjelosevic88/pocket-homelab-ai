@@ -129,6 +129,21 @@ func serve() {
 		servers = append(servers, hs)
 		go listen(ctx, log, hs)
 	}
+	// SIGUSR1 (deploy.sh): restart once no agent is working — an agent that
+	// deploys Pocket AI from inside Pocket AI no longer kills itself.
+	usr1 := make(chan os.Signal, 1)
+	signal.Notify(usr1, syscall.SIGUSR1)
+	go func() {
+		select {
+		case <-usr1:
+		case <-ctx.Done():
+			return
+		}
+		log.Info("restart requested: waiting until no agent is working")
+		srv.WaitIdle(ctx, 30*time.Minute)
+		log.Info("restarting for the update")
+		cancel()
+	}()
 	log.Info("pocket-ai started", "version", version, "addrs", cfg.Addrs(), "base_url", cfg.BaseURL, "db", cfg.DBPath,
 		"auth_mode", cfg.AuthMode, "roots", cfg.Roots)
 	<-ctx.Done()

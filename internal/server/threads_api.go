@@ -24,6 +24,8 @@ func (s *Server) threadRoutes(r chi.Router) {
 	r.Delete("/threads/{id}", s.handleDeleteThread)
 	r.Post("/threads/{id}/messages", s.handleSendMessage)
 	r.Delete("/threads/{id}/queue", s.handleClearQueue)
+	r.Delete("/threads/{id}/queue/{key}", s.handleDropQueued)
+	r.Post("/threads/{id}/queue/{key}/now", s.handleSendNow)
 	r.Post("/threads/{id}/interrupt", s.handleInterrupt)
 	r.Post("/threads/{id}/requests/{rid}", s.handleRespond)
 	r.Post("/threads/{id}/read", s.handleMarkRead)
@@ -451,6 +453,43 @@ func (s *Server) handleClearQueue(w http.ResponseWriter, r *http.Request) {
 		s.rt.clearQueue(t.ID)
 		if t2, err := s.store.GetThread(r.Context(), me(r), t.ID); err == nil {
 			s.rt.publishThread(t2)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// handleDropQueued removes one message from the queue (or one that was never
+// sent because Pocket AI restarted).
+func (s *Server) handleDropQueued(w http.ResponseWriter, r *http.Request) {
+	t := s.thread(w, r)
+	if t == nil {
+		return
+	}
+	key := chi.URLParam(r, "key")
+	st, err := s.store.GetItem(r.Context(), t.ID, key)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "no such message")
+		return
+	}
+	var it agent.Item
+	_ = json.Unmarshal(st.Data, &it)
+	if it.Kind != "user" || (!it.Queued && !it.Unsent) {
+		writeErr(w, http.StatusConflict, "that message was already sent")
+		return
+	}
+	s.rt.dropQueued(t.ID, key)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleSendNow stops the current turn and sends this queued message next.
+func (s *Server) handleSendNow(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRun(w, r) {
+		return
+	}
+	if t := s.thread(w, r); t != nil {
+		if err := s.rt.sendNow(t.ID, chi.URLParam(r, "key")); err != nil {
+			s.fail(w, err, "send now")
+			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}
