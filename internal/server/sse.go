@@ -81,6 +81,8 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request, fl http.Flusher,
 		select {
 		case <-r.Context().Done():
 			return
+		case <-s.rt.ctx.Done(): // shutting down: the browser reconnects to the new process
+			return
 		case ev := <-ch:
 			if writeEvent(w, ev) != nil {
 				return
