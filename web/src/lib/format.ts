@@ -26,6 +26,17 @@ export function stamp(iso: string | null | undefined): string {
 }
 
 /** Future time: "in 3 h", "tomorrow 08:00", "Mon 08:00". */
+/** Time left until a reset: "3d 4h", "5h 12m", "34m". */
+export function resetsIn(iso: string, now = Date.now(), prefix = 'resets in '): string {
+  const ms = new Date(iso).getTime() - now
+  if (isNaN(ms)) return ''
+  if (ms <= 60e3) return prefix ? 'resets now' : 'now'
+  const m = Math.floor(ms / 60e3), h = Math.floor(m / 60), d = Math.floor(h / 24)
+  if (d > 0) return `${prefix}${d}d ${h % 24}h`
+  if (h > 0) return `${prefix}${h}h ${m % 60}m`
+  return `${prefix}${m}m`
+}
+
 export function when(iso: string | null | undefined): string {
   if (!iso) return '—'
   const d = new Date(iso)

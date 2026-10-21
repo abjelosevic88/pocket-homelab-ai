@@ -445,3 +445,20 @@
 /* pictures a tool returned (Read of an image), under its row */
 .tool-imgs { margin: -2px 0 8px 30px; }
 .tool-imgs .msg-imgs { justify-content: flex-start; }
+
+/* Plan limits: pins on the Usage page, and the always-on panel in the sidebar */
+.limit-h { align-items: center; }
+.limit-h > span:first-child { flex: 1; min-width: 0; }
+.limit-pin { color: var(--faint); margin: -4px -6px -4px 0; }
+.limit-pin.on { color: var(--accent); }
+.usage-widget { display: grid; gap: 7px; margin: 0 10px 6px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); text-align: left; cursor: pointer; font: inherit; color: inherit; }
+.usage-widget:hover { border-color: var(--border-strong, var(--border)); background: var(--surface-2); }
+.uw-row { display: grid; gap: 4px; min-width: 0; }
+.uw-h { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 11.5px; color: var(--text-2); min-width: 0; }
+.uw-h b { font-weight: 600; color: var(--text); }
+.uw-num { white-space: nowrap; flex-shrink: 0; font-size: 11px; }
+.limit-bar.thin { height: 4px; border-radius: 2px; }
+/* limits panel + footer stay in view while the thread list scrolls under them */
+.sb-bottom { margin-top: auto; position: sticky; bottom: -14px; z-index: 2; background: var(--sidebar); padding: 8px 0 14px; margin-bottom: -14px; }
+.sb-bottom .sb-foot { margin-top: 0; padding-top: 4px; }
+.sb-bottom .usage-widget { margin: 0 0 6px; width: 100%; }

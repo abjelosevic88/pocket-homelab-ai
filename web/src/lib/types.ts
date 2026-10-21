@@ -42,6 +42,8 @@ export interface Settings {
   notify_only_away: boolean
   enter_sends: boolean
   show_thinking: boolean
+  usage_widget: boolean
+  usage_pinned: string[]
   system_prompt: string
 }
 

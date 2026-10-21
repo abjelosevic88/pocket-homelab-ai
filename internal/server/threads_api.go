@@ -33,6 +33,7 @@ func (s *Server) threadRoutes(r chi.Router) {
 	r.Get("/running", s.handleRunning)
 	r.Get("/search", s.handleSearch)
 	r.Get("/usage", s.handleUsage)
+	r.Get("/limits", s.handleLimits)
 }
 
 // requireRun answers 403 unless the person may start agents.
@@ -656,6 +657,16 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"days": all, "providers": prov, "limits": s.rt.limitsSnapshot()})
+}
+
+// handleLimits is the plan limits alone, for the always-on usage panel: it
+// asks the CLIs again only when the numbers are older than 10 minutes (live
+// turns keep them current in between, as SSE "limits" events).
+func (s *Server) handleLimits(w http.ResponseWriter, r *http.Request) {
+	if userFrom(r.Context()).MayRun() && s.rt.limitsStale(10*time.Minute) {
+		s.rt.refreshLimits(false)
+	}
+	writeJSON(w, http.StatusOK, s.rt.limitsSnapshot())
 }
 
 // promptLine is how a prompt shows in the "Running now" list (the

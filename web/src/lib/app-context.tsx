@@ -45,7 +45,7 @@ export const DEFAULT_SETTINGS: Settings = {
   title: 'Pocket AI', default_provider: 'claude', default_cwd: '',
   claude: { model: '', effort: '', mode: '' }, codex: { model: '', effort: '', mode: '' },
   notify_kind: 'apprise', notify_url: '', notify_finished: true, notify_input: true, notify_failed: true, notify_only_away: true,
-  enter_sends: true, show_thinking: false, system_prompt: '',
+  enter_sends: true, show_thinking: false, usage_widget: true, usage_pinned: [], system_prompt: '',
 }
 
 /** GET /settings may answer the bare object or `{settings, …}`; fill defaults either way. */
@@ -155,6 +155,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => { for (const t of threads || []) if (!prevStatus.current.has(t.id)) prevStatus.current.set(t.id, t.status) }, [threads])
   const settingsRef = useRef(settings)
   settingsRef.current = settings
+  // Plan limits for the usage panel: now and every 10 minutes (running turns
+  // keep them current in between through the "limits" event).
+  useEffect(() => {
+    if (!user) return
+    const load = () => api.get<Limits>(`${V1}/limits`).then(l => setLimits(l || {})).catch(() => {})
+    load()
+    const t = setInterval(load, 10 * 60e3)
+    return () => clearInterval(t)
+  }, [user])
   useEffect(() => {
     if (!user) return
     const close = openSSE(`${V1}/events`, {

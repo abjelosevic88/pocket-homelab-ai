@@ -62,6 +62,8 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		NotifyOnlyAway  *bool                `json:"notify_only_away"`
 		EnterSends      *bool                `json:"enter_sends"`
 		ShowThinking    *bool                `json:"show_thinking"`
+		UsageWidget     *bool                `json:"usage_widget"`
+		UsagePinned     *[]string            `json:"usage_pinned"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
@@ -103,6 +105,14 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 			st.NotifyKind = *in.NotifyKind
 		}
 	}
+	if in.UsagePinned != nil {
+		st.UsagePinned = []string{}
+		for _, k := range *in.UsagePinned {
+			if k = strings.TrimSpace(k); k != "" && !strings.Contains(k, ",") && len(k) < 100 && len(st.UsagePinned) < 30 {
+				st.UsagePinned = append(st.UsagePinned, k)
+			}
+		}
+	}
 	if in.NotifyURL != nil {
 		st.NotifyURL = strings.TrimSpace(*in.NotifyURL)
 	}
@@ -110,7 +120,8 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		in  *bool
 		out *bool
 	}{{in.NotifyFinished, &st.NotifyFinished}, {in.NotifyInput, &st.NotifyInput}, {in.NotifyFailed, &st.NotifyFailed},
-		{in.NotifyOnlyAway, &st.NotifyOnlyAway}, {in.EnterSends, &st.EnterSends}, {in.ShowThinking, &st.ShowThinking}} {
+		{in.NotifyOnlyAway, &st.NotifyOnlyAway}, {in.EnterSends, &st.EnterSends}, {in.ShowThinking, &st.ShowThinking},
+		{in.UsageWidget, &st.UsageWidget}} {
 		if b.in != nil {
 			*b.out = *b.in
 		}

@@ -25,6 +25,9 @@ export function GeneralTab() {
         <SettingRow title="Show the agent’s thinking" help="Expanded by default. Off: a small “Thinking” line you can open.">
           <Switch label="Show thinking" checked={!!s.show_thinking} onChange={v => save({ show_thinking: v })} />
         </SettingRow>
+        <SettingRow title="Plan limits always in view" help="Claude’s and Codex’s limits at the bottom of the sidebar (in the menu on phones). Pick which ones with the pins on the Usage page.">
+          <Switch label="Plan limits always in view" checked={s.usage_widget !== false} onChange={v => save({ usage_widget: v })} />
+        </SettingRow>
       </Section>
 
       <Section title="Composer">

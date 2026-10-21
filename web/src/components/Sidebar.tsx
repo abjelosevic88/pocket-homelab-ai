@@ -1,6 +1,7 @@
 // Threads, grouped by time, with search (titles here, all messages on Enter), folder filter and archive.
 import type React from 'react'
 import { RunningList, elapsed, useNow } from './RunningList'
+import { UsageWidget } from './UsageWidget'
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { api, qs, V1 } from '../lib/api'
@@ -168,12 +169,15 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
         </div>
       )}
 
+      <div className="sb-bottom">
+      {!showArchive && <UsageWidget onNavigate={onNavigate} />}
       <div className="sb-foot">
         <button type="button" className={`sb-foot-link ${showArchive ? 'active' : ''}`} onClick={() => { setShowArchive(a => !a); setHits(null) }}><Icon name="archive" size={14} />{showArchive ? 'Back to threads' : 'Archive'}</button>
         <span className="spacer" />
         <button type="button" className={`sb-foot-link ${loc.pathname.startsWith('/settings') ? 'active' : ''}`} onClick={() => go('/settings')} title="Settings">
           {user && <Avatar name={user.name} email={user.email} size={20} />}<Icon name="settings" size={14} />
         </button>
+      </div>
       </div>
     </aside>
   )

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"strings"
 )
 
 // DefaultTitle is the app title until someone changes it.
@@ -37,6 +38,11 @@ type Settings struct {
 
 	EnterSends   bool `json:"enter_sends"`
 	ShowThinking bool `json:"show_thinking"`
+
+	// The plan-limit panel in the sidebar, and which limits it shows
+	// ("provider:window id"; empty = all of them).
+	UsageWidget bool     `json:"usage_widget"`
+	UsagePinned []string `json:"usage_pinned"`
 }
 
 func defaults() Settings {
@@ -45,7 +51,8 @@ func defaults() Settings {
 		Claude:     AgentDefaults{Model: "default", Effort: "high", Mode: "default"},
 		Codex:      AgentDefaults{Model: "", Effort: "high", Mode: "on-request"},
 		NotifyKind: "apprise", NotifyFinished: true, NotifyInput: true, NotifyFailed: true, NotifyOnlyAway: true,
-		EnterSends: true,
+		EnterSends:  true,
+		UsageWidget: true,
 	}
 }
 
@@ -111,6 +118,10 @@ func (s *Store) GetSettings(ctx context.Context, userID int64) (Settings, error)
 			st.EnterSends = v != "0"
 		case "show_thinking":
 			st.ShowThinking = v == "1"
+		case "usage_widget":
+			st.UsageWidget = v != "0"
+		case "usage_pinned":
+			st.UsagePinned = splitList(v)
 		}
 	}
 	return st, rows.Err()
@@ -134,7 +145,18 @@ func (s *Store) SaveSettings(ctx context.Context, userID int64, st Settings) err
 		"notify_kind":   st.NotifyKind, "notify_url": st.NotifyURL, "notify_finished": b2s(st.NotifyFinished),
 		"notify_input": b2s(st.NotifyInput), "notify_failed": b2s(st.NotifyFailed), "notify_only_away": b2s(st.NotifyOnlyAway),
 		"enter_sends": b2s(st.EnterSends), "show_thinking": b2s(st.ShowThinking),
+		"usage_widget": b2s(st.UsageWidget), "usage_pinned": strings.Join(st.UsagePinned, ","),
 	})
+}
+
+func splitList(v string) []string {
+	out := []string{}
+	for _, x := range strings.Split(v, ",") {
+		if x = strings.TrimSpace(x); x != "" {
+			out = append(out, x)
+		}
+	}
+	return out
 }
 
 // UserSetting reads one raw key of a person's settings ("" when missing).

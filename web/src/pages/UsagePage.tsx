@@ -2,25 +2,30 @@
 import { useState } from 'react'
 import { api, qs, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
-import { fmtCost, fmtTokens, providerName, when } from '../lib/format'
+import { fmtCost, fmtTokens, providerName, resetsIn, when } from '../lib/format'
+import { isPinned, limitKey, limitRows, limitTone, usedFrac } from '../components/UsageWidget'
 import type { LimitWindow, ProviderId, UsageReport } from '../lib/types'
 import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
 import { Loading, Segmented, useAsync } from '../components/ui'
 
-function LimitBar({ w }: { w: LimitWindow }) {
-  const used = Math.max(0, Math.min(1, w.used > 1 ? w.used / 100 : w.used))
-  const tone = used > 0.9 ? 'danger' : used > 0.7 ? 'warn' : ''
+function LimitBar({ w, pinned, onPin }: { w: LimitWindow; pinned?: boolean; onPin?: () => void }) {
+  const used = usedFrac(w)
   return (
     <div className="limit">
-      <div className="limit-h"><span>{w.name}</span><span className="tnum"><b>{Math.round(used * 100)}%</b> used{w.resets_at && <span className="muted"> · resets {when(w.resets_at)}</span>}</span></div>
-      <div className={`limit-bar ${tone}`}><span style={{ width: `${Math.max(1, used * 100)}%` }} /></div>
+      <div className="limit-h">
+        <span>{w.name}</span>
+        <span className="tnum"><b>{Math.round(used * 100)}%</b> used{w.resets_at && <span className="muted" title={when(w.resets_at)}> · {resetsIn(w.resets_at)}</span>}</span>
+        {onPin && <button type="button" className={`btn ghost icon-only xs limit-pin ${pinned ? 'on' : ''}`} onClick={onPin} aria-pressed={pinned}
+          title={pinned ? 'Shown in the sidebar — click to hide it there' : 'Show in the sidebar'} aria-label={pinned ? 'Unpin from the sidebar' : 'Pin to the sidebar'}><Icon name="pin" size={14} /></button>}
+      </div>
+      <div className={`limit-bar ${limitTone(used)}`}><span style={{ width: `${Math.max(1, used * 100)}%` }} /></div>
     </div>
   )
 }
 
 export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
-  const { limits: liveLimits } = useApp()
+  const { limits: liveLimits, settings, saveSettings } = useApp()
   const [days, setDays] = useState(30)
   const [metric, setMetric] = useState<'cost' | 'turns' | 'tokens'>('cost')
   const [refreshing, setRefreshing] = useState(false)
@@ -33,6 +38,13 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
   const max = Math.max(1e-9, ...series.map(val))
   const total = series.reduce((a, x) => a + val(x), 0)
   const providers = (['claude', 'codex'] as ProviderId[])
+  // Pins pick what the sidebar panel shows. No pins = all; unpinning the
+  // last one leaves a marker that matches nothing, so the panel is empty.
+  const togglePin = (key: string) => {
+    const cur = settings?.usage_pinned?.length ? settings.usage_pinned.filter(k => k !== '-') : limitRows(limits).map(x => x.key)
+    const next = cur.includes(key) ? cur.filter(k => k !== key) : [...cur, key]
+    saveSettings({ usage_pinned: next.length ? next : ['-'] }).catch(() => {})
+  }
 
   return (
     <div className="page">
@@ -51,7 +63,8 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
                   return (
                     <div key={p} className="limit-box">
                       <div className="limit-prov"><span className={`prov-dot prov-${p}`} /><b>{providerName(p)}</b>{l?.updated_at && <span className="muted xsmall">· {when(l.updated_at)}</span>}</div>
-                      {l?.windows?.length ? l.windows.map(w => <LimitBar key={w.id || w.name} w={w} />) : <p className="muted small" style={{ margin: 0 }}>{l?.error ? 'Could not read the limits: ' + l.error : 'Reading the limits…'}</p>}
+                      {l?.windows?.length ? l.windows.map(w => <LimitBar key={w.id || w.name} w={w}
+                        pinned={isPinned(settings?.usage_pinned, limitKey(p, w))} onPin={settings?.usage_widget !== false ? () => togglePin(limitKey(p, w)) : undefined} />) : <p className="muted small" style={{ margin: 0 }}>{l?.error ? 'Could not read the limits: ' + l.error : 'Reading the limits…'}</p>}
                       {l?.note && <p className="muted xsmall" style={{ margin: 0 }}><Icon name="info" size={12} className="inline-ico" />{l.note}</p>}
                     </div>
                   )
