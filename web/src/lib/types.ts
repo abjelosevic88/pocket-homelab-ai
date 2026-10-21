@@ -242,8 +242,8 @@ export interface HistorySession {
 
 export interface SearchHit { thread_id: string; title: string; provider: ProviderId; snippet: string; item_key: string; activity_at: string }
 
-export interface LimitWindow { name: string; used: number; resets_at: string }
-export interface ProviderLimits { windows: LimitWindow[]; updated_at: string }
+export interface LimitWindow { id?: string; name: string; used: number; resets_at: string }
+export interface ProviderLimits { windows: LimitWindow[]; updated_at: string; note?: string; error?: string }
 export type Limits = Partial<Record<ProviderId, ProviderLimits>>
 
 export interface UsageReport {

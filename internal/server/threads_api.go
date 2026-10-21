@@ -632,5 +632,14 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "usage")
 		return
 	}
+	// Plan limits: a full read when the numbers are older than 3 minutes
+	// (?refresh=1 waits for it; otherwise it arrives as an SSE "limits" event).
+	if userFrom(ctx).MayRun() {
+		if queryBool(r, "refresh") {
+			s.rt.refreshLimits(true)
+		} else if s.rt.limitsStale(3 * time.Minute) {
+			s.rt.refreshLimits(false)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"days": all, "providers": prov, "limits": s.rt.limitsSnapshot()})
 }

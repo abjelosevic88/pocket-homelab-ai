@@ -23,6 +23,7 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
   const { limits: liveLimits } = useApp()
   const [days, setDays] = useState(30)
   const [metric, setMetric] = useState<'cost' | 'turns' | 'tokens'>('cost')
+  const [refreshing, setRefreshing] = useState(false)
   const r = useAsync(() => api.get<UsageReport>(`${V1}/usage${qs({ days })}`), [days])
   const d = r.data
   const limits = { ...(d?.limits || {}), ...liveLimits }
@@ -39,7 +40,10 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
       <div className="page-scroll">
         <div className="page-inner stack loose">
           <section className="card">
-            <div className="card-head"><div className="grow"><h2>Plan limits</h2><p className="muted small">Reported by the CLIs while they run — fresh after any thread did something.</p></div></div>
+            <div className="card-head"><div className="grow"><h2>Plan limits</h2><p className="muted small">Read from the Claude Code and Codex accounts on the server, including per-model limits.</p></div>
+              <button type="button" className="btn sm ghost icon-only" aria-label="Refresh limits" title="Refresh" disabled={refreshing}
+                onClick={async () => { setRefreshing(true); try { r.setData(await api.get<UsageReport>(`${V1}/usage${qs({ days, refresh: 1 })}`)) } finally { setRefreshing(false) } }}>
+                <Icon name="refresh" size={15} className={refreshing ? 'spin' : ''} /></button></div>
             <div className="card-body">
               <div className="two-col">
                 {providers.map(p => {
@@ -47,7 +51,8 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
                   return (
                     <div key={p} className="limit-box">
                       <div className="limit-prov"><span className={`prov-dot prov-${p}`} /><b>{providerName(p)}</b>{l?.updated_at && <span className="muted xsmall">· {when(l.updated_at)}</span>}</div>
-                      {l?.windows?.length ? l.windows.map(w => <LimitBar key={w.name} w={w} />) : <p className="muted small" style={{ margin: 0 }}>No numbers yet — they show up after the next run.</p>}
+                      {l?.windows?.length ? l.windows.map(w => <LimitBar key={w.id || w.name} w={w} />) : <p className="muted small" style={{ margin: 0 }}>{l?.error ? 'Could not read the limits: ' + l.error : 'Reading the limits…'}</p>}
+                      {l?.note && <p className="muted xsmall" style={{ margin: 0 }}><Icon name="info" size={12} className="inline-ico" />{l.note}</p>}
                     </div>
                   )
                 })}
@@ -56,9 +61,9 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
           </section>
 
           <section className="card">
-            <div className="card-head">
+            <div className="card-head usage-head">
               <div className="grow"><h2>{fmt(total)} <span className="muted small">{metric === 'cost' ? 'in API prices' : metric} · last {days} days</span></h2></div>
-              <div className="row wrap">
+              <div className="row wrap usage-controls">
                 <Segmented size="sm" value={metric} onChange={setMetric} options={[{ value: 'cost', label: 'Cost' }, { value: 'turns', label: 'Turns' }, { value: 'tokens', label: 'Tokens' }]} label="Metric" />
                 <Segmented size="sm" value={days} onChange={setDays} options={[{ value: 7, label: '7d' }, { value: 30, label: '30d' }, { value: 90, label: '90d' }]} label="Range" />
               </div>
@@ -66,10 +71,10 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
             <div className="card-body">
               {r.error ? <div className="callout danger"><Icon name="alert" size={15} /><span>{r.error}</span></div> : !d ? <Loading /> : series.length === 0 ? <p className="muted">No turns in this range.</p> : (
                 <div className="bars" role="img" aria-label={`${metric} per day`}>
-                  {series.map(x => (
+                  {series.map((x, i) => (
                     <div key={x.date} className="bar-col" title={`${x.date}: ${fmt(val(x))} · ${x.turns} turns`}>
                       <div className="bar"><span style={{ height: `${(val(x) / max) * 100}%` }} /></div>
-                      {series.length <= 31 && <span className="bar-l">{new Date(x.date + 'T12:00:00').getDate()}</span>}
+                      {series.length <= 31 && <span className={`bar-l ${series.length > 14 && i % 5 !== (series.length - 1) % 5 ? 'bar-l-minor' : ''}`}>{new Date(x.date + 'T12:00:00').getDate()}</span>}
                     </div>
                   ))}
                 </div>

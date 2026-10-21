@@ -392,3 +392,22 @@
   .agent-chips .lbl-short { display: inline-block; }
 }
 .mic-btn { flex-shrink: 0; margin-right: 2px; }
+
+/* folder picker on phones: rows never wider than the sheet, short button */
+.dir-list { grid-template-columns: minmax(0, 1fr); }
+.modal-body { min-width: 0; }
+.show-narrow { display: none; }
+@media (max-width: 760px) {
+  .hide-narrow { display: none; }
+  .show-narrow { display: inline; }
+  .folder-modal .modal-foot .ellipsis { min-width: 0; flex: 1 1 0; }
+}
+
+/* usage chart: on phones the total goes on its own line, controls below */
+@media (max-width: 760px) {
+  .usage-head { flex-direction: column; align-items: stretch; gap: 10px; }
+  .usage-controls { justify-content: space-between; }
+  .bar-l-minor { visibility: hidden; }
+  .bars { gap: 2px; }
+}
+.spin { animation: spin 1s linear infinite; }

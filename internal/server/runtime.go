@@ -33,7 +33,9 @@ type engine struct {
 	runs     map[string]*run                       // thread id → live process
 	watchers map[string]map[chan sseEvent]struct{} // thread id → SSE clients of that thread
 	userSubs map[int64]map[chan sseEvent]struct{}  // user id → SSE clients of /events
-	limits   map[string]map[string]any             // provider → {windows, updated_at}
+	limits   map[string]*provLimits                // provider → plan limit windows
+	limitsAt time.Time                             // last full read (both CLIs)
+	limitsMu sync.Mutex                            // one full read at a time
 	starting map[string]chan struct{}              // thread id → start in progress
 }
 
@@ -64,15 +66,15 @@ type queued struct {
 
 func newRuntime(s *Server) *engine {
 	return &engine{s: s, runs: map[string]*run{}, watchers: map[string]map[chan sseEvent]struct{}{},
-		userSubs: map[int64]map[chan sseEvent]struct{}{}, limits: map[string]map[string]any{}, starting: map[string]chan struct{}{}}
+		userSubs: map[int64]map[chan sseEvent]struct{}{}, limits: map[string]*provLimits{}, starting: map[string]chan struct{}{}}
 }
 
 func (rt *engine) start(ctx context.Context) {
 	rt.ctx = ctx
 	for _, p := range []string{"claude", "codex"} {
-		var l map[string]any
+		var l provLimits
 		if v := rt.s.store.BoxSetting(ctx, "limits."+p); v != "" && json.Unmarshal([]byte(v), &l) == nil {
-			rt.limits[p] = l
+			rt.limits[p] = &l
 		}
 	}
 	go rt.reaper(ctx)
@@ -652,14 +654,121 @@ func (k *runSink) Context(c agent.Context) {
 	k.rt.publishThread(t)
 }
 
+// provLimits are one provider's plan limit windows.
+type provLimits struct {
+	Windows   []agent.Window `json:"windows"`
+	Note      string         `json:"note,omitempty"`
+	UpdatedAt string         `json:"updated_at"`
+	Error     string         `json:"error,omitempty"`
+}
+
+// Limits merges what a running CLI reports (it only reports the windows of
+// the model in use) into the full picture by window id.
 func (k *runSink) Limits(provider string, w []agent.Window) {
-	l := map[string]any{"windows": w, "updated_at": store.Now()}
-	k.rt.mu.Lock()
-	k.rt.limits[provider] = l
-	k.rt.mu.Unlock()
-	b, _ := json.Marshal(l)
-	_ = k.rt.s.store.SetBoxSetting(k.rt.ctx, "limits."+provider, string(b))
-	k.rt.toUser(k.r.userID, sseEvent{Name: "limits", Data: k.rt.limitsSnapshot()})
+	k.rt.setLimits(provider, w, nil, false, "")
+}
+
+// setLimits stores windows: replace=true for a full read, otherwise merge.
+func (rt *engine) setLimits(provider string, w []agent.Window, note *string, replace bool, errMsg string) {
+	rt.mu.Lock()
+	cur := rt.limits[provider]
+	if cur == nil {
+		cur = &provLimits{}
+		rt.limits[provider] = cur
+	}
+	switch {
+	case errMsg != "":
+		cur.Error = errMsg
+	case replace:
+		cur.Windows, cur.Error = w, ""
+	default:
+		for _, nw := range w {
+			found := false
+			for i := range cur.Windows {
+				if cur.Windows[i].ID == nw.ID || cur.Windows[i].ID == "" && cur.Windows[i].Name == nw.Name {
+					cur.Windows[i], found = nw, true
+					break
+				}
+			}
+			if !found {
+				cur.Windows = append(cur.Windows, nw)
+			}
+		}
+	}
+	if note != nil {
+		cur.Note = *note
+	}
+	if errMsg == "" {
+		cur.UpdatedAt = store.Now()
+	}
+	b, _ := json.Marshal(cur)
+	rt.mu.Unlock()
+	_ = rt.s.store.SetBoxSetting(rt.ctx, "limits."+provider, string(b))
+	snap := rt.limitsSnapshot()
+	rt.mu.Lock()
+	for _, subs := range rt.userSubs {
+		for ch := range subs {
+			deliver(ch, sseEvent{Name: "limits", Data: snap})
+		}
+	}
+	rt.mu.Unlock()
+}
+
+// refreshLimits reads the full plan limits from both CLIs (at most every
+// minute); wait=false runs it in the background.
+func (rt *engine) refreshLimits(wait bool) {
+	run := func() {
+		if !rt.limitsMu.TryLock() {
+			return
+		}
+		defer rt.limitsMu.Unlock()
+		rt.mu.Lock()
+		fresh := time.Since(rt.limitsAt) < time.Minute
+		rt.mu.Unlock()
+		if fresh {
+			return
+		}
+		ctx, cancel := context.WithTimeout(rt.ctx, 45*time.Second)
+		defer cancel()
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			w, note, err := agent.ClaudeLimits(ctx, rt.s.cfg.ClaudeBin, rt.s.cfg.Home)
+			if err != nil {
+				rt.s.log.Debug("claude limits", "err", err)
+				rt.setLimits("claude", nil, nil, false, err.Error())
+				return
+			}
+			rt.setLimits("claude", w, &note, true, "")
+		}()
+		go func() {
+			defer wg.Done()
+			w, note, err := agent.CodexLimits(ctx, rt.s.cfg.CodexBin)
+			if err != nil {
+				rt.s.log.Debug("codex limits", "err", err)
+				rt.setLimits("codex", nil, nil, false, err.Error())
+				return
+			}
+			rt.setLimits("codex", w, &note, true, "")
+		}()
+		wg.Wait()
+		rt.mu.Lock()
+		rt.limitsAt = time.Now()
+		rt.mu.Unlock()
+	}
+	if wait {
+		run()
+	} else {
+		go run()
+	}
+}
+
+// limitsStale reports whether the last full read is older than d.
+func (rt *engine) limitsStale(d time.Duration) bool {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	return time.Since(rt.limitsAt) > d
 }
 
 func (rt *engine) limitsSnapshot() map[string]any {
@@ -667,7 +776,9 @@ func (rt *engine) limitsSnapshot() map[string]any {
 	defer rt.mu.Unlock()
 	out := map[string]any{}
 	for p, l := range rt.limits {
-		out[p] = l
+		cp := *l
+		cp.Windows = append([]agent.Window(nil), l.Windows...)
+		out[p] = cp
 	}
 	return out
 }

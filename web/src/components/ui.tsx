@@ -179,8 +179,11 @@ export function Modal({ title, onClose, children, size = '', footer, className =
     }
     window.addEventListener('keydown', h)
     if (!ref.current?.contains(document.activeElement)) {
-      const first = ref.current?.querySelector<HTMLElement>('[autofocus], input:not([type=hidden]), textarea, button.primary')
-      first?.focus()
+      // On touch screens focusing a text field opens the keyboard over the
+      // dialog: only fields marked autofocus get focus there.
+      const touch = window.matchMedia('(pointer: coarse)').matches
+      const first = ref.current?.querySelector<HTMLElement>(touch ? '[autofocus]' : '[autofocus], input:not([type=hidden]), textarea, button.primary')
+      first?.focus({ preventScroll: true })
     }
     return () => { openModals--; window.removeEventListener('keydown', h); prev?.focus?.() }
   }, [])

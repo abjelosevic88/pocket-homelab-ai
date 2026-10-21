@@ -28,7 +28,7 @@ export function FolderPicker({ value, onPick, onClose }: { value: string; onPick
     <Modal title="Working folder" onClose={onClose} size="lg" className="folder-modal" footer={<>
       <span className="muted small grow ellipsis" title={list?.path}>{shortPath(list?.path)}</span>
       <button type="button" className="btn" onClick={onClose}>Cancel</button>
-      <button type="button" className="btn primary" disabled={!list?.path || !!err} onClick={() => { onPick(list!.path); onClose() }}>Use this folder</button>
+      <button type="button" className="btn primary" disabled={!list?.path || !!err} onClick={() => { onPick(list!.path); onClose() }}><span className="hide-narrow">Use this folder</span><span className="show-narrow">Use</span></button>
     </>}>
       <div className="stack">
         {workspaces.length > 0 && (

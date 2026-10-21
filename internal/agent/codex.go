@@ -653,6 +653,7 @@ func (s *codexSession) notify(method string, params json.RawMessage) {
 	case "account/rateLimits/updated":
 		var p struct {
 			RateLimits struct {
+				LimitID   string       `json:"limitId"`
 				Primary   *codexWindow `json:"primary"`
 				Secondary *codexWindow `json:"secondary"`
 			} `json:"rateLimits"`
@@ -661,7 +662,7 @@ func (s *codexSession) notify(method string, params json.RawMessage) {
 			var out []Window
 			for _, w := range []*codexWindow{p.RateLimits.Primary, p.RateLimits.Secondary} {
 				if w != nil {
-					out = append(out, Window{Name: windowName(w.WindowDurationMins), Used: float64(w.UsedPercent) / 100, ResetsAt: unixISO(w.ResetsAt)})
+					out = append(out, Window{ID: codexWindowID(p.RateLimits.LimitID, w.WindowDurationMins), Name: windowName(w.WindowDurationMins), Used: float64(w.UsedPercent) / 100, ResetsAt: unixISO(w.ResetsAt)})
 				}
 			}
 			if len(out) > 0 {

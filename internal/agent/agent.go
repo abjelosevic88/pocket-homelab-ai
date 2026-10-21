@@ -102,6 +102,7 @@ type Context struct {
 
 // Window is one rate-limit window of a provider account.
 type Window struct {
+	ID       string  `json:"id"`
 	Name     string  `json:"name"`
 	Used     float64 `json:"used"` // 0..1
 	ResetsAt string  `json:"resets_at,omitempty"`

@@ -803,11 +803,11 @@ func (s *claudeSession) handleRateLimit(raw json.RawMessage) {
 	if json.Unmarshal(raw, &r) != nil {
 		return
 	}
-	names := map[string]string{"five_hour": "5 hours", "seven_day": "7 days", "seven_day_opus": "7 days (Opus)", "seven_day_sonnet": "7 days (Sonnet)"}
+	names := map[string]string{"five_hour": "5 hours", "seven_day": "7 days", "seven_day_opus": "7 days · Opus", "seven_day_sonnet": "7 days · Sonnet"}
 	var out []Window
 	for _, k := range []string{"five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet"} {
 		if w, ok := r.Windows[k]; ok {
-			out = append(out, Window{Name: names[k], Used: w.Utilization, ResetsAt: unixISO(w.ResetsAt)})
+			out = append(out, Window{ID: k, Name: names[k], Used: w.Utilization, ResetsAt: unixISO(w.ResetsAt)})
 		}
 	}
 	if len(out) == 0 && r.Type != "" {
@@ -815,7 +815,7 @@ func (s *claudeSession) handleRateLimit(raw json.RawMessage) {
 		if n == "" {
 			n = r.Type
 		}
-		out = append(out, Window{Name: n, Used: r.Utilization, ResetsAt: unixISO(r.ResetsAt)})
+		out = append(out, Window{ID: r.Type, Name: n, Used: r.Utilization, ResetsAt: unixISO(r.ResetsAt)})
 	}
 	if len(out) > 0 {
 		s.sink.Limits("claude", out)
