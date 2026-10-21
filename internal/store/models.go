@@ -81,6 +81,8 @@ type Thread struct {
 	Source            string `json:"source"` // web | recipe | schedule | import | api
 	SourceRef         string `json:"source_ref"`
 	Preview           string `json:"preview"`
+	LastPrompt        string `json:"last_prompt"`
+	PromptAt          string `json:"prompt_at"`
 	Usage             Usage  `json:"usage"`
 	CreatedAt         string `json:"created_at"`
 	UpdatedAt         string `json:"updated_at"`
@@ -93,6 +95,8 @@ type Thread struct {
 	// External: the session is being driven somewhere else right now (a
 	// terminal, another app) and Pocket AI is following its log.
 	External bool `json:"external"`
+	// Subagents at work right now (background sub-agents of a live session).
+	Subagents any `json:"subagents,omitempty"`
 }
 
 // Item is one stored timeline entry; Data is the JSON the runtime wrote.

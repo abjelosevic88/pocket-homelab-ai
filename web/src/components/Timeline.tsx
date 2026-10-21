@@ -1,5 +1,5 @@
 // A thread's items, in order: what you said, what the agent said and did.
-import { memo, useState } from 'react'
+import { memo, useRef, useState } from 'react'
 import { fmtCost, fmtDuration, fmtTokens } from '../lib/format'
 import type { Item, ItemImage, Todo } from '../lib/types'
 import { Icon } from './icons'
@@ -106,10 +106,18 @@ export const ItemView = memo(function ItemView({ item, showThinking }: { item: I
   }
 })
 
-export function Timeline({ items, showThinking }: { items: Item[]; showThinking: boolean }) {
+export function Timeline({ items, showThinking, streamingKey }: { items: Item[]; showThinking: boolean; streamingKey?: string }) {
+  // Items there when the thread opened render still; anything that arrives
+  // while you watch slides in.
+  const initial = useRef<Set<string> | null>(null)
+  if (initial.current === null) initial.current = new Set(items.map(i => i.key))
   return (
     <div className="timeline">
-      {items.map(it => <ItemView key={it.key} item={it} showThinking={showThinking} />)}
+      {items.map(it => (
+        <div key={it.key} className={`tl-item ${initial.current!.has(it.key) ? '' : 'appear'} ${it.key === streamingKey ? 'streaming' : ''}`}>
+          <ItemView item={it} showThinking={showThinking} />
+        </div>
+      ))}
     </div>
   )
 }

@@ -1,5 +1,6 @@
 // Threads, grouped by time, with search (titles here, all messages on Enter), folder filter and archive.
 import type React from 'react'
+import { RunningList } from './RunningList'
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { api, qs, V1 } from '../lib/api'
@@ -126,6 +127,7 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
         )}
       </div>
 
+      {!hits && !showArchive && <RunningList compact onOpened={onNavigate} />}
       {hits ? (
         <div className="sb-threads">
           <div className="sb-h"><span>Messages matching “{q.trim()}”</span><button type="button" className="btn ghost xs" aria-label="Close search" onClick={() => setHits(null)}><Icon name="x" size={12} /></button></div>

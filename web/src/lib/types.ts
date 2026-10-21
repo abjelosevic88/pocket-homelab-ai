@@ -128,6 +128,9 @@ export interface Thread {
   pending: number
   queued: number
   external?: boolean
+  subagents?: Subagent[]
+  last_prompt?: string
+  prompt_at?: string
 }
 
 export interface ItemImage { id: string; name: string; url: string }
@@ -266,3 +269,20 @@ export interface SystemInfo {
   counts?: Record<string, number>
   [k: string]: unknown
 }
+
+// ---------- running now ----------
+
+export interface RunningItem {
+  provider: ProviderId
+  session_id: string
+  cwd: string
+  title: string
+  prompt: string
+  prompt_at: string
+  updated_at: string
+  origin: 'pocket-ai' | 'paseo' | 'terminal' | 'app'
+  thread_id: string
+  status: 'running' | 'waiting'
+}
+
+export interface Subagent { id: string; description: string; activity?: string; type?: string; started_at: string; tool_uses?: number }

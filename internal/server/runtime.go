@@ -39,6 +39,7 @@ type engine struct {
 	starting  map[string]chan struct{}              // thread id → start in progress
 	followers map[string]*follower                  // thread id → log follower (follow.go)
 	external  map[string]bool                       // thread id → running somewhere else
+	active    []agent.ActiveSession                 // last scan of the CLIs' session files (running.go)
 }
 
 // run is one live CLI process attached to a thread.
@@ -59,6 +60,7 @@ type run struct {
 	stale     bool // settings changed: restart after this turn
 	turnCount int
 	lastText  string // last assistant text of the current turn
+	subs      []agent.Subagent
 }
 
 type queued struct {
@@ -81,6 +83,7 @@ func (rt *engine) start(ctx context.Context) {
 		}
 	}
 	go rt.reaper(ctx)
+	go rt.activeLoop(ctx)
 	go rt.flusher(ctx)
 }
 
@@ -103,6 +106,9 @@ func (rt *engine) decorate(t *store.Thread) *store.Thread {
 		t.Live = true
 		t.Pending = len(r.pending)
 		t.Queued = len(r.queue)
+		if len(r.subs) > 0 {
+			t.Subagents = append([]agent.Subagent(nil), r.subs...)
+		}
 		r.mu.Unlock()
 	}
 	t.External = rt.isExternal(t.ID)
@@ -402,7 +408,7 @@ func (rt *engine) idle(d time.Duration) []string {
 	rt.mu.Lock()
 	for id, r := range rt.runs {
 		r.mu.Lock()
-		if !r.running && len(r.pending) == 0 && len(r.queue) == 0 && time.Since(r.lastUsed) >= d {
+		if !r.running && len(r.pending) == 0 && len(r.queue) == 0 && len(r.subs) == 0 && time.Since(r.lastUsed) >= d {
 			c = append(c, cand{id, r.lastUsed})
 		}
 		r.mu.Unlock()
@@ -857,6 +863,16 @@ func (k *runSink) Request(req agent.Request) {
 	}
 	k.rt.s.publish(t.UserID, "ai.needs_input", t.ID, map[string]any{"thread_id": t.ID, "title": t.Title, "type": req.Type, "what": req.Title})
 	k.rt.notify(t, "input", fmt.Sprintf("%s %s", providerName(t.Provider), what), oneLine(req.Title+"\n"+t.Title, 200))
+}
+
+func (k *runSink) Subagents(list []agent.Subagent) {
+	k.r.mu.Lock()
+	k.r.subs = list
+	k.r.lastUsed = time.Now()
+	k.r.mu.Unlock()
+	if t, err := k.rt.s.store.GetThreadAny(k.rt.ctx, k.r.threadID); err == nil {
+		k.rt.publishThread(t)
+	}
 }
 
 func (k *runSink) TurnStarted() {

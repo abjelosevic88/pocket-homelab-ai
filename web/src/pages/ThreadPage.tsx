@@ -6,7 +6,8 @@ import { useApp } from '../lib/app-context'
 import { fmtCost, providerName, shortPath, threadTitle } from '../lib/format'
 import { openSSE } from '../lib/sse'
 import type { Item, Thread, ThreadDetail } from '../lib/types'
-import { effortOptions, modelOptions, modeOptions, AgentPicker, speedOptions } from '../components/AgentPicker'
+import { RunBar } from '../components/RunBar'
+import { AgentPicker } from '../components/AgentPicker'
 import { ContextMeter, ProviderBadge } from '../components/bits'
 import { Composer, type ComposerHandle } from '../components/Composer'
 import { Icon } from '../components/icons'
@@ -41,6 +42,8 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const composer = useRef<ComposerHandle>(null)
   const atBottomRef = useRef(true)
   const canRun = !!user && (user.role === 'admin' || user.can_run)
+  const { running: runningNow } = useApp()
+  const otherRunning = runningNow.filter(r => r.thread_id !== id).length
 
   // the list's copy is fresher while the detail loads
   const listCopy = threads?.find(t => t.id === id) || null
@@ -177,6 +180,9 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
 
   const p = providers.find(x => x.id === t.provider)
   const running = t.status === 'running'
+  const lastItem = visible[visible.length - 1]
+  // the text the agent is writing right now gets a blinking cursor
+  const streamingKey = running && (lastItem?.kind === 'assistant' || lastItem?.kind === 'thinking') ? lastItem.key : undefined
   const menu: MenuItem[] = [
     { label: t.pinned ? 'Unpin' : 'Pin to top', icon: 'bookmark', onSelect: () => patch({ pinned: !t.pinned }) },
     { label: 'Rename', icon: 'edit', onSelect: () => { setTitleDraft(t.title || threadTitle(t)); setEditingTitle(true) } },
@@ -190,7 +196,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   return (
     <div className="thread-page">
       <header className="thread-head">
-        {onMenu && <button type="button" className="btn ghost icon-only" aria-label="Threads" onClick={onMenu}><Icon name="menu" size={19} /></button>}
+        {onMenu && <button type="button" className="btn ghost icon-only menu-btn" aria-label="Threads" onClick={onMenu}><Icon name="menu" size={19} />{otherRunning > 0 && <span className="menu-run-dot" />}</button>}
         <div className="grow thread-head-main">
           {editingTitle ? (
             <form onSubmit={e => { e.preventDefault(); setEditingTitle(false); if (titleDraft.trim() !== t.title) patch({ title: titleDraft.trim() }) }}>
@@ -210,16 +216,6 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
           </div>
         </div>
         <div className="thread-head-actions">
-          {p && canRun && (
-            <div className="head-pickers">
-              <Select size="sm" className="inline ghost" label="Model" value={t.model} options={modelOptions(p, false).concat(t.model && !p.models.some(m => m.id === t.model) ? [{ value: t.model, label: t.model }] : [])} onChange={v => patch({ model: v })} width={280} />
-              <Select size="sm" className="inline ghost" label="Effort" value={t.effort} options={effortOptions(p, t.model, false).concat(t.effort && !(p.efforts || []).includes(t.effort) ? [{ value: t.effort, label: t.effort }] : [])} onChange={v => patch({ effort: v })} width={180} />
-              <Select size="sm" className="inline ghost" label="Permissions" value={t.mode} options={modeOptions(p, false).concat(t.mode && !p.modes.some(m => m.id === t.mode) ? [{ value: t.mode, label: t.mode }] : [])} onChange={v => patch({ mode: v })} width={300}
-                renderValue={o => <span className="ellipsis"><Icon name="shield" size={12} className="inline-ico" />{o?.label || 'Mode'}</span>} />
-              {speedOptions(p, t.model, false).length > 0 && <Select size="sm" className="inline ghost" label="Speed" value={t.speed || ''} options={speedOptions(p, t.model, false)} onChange={v => patch({ speed: v })} width={300}
-                renderValue={o => <span className="ellipsis"><Icon name="zap" size={12} className="inline-ico" />{o?.label || 'Speed'}</span>} />}
-            </div>
-          )}
           <MenuButton items={menu} label="Thread menu" align="right"><Icon name="more" size={17} /></MenuButton>
         </div>
       </header>
@@ -230,8 +226,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
             <>
               {items.length === 0 && <div className="muted center small" style={{ padding: 30 }}>Nothing here yet.</div>}
               {t.source === 'import' && items.length > 0 && <div className="notice info"><Icon name="history" size={14} /><span>Imported from the server’s {providerName(t.provider)} history — sending a message continues that session.</span></div>}
-              <Timeline items={visible} showThinking={!!settings?.show_thinking} />
-              {running && pending.length === 0 && <div className="working"><span className="working-dots"><span /><span /><span /></span>{providerName(t.provider)} is working…</div>}
+              <Timeline key={id} items={visible} showThinking={!!settings?.show_thinking} streamingKey={streamingKey} />
               {t.status === 'error' && t.error && <div className="notice error"><Icon name="alert" size={14} /><span>{t.error}</span></div>}
             </>
           )}
@@ -241,6 +236,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
       <div className="thread-bottom">
         {newBelow && !atBottom && <button type="button" className="new-below" onClick={() => { toBottom(true); setNewBelow(false) }}><Icon name="arrow-down" size={13} />New messages</button>}
         <div className="thread-bottom-inner">
+          {(running || t.status === 'waiting' || !!t.subagents?.length) && items && <RunBar t={t} items={items} />}
           {pending.length > 0 && (
             <div className="req-dock">
               <RequestCard key={pending[0].key} threadId={id} req={pending[0].request!} onDone={() => setItems(list => list && list.map(x => x.key === pending[0].key && x.request ? { ...x, request: { ...x.request, status: 'answered' } } : x))} />

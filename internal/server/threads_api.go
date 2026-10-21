@@ -29,6 +29,7 @@ func (s *Server) threadRoutes(r chi.Router) {
 	r.Post("/threads/{id}/read", s.handleMarkRead)
 	r.Post("/threads/{id}/fork", s.handleFork)
 	r.Get("/threads/{id}/export.md", s.handleExport)
+	r.Get("/running", s.handleRunning)
 	r.Get("/search", s.handleSearch)
 	r.Get("/usage", s.handleUsage)
 }
@@ -265,6 +266,7 @@ func (s *Server) postMessage(ctx context.Context, u *store.User, t *store.Thread
 	if t.Title == "" {
 		t.Title = titleFrom(text)
 	}
+	t.LastPrompt, t.PromptAt = promptLine(text, len(in.Images)), store.Now()
 	_ = s.store.UpdateThread(ctx, t)
 	queued, err := s.rt.send(t, it.Key, in)
 	if err != nil {
@@ -653,4 +655,17 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"days": all, "providers": prov, "limits": s.rt.limitsSnapshot()})
+}
+
+// promptLine is how a prompt shows in the "Running now" list (the
+// instruction appended to scheduled runs is left out).
+func promptLine(text string, images int) string {
+	if i := strings.Index(text, scheduleSuffix[:20]); i > 0 {
+		text = text[:i]
+	}
+	line := oneLine(text, 300)
+	if line == "" && images > 0 {
+		return "🖼 image"
+	}
+	return line
 }

@@ -9,14 +9,14 @@ import (
 )
 
 const threadCols = `id, user_id, title, provider, model, effort, mode, speed, cwd, workspace_id, provider_session_id, log_offset, status, error,
-	pinned, archived, unread, source, source_ref, preview, usage, created_at, updated_at, activity_at`
+	pinned, archived, unread, source, source_ref, preview, last_prompt, prompt_at, usage, created_at, updated_at, activity_at`
 
 func scanThread(row interface{ Scan(...any) error }) (*Thread, error) {
 	var t Thread
 	var ws sql.NullInt64
 	var usage string
 	if err := row.Scan(&t.ID, &t.UserID, &t.Title, &t.Provider, &t.Model, &t.Effort, &t.Mode, &t.Speed, &t.Cwd, &ws, &t.ProviderSessionID, &t.LogOffset,
-		&t.Status, &t.Error, &t.Pinned, &t.Archived, &t.Unread, &t.Source, &t.SourceRef, &t.Preview, &usage,
+		&t.Status, &t.Error, &t.Pinned, &t.Archived, &t.Unread, &t.Source, &t.SourceRef, &t.Preview, &t.LastPrompt, &t.PromptAt, &usage,
 		&t.CreatedAt, &t.UpdatedAt, &t.ActivityAt); err != nil {
 		return nil, notFound(err)
 	}
@@ -102,10 +102,10 @@ func (s *Store) ListThreads(ctx context.Context, userID int64, f ThreadFilter) (
 func (s *Store) UpdateThread(ctx context.Context, t *Thread) error {
 	t.UpdatedAt = Now()
 	_, err := s.DB.ExecContext(ctx, `UPDATE threads SET title = ?, model = ?, effort = ?, mode = ?, speed = ?, cwd = ?, workspace_id = ?,
-		provider_session_id = ?, log_offset = ?, status = ?, error = ?, pinned = ?, archived = ?, unread = ?, preview = ?, usage = ?,
+		provider_session_id = ?, log_offset = ?, status = ?, error = ?, pinned = ?, archived = ?, unread = ?, preview = ?, last_prompt = ?, prompt_at = ?, usage = ?,
 		updated_at = ?, activity_at = ? WHERE id = ?`,
 		t.Title, t.Model, t.Effort, t.Mode, t.Speed, t.Cwd, nullInt(t.WorkspaceID), t.ProviderSessionID, t.LogOffset, t.Status, t.Error,
-		boolInt(t.Pinned), boolInt(t.Archived), boolInt(t.Unread), t.Preview, jsonMarshal(t.Usage), t.UpdatedAt, t.ActivityAt, t.ID)
+		boolInt(t.Pinned), boolInt(t.Archived), boolInt(t.Unread), t.Preview, t.LastPrompt, t.PromptAt, jsonMarshal(t.Usage), t.UpdatedAt, t.ActivityAt, t.ID)
 	return err
 }
 

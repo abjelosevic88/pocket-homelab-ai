@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { api, V1 } from './api'
 import { openSSE } from './sse'
-import type { AuthStatus, Limits, Provider, Recipe, Settings, SettingsResponse, Thread, User, Workspace } from './types'
+import type { AuthStatus, Limits, Provider, Recipe, Settings, SettingsResponse, Thread, User, Workspace, RunningItem } from './types'
 
 export type ThemeMode = 'system' | 'light' | 'dark'
 
@@ -17,6 +17,7 @@ interface AppState {
   workspaces: Workspace[]
   recipes: Recipe[]
   limits: Limits
+  running: RunningItem[]
   /** The thread open on screen (no push/browser notification for it). */
   viewing: string | null
   setViewing: (id: string | null) => void
@@ -74,6 +75,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [recipes, setRecipes] = useState<Recipe[]>([])
   const [limits, setLimits] = useState<Limits>({})
+  const [running, setRunning] = useState<RunningItem[]>([])
+  const runTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const reloadRunning = useCallback(() => {
+    if (runTimer.current) clearTimeout(runTimer.current)
+    runTimer.current = setTimeout(() => { api.get<RunningItem[]>(`${V1}/running`).then(r => setRunning(r || [])).catch(() => {}) }, 250)
+  }, [])
   const [viewing, setViewingRaw] = useState<string | null>(null)
   const viewingRef = useRef<string | null>(null)
   const setViewing = useCallback((id: string | null) => { viewingRef.current = id; setViewingRaw(id) }, [])
@@ -157,14 +164,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const before = prevStatus.current.get(t.id)
         prevStatus.current.set(t.id, t.status)
         upsertThread(t)
+        if (before !== t.status) reloadRunning()
         if (before && before !== t.status) notifyBrowser(t, before, viewingRef.current, settingsRef.current)
       },
       thread_removed: () => { reloadThreads().catch(() => {}) },
       limits: d => setLimits((d || {}) as Limits),
+      running: () => reloadRunning(),
       ping: () => {},
-    }, { onOpen: () => { setLive(true); reloadThreads().catch(() => {}) }, onDown: () => setLive(false) })
+    }, { onOpen: () => { setLive(true); reloadThreads().catch(() => {}); reloadRunning() }, onDown: () => setLive(false) })
     return () => { close(); setLive(false) }
-  }, [user, upsertThread, reloadThreads])
+  }, [user, upsertThread, reloadThreads, reloadRunning])
 
   // App badge (installed PWA) = threads that need you.
   useEffect(() => {
@@ -186,9 +195,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const value = useMemo<AppState>(() => ({
-    status, user, sr, settings, providers, providersReady, threads, workspaces, recipes, limits, viewing, setViewing, live, themeMode, theme, setThemeMode, refresh,
+    status, user, sr, settings, providers, providersReady, threads, workspaces, recipes, limits, running, viewing, setViewing, live, themeMode, theme, setThemeMode, refresh,
     reloadThreads, reloadWorkspaces, reloadRecipes, reloadProviders, upsertThread, dropThread, saveSettings, setUser,
-  }), [status, user, sr, settings, providers, providersReady, threads, workspaces, recipes, limits, viewing, setViewing, live, themeMode, theme, setThemeMode, refresh, reloadThreads, reloadWorkspaces, reloadRecipes, reloadProviders, upsertThread, dropThread, saveSettings])
+  }), [status, user, sr, settings, providers, providersReady, threads, workspaces, recipes, limits, running, viewing, setViewing, live, themeMode, theme, setThemeMode, refresh, reloadThreads, reloadWorkspaces, reloadRecipes, reloadProviders, upsertThread, dropThread, saveSettings])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

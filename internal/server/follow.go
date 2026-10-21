@@ -153,6 +153,9 @@ func (rt *engine) claudeTick(ctx context.Context, t *store.Thread, path string, 
 			}
 			if op.TurnStarted {
 				ended = false
+				if op.Item != nil {
+					_, _ = rt.s.store.DB.ExecContext(ctx, `UPDATE threads SET last_prompt = ?, prompt_at = ? WHERE id = ?`, promptLine(op.Item.Text, 0), store.Now(), t.ID)
+				}
 				rt.setExternal(t.ID, true)
 			}
 			if op.TurnEnded {

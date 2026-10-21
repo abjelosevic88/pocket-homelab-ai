@@ -223,15 +223,17 @@ export const Composer = React.forwardRef<ComposerHandle, {
         onChange={e => setText(e.target.value)} onKeyDown={onKey} onPaste={onPaste} enterKeyHint={isTouch() ? 'enter' : 'send'} />
       <div className="composer-bar">
         <input ref={fileInput} type="file" accept="image/*" multiple hidden onChange={e => { addFiles(Array.from(e.target.files || [])); e.target.value = '' }} />
-        <button type="button" className="btn ghost icon-only sm" aria-label="Attach images" title="Attach images (or paste / drop them)" disabled={disabled} onClick={() => fileInput.current?.click()}><Icon name="image" size={17} /></button>
+        <button type="button" className="btn ghost icon-only sm attach-btn" aria-label="Attach images" title="Attach images (or paste / drop them)" disabled={disabled} onClick={() => fileInput.current?.click()}><Icon name="plus" size={18} /></button>
         <div className="composer-extra">{footer}</div>
+        {running && <span className="run-ring" title="The agent is working" aria-hidden="true" />}
         {Speech && <button type="button" className={`btn ghost icon-only sm mic-btn ${listening ? 'rec' : ''}`} aria-label={listening ? 'Stop dictation' : 'Dictate'} title={listening ? 'Stop dictation' : 'Dictate'} disabled={disabled} onClick={toggleDictation}><Icon name="mic" size={17} /></button>}
-        {running && onStop && (
-          <button type="button" className="btn icon-only stop-btn" aria-label="Stop" title="Stop (⌘.)" onClick={onStop}><Icon name="stop" size={13} /></button>
+        {running && onStop && !text.trim() && atts.length === 0 ? (
+          <button type="button" className="stop-round" aria-label="Stop" title="Stop (⌘.)" onClick={onStop}><span /></button>
+        ) : (
+          <button type="button" className="btn primary icon-only send-btn" aria-label={running ? 'Queue message' : 'Send'} title={running ? 'Queue — sent when the agent is done' : 'Send'} disabled={!canSend} onClick={send}>
+            {sending ? <Spinner size={14} /> : <Icon name="arrow-up" size={17} strokeWidth={2.2} />}
+          </button>
         )}
-        <button type="button" className="btn primary icon-only send-btn" aria-label={running ? 'Queue message' : 'Send'} title={running ? 'Queue — sent when the agent is done' : 'Send'} disabled={!canSend} onClick={send}>
-          {sending ? <Spinner size={14} /> : <Icon name="arrow-up" size={17} strokeWidth={2.2} />}
-        </button>
       </div>
       {dragging && <div className="drop-overlay"><div><Icon name="image" size={28} /><b>Drop images to attach</b></div></div>}
     </div>

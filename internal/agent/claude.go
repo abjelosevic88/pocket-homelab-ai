@@ -54,6 +54,7 @@ type claudeSession struct {
 	msgKeys   map[string][]string
 	lastUsage struct{ in, out, cached int64 }
 	cost      float64 // cumulative cost reported by this process
+	subs      []Subagent
 }
 
 type claudePending struct {
@@ -363,6 +364,8 @@ func (s *claudeSession) handle(m map[string]json.RawMessage) {
 			}
 		case "compact_boundary":
 			s.notice("info", "Context compacted — older messages were summarised.")
+		case "task_started", "task_progress", "task_updated", "task_notification":
+			s.handleTask(m)
 		}
 	case "stream_event":
 		if p := m["parent_tool_use_id"]; len(p) > 0 && string(p) != "null" {
@@ -896,4 +899,58 @@ func (s *claudeSession) handleControl(id string, raw json.RawMessage) {
 	s.pending[id] = p
 	s.mu.Unlock()
 	s.sink.Request(r)
+}
+
+// handleTask keeps the list of background sub-agents up to date.
+func (s *claudeSession) handleTask(m map[string]json.RawMessage) {
+	var ev struct {
+		Subtype     string `json:"subtype"`
+		TaskID      string `json:"task_id"`
+		Description string `json:"description"`
+		Type        string `json:"subagent_type"`
+		Status      string `json:"status"`
+		Patch       struct {
+			Status string `json:"status"`
+		} `json:"patch"`
+		Usage struct {
+			ToolUses int `json:"tool_uses"`
+		} `json:"usage"`
+	}
+	raw, _ := json.Marshal(m)
+	if json.Unmarshal(raw, &ev) != nil || ev.TaskID == "" {
+		return
+	}
+	s.mu.Lock()
+	idx := -1
+	for i, sa := range s.subs {
+		if sa.ID == ev.TaskID {
+			idx = i
+		}
+	}
+	done := ev.Subtype == "task_notification"
+	switch ev.Patch.Status {
+	case "completed", "failed", "killed", "cancelled", "stopped":
+		done = true
+	}
+	switch {
+	case done:
+		if idx < 0 {
+			s.mu.Unlock()
+			return
+		}
+		s.subs = append(s.subs[:idx], s.subs[idx+1:]...)
+	case ev.Subtype == "task_started":
+		if idx < 0 {
+			s.subs = append(s.subs, Subagent{ID: ev.TaskID, Description: ev.Description, Type: ev.Type, StartedAt: time.Now().UTC().Format(time.RFC3339)})
+		}
+	case ev.Subtype == "task_progress" && idx >= 0:
+		s.subs[idx].Activity = ev.Description
+		s.subs[idx].ToolUses = ev.Usage.ToolUses
+	default:
+		s.mu.Unlock()
+		return
+	}
+	list := append([]Subagent(nil), s.subs...)
+	s.mu.Unlock()
+	s.sink.Subagents(list)
 }

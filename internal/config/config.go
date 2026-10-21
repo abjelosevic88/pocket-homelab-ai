@@ -60,6 +60,8 @@ type Config struct {
 	ClaudeBin   string        // claude executable
 	CodexBin    string        // codex executable
 	ClaudeHome  string        // ~/.claude (session history)
+	CodexHome   string        // ~/.codex (rollout files, for "Running now")
+	PaseoHome   string        // ~/.paseo (to name sessions Paseo drives); "" = off
 	IdleTimeout time.Duration // stop a CLI process after this long without a turn
 	MaxLive     int           // most CLI processes alive at once (oldest idle ones are stopped)
 	UploadMax   int64         // bytes per uploaded image
@@ -149,6 +151,8 @@ func Load() (*Config, error) {
 		c.Home = "/"
 	}
 	c.ClaudeHome = env("CLAUDE_HOME", filepath.Join(c.Home, ".claude"))
+	c.CodexHome = env("CODEX_HOME", filepath.Join(c.Home, ".codex"))
+	c.PaseoHome = env("PASEO_HOME", filepath.Join(c.Home, ".paseo"))
 	for _, r := range strings.Split(env("ROOTS", c.Home), ",") {
 		r = strings.TrimSpace(r)
 		if strings.HasPrefix(r, "~") {

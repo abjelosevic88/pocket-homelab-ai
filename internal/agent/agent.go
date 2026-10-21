@@ -94,6 +94,16 @@ type TurnInfo struct {
 	Interrupted  bool    `json:"interrupted,omitempty"`
 }
 
+// Subagent is a sub-agent at work.
+type Subagent struct {
+	ID          string `json:"id"`
+	Description string `json:"description"`
+	Activity    string `json:"activity,omitempty"` // what it is doing now
+	Type        string `json:"type,omitempty"`
+	StartedAt   string `json:"started_at"`
+	ToolUses    int    `json:"tool_uses,omitempty"`
+}
+
 // Context is how full the model's context window is.
 type Context struct {
 	Tokens int64
@@ -138,6 +148,9 @@ type Sink interface {
 	Request(r Request)
 	TurnStarted()
 	TurnDone(t TurnInfo)
+	// Subagents is the full list of sub-agents working right now (Claude
+	// runs them in the background; they can outlive the turn that started them).
+	Subagents(list []Subagent)
 	Exited(err error)
 }
 

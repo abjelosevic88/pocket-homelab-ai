@@ -5,6 +5,7 @@ import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { shortPath } from '../lib/format'
 import type { ProviderId, Thread } from '../lib/types'
+import { RunningList } from '../components/RunningList'
 import { AgentPicker, type AgentValue, defaultsFor, ProviderToggle } from '../components/AgentPicker'
 import { Composer } from '../components/Composer'
 import { FolderButton } from '../components/FolderPicker'
@@ -23,7 +24,7 @@ function greeting() {
 }
 
 export default function HomePage({ onMenu }: { onMenu?: () => void }) {
-  const { user, settings, providers, providersReady, workspaces, recipes, threads, upsertThread } = useApp()
+  const { user, settings, providers, providersReady, workspaces, recipes, threads, upsertThread, running } = useApp()
   const { toast } = useToast()
   const navigate = useNavigate()
   const runRecipe = useRunRecipe()
@@ -79,7 +80,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
   return (
     <div className="home">
       <header className="home-top">
-        {onMenu && <button type="button" className="btn ghost icon-only" aria-label="Threads" onClick={onMenu}><Icon name="menu" size={19} />{needYou.length > 0 && <span className="menu-badge">{needYou.length}</span>}</button>}
+        {onMenu && <button type="button" className="btn ghost icon-only menu-btn" aria-label="Threads" onClick={onMenu}><Icon name="menu" size={19} />{needYou.length > 0 ? <span className="menu-badge">{needYou.length}</span> : running.length > 0 && <span className="menu-run-dot" />}</button>}
         <span className="grow" />
         <button type="button" className="btn ghost icon-only" aria-label="Settings" onClick={() => navigate('/settings')}><Icon name="settings" size={17} /></button>
       </header>
@@ -115,6 +116,8 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
               )}
             </>
           )}
+
+          <RunningList />
 
           {canRun && (
             <section className="home-sec">

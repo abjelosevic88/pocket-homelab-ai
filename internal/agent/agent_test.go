@@ -38,6 +38,7 @@ func (r *rec) Context(Context)               {}
 func (r *rec) Limits(string, []Window)       {}
 func (r *rec) Request(q Request)             { r.mu.Lock(); r.reqs = append(r.reqs, q); r.mu.Unlock() }
 func (r *rec) TurnStarted()                  {}
+func (r *rec) Subagents([]Subagent)          {}
 func (r *rec) TurnDone(t TurnInfo)           { r.mu.Lock(); r.turns = append(r.turns, t); r.mu.Unlock() }
 func (r *rec) Exited(err error)              { r.exited <- err }
 
