@@ -142,17 +142,25 @@ func (rt *engine) claudeElsewhere(t *store.Thread, path string, scan bool) {
 func (rt *engine) setExtSubs(threadID string, subs []agent.Subagent) {
 	rt.mu.Lock()
 	old := rt.extSubs[threadID]
-	same := len(old) == len(subs)
-	for i := 0; same && i < len(subs); i++ {
-		same = old[i].ID == subs[i].ID && old[i].Activity == subs[i].Activity
+	sameSet := len(old) == len(subs)
+	sameSteps := sameSet
+	for i := 0; sameSet && i < len(subs); i++ {
+		sameSet = old[i].ID == subs[i].ID
+		sameSteps = sameSteps && old[i].Activity == subs[i].Activity
 	}
-	if len(subs) == 0 {
-		delete(rt.extSubs, threadID)
-	} else {
-		rt.extSubs[threadID] = subs
+	// sub-agents coming or going go out at once; only their current step
+	// changing, at most every 15 s (each update re-renders open pages)
+	publish := !sameSet || (!sameSteps && time.Since(rt.extSubsAt[threadID]) > 15*time.Second)
+	if publish || len(subs) == 0 {
+		if len(subs) == 0 {
+			delete(rt.extSubs, threadID)
+		} else {
+			rt.extSubs[threadID] = subs
+		}
+		rt.extSubsAt[threadID] = time.Now()
 	}
 	rt.mu.Unlock()
-	if !same {
+	if publish {
 		if t, err := rt.s.store.GetThreadAny(rt.ctx, threadID); err == nil {
 			rt.publishThread(t)
 		}
