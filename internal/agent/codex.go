@@ -730,7 +730,7 @@ func (s *codexSession) notify(method string, params json.RawMessage) {
 		if dur == 0 {
 			dur = time.Since(s.turnFrom).Milliseconds()
 		}
-		t := TurnInfo{OK: p.Turn.Status == "completed", DurationMS: dur,
+		t := TurnInfo{ID: p.Turn.ID, OK: p.Turn.Status == "completed", DurationMS: dur,
 			InputTokens: s.tokensNow.in - s.tokensBase.in, OutputTokens: s.tokensNow.out - s.tokensBase.out,
 			CachedTokens: s.tokensNow.cached - s.tokensBase.cached}
 		s.turnID = ""

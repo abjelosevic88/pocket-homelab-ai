@@ -6,7 +6,7 @@ import { useApp } from '../lib/app-context'
 import { fmtCost, providerName, shortPath, threadTitle } from '../lib/format'
 import { openSSE } from '../lib/sse'
 import type { Item, Thread, ThreadDetail } from '../lib/types'
-import { RunBar } from '../components/RunBar'
+import { RunBar, useForkNewTab } from '../components/RunBar'
 import { AgentPicker } from '../components/AgentPicker'
 import { ContextMeter, ProviderBadge } from '../components/bits'
 import { Composer, type ComposerHandle } from '../components/Composer'
@@ -42,6 +42,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const composer = useRef<ComposerHandle>(null)
   const atBottomRef = useRef(true)
   const canRun = !!user && (user.role === 'admin' || user.can_run)
+  const forkNewTab = useForkNewTab(id)
   const { running: runningNow } = useApp()
   const otherRunning = runningNow.filter(r => r.thread_id !== id).length
 
@@ -226,7 +227,8 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
             <>
               {items.length === 0 && <div className="muted center small" style={{ padding: 30 }}>Nothing here yet.</div>}
               {t.source === 'import' && items.length > 0 && <div className="notice info"><Icon name="history" size={14} /><span>Imported from the server’s {providerName(t.provider)} history — sending a message continues that session.</span></div>}
-              <Timeline key={id} items={visible} showThinking={!!settings?.show_thinking} streamingKey={streamingKey} />
+              <Timeline key={id} items={visible} showThinking={!!settings?.show_thinking} streamingKey={streamingKey}
+                onFork={t.provider_session_id && canRun && !running ? forkNewTab : undefined} />
               {t.status === 'error' && t.error && <div className="notice error"><Icon name="alert" size={14} /><span>{t.error}</span></div>}
             </>
           )}

@@ -41,10 +41,8 @@ func (r *CodexReader) Read(ctx context.Context, threadID string) ([]Item, string
 	}
 	var t struct {
 		Thread struct {
-			Path  string `json:"path"`
-			Turns []struct {
-				Items []json.RawMessage `json:"items"`
-			} `json:"turns"`
+			Path  string      `json:"path"`
+			Turns []codexTurn `json:"turns"`
 		} `json:"thread"`
 	}
 	if err := json.Unmarshal(res, &t); err != nil {
@@ -56,6 +54,9 @@ func (r *CodexReader) Read(ctx context.Context, threadID string) ([]Item, string
 			if it, ok := CodexItem(raw); ok {
 				items = append(items, it)
 			}
+		}
+		if it, ok := turn.footer(); ok {
+			items = append(items, it)
 		}
 	}
 	return items, t.Thread.Path, nil

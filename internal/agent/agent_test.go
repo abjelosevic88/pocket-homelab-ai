@@ -225,3 +225,31 @@ func TestClaudeTailFollowsAppends(t *testing.T) {
 		t.Fatalf("ops %+v", ops)
 	}
 }
+
+func TestClaudeLogTurnFooter(t *testing.T) {
+	var log ClaudeLog
+	var turns []Item
+	for _, l := range []string{
+		`{"type":"user","uuid":"p1","timestamp":"2026-10-21T10:00:00Z","message":{"role":"user","content":"hi"}}`,
+		`{"type":"assistant","uuid":"a1","timestamp":"2026-10-21T10:00:05Z","message":{"content":[{"type":"text","text":"working"}],"stop_reason":"tool_use"}}`,
+		`{"type":"assistant","uuid":"a2","timestamp":"2026-10-21T10:01:30Z","message":{"content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}}`,
+	} {
+		for _, op := range log.Feed([]byte(l)) {
+			if op.Item != nil && op.Item.Kind == "turn" {
+				turns = append(turns, *op.Item)
+			}
+		}
+	}
+	if len(turns) != 1 || turns[0].Key != "turn-p1" || turns[0].Turn.DurationMS != 90000 {
+		t.Fatalf("turn footer: %+v", turns)
+	}
+}
+
+func TestRealPromptSkipsPaseoSummary(t *testing.T) {
+	if got := realPrompt("<chat-history-summary>\nlong story\n</chat-history-summary>where is my fork?"); got != "where is my fork?" {
+		t.Fatalf("got %q", got)
+	}
+	if got := realPrompt("<chat-history-summary>never closed"); got != "" {
+		t.Fatalf("got %q", got)
+	}
+}

@@ -84,6 +84,7 @@ type Request struct {
 
 // TurnInfo summarises a finished turn.
 type TurnInfo struct {
+	ID           string  `json:"id,omitempty"` // the CLI's own turn id, when it has one (Codex)
 	OK           bool    `json:"ok"`
 	DurationMS   int64   `json:"duration_ms"`
 	CostUSD      float64 `json:"cost_usd"`

@@ -164,6 +164,16 @@ func userText(raw json.RawMessage) string {
 
 func realPrompt(s string) string {
 	t := strings.TrimSpace(s)
+	// Paseo starts a continued conversation with a summary of the earlier one
+	// in front of the new message: the prompt is what follows it.
+	const sumOpen, sumClose = "<chat-history-summary>", "</chat-history-summary>"
+	if strings.HasPrefix(t, sumOpen) {
+		i := strings.Index(t, sumClose)
+		if i < 0 {
+			return ""
+		}
+		t = strings.TrimSpace(t[i+len(sumClose):])
+	}
 	for _, pre := range []string{"<command-", "<local-command", "Caveat:", "<system-reminder", "[Request interrupted", "<bash-", "<task-notification"} {
 		if strings.HasPrefix(t, pre) {
 			return ""
@@ -189,6 +199,9 @@ func FindClaude(claudeHome, sessionID string) (string, error) {
 // session feeds the lines as they are appended).
 type ClaudeLog struct {
 	Cwd string
+
+	promptKey string    // the message that started the current turn
+	promptAt  time.Time // and when
 }
 
 // LogOp is one change a session-file line makes to the timeline.
@@ -210,11 +223,12 @@ type ToolResult struct {
 // Feed parses one line.
 func (l *ClaudeLog) Feed(line []byte) []LogOp {
 	var m struct {
-		Type        string `json:"type"`
-		UUID        string `json:"uuid"`
-		Cwd         string `json:"cwd"`
-		IsMeta      bool   `json:"isMeta"`
-		IsSidechain bool   `json:"isSidechain"`
+		Type        string    `json:"type"`
+		UUID        string    `json:"uuid"`
+		Timestamp   time.Time `json:"timestamp"`
+		Cwd         string    `json:"cwd"`
+		IsMeta      bool      `json:"isMeta"`
+		IsSidechain bool      `json:"isSidechain"`
 		Message     struct {
 			Content    json.RawMessage `json:"content"`
 			StopReason string          `json:"stop_reason"`
@@ -255,6 +269,7 @@ func (l *ClaudeLog) Feed(line []byte) []LogOp {
 		}
 		if t := userText(m.Message.Content); t != "" {
 			ops = append(ops, LogOp{Item: &Item{Key: "u-" + m.UUID, Kind: "user", Text: t}, TurnStarted: true})
+			l.promptKey, l.promptAt = m.UUID, m.Timestamp
 		}
 	case "assistant":
 		var blocks []struct {
@@ -283,6 +298,12 @@ func (l *ClaudeLog) Feed(line []byte) []LogOp {
 		}
 		if m.Message.StopReason == "end_turn" || m.Message.StopReason == "stop_sequence" {
 			ops = append(ops, LogOp{TurnEnded: true})
+			// The log has no turn summary, only timestamps: the footer shows how
+			// long the turn took (a later end of the same turn replaces it).
+			if l.promptKey != "" && !l.promptAt.IsZero() && m.Timestamp.After(l.promptAt) {
+				ops = append(ops, LogOp{Item: &Item{Key: "turn-" + l.promptKey, Kind: "turn",
+					Turn: &TurnInfo{OK: true, DurationMS: m.Timestamp.Sub(l.promptAt).Milliseconds()}}})
+			}
 		}
 	}
 	return ops
@@ -392,6 +413,33 @@ func FileSize(path string) int64 {
 	return fi.Size()
 }
 
+// codexTurn is one turn as `thread/read` returns it.
+type codexTurn struct {
+	ID         string            `json:"id"`
+	Status     string            `json:"status"` // completed | interrupted | failed | inProgress
+	DurationMS int64             `json:"durationMs"`
+	Items      []json.RawMessage `json:"items"`
+	Error      *struct {
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+// footer is the timeline footer of a finished turn (same key as the one
+// Pocket AI writes when it drives the turn itself).
+func (t codexTurn) footer() (Item, bool) {
+	if t.ID == "" || t.DurationMS <= 0 || (t.Status != "completed" && t.Status != "interrupted" && t.Status != "failed") {
+		return Item{}, false
+	}
+	ti := TurnInfo{ID: t.ID, OK: t.Status == "completed", DurationMS: t.DurationMS, Interrupted: t.Status == "interrupted"}
+	if !ti.OK {
+		ti.Error = "Interrupted"
+		if t.Error != nil && t.Error.Message != "" {
+			ti.Error = t.Error.Message
+		}
+	}
+	return Item{Key: "turn-" + t.ID, Kind: "turn", Turn: &ti}, true
+}
+
 // ListCodex lists Codex threads through the app-server, newest first.
 func ListCodex(ctx context.Context, bin, q string, limit int) ([]Past, error) {
 	c, err := startRPC(bin, os.TempDir(), nil)
@@ -457,12 +505,10 @@ func ReadCodex(ctx context.Context, bin, threadID string) (items []Item, cwd, ti
 	}
 	var r struct {
 		Thread struct {
-			Cwd     string `json:"cwd"`
-			Preview string `json:"preview"`
-			Name    string `json:"name"`
-			Turns   []struct {
-				Items []json.RawMessage `json:"items"`
-			} `json:"turns"`
+			Cwd     string      `json:"cwd"`
+			Preview string      `json:"preview"`
+			Name    string      `json:"name"`
+			Turns   []codexTurn `json:"turns"`
 		} `json:"thread"`
 	}
 	if err := json.Unmarshal(res, &r); err != nil {
@@ -476,6 +522,9 @@ func ReadCodex(ctx context.Context, bin, threadID string) (items []Item, cwd, ti
 				}
 				items = append(items, it)
 			}
+		}
+		if it, ok := t.footer(); ok {
+			items = append(items, it)
 		}
 	}
 	return items, r.Thread.Cwd, oneLine(firstNonEmpty(r.Thread.Name, r.Thread.Preview), 140), nil

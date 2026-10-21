@@ -1,7 +1,7 @@
 // A thread's items, in order: what you said, what the agent said and did.
 import { memo, useRef, useState } from 'react'
 import { fmtCost, fmtDuration, fmtTokens } from '../lib/format'
-import type { Item, ItemImage, Todo } from '../lib/types'
+import type { Item, ItemImage, Todo, TurnInfo } from '../lib/types'
 import { Icon } from './icons'
 import { Markdown } from './Markdown'
 import { RequestSummary } from './RequestCard'
@@ -88,34 +88,49 @@ export const ItemView = memo(function ItemView({ item, showThinking }: { item: I
           <span>{item.text}</span>
         </div>
       )
-    case 'turn': {
-      const t = item.turn
-      if (!t) return null
-      const bits = [fmtDuration(t.duration_ms)]
-      if (t.cost_usd) bits.push(fmtCost(t.cost_usd))
-      if (t.input_tokens || t.output_tokens) bits.push(`${fmtTokens(t.input_tokens + t.output_tokens)} tokens`)
-      return (
-        <div className={`turn-foot ${t.ok ? '' : 'err'}`}>
-          {!t.ok && <><Icon name="alert" size={12} /><span>{t.error || 'The turn failed'}</span><span>·</span></>}
-          <span className="tnum">{bits.join(' · ')}</span>
-        </div>
-      )
-    }
+    case 'turn':
+      return item.turn ? <TurnFoot t={item.turn} /> : null
     default:
       return item.text ? <div className="notice info"><span>{item.text}</span></div> : null
   }
 })
 
-export function Timeline({ items, showThinking, streamingKey }: { items: Item[]; showThinking: boolean; streamingKey?: string }) {
+// How long the turn took (and what it cost), under the agent's reply. The
+// last one also carries the fork button.
+function TurnFoot({ t, onFork }: { t: TurnInfo; onFork?: () => void }) {
+  const bits = []
+  if (t.cost_usd) bits.push(fmtCost(t.cost_usd))
+  if (t.input_tokens || t.output_tokens) bits.push(`${fmtTokens(t.input_tokens + t.output_tokens)} tokens`)
+  return (
+    <div className={`turn-foot ${t.ok ? '' : 'err'}`}>
+      {!t.ok && <span className="turn-err"><Icon name="alert" size={12} /><span className="ellipsis">{t.error || 'The turn failed'}</span></span>}
+      <span className="grow" />
+      {bits.length > 0 && <span className="tnum turn-bits">{bits.join(' · ')}</span>}
+      {onFork && <button type="button" className="btn ghost icon-only xs" onClick={onFork} title="Fork into a new tab" aria-label="Fork into a new tab"><Icon name="fork" size={14} /></button>}
+      <span className="run-time tnum" title="How long the agent worked on this"><Icon name="clock" size={12} />{fmtDuration(t.duration_ms)}</span>
+    </div>
+  )
+}
+
+export function Timeline({ items, showThinking, streamingKey, onFork }: { items: Item[]; showThinking: boolean; streamingKey?: string; onFork?: () => void }) {
   // Items there when the thread opened render still; anything that arrives
   // while you watch slides in.
   const initial = useRef<Set<string> | null>(null)
   if (initial.current === null) initial.current = new Set(items.map(i => i.key))
+  // A turn footer straight after another is the same turn read twice (Pocket
+  // AI's own footer and the one from the CLI's log): keep the first.
+  const shown = items.filter((it, i) => !(it.kind === 'turn' && items[i - 1]?.kind === 'turn'))
+  let lastTurn = ''
+  for (let i = shown.length - 1; i >= 0; i--) {
+    if (shown[i].kind === 'turn') { lastTurn = shown[i].key; break }
+    if (shown[i].kind === 'user') break
+  }
   return (
     <div className="timeline">
-      {items.map(it => (
+      {shown.map(it => (
         <div key={it.key} className={`tl-item ${initial.current!.has(it.key) ? '' : 'appear'} ${it.key === streamingKey ? 'streaming' : ''}`}>
-          <ItemView item={it} showThinking={showThinking} />
+          {it.kind === 'turn' && it.turn ? <TurnFoot t={it.turn} onFork={it.key === lastTurn ? onFork : undefined} />
+            : <ItemView item={it} showThinking={showThinking} />}
         </div>
       ))}
     </div>

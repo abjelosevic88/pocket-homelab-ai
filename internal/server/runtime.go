@@ -930,7 +930,13 @@ func (k *runSink) TurnDone(ti agent.TurnInfo) {
 			}
 		}
 	}
-	rt.saveItem(r.threadID, agent.Item{Key: "turn-" + uuid.NewString()[:8], Kind: "turn", Turn: &ti})
+	// Keyed by the CLI's turn id where there is one, so re-reading the session
+	// later (follow.go) finds this footer instead of adding a second one.
+	turnKey := "turn-" + uuid.NewString()[:8]
+	if ti.ID != "" {
+		turnKey = "turn-" + ti.ID
+	}
+	rt.saveItem(r.threadID, agent.Item{Key: turnKey, Kind: "turn", Turn: &ti})
 
 	t, err := rt.s.store.GetThreadAny(rt.ctx, r.threadID)
 	if err != nil {

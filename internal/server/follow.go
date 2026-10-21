@@ -285,6 +285,9 @@ func (rt *engine) reconcileCodex(ctx context.Context, t *store.Thread, items []a
 		if !ok && i < last {
 			continue
 		}
+		if ok && it.Kind == "turn" {
+			continue // Pocket AI's own footer has cost and tokens; the log has only time
+		}
 		if ok && old == string(data) {
 			continue
 		}

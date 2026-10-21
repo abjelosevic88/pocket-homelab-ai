@@ -8,9 +8,24 @@ import { Icon } from './icons'
 import { RunDots, elapsed, useNow } from './RunningList'
 import { errMsg, useToast } from './ui'
 
-export function RunBar({ t, items }: { t: Thread; items: Item[] }) {
+// Fork the thread and open the copy in a new tab. window.open has to happen
+// in the click, before the request, or Safari blocks it.
+export function useForkNewTab(threadId: string) {
   const { upsertThread } = useApp()
   const { toast } = useToast()
+  return async () => {
+    const w = window.open('about:blank', '_blank')
+    try {
+      const n = await api.post<Thread>(`${V1}/threads/${threadId}/fork`)
+      upsertThread(n)
+      if (w) w.location.href = `/t/${n.id}`
+      else window.location.href = `/t/${n.id}`
+    } catch (e) { w?.close(); toast(errMsg(e), 'err') }
+  }
+}
+
+export function RunBar({ t, items }: { t: Thread; items: Item[] }) {
+  const fork = useForkNewTab(t.id)
   const now = useNow(1000)
   const [open, setOpen] = useState(false)
   // live sub-agents reported by the CLI; running Agent tool calls as a fallback
@@ -20,17 +35,6 @@ export function RunBar({ t, items }: { t: Thread; items: Item[] }) {
   const waiting = t.status === 'waiting' || t.pending > 0
   const turnOver = t.status !== 'running' && !waiting
   const since = t.prompt_at || t.activity_at
-
-  // window.open has to happen in the click, before the request, or Safari blocks it
-  const fork = async () => {
-    const w = window.open('about:blank', '_blank')
-    try {
-      const n = await api.post<Thread>(`${V1}/threads/${t.id}/fork`)
-      upsertThread(n)
-      if (w) w.location.href = `/t/${n.id}`
-      else window.location.href = `/t/${n.id}`
-    } catch (e) { w?.close(); toast(errMsg(e), 'err') }
-  }
 
   return (
     <div className="run-bar">
