@@ -44,6 +44,8 @@ type engine struct {
 	extSubsAt map[string]time.Time                 // when extSubs last went out
 	active    []agent.ActiveSession                // last scan of the CLIs' session files (running.go)
 
+	turnBy map[string]int64 // thread id → whose message the running turn answers
+
 	sharesMu sync.RWMutex
 	shares   map[string]store.SharedThread // thread id → owner and shares (shares.go); nil = not loaded yet
 }
@@ -78,7 +80,7 @@ type queued struct {
 func newRuntime(s *Server) *engine {
 	return &engine{s: s, runs: map[string]*run{}, watchers: map[string]map[chan sseEvent]int64{},
 		userSubs: map[int64]map[chan sseEvent]struct{}{}, limits: map[string]*provLimits{}, starting: map[string]chan struct{}{},
-		followers: map[string]*follower{}, external: map[string]bool{}, extSubs: map[string][]agent.Subagent{}, extSubsAt: map[string]time.Time{}}
+		followers: map[string]*follower{}, turnBy: map[string]int64{}, external: map[string]bool{}, extSubs: map[string][]agent.Subagent{}, extSubsAt: map[string]time.Time{}}
 }
 
 func (rt *engine) start(ctx context.Context) {
@@ -526,7 +528,7 @@ func (rt *engine) send(t *store.Thread, key string, in agent.Input) (bool, error
 	r.lastUsed = time.Now()
 	r.lastText = ""
 	r.mu.Unlock()
-	in = rt.withMemory(r, in)
+	in = rt.withMemory(r, in, rt.setTurnSender(t.ID, key, t.UserID))
 	if err := r.sess.Send(in); err != nil {
 		r.mu.Lock()
 		r.running = false
@@ -560,7 +562,7 @@ func (rt *engine) next(r *run) {
 		rt.toThread(r.threadID, sseEvent{Name: "item_removed", Data: map[string]string{"key": q.key}})
 		rt.saveItem(r.threadID, it)
 	}
-	q.in = rt.withMemory(r, q.in)
+	q.in = rt.withMemory(r, q.in, rt.setTurnSender(r.threadID, q.key, r.userID))
 	if err := r.sess.Send(q.in); err != nil {
 		r.mu.Lock()
 		r.running = false
@@ -1358,9 +1360,38 @@ func (s *Server) publish(uid int64, topic, subject string, payload map[string]an
 
 // Resolve preferences at dispatch time, including queued turns, so a forgotten
 // preference is never injected from an old in-memory queue snapshot.
-func (rt *engine) withMemory(r *run, in agent.Input) agent.Input {
+// setTurnSender records whose message (item key) the turn now starting
+// answers: the person in its by_id, else the owner.
+func (rt *engine) setTurnSender(threadID, key string, owner int64) int64 {
+	uid := owner
+	if st, err := rt.s.store.GetItem(rt.ctxOrBackground(), threadID, key); err == nil {
+		var it agent.Item
+		if json.Unmarshal(st.Data, &it) == nil && it.ByID != 0 {
+			uid = it.ByID
+		}
+	}
+	rt.mu.Lock()
+	rt.turnBy[threadID] = uid
+	rt.mu.Unlock()
+	return uid
+}
+
+// turnSender is whose message the running turn answers: Pocket tools use
+// that person's apps.
+func (rt *engine) turnSender(t *store.Thread) int64 {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if uid := rt.turnBy[t.ID]; uid != 0 {
+		return uid
+	}
+	return t.UserID
+}
+
+// withMemory adds the sender's saved memory, but only the owner's: someone
+// chatting in a shared thread doesn't get theirs pulled into it unasked.
+func (rt *engine) withMemory(r *run, in agent.Input, sender int64) agent.Input {
 	t, err := rt.s.store.GetThread(rt.ctx, r.userID, r.threadID)
-	if err != nil {
+	if err != nil || sender != r.userID {
 		return in
 	}
 	in.Text += rt.s.memoryContext(rt.ctx, r.userID, t.NoMemory)

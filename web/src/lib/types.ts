@@ -204,6 +204,9 @@ export interface AgentRequest {
   can_allow_session?: boolean
   status: 'pending' | 'allowed' | 'denied' | 'answered' | 'expired'
   answer?: unknown
+  /** A Pocket app change in a shared chat: whose apps (only they answer it). */
+  for_id?: number
+  for?: string
 }
 
 export interface TurnInfo { ok: boolean; duration_ms: number; cost_usd: number; input_tokens: number; output_tokens: number; error?: string }

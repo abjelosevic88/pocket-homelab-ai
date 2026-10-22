@@ -41,8 +41,9 @@ export function ShareDialog({ thread, onClose, onSaved }: { thread: Thread; onCl
     </>}>
       {ask ? (
         <p className="muted small share-intro">
-          This chat reads your apps as you, so others can only <b>view</b> it: they read the conversation live, but can’t
-          send anything. The raw app results under “Sources & app activity” stay yours.
+          Ask answers each message from <b>the sender’s own apps</b>: your questions use your data, theirs use theirs, and
+          only the person whose apps a change touches can approve it. <b>Can view</b> reads along; <b>Can chat</b> also asks
+          (they need Ask connected). Everyone sees what is said here; raw app results stay with whoever asked.
         </p>
       ) : (
         <p className="muted small share-intro">
@@ -59,13 +60,13 @@ export function ShareDialog({ thread, onClose, onSaved }: { thread: Thread; onCl
               <Avatar name={p.name} email={p.email} size={28} />
               <span className="grow share-person-name">
                 <span className="ellipsis">{p.name}</span>
-                {!p.can_run && !ask && <span className="muted xsmall">May not run agents — view only</span>}
+                {!p.can_run && <span className="muted xsmall">May not run agents — view only</span>}
               </span>
               <Segmented size="sm" label={`Access for ${p.name}`} value={roles[p.id] || ''} onChange={v => setRoles(r => ({ ...r, [p.id]: v }))}
                 options={[
                   { value: '' as Role, label: <Icon name="lock" size={13} />, title: 'No access' },
                   { value: 'view' as Role, label: 'View', title: 'Can view' },
-                  ...(p.can_run && !ask ? [{ value: 'chat' as Role, label: 'Chat', title: 'Can chat' }] : []),
+                  ...(p.can_run ? [{ value: 'chat' as Role, label: 'Chat', title: 'Can chat' }] : []),
                 ]} />
             </div>
           ))}

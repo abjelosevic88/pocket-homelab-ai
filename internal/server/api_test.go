@@ -446,20 +446,51 @@ func TestSharedThreads(t *testing.T) {
 	carol.want("GET", path, nil, 404, nil)
 }
 
-// Ask chats read the owner's apps as the owner: shareable to view, never to chat.
-func TestAskChatsShareViewOnly(t *testing.T) {
+// Shared Ask chats: anyone may chat (no run permission needed), but each
+// message is answered from the sender's own apps, so they need Ask
+// connected, and only the person whose apps a change touches approves it.
+func TestSharedAskChats(t *testing.T) {
 	s, h, root := testServer(t)
-	alice, au := person(t, s, h, "alice@example.com", "member", true)
-	bob, bu := person(t, s, h, "bob@example.com", "member", true)
+	alice, au := person(t, s, h, "alice@example.com", "member", false)
+	bob, bu := person(t, s, h, "bob@example.com", "member", false)
 	th := thread(t, s, au.ID, root)
-	th.Source = "ask"
 	if _, err := s.store.DB.Exec(`UPDATE threads SET source = 'ask' WHERE id = ?`, th.ID); err != nil {
 		t.Fatal(err)
 	}
 	path := "/api/v1/threads/" + th.ID
-	alice.want("PUT", path+"/shares", map[string]any{"shares": []store.ThreadShare{{UserID: bu.ID, Role: "chat"}}}, 400, nil)
-	alice.want("PUT", path+"/shares", map[string]any{"shares": []store.ThreadShare{{UserID: bu.ID, Role: "view"}}}, 200, nil)
-	bob.want("GET", path, nil, 200, nil)
-	bob.want("POST", path+"/messages", map[string]string{"text": "show me her bank balance"}, 403, nil)
-	bob.want("GET", "/api/v1/app-calls?thread="+th.ID, nil, 404, nil)
+	var people struct {
+		People []sharePerson `json:"people"`
+	}
+	alice.want("GET", path+"/shares", nil, 200, &people)
+	if len(people.People) != 1 || !people.People[0].CanRun {
+		t.Fatalf("bob should be offered Chat in an Ask chat: %+v", people.People)
+	}
+	alice.want("PUT", path+"/shares", map[string]any{"shares": []store.ThreadShare{{UserID: bu.ID, Role: "chat"}}}, 200, nil)
+	// no Ask connection of his own: refused, nothing runs on Alice's apps
+	_, body := bob.call("POST", path+"/messages", map[string]string{"text": "show me her bank balance"})
+	if !strings.Contains(string(body), "Connect Ask first") {
+		t.Fatalf("bob without Ask: %s", body)
+	}
+	bob.want("GET", "/api/v1/app-calls?thread="+th.ID, nil, 200, nil) // his own calls only (none)
+
+	// a change waiting for Alice's apps: Bob can't approve it
+	key := struct {
+		S          *Server
+		Thread, ID string
+	}{s, th.ID, "ask-test"}
+	askApprovals.Store(key, askApproval{Thread: th.ID, Answer: make(chan bool, 1), UserID: au.ID})
+	defer askApprovals.Delete(key)
+	bob.want("POST", path+"/requests/ask-test", map[string]string{"decision": "allow"}, 403, nil)
+	if s.askApprover(th.ID, "ask-test") != au.ID {
+		t.Fatal("approval was taken")
+	}
+	// a turn answers whoever sent its message: Pocket tools use their apps
+	s.rt.saveItem(th.ID, agent.Item{Key: "u-bob", Kind: "user", Text: "my spending?", ByID: bu.ID, By: "Bob"})
+	s.rt.saveItem(th.ID, agent.Item{Key: "u-alice", Kind: "user", Text: "and mine?"})
+	if got := s.rt.setTurnSender(th.ID, "u-bob", au.ID); got != bu.ID || s.rt.turnSender(th) != bu.ID {
+		t.Fatalf("bob's turn runs as %d", got)
+	}
+	if got := s.rt.setTurnSender(th.ID, "u-alice", au.ID); got != au.ID || s.rt.turnSender(th) != au.ID {
+		t.Fatalf("alice's turn runs as %d", got)
+	}
 }

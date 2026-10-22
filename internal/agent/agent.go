@@ -91,6 +91,10 @@ type Request struct {
 	CanAllowSession bool            `json:"can_allow_session"`
 	Status          string          `json:"status"` // pending | allowed | denied | answered | expired
 	Answer          any             `json:"answer,omitempty"`
+	// ForID / For: a Pocket app change in a shared thread waits for this
+	// person (their apps); only they may answer it.
+	ForID int64  `json:"for_id,omitempty"`
+	For   string `json:"for,omitempty"`
 }
 
 // TurnInfo summarises a finished turn.

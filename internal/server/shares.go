@@ -45,7 +45,7 @@ func (s *Server) threadAccess(ctx context.Context, u *store.User, id string) (*s
 	if err != nil {
 		return nil, accessNone
 	}
-	if role == "chat" && u.MayRun() {
+	if role == "chat" && (u.MayRun() || t.Source == "ask") { // Ask runs on their own apps, not the server
 		return t, accessChat
 	}
 	return t, accessView
@@ -172,7 +172,7 @@ func (s *Server) handleGetShares(w http.ResponseWriter, r *http.Request) {
 	people := []sharePerson{}
 	for _, u := range users {
 		if u.ID != t.UserID {
-			people = append(people, sharePerson{ID: u.ID, Name: displayName(&u), Email: u.Email, CanRun: u.MayRun()})
+			people = append(people, sharePerson{ID: u.ID, Name: displayName(&u), Email: u.Email, CanRun: u.MayRun() || t.Source == "ask"})
 		}
 	}
 	sort.Slice(people, func(i, j int) bool { return people[i].Name < people[j].Name })
@@ -211,11 +211,7 @@ func (s *Server) handlePutShares(w http.ResponseWriter, r *http.Request) {
 		switch sh.Role {
 		case "view":
 		case "chat":
-			if t.Source == "ask" { // it reads the owner's apps as the owner
-				writeErr(w, http.StatusBadRequest, "Ask chats read your apps as you, so others can only view them")
-				return
-			}
-			if !u.MayRun() {
+			if !u.MayRun() && t.Source != "ask" {
 				writeErr(w, http.StatusBadRequest, displayName(u)+" may not run agents, so they can only view")
 				return
 			}

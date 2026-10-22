@@ -154,6 +154,15 @@ func (s *Server) readApp(ctx context.Context, uid int64, tid, name string, args 
 	return result
 }
 func (s *Server) callPocketTool(ctx, session context.Context, t *store.Thread, sink *runSink, catalog map[string]askTool, raw json.RawMessage) json.RawMessage {
+	// whose apps: the person whose message this turn answers (in a shared
+	// thread that need not be the owner); approvals are theirs too
+	uid := s.rt.turnSender(t)
+	byName := ""
+	if _, shared := s.rt.sharesOf(t.ID); shared || uid != t.UserID {
+		if u, err := s.store.GetUser(ctx, uid); err == nil {
+			byName = displayName(u)
+		}
+	}
 	var call struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
@@ -172,7 +181,7 @@ func (s *Server) callPocketTool(ctx, session context.Context, t *store.Thread, s
 		if json.Unmarshal(call.Arguments, &in) != nil || in.ID < 1 || len(in.Query) > 100 {
 			return toolFailure("Choose a vehicle ID and optional short Money search")
 		}
-		return s.vehicleCosts(ctx, t.UserID, t.ID, catalog, in.ID, in.Query)
+		return s.vehicleCosts(ctx, uid, t.ID, catalog, in.ID, in.Query)
 	}
 	if call.Name == "pocket_find_tools" {
 		var in struct {
@@ -193,10 +202,10 @@ func (s *Server) callPocketTool(ctx, session context.Context, t *store.Thread, s
 		if json.Unmarshal(call.Arguments, &in) != nil || strings.TrimSpace(in.Query) == "" || len(in.Query) > 200 {
 			return toolFailure("Write a short search query")
 		}
-		return toolResult(s.appSearch(ctx, t.UserID, t.ID, catalog, in), false)
+		return toolResult(s.appSearch(ctx, uid, t.ID, catalog, in), false)
 	}
 	if call.Name == "pocket_briefing" {
-		return toolResult(s.briefing(ctx, t.UserID, t.ID, catalog), false)
+		return toolResult(s.briefing(ctx, uid, t.ID, catalog), false)
 	}
 	if call.Name == "pocket_call_tool" {
 		var nested struct {
@@ -214,7 +223,7 @@ func (s *Server) callPocketTool(ctx, session context.Context, t *store.Thread, s
 			ID string `json:"action_id"`
 		}
 		_ = json.Unmarshal(call.Arguments, &in)
-		args, err := s.undoNoteArgs(ctx, t.UserID, in.ID)
+		args, err := s.undoNoteArgs(ctx, uid, in.ID)
 		if err != nil {
 			return toolFailure(err.Error())
 		}
@@ -231,9 +240,9 @@ func (s *Server) callPocketTool(ctx, session context.Context, t *store.Thread, s
 		return toolFailure("Arguments must be an object")
 	}
 	if tool.Annotations.ReadOnly {
-		return s.readApp(ctx, t.UserID, t.ID, call.Name, args)
+		return s.readApp(ctx, uid, t.ID, call.Name, args)
 	}
-	callID := s.startAppCall(ctx, t.UserID, t.ID, call.Name, call.Arguments, true)
+	callID := s.startAppCall(ctx, uid, t.ID, call.Name, call.Arguments, true)
 	if callID == "" {
 		return toolFailure("Could not save the approval record; no change was sent")
 	}
@@ -245,7 +254,7 @@ func (s *Server) callPocketTool(ctx, session context.Context, t *store.Thread, s
 	// Capture a Notes version for a conflict-safe undo; failure does not fabricate an undo.
 	if call.Name == "pocket_notes_update" {
 		if data, ok := args["data"].(map[string]any); ok && data["etag"] != nil {
-			before := s.readApp(ctx, t.UserID, t.ID, "pocket_notes_get", map[string]any{"id": args["id"]})
+			before := s.readApp(ctx, uid, t.ID, "pocket_notes_get", map[string]any{"id": args["id"]})
 			if !toolFailed(before) {
 				_, _ = s.store.DB.ExecContext(ctx, `UPDATE app_calls SET before_state=? WHERE id=?`, string(before), callID)
 				prior := map[string]any{}
@@ -270,9 +279,9 @@ func (s *Server) callPocketTool(ctx, session context.Context, t *store.Thread, s
 		S          *Server
 		Thread, ID string
 	}{s, t.ID, id}
-	askApprovals.Store(key, askApproval{Thread: t.ID, Answer: answer})
+	askApprovals.Store(key, askApproval{Thread: t.ID, Answer: answer, UserID: uid})
 	defer askApprovals.Delete(key)
-	sink.Request(agent.Request{ID: id, Type: "permission", ToolName: call.Name, Title: askActionTitle(call.Name), Input: preview, Status: "pending"})
+	sink.Request(agent.Request{ID: id, Type: "permission", ToolName: call.Name, Title: askActionTitle(call.Name), Input: preview, Status: "pending", ForID: uid, For: byName})
 	approved := false
 	select {
 	case approved = <-answer:
@@ -289,7 +298,7 @@ func (s *Server) callPocketTool(ctx, session context.Context, t *store.Thread, s
 		result = toolFailure("Could not record approval; nothing was sent")
 		return result
 	}
-	token, err := s.askToken(ctx, t.UserID)
+	token, err := s.askToken(ctx, uid)
 	if err != nil {
 		result = toolFailure(err.Error())
 		status = "error"
@@ -304,7 +313,7 @@ func (s *Server) callPocketTool(ctx, session context.Context, t *store.Thread, s
 		status = "error"
 	}
 	if undoID != "" && status == "done" {
-		_, _ = s.store.DB.ExecContext(ctx, `UPDATE app_calls SET status='undone' WHERE id=? AND user_id=?`, undoID, t.UserID)
+		_, _ = s.store.DB.ExecContext(ctx, `UPDATE app_calls SET status='undone' WHERE id=? AND user_id=?`, undoID, uid)
 	}
 	return result
 }

@@ -42,7 +42,8 @@ func (s *Server) threadRoutes(r chi.Router) {
 // requireRun answers 403 unless the person may start agents.
 func (s *Server) requireRun(w http.ResponseWriter, r *http.Request) bool {
 	if id := chi.URLParam(r, "id"); id != "" {
-		if t, err := s.store.GetThread(r.Context(), me(r), id); err == nil && t.Source == "ask" {
+		// Ask runs on the person's own apps, not the server: no run permission needed
+		if t, level := s.threadAccess(r.Context(), userFrom(r.Context()), id); t != nil && t.Source == "ask" && level >= accessChat {
 			return true
 		}
 	}
@@ -282,6 +283,11 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 func (s *Server) postMessage(ctx context.Context, u *store.User, t *store.Thread, text string, uploadIDs []string) (bool, error) {
 	if len(uploadIDs) > 10 {
 		return false, badRequest("Attach at most 10 files per message")
+	}
+	if t.Source == "ask" && u.ID != t.UserID {
+		if _, err := s.askToken(ctx, u.ID); err != nil {
+			return false, badRequest("Connect Ask first (Connect Ask on the start page): your questions here are answered from your own apps")
+		}
 	}
 	in := agent.Input{Text: text}
 	it := agent.Item{Key: "u-" + uuid.NewString(), Kind: "user", Text: text}
@@ -607,6 +613,12 @@ func (s *Server) handleRespond(w http.ResponseWriter, r *http.Request) {
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
+	}
+	if strings.HasPrefix(chi.URLParam(r, "rid"), "ask-") {
+		if who := s.askApprover(t.ID, chi.URLParam(r, "rid")); who != 0 && who != me(r) {
+			writeErr(w, http.StatusForbidden, "this change is for someone else's apps: only they can approve it")
+			return
+		}
 	}
 	if (t.Source == "ask" || strings.HasPrefix(chi.URLParam(r, "rid"), "ask-")) && in.Decision == "allow_session" {
 		writeErr(w, 400, "Approve each Ask change individually")

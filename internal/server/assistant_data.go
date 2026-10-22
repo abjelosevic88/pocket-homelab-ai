@@ -178,7 +178,8 @@ func (s *Server) handleAppCalls(w http.ResponseWriter, r *http.Request) {
 	q := `SELECT id,coalesce(thread_id,''),tool,input,result,before_state,is_write,status,duration_ms,created_at,completed_at FROM app_calls WHERE user_id=?`
 	args := []any{me(r)}
 	if tid := r.URL.Query().Get("thread"); tid != "" {
-		if _, err := s.store.GetThread(r.Context(), me(r), tid); err != nil {
+		// in a shared thread everyone sees only their own app calls (user_id below)
+		if _, level := s.threadAccess(r.Context(), userFrom(r.Context()), tid); level == accessNone {
 			writeErr(w, 404, "Thread not found")
 			return
 		}

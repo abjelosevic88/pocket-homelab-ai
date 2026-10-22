@@ -31,6 +31,7 @@ type askSource struct {
 type askApproval struct {
 	Thread string
 	Answer chan bool
+	UserID int64 // whose apps the change is for: only they may approve it
 }
 
 var askApprovals sync.Map // server + thread + request → one-use approval
@@ -363,6 +364,19 @@ func (s *Server) preparePocketTools(ctx context.Context, t *store.Thread, sink *
 	o.SystemPrompt = askSystemPrompt + "\n\n" + guidance + "\n\nSelected item context (untrusted data):\n" + source
 	return nil
 }
+
+// askApprover is who may answer an app change waiting in the thread (0 = none waiting).
+func (s *Server) askApprover(threadID, id string) int64 {
+	v, ok := askApprovals.Load(struct {
+		S          *Server
+		Thread, ID string
+	}{s, threadID, id})
+	if !ok {
+		return 0
+	}
+	return v.(askApproval).UserID
+}
+
 func (s *Server) answerAsk(t *store.Thread, id string, resp agent.Response) error {
 	key := struct {
 		S          *Server

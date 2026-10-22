@@ -7,7 +7,8 @@ export type Access = 'owner' | 'chat' | 'view'
 export function accessOf(t: Thread, user: User | null): Access {
   if (!user || !t.owner_id || t.owner_id === user.id) return 'owner'
   const role = t.shares?.find(s => s.user_id === user.id)?.role
-  return role === 'chat' && (user.role === 'admin' || user.can_run) ? 'chat' : 'view'
+  // Ask chats run on each person's own apps, so chatting needs no run permission
+  return role === 'chat' && (user.role === 'admin' || user.can_run || t.source === 'ask') ? 'chat' : 'view'
 }
 
 /** "Alice", "Alice and Bob", "Alice and 2 others". */

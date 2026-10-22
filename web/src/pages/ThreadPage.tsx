@@ -140,7 +140,10 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
     else setNewBelow(true)
   }, [items]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const pending = useMemo(() => (items || []).filter(i => i.kind === 'request' && i.request?.status === 'pending'), [items])
+  const allPending = useMemo(() => (items || []).filter(i => i.kind === 'request' && i.request?.status === 'pending'), [items])
+  // a Pocket app change in a shared chat is answered by the person whose apps it touches
+  const pending = useMemo(() => allPending.filter(i => !i.request?.for_id || i.request.for_id === user?.id), [allPending, user])
+  const othersPending = allPending.filter(i => !pending.includes(i))
   // queued messages wait above the reply box, not in the conversation
   const visible = useMemo(() => (items || []).filter(i => !(i.kind === 'request' && i.request?.status === 'pending') && !(i.kind === 'user' && i.queued)), [items])
   const queuedItems = useMemo(() => (items || []).filter(i => i.kind === 'user' && i.queued), [items])
@@ -259,7 +262,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
               <Timeline key={id} threadId={t.provider === 'claude' ? id : undefined} items={visible} onResend={canSend ? resend : undefined} onDropUnsent={canSend ? dropUnsent : undefined} showThinking={!!settings?.show_thinking} streamingKey={streamingKey}
                 onFork={owner && t.source !== 'ask' && t.provider_session_id && canRun && !running ? forkNewTab : undefined}
                 owner={sharedOwner} />
-              {owner && <ThreadEvidence id={id} revision={visible.filter(i => i.kind === 'turn').length} />}
+              <ThreadEvidence id={id} revision={visible.filter(i => i.kind === 'turn').length} />
               {t.status === 'error' && t.error && <div className="notice error"><Icon name="alert" size={14} /><span>{t.error}</span></div>}
             </>
           )}
@@ -272,6 +275,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
           {(running || t.status === 'waiting' || !!t.subagents?.length) && items && <RunBar t={t} items={items} />}
           <QueueStrip threadId={id} queued={queuedItems} agent={t.provider === 'codex' ? 'Codex' : 'Claude'} onClearAll={clearQueue} />
           {pending.length > 0 && !canSend && access === 'view' && <div className="muted xsmall center">The agent is waiting for an answer from {t.owner_name || 'the owner'}.</div>}
+          {othersPending.length > 0 && <div className="muted xsmall center">Waiting for {othersPending[0].request?.for || 'someone'} to approve a change to their apps.</div>}
           {pending.length > 0 && canSend && (
             <div className="req-dock">
               {pending.length > 1 && pending.every(p => p.request?.id.startsWith('ask-')) ? <BatchReview threadId={id} requests={pending.map(p => p.request!)} onDone={load} /> : <>
@@ -287,8 +291,8 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
             <Composer ref={composer} draftKey={id} autoFocus onSend={send} running={running} onStop={t.external && !t.live ? undefined : interrupt} disabled={!!t.external && !t.live}
               placeholder={t.external && !t.live ? 'It is running in another app right now — you can reply here once it has finished' : running ? 'Add a message — it is sent when the agent is done…' : pending.length ? 'Or type an answer…' : `Reply to ${providerName(t.provider)}…`}
               footer={<>
-                {t.source === 'ask' && <span className="muted small">Pocket Ask · each change needs your approval · <a href={t.source_ref} target="_blank" rel="noopener noreferrer">Source item ↗</a></span>}
-                {!owner && <span className="muted small">Chatting in {t.owner_name || 'someone'}’s chat — the agent runs on their login and settings</span>}
+                {t.source === 'ask' && owner && <span className="muted small">Pocket Ask · each change needs your approval · <a href={t.source_ref} target="_blank" rel="noopener noreferrer">Source item ↗</a></span>}
+                {!owner && <span className="muted small">{t.source === 'ask' ? `Shared Ask chat from ${t.owner_name || 'someone'} — your questions use your own apps` : `Chatting in ${t.owner_name || 'someone'}’s chat — the agent runs on their login and settings`}</span>}
                 {owner && p && t.source !== 'ask' && <span className="thread-pickers"><AgentPicker compact showProvider={false} value={{ provider: t.provider, model: t.model, effort: t.effort, mode: t.mode, speed: t.speed || '', account_id: t.account_id || 0 }}
                   onChange={ch => patch(ch as Partial<Thread>)} /></span>}
               </>} />
