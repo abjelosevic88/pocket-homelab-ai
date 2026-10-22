@@ -114,3 +114,19 @@ How it talks to the CLIs: [docs/design.md](docs/design.md).
 
 Go (chi, modernc SQLite with FTS5), React 19 + Vite, marked + DOMPurify. The Pocket Core SDK snapshot is vendored
 in `third_party/pocket-core` and checked by hash in CI. MIT licensed.
+
+## Text generation for linked Pocket apps
+
+Travel, Money, Day and Bookshelf can reuse Pocket AI instead of storing another
+OpenAI API key. Register the updated apps with Core and approve their **Generate
+text** link (`inference:write`) in Core's Links page. Existing app updates do not
+auto-approve new permissions; each person can also disable the link.
+
+`POST /api/v1/inference` accepts `{ "system": "...", "prompt": "...", "json": true }`
+and returns text, model and token usage. It requires a Core delegated token for
+that person, audience `ai`, scope `inference:write`. Such tokens cannot access
+normal account, conversation or agent-control endpoints. Inference uses the
+person's selected Claude account and model, with a private temporary workspace,
+no tools/MCP/hooks, and no saved CLI session. It does not transcribe audio or
+perform web searches. At most four requests run at once, each bounded to 140
+seconds. Busy responses and model failures are surfaced to the calling app.

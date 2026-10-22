@@ -57,6 +57,8 @@ type Server struct {
 	provList []agent.Provider
 	provAt   time.Time
 
+	inferenceSlots chan struct{}
+
 	accts accountState // logins: status cache, sign-ins in progress (accounts.go)
 }
 
@@ -65,6 +67,7 @@ func New(cfg *config.Config, st *store.Store, log *slog.Logger, webFS fs.FS) *Se
 	ua := "PocketAI/" + Version + " (+https://github.com/abjelosevic88/pocket-homelab-ai)"
 	s := &Server{cfg: cfg, store: st, log: log, webFS: webFS, started: time.Now(),
 		accts: accountState{status: map[string]acctStatus{}, logins: map[int64]*loginRun{}}}
+	s.inferenceSlots = make(chan struct{}, 4)
 	s.rt = newRuntime(s)
 	agent.Version = Version
 	s.http = &http.Client{Timeout: 60 * time.Second}
@@ -182,6 +185,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/auth/oidc/start", s.handleOIDCStart)
 		r.Get("/auth/oidc/callback", s.handleOIDCCallback)
 		r.Post("/client-error", s.handleClientError)
+		r.Post("/inference", s.handleInference)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
@@ -356,6 +360,7 @@ func (s *Server) registerWithCore(ctx context.Context) error {
 		Icon:        "/favicon.svg", Version: Version,
 		URL: s.cfg.CoreAppURL, PublicURL: s.cfg.BaseURL, HealthPath: "/healthz", EnvPrefix: "AI",
 		Publishes: []string{"ai.turn_finished", "ai.needs_input", "ai.schedule_attention"},
+		Offers:    []core.Offer{{Scope: core.InferenceScope, Name: "Generate text", Description: "Text-only generation with your Pocket AI account; no tools or conversation access"}},
 	}
 	if s.cfg.BaseURL != "" {
 		m.OIDC = &core.OIDCRequest{RedirectURIs: []string{s.cfg.BaseURL + "/api/v1/auth/oidc/callback"}}
@@ -406,14 +411,14 @@ func (s *Server) handleChanges(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"core_outbox": s.coreOutboxHealth(r.Context()), "status": "ok", "version": Version, "uptime": time.Since(s.started).Round(time.Second).String(),
-		"agents_working": s.rt.busyCount()})
+		"agents_working": s.rt.busyCount() + len(s.inferenceSlots)})
 }
 
 // WaitIdle returns once no thread has a turn running or messages queued (or
 // after max): a restart then cuts nobody off.
 func (s *Server) WaitIdle(ctx context.Context, max time.Duration) {
 	deadline := time.Now().Add(max)
-	for s.rt.busyCount() > 0 && time.Now().Before(deadline) {
+	for (s.rt.busyCount() > 0 || len(s.inferenceSlots) > 0) && time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
 			return

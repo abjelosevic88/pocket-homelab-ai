@@ -1,0 +1,95 @@
+package server
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
+	core "github.com/abjelosevic88/pocket-homelab-core/sdk"
+)
+
+func TestInferenceScopeAndIsolation(t *testing.T) {
+	s, h, root := testServer(t)
+	personal, user := person(t, s, h, "inference@example.test", "member", true)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			Token string `json:"token"`
+		}
+		json.NewDecoder(r.Body).Decode(&input)
+		scope, audience, kind := core.InferenceScope, "ai", "delegated"
+		switch input.Token {
+		case "pcx_wrong_scope":
+			scope = "threads:read"
+		case "pcx_wrong_audience":
+			audience = "money"
+		case "pcx_not_delegated":
+			kind = "user"
+		}
+		json.NewEncoder(w).Encode(map[string]any{"active": input.Token != "pcx_revoked", "kind": kind, "scope": scope, "audience": audience,
+			"user": map[string]any{"id": 123, "sub": "inference-person", "email": "inference@example.test", "name": "Inference"}})
+	}))
+	defer upstream.Close()
+	s.core = core.New(upstream.URL, core.Options{DB: s.store.DB, Token: "app"})
+	// Exercise the real CLI adapter with a deterministic process, never a paid model.
+	bin := filepath.Join(root, "fake-claude")
+	script := `#!/usr/bin/env python3
+import sys,json
+args=sys.argv[1:]
+assert '--restricted' in args and '--no-session-persistence' in args
+assert args[args.index('--tools')+1] == ''
+assert json.loads(args[args.index('--mcp-config')+1]) == {'mcpServers':{}}
+assert args[args.index('--setting-sources')+1] == ''
+for line in sys.stdin:
+    m=json.loads(line)
+    if m.get('type')=='user':
+        print(json.dumps({'type':'assistant','message':{'id':'answer','content':[{'type':'text','text':'{"ok":true}'}]}}),flush=True)
+        print(json.dumps({'type':'result','subtype':'success','usage':{'input_tokens':3,'output_tokens':4}}),flush=True)
+        break
+`
+	if err := os.WriteFile(bin, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	s.cfg.ClaudeBin = bin
+	for _, token := range []string{"", personal.token, "pcx_wrong_scope", "pcx_wrong_audience", "pcx_not_delegated", "pcx_revoked"} {
+		c := &client{t: t, h: h, token: token}
+		code, body := c.do("POST", "/api/v1/inference", "application/json", []byte(`{"prompt":"private","json":true}`))
+		if code != 401 && code != 403 {
+			t.Fatalf("%q bypassed inference auth: %d %s", token, code, body)
+		}
+	}
+	c := &client{t: t, h: h, token: "pcx_valid"}
+	code, body := c.do("POST", "/api/v1/inference", "application/json", []byte(`{"system":"Return JSON","prompt":"private","json":true}`))
+	if code != 200 || !strings.Contains(string(body), `pocket-ai/sonnet`) || !strings.Contains(string(body), `"input_tokens":3`) {
+		t.Fatalf("inference: %d %s", code, body)
+	}
+	for _, path := range []string{"/api/v1/threads", "/api/v1/settings", "/api/v1/accounts"} {
+		code, body := c.do("GET", path, "", nil)
+		if code != 401 {
+			t.Fatalf("inference token reached %s: %d %s", path, code, body)
+		}
+	}
+	code, _ = c.do("POST", "/api/v1/inference", "application/json", []byte(`{"prompt":"private","cwd":"/","tools":["Bash"]}`))
+	if code != 400 {
+		t.Fatalf("accepted arbitrary execution options: %d", code)
+	}
+
+	_, other := person(t, s, h, "another@example.test", "member", true)
+	account := &store.Account{Provider: "claude", Label: "Other person's account", Home: root, UserID: &other.ID}
+	if err := s.store.CreateAccount(t.Context(), account); err != nil {
+		t.Fatal(err)
+	}
+	settings, _ := s.store.GetSettings(t.Context(), user.ID)
+	settings.Claude.Account = account.ID
+	if err := s.store.SaveSettings(t.Context(), user.ID, settings); err != nil {
+		t.Fatal(err)
+	}
+	code, body = c.do("POST", "/api/v1/inference", "application/json", []byte(`{"prompt":"private"}`))
+	if code != 403 {
+		t.Fatalf("used another person's Claude account: %d %s", code, body)
+	}
+}

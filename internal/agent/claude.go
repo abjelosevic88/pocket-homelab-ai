@@ -74,6 +74,9 @@ func StartClaude(ctx context.Context, o Options, sink Sink) (Session, error) {
 	}
 	args := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
 		"--include-partial-messages", "--permission-prompt-tool", "stdio"}
+	if o.Ephemeral {
+		args = append(args, "--no-session-persistence")
+	}
 	if o.Model != "" && o.Model != "default" {
 		args = append(args, "--model", o.Model)
 	}

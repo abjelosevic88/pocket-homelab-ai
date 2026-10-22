@@ -93,7 +93,7 @@ func (s *Server) coreUser(ctx context.Context, tok string) (*store.User, error) 
 	if err != nil {
 		return nil, err
 	}
-	if !in.Active || in.User == nil || in.User.Email == "" {
+	if !in.Active || in.Delegated() || in.User == nil || in.User.Email == "" {
 		return nil, http.ErrNoCookie
 	}
 	return s.coreIdentityUser(ctx, in)

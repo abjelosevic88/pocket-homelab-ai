@@ -172,6 +172,7 @@ type Sink interface {
 
 // Options start a session.
 type Options struct {
+	Ephemeral    bool // do not persist one-shot app generation as a CLI conversation
 	Restricted   bool // Pocket Ask: only the supplied MCP server, no built-in tools
 	MCPConfig    string
 	Bin          string
