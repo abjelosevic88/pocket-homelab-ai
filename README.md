@@ -138,3 +138,18 @@ Pocket AI model selection: AI settings offer the models discovered from your con
 Set your default for connected apps in **Pocket AI → Settings → App defaults**. This is personal to your account and applies on the next text-generation request in Travel, Money, Day, and Bookshelf when the app uses “Use Pocket AI default”. A model chosen in an individual app takes precedence. “Follow Claude default” preserves existing behavior: use your Claude model under Agents, or Sonnet when no specific model is selected. Claude and Codex chat defaults remain under Agents. Core manages app connections and permissions; model preferences live in Pocket AI alongside your connected accounts.
 
 App defaults also include a personal **Effort level for apps**, with levels discovered for the selected model. Automatic preserves Medium where supported and otherwise uses the model’s own default. The shared effort applies to app-specific models too; if a model does not support the selected level, it uses Automatic. Choosing a new central model resets an incompatible effort to Automatic. Chat effort preferences remain separate.
+
+### Edit and rewind messages
+
+Each sent user message has **Edit message** and **Rewind here** actions. Editing
+opens the message for revision; **Save & send** starts a new continuation with the
+edited prompt. Rewind opens a new continuation before that message and restores
+it, with its attachments, as an editable draft. The original conversation stays
+in history. Files and Pocket app changes already made are not undone.
+
+Only the owner can rewind, after the agent and its queue have stopped. The new
+conversation is private and keeps its account, model, effort, workspace, memory
+preference, and Pocket Ask restrictions. Claude continues from an independent
+copy of the earlier session history; Codex uses its native turn-boundary fork.
+An unsupported Codex version or a history mismatch returns an error instead of
+continuing with later messages still in context.

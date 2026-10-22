@@ -47,6 +47,14 @@ async function shrink(file: File): Promise<File> {
 
 let lidSeq = 0
 
+function draftAttachments(key?: string): Attachment[] {
+  if (!key) return []
+  try {
+    const uploads: Upload[] = JSON.parse(sessionStorage.getItem('pai-draft-uploads-' + key) || '[]')
+    return uploads.map(upload => ({ lid: 'a' + ++lidSeq, name: upload.name, preview: upload.url, image: upload.mime.startsWith('image/'), progress: 1, upload }))
+  } catch { return [] }
+}
+
 type SpeechCtor = new () => { lang: string; continuous: boolean; interimResults: boolean; start: () => void; stop: () => void; onresult: ((e: { resultIndex: number; results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> }) => void) | null; onend: (() => void) | null; onerror: ((e: { error: string }) => void) | null }
 
 export const Composer = React.forwardRef<ComposerHandle, {
@@ -63,7 +71,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
   const { settings, recipes } = useApp()
   const { toast } = useToast()
   const [text, setText] = useState(() => (draftKey && sessionStorage.getItem('pai-draft-' + draftKey)) || '')
-  const [atts, setAtts] = useState<Attachment[]>([])
+  const [atts, setAtts] = useState<Attachment[]>(() => draftAttachments(draftKey))
   const [sending, setSending] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [listening, setListening] = useState(false)
@@ -74,8 +82,15 @@ export const Composer = React.forwardRef<ComposerHandle, {
   const Speech = (window as unknown as { SpeechRecognition?: SpeechCtor; webkitSpeechRecognition?: SpeechCtor }).SpeechRecognition || (window as unknown as { webkitSpeechRecognition?: SpeechCtor }).webkitSpeechRecognition
 
   // drafts survive switching threads
-  useEffect(() => { if (draftKey) setText(sessionStorage.getItem('pai-draft-' + draftKey) || '') }, [draftKey])
+  useEffect(() => { if (draftKey) { setText(sessionStorage.getItem('pai-draft-' + draftKey) || ''); setAtts(draftAttachments(draftKey)) } }, [draftKey])
   useEffect(() => { if (draftKey) { if (text) sessionStorage.setItem('pai-draft-' + draftKey, text); else sessionStorage.removeItem('pai-draft-' + draftKey) } }, [text, draftKey])
+
+  useEffect(() => {
+    if (!draftKey) return
+    const uploads = atts.flatMap(a => a.upload ? [a.upload] : [])
+    if (uploads.length) sessionStorage.setItem('pai-draft-uploads-' + draftKey, JSON.stringify(uploads))
+    else sessionStorage.removeItem('pai-draft-uploads-' + draftKey)
+  }, [atts, draftKey])
 
   useLayoutEffect(() => {
     const el = ta.current

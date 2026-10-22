@@ -510,3 +510,8 @@ button.privacy-badge:disabled { cursor: default; }
 .privacy-badge.sm.icon-only { width: 16px; padding: 0; justify-content: center; background: transparent; color: var(--faint); }
 .privacy-badge.sm.icon-only.shared { color: var(--accent); }
 .callout.ask-connect { align-items: center; }
+
+.message-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; margin: 2px 0 10px; color: var(--muted); }
+.message-actions .btn { min-height: 32px; }
+.message-editor { display: block; width: 100%; min-height: 140px; max-height: 50dvh; resize: vertical; margin: 8px 0 12px; }
+@media (pointer: coarse) { .message-actions .btn { min-height: 44px; } }
