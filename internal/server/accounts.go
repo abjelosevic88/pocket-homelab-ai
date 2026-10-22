@@ -163,6 +163,11 @@ func (s *Server) accountStatus(ctx context.Context, provider string, id int64, h
 	var env []string
 	if id != 0 {
 		env = agent.AccountEnv(provider, home)
+		if fi, err := os.Stat(home); err != nil || !fi.IsDir() {
+			st := acctStatus{Error: "Its folder " + home + " is missing on the server. Remove the account and add it again.", at: time.Now()}
+			st.CheckedAt = store.FormatTime(st.at)
+			return st
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()

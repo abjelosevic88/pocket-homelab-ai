@@ -11,6 +11,9 @@ import { Icon } from '../../components/icons'
 import { Confirm, CopyField, errMsg, Field, MenuButton, Modal, Spinner, useAsync, useToast } from '../../components/ui'
 import { ago, Section, StatusDot } from './common'
 
+/** "max" → "Max", "PRO" → "Pro". */
+const planName = (p: string) => p.length > 1 ? p[0].toUpperCase() + p.slice(1).toLowerCase() : p
+
 export function AccountsSection() {
   const { user, reloadAccounts } = useApp()
   const { toast } = useToast()
@@ -23,7 +26,7 @@ export function AccountsSection() {
   const [signIn, setSignIn] = useState<Account | null>(null)
   const [del, setDel] = useState<Account | null>(null)
   const done = () => { list.reload(); reloadAccounts().catch(() => {}) }
-  const who = (a: Account) => a.default ? 'Everyone' : a.user_id == null ? 'Everyone who may run agents' : (people.data?.find(p => p.id === a.user_id)?.name || 'One person')
+  const who = (a: Account) => a.default ? 'Everyone' : a.user_id == null ? 'Everyone who may run agents' : 'Only ' + (people.data?.find(p => p.id === a.user_id)?.name || 'One person')
 
   const signOut = async (a: Account) => {
     try { await api.post(`${V1}/accounts/${a.id}/logout`); toast('Signed out'); done() } catch (e) { toast(errMsg(e), 'err') }
@@ -37,31 +40,43 @@ export function AccountsSection() {
         {isAdmin && <button type="button" className="btn primary sm" onClick={() => setAdding(true)}><Icon name="plus" size={14} />Add account</button>}
       </>}>
       {!list.data ? <div className="loading"><Spinner /> Checking the logins…</div> : (
-        <div className="set-people">
-          {list.data.map(a => (
-            <div key={`${a.provider}-${a.id}`} className="set-person">
-              <span className={`prov-dot prov-${a.provider}`} />
-              <div className="grow" style={{ minWidth: 0 }}>
-                <div className="set-person-name">{a.label}
-                  {a.signed_in ? <span className="badge ok">{a.plan || 'Signed in'}</span> : a.error ? <span className="badge danger">Error</span> : <span className="badge">Not signed in</span>}
-                </div>
-                <div className="muted small ellipsis" title={a.home}>
-                  {a.provider === 'claude' ? 'Claude Code' : 'Codex'}{a.email && <> · {a.email}</>} · <code>{a.home.replace(/^\/home\/[^/]+/, '~')}</code>{!a.default && <> · {who(a)}</>}
-                </div>
-                {a.error && <div className="danger-text xsmall ellipsis" title={a.error}>{a.error}</div>}
+        <div className="acct-groups">
+          {(['claude', 'codex'] as ProviderId[]).map(pid => {
+            const rows = list.data!.filter(a => a.provider === pid)
+            if (!rows.length) return null
+            return (
+              <div key={pid} className="acct-group">
+                <div className="acct-group-h"><span className={`prov-dot prov-${pid}`} />{pid === 'claude' ? 'Claude Code' : 'Codex'}</div>
+                {rows.map(a => (
+                  <div key={a.id} className="acct-row">
+                    <StatusDot status={a.signed_in ? 'ok' : a.error ? 'error' : 'off'}
+                      title={(a.signed_in ? 'Signed in' : a.error ? 'Error' : 'Not signed in') + (a.checked_at ? ` · checked ${ago(a.checked_at)}` : '')} />
+                    <div className="acct-main">
+                      <div className="acct-name">
+                        <span className="ellipsis">{a.label}</span>
+                        {a.signed_in ? (a.plan && <span className="badge ok">{planName(a.plan)}</span>) : a.error ? <span className="badge danger">Error</span> : <span className="badge">Not signed in</span>}
+                        {a.default && <span className="badge">Default</span>}
+                      </div>
+                      {a.email && <div className="acct-email ellipsis">{a.email}</div>}
+                      <div className="acct-meta"><code>{a.home.replace(/^\/home\/[^/]+/, '~')}</code>{!a.default && <span>{who(a)}</span>}</div>
+                      {a.error && <div className="danger-text xsmall" title={a.error}>{a.error}</div>}
+                    </div>
+                    <div className="acct-actions">
+                      {isAdmin && !a.default && (
+                        <MenuButton label={`More for ${a.label}`} align="right" items={[
+                          { label: a.signed_in ? 'Sign in again…' : 'Sign in…', icon: 'key', onSelect: () => setSignIn(a) },
+                          { label: 'Edit…', icon: 'edit', onSelect: () => setEdit(a) },
+                          ...(a.signed_in ? [{ label: 'Sign out', icon: 'log-out', onSelect: () => signOut(a) }] : []),
+                          'sep',
+                          { label: 'Remove…', icon: 'trash', danger: true, onSelect: () => setDel(a) },
+                        ]}><Icon name="more" size={16} /></MenuButton>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
-              <StatusDot status={a.signed_in ? 'ok' : a.error ? 'error' : 'off'} title={a.checked_at ? `Checked ${ago(a.checked_at)}` : undefined} />
-              {isAdmin && !a.default && (
-                <MenuButton label={`More for ${a.label}`} align="right" items={[
-                  { label: a.signed_in ? 'Sign in again…' : 'Sign in…', icon: 'key', onSelect: () => setSignIn(a) },
-                  { label: 'Edit…', icon: 'edit', onSelect: () => setEdit(a) },
-                  ...(a.signed_in ? [{ label: 'Sign out', icon: 'log-out', onSelect: () => signOut(a) }] : []),
-                  'sep',
-                  { label: 'Remove…', icon: 'trash', danger: true, onSelect: () => setDel(a) },
-                ]}><Icon name="more" size={16} /></MenuButton>
-              )}
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
       {list.error && <p className="danger-text small">{list.error}</p>}
