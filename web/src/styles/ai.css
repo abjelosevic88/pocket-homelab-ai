@@ -103,7 +103,11 @@
 .starter:hover:not(:disabled) { border-color: var(--border-strong); }
 .starter.on { border-color: var(--accent); background: var(--accent-soft); }
 .starter:disabled { opacity: .5; cursor: default; }
+.inline-switch { display: flex; align-items: center; gap: 10px; cursor: pointer; font-weight: 550; }
+.inline-switch .switch { flex-shrink: 0; }
 .inline-switch.top { align-items: flex-start; }
+.inline-switch.top b { font-weight: 600; }
+.inline-switch.top .muted { display: inline-block; margin-top: 2px; font-weight: 400; line-height: 1.45; }
 .inline-switch.top .switch { margin-top: 2px; }
 .pal-emoji { font-size: 16px; }
 .ws-dot { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; color: #fff; flex-shrink: 0; }

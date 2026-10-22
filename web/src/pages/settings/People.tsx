@@ -80,7 +80,7 @@ function PersonDialog({ person, onClose, onSaved }: { person: Partial<User>; onC
         {f.role === 'member' && (
           <label className="inline-switch top">
             <Switch checked={f.can_run} onChange={v => setF({ ...f, can_run: v })} label="May run agents" />
-            <span><b>May run agents</b><br /><span className="muted small">Agents run as this server’s user account, with its files and logins — only for people you trust with a shell.</span></span>
+            <span className="grow"><b>May run agents</b><br /><span className="muted small">Agents run as this server’s user account, with its files and logins — only for people you trust with a shell.</span></span>
           </label>
         )}
       </div>
