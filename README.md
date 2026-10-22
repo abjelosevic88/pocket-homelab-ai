@@ -130,3 +130,5 @@ person's selected Claude account and model, with a private temporary workspace,
 no tools/MCP/hooks, and no saved CLI session. It does not transcribe audio or
 perform web searches. At most four requests run at once, each bounded to 140
 seconds. Busy responses and model failures are surfaced to the calling app.
+
+Pocket AI model selection: AI settings offer the models discovered from your connected Claude account. “Use Pocket AI default” follows your current model in Pocket AI (Sonnet when no model is set). An explicit choice is saved per person in this app and never changes the Pocket AI default or your OpenAI model. Loading models does not create a chat or send a generation prompt. If a saved model is no longer offered, choose another model or return to the default; generation does not silently substitute a different model.

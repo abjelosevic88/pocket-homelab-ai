@@ -27,6 +27,16 @@ func cliVersion(ctx context.Context, bin string) (string, error) {
 // ProbeClaude asks Claude Code for its version, models and account without
 // sending a prompt (the initialize handshake only).
 func ProbeClaude(ctx context.Context, bin, cwd string, env []string) Provider {
+	return probeClaude(ctx, bin, cwd, env, false)
+}
+
+// ProbeInferenceClaude discovers models in an empty workspace without tools,
+// hooks, persisted sessions or a generation prompt. No guessed fallback list.
+func ProbeInferenceClaude(ctx context.Context, bin, cwd string, env []string) Provider {
+	return probeClaude(ctx, bin, cwd, env, true)
+}
+
+func probeClaude(ctx context.Context, bin, cwd string, env []string, isolated bool) Provider {
 	if bin == "" {
 		bin = "claude"
 	}
@@ -43,8 +53,14 @@ func ProbeClaude(ctx context.Context, bin, cwd string, env []string) Provider {
 
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-prompt-tool", "stdio",
-		"--settings", `{"fastMode":true}`)
+	args := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-prompt-tool", "stdio"}
+	if isolated {
+		p.Models = nil
+		args = append(args, "--restricted", "--no-session-persistence", "--tools", "", "--mcp-config", `{"mcpServers":{}}`, "--strict-mcp-config", "--setting-sources", "", "--settings", `{"disableAllHooks":true}`)
+	} else {
+		args = append(args, "--settings", `{"fastMode":true}`)
+	}
+	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = cwd
 	cmd.Env = append(os.Environ(), env...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

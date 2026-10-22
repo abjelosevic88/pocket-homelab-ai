@@ -35,6 +35,7 @@ type InferenceClient struct {
 	core  *Client
 	email string
 	err   error
+	model string
 }
 
 // SelectAI returns nil only when direct OpenAI is selected. A Core outage is
@@ -83,7 +84,53 @@ func (c *Client) SelectAI(ctx context.Context, email, provider string, directRea
 	return nil, status
 }
 
+// WithModel returns a request client with an app-specific override. Empty means
+// use the person's current Pocket AI default; nil keeps direct OpenAI selected.
+func (c *InferenceClient) WithModel(model string) *InferenceClient {
+	if c == nil {
+		return nil
+	}
+	copy := *c
+	copy.model = model
+	return &copy
+}
+
+// ValidInferenceModel validates stored identifiers; Pocket AI checks membership
+// in the connected account's discovered model list before running an override.
+func ValidInferenceModel(model string) bool {
+	if len(model) > 160 {
+		return false
+	}
+	for _, c := range model {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("-_.:/[]", c)) {
+			return false
+		}
+	}
+	return true
+}
+
+type InferenceModel struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+type InferenceModels struct {
+	Models       []InferenceModel `json:"models"`
+	DefaultModel string           `json:"default_model"`
+	DefaultName  string           `json:"default_name"`
+}
+
+func (c *InferenceClient) Models(ctx context.Context) (InferenceModels, error) {
+	var out InferenceModels
+	ctx, cancel := context.WithTimeout(ctx, 40*time.Second)
+	defer cancel()
+	err := c.request(ctx, http.MethodGet, "/api/v1/inference/models", nil, &out)
+	return out, err
+}
+
 type InferenceRequest struct {
+	Model  string `json:"model,omitempty"`
 	System string `json:"system"`
 	Prompt string `json:"prompt"`
 	JSON   bool   `json:"json"`
@@ -98,30 +145,42 @@ type InferenceReply struct {
 
 func (c *InferenceClient) Complete(ctx context.Context, system, prompt string, jsonMode bool) (InferenceReply, error) {
 	var out InferenceReply
-	if c.err != nil {
-		return out, c.err
-	}
 	ctx, cancel := context.WithTimeout(ctx, 150*time.Second)
 	defer cancel()
-	// Recheck grants for every invocation, including background jobs.
+	raw, err := json.Marshal(InferenceRequest{System: system, Prompt: prompt, JSON: jsonMode, Model: c.model})
+	if err != nil {
+		return out, err
+	}
+	if err := c.request(ctx, http.MethodPost, "/api/v1/inference", raw, &out); err != nil {
+		return out, err
+	}
+	if strings.TrimSpace(out.Text) == "" {
+		return out, errors.New("Pocket AI returned no answer")
+	}
+	return out, nil
+}
+
+func (c *InferenceClient) request(ctx context.Context, method, path string, body []byte, out any) error {
+	if c.err != nil {
+		return c.err
+	}
+	// Recheck grants for model discovery as well as each generation.
 	token, err := c.core.ActAs(ctx, c.email, "ai", InferenceScope)
 	if err != nil {
-		return out, err
+		return err
 	}
-	raw, err := json.Marshal(InferenceRequest{System: system, Prompt: prompt, JSON: jsonMode})
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(token.URL, "/")+path, bytes.NewReader(body))
 	if err != nil {
-		return out, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(token.URL, "/")+"/api/v1/inference", bytes.NewReader(raw))
-	if err != nil {
-		return out, err
+		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
-	req.Header.Set("Content-Type", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	client := &http.Client{Timeout: 150 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	res, err := client.Do(req)
 	if err != nil {
-		return out, fmt.Errorf("Pocket AI: %w", err)
+		return fmt.Errorf("Pocket AI: %w", err)
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
@@ -129,13 +188,7 @@ func (c *InferenceClient) Complete(ctx context.Context, system, prompt string, j
 			Error string `json:"error"`
 		}
 		_ = json.NewDecoder(io.LimitReader(res.Body, 64<<10)).Decode(&e)
-		return out, fmt.Errorf("Pocket AI HTTP %d: %s", res.StatusCode, e.Error)
+		return fmt.Errorf("Pocket AI HTTP %d: %s", res.StatusCode, e.Error)
 	}
-	if err := json.NewDecoder(io.LimitReader(res.Body, 4<<20)).Decode(&out); err != nil {
-		return out, err
-	}
-	if strings.TrimSpace(out.Text) == "" {
-		return out, errors.New("Pocket AI returned no answer")
-	}
-	return out, nil
+	return json.NewDecoder(io.LimitReader(res.Body, 4<<20)).Decode(out)
 }

@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -33,17 +35,20 @@ func (s *Server) handleInference(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body core.InferenceRequest
-	r.Body = http.MaxBytesReader(w, r.Body, 512<<10)
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&body); err != nil || strings.TrimSpace(body.Prompt) == "" || len(body.Prompt)+len(body.System) > 300000 {
-		writeErr(w, 400, "provide a prompt and system instructions totaling at most 300,000 bytes")
-		return
+	if r.Method == http.MethodPost {
+		r.Body = http.MaxBytesReader(w, r.Body, 512<<10)
+		dec := json.NewDecoder(r.Body)
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&body); err != nil || strings.TrimSpace(body.Prompt) == "" || len(body.Prompt)+len(body.System) > 300000 {
+			writeErr(w, 400, "provide a prompt and system instructions totaling at most 300,000 bytes")
+			return
+		}
+		if dec.Decode(new(any)) != io.EOF {
+			writeErr(w, 400, "provide one JSON request object")
+			return
+		}
 	}
-	if dec.Decode(new(any)) != io.EOF {
-		writeErr(w, 400, "provide one JSON request object")
-		return
-	}
+
 	select {
 	case s.inferenceSlots <- struct{}{}:
 		defer func() { <-s.inferenceSlots }()
@@ -86,13 +91,51 @@ func (s *Server) handleInference(w http.ResponseWriter, r *http.Request) {
 	if model == "" || model == "default" {
 		model = "sonnet"
 	}
+	effort := "medium"
+	if r.Method == http.MethodGet || body.Model != "" {
+		models, err := s.inferenceModels(r.Context(), fmt.Sprintf("%d:%s", u.ID, home), home, cwd)
+		if err != nil {
+			writeErr(w, 503, "Could not load models from your Claude account; try again shortly")
+			return
+		}
+		if r.Method == http.MethodGet {
+			out := core.InferenceModels{Models: []core.InferenceModel{}, DefaultModel: model, DefaultName: model}
+			for _, m := range models {
+				out.Models = append(out.Models, m.InferenceModel)
+				if m.ID == model {
+					out.DefaultName = m.Name
+				}
+			}
+			writeJSON(w, 200, out)
+			return
+		}
+		found := false
+		for _, m := range models {
+			if m.ID == body.Model {
+				effort = ""
+				for _, e := range m.efforts {
+					if e == "medium" {
+						effort = e
+						break
+					}
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			writeErr(w, 400, "This model is no longer offered by your Claude account; choose an available model or Use Pocket AI default")
+			return
+		}
+		model = body.Model
+	}
 	system := body.System
 	if body.JSON {
 		system += "\nReturn only one valid JSON object. No markdown fences or commentary."
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 140*time.Second)
 	defer cancel()
-	text, usage, err := agent.CompleteClaude(ctx, agent.Options{Bin: s.cfg.ClaudeBin, Cwd: cwd, Model: model, Effort: "medium", SystemPrompt: system, Env: agent.AccountEnv("claude", home), Log: s.log}, body.Prompt)
+	text, usage, err := agent.CompleteClaude(ctx, agent.Options{Bin: s.cfg.ClaudeBin, Cwd: cwd, Model: model, Effort: effort, SystemPrompt: system, Env: agent.AccountEnv("claude", home), Log: s.log}, body.Prompt)
 	if err != nil {
 		s.log.Warn("app inference failed", "user", u.ID, "err", err)
 		writeErr(w, 502, "Pocket AI could not generate an answer; check your Claude account in Pocket AI")
@@ -106,4 +149,49 @@ func (s *Server) handleInference(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, 200, core.InferenceReply{Text: text, Model: "pocket-ai/" + model, InputTokens: int(usage.InputTokens), OutputTokens: int(usage.OutputTokens)})
+}
+
+type inferenceModel struct {
+	core.InferenceModel
+	efforts []string
+}
+
+type inferenceModelEntry struct {
+	models []inferenceModel
+	at     time.Time
+}
+
+// Cache only catalog data, scoped to the caller and selected account. Account
+// access and Core grants are checked on every request before consulting this.
+func (s *Server) inferenceModels(ctx context.Context, key, home, cwd string) ([]inferenceModel, error) {
+	s.inferenceModelsMu.Lock()
+	defer s.inferenceModelsMu.Unlock()
+	if cached, ok := s.inferenceModelCache[key]; ok && time.Since(cached.at) < 5*time.Minute {
+		return cached.models, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	provider := agent.ProbeInferenceClaude(ctx, s.cfg.ClaudeBin, cwd, agent.AccountEnv("claude", home))
+	models := []inferenceModel{}
+	for _, m := range provider.Models {
+		// "default" is represented by the explicit follow-Pocket-AI option.
+		if m.ID != "default" && m.ID != "" && core.ValidInferenceModel(m.ID) {
+			models = append(models, inferenceModel{InferenceModel: core.InferenceModel{ID: m.ID, Name: m.Name, Description: m.Description}, efforts: m.Efforts})
+		}
+	}
+	if !provider.Available || len(models) == 0 {
+		return nil, errors.New("model discovery unavailable")
+	}
+	if s.inferenceModelCache == nil {
+		s.inferenceModelCache = map[string]inferenceModelEntry{}
+	}
+	// Evict expired entries so old accounts do not accumulate indefinitely.
+	for k, v := range s.inferenceModelCache {
+		if time.Since(v.at) >= 5*time.Minute {
+			delete(s.inferenceModelCache, k)
+		}
+	}
+	s.inferenceModelCache[key] = inferenceModelEntry{models: models, at: time.Now()}
+	return models, nil
 }

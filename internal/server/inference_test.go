@@ -40,12 +40,18 @@ func TestInferenceScopeAndIsolation(t *testing.T) {
 	script := `#!/usr/bin/env python3
 import sys,json
 args=sys.argv[1:]
+if args == ['--version']:
+    print('test (Claude Code)')
+    sys.exit(0)
 assert '--restricted' in args and '--no-session-persistence' in args
 assert args[args.index('--tools')+1] == ''
 assert json.loads(args[args.index('--mcp-config')+1]) == {'mcpServers':{}}
 assert args[args.index('--setting-sources')+1] == ''
 for line in sys.stdin:
     m=json.loads(line)
+    if m.get('type')=='control_request' and m.get('request_id')=='probe':
+        print(json.dumps({'type':'control_response','response':{'request_id':'probe','response':{'models':[{'value':'default','displayName':'Default'},{'value':'sonnet','displayName':'Test Sonnet'},{'value':'opus','displayName':'Test Opus'}]}}}),flush=True)
+        continue
     if m.get('type')=='user':
         print(json.dumps({'type':'assistant','message':{'id':'answer','content':[{'type':'text','text':'{"ok":true}'}]}}),flush=True)
         print(json.dumps({'type':'result','subtype':'success','usage':{'input_tokens':3,'output_tokens':4}}),flush=True)
@@ -61,11 +67,45 @@ for line in sys.stdin:
 		if code != 401 && code != 403 {
 			t.Fatalf("%q bypassed inference auth: %d %s", token, code, body)
 		}
+		code, body = c.do("GET", "/api/v1/inference/models", "", nil)
+		if code != 401 && code != 403 {
+			t.Fatalf("%q bypassed model auth: %d %s", token, code, body)
+		}
+
 	}
 	c := &client{t: t, h: h, token: "pcx_valid"}
 	code, body := c.do("POST", "/api/v1/inference", "application/json", []byte(`{"system":"Return JSON","prompt":"private","json":true}`))
 	if code != 200 || !strings.Contains(string(body), `pocket-ai/sonnet`) || !strings.Contains(string(body), `"input_tokens":3`) {
 		t.Fatalf("inference: %d %s", code, body)
+	}
+
+	code, body = c.do("GET", "/api/v1/inference/models", "", nil)
+	var catalog core.InferenceModels
+	if err := json.Unmarshal(body, &catalog); err != nil || code != 200 || len(catalog.Models) != 2 || catalog.DefaultModel != "sonnet" || catalog.DefaultName != "Test Sonnet" {
+		t.Fatalf("model discovery: %d %s", code, body)
+	}
+	code, body = c.do("POST", "/api/v1/inference", "application/json", []byte(`{"prompt":"private","model":"opus"}`))
+	if code != 200 || !strings.Contains(string(body), `pocket-ai/opus`) {
+		t.Fatalf("override: %d %s", code, body)
+	}
+	settingsBefore, _ := s.store.GetSettings(t.Context(), user.ID)
+	if settingsBefore.Claude.Model != "" && settingsBefore.Claude.Model != "default" {
+		t.Fatal("override mutated global model")
+	}
+	settingsBefore.Claude.Model = "opus"
+	if err := s.store.SaveSettings(t.Context(), user.ID, settingsBefore); err != nil {
+		t.Fatal(err)
+	}
+	code, body = c.do("POST", "/api/v1/inference", "application/json", []byte(`{"prompt":"private"}`))
+	if code != 200 || !strings.Contains(string(body), `pocket-ai/opus`) {
+		t.Fatalf("follow changed default: %d %s", code, body)
+	}
+	for _, model := range []string{"unknown-model", "--help", "opus;echo-secret"} {
+		input, _ := json.Marshal(map[string]string{"prompt": "private", "model": model})
+		code, body = c.do("POST", "/api/v1/inference", "application/json", input)
+		if code != 400 {
+			t.Fatalf("accepted unlisted model %q: %d %s", model, code, body)
+		}
 	}
 	for _, path := range []string{"/api/v1/threads", "/api/v1/settings", "/api/v1/accounts"} {
 		code, body := c.do("GET", path, "", nil)
@@ -92,4 +132,9 @@ for line in sys.stdin:
 	if code != 403 {
 		t.Fatalf("used another person's Claude account: %d %s", code, body)
 	}
+	code, body = c.do("GET", "/api/v1/inference/models", "", nil)
+	if code != 403 {
+		t.Fatalf("listed another person's account models: %d %s", code, body)
+	}
+
 }

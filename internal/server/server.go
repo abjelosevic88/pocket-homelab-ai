@@ -57,7 +57,9 @@ type Server struct {
 	provList []agent.Provider
 	provAt   time.Time
 
-	inferenceSlots chan struct{}
+	inferenceSlots      chan struct{}
+	inferenceModelsMu   sync.Mutex
+	inferenceModelCache map[string]inferenceModelEntry
 
 	accts accountState // logins: status cache, sign-ins in progress (accounts.go)
 }
@@ -186,6 +188,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/auth/oidc/callback", s.handleOIDCCallback)
 		r.Post("/client-error", s.handleClientError)
 		r.Post("/inference", s.handleInference)
+		r.Get("/inference/models", s.handleInference)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
