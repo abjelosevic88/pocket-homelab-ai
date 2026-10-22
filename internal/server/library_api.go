@@ -20,6 +20,8 @@ func (s *Server) libraryRoutes(r chi.Router) {
 	r.Put("/workspaces/{id}", s.handleSaveWorkspace)
 	r.Delete("/workspaces/{id}", s.handleDeleteWorkspace)
 	r.Get("/fs/dirs", s.handleDirs)
+	r.Get("/fs/git", s.handleGitInfo)
+	r.Post("/fs/git/switch", s.handleGitSwitch)
 
 	r.Get("/recipes", s.handleListRecipes)
 	r.Get("/recipes/suggestions", s.handleRecipeSuggestions)

@@ -9,6 +9,7 @@ import type { ProviderId, Thread } from '../lib/types'
 import { RunningList } from '../components/RunningList'
 import { accountOptions, AgentPicker, type AgentValue, defaultsFor, ProviderToggle } from '../components/AgentPicker'
 import { Composer, type ComposerHandle } from '../components/Composer'
+import { BranchButton } from '../components/BranchPicker'
 import { FolderButton } from '../components/FolderPicker'
 import { Icon } from '../components/icons'
 import { AskButton } from '../components/AskButton'
@@ -156,7 +157,10 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
             <>
               <div className="home-agent">
                 <ProviderToggle value={choice.provider} onChange={pickProvider} />
-                <FolderButton value={choice.cwd} onChange={cwd => setChoice(c => c && { ...c, cwd })} className="btn sm" />
+                <div className="home-where">
+                  <BranchButton cwd={choice.cwd} />
+                  <FolderButton value={choice.cwd} onChange={cwd => setChoice(c => c && { ...c, cwd })} className="btn sm" />
+                </div>
               </div>
               <Composer big autoFocus draftKey="new" onSend={send}
                 placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} anything${choice.cwd ? ` in ${shortPath(choice.cwd)}` : ''}… paste a screenshot, type / for recipes`}

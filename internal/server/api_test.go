@@ -222,6 +222,7 @@ func TestMembersNeedPermissionToRun(t *testing.T) {
 	for _, p := range []struct{ method, path string }{
 		{"POST", "/api/v1/threads"}, {"POST", "/api/v1/uploads"}, {"GET", "/api/v1/history"},
 		{"POST", "/api/v1/history/import"}, {"GET", "/api/v1/fs/dirs"}, {"POST", "/api/v1/schedules"},
+		{"GET", "/api/v1/fs/git?path=" + root}, {"POST", "/api/v1/fs/git/switch"},
 	} {
 		if code, b := member.call(p.method, p.path, map[string]any{"text": "rm -rf", "cwd": root}); code != http.StatusForbidden {
 			t.Errorf("member %s %s: got %d want 403 (%s)", p.method, p.path, code, b)
