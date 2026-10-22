@@ -200,13 +200,25 @@ func (s *Store) SessionThreadsAll(ctx context.Context, userID int64) map[string]
 	return out
 }
 
-// ResetRunning marks threads left running by a previous process as idle.
-func (s *Store) ResetRunning(ctx context.Context) {
+// ResetRunning marks threads left running by a previous process as idle and
+// returns the ones that were cut off mid-turn.
+func (s *Store) ResetRunning(ctx context.Context) []string {
+	var cut []string
+	if rows, err := s.DB.QueryContext(ctx, `SELECT id FROM threads WHERE status IN ('running', 'waiting')`); err == nil {
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) == nil {
+				cut = append(cut, id)
+			}
+		}
+		rows.Close()
+	}
 	// messages still waiting in a queue were lost with the process
 	_, _ = s.DB.ExecContext(ctx, `UPDATE items SET data = json_set(json_remove(data, '$.queued'), '$.unsent', json('true')) WHERE kind = 'user' AND json_extract(data, '$.queued') = 1`)
 	_, _ = s.DB.ExecContext(ctx, `UPDATE threads SET status = 'idle' WHERE status IN ('running', 'waiting')`)
 	_, _ = s.DB.ExecContext(ctx, `UPDATE items SET data = json_set(data, '$.request.status', 'expired') WHERE kind = 'request' AND json_extract(data, '$.request.status') = 'pending'`)
 	_, _ = s.DB.ExecContext(ctx, `UPDATE items SET data = json_set(data, '$.tool.status', 'error') WHERE kind = 'tool' AND json_extract(data, '$.tool.status') = 'running'`)
+	return cut
 }
 
 // ---------- items ----------
