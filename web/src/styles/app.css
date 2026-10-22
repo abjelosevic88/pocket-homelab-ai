@@ -89,3 +89,7 @@
 .sc-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--hairline); font-size: 13.5px; }
 .sc-keys { display: flex; gap: 4px; }
 
+.sb-home { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 2px 6px 2px 0; border: 0; border-radius: 8px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.sb-home:hover .sb-logo { transform: scale(1.06); }
+.sb-home .sb-logo { transition: transform .15s var(--ease); flex-shrink: 0; }
+.sb-home:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 2px; }

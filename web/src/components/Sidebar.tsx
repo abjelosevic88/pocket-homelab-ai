@@ -115,9 +115,11 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
   return (
     <aside className="sidebar" aria-label="Threads">
       <div className="sb-brand">
-        <img src="/favicon.svg" alt="" className="sb-logo" />
-        <div className="sb-title grow"><b>{settings?.title && settings.title !== 'Pocket AI' ? settings.title : <>Pocket <span className="accent-text">AI</span></>}</b></div>
-        <span className={`live-dot ${live ? 'on' : ''}`} title={live ? 'Live updates connected' : 'Reconnecting…'} />
+        <button type="button" className="sb-home grow" onClick={() => go('/')} title="New thread" aria-label="New thread">
+          <img src="/favicon.svg" alt="" className="sb-logo" />
+          <span className="sb-title"><b>{settings?.title && settings.title !== 'Pocket AI' ? settings.title : <>Pocket <span className="accent-text">AI</span></>}</b></span>
+        </button>
+        {!live && <span className="live-off" title="Live updates dropped — reconnecting; lists may be out of date"><span className="live-dot" />Reconnecting…</span>}
         <button type="button" className="btn ghost icon-only sm" aria-label="Search and commands" title="Search and commands (⌘K)" onClick={onPalette}><Icon name="search" size={16} /></button>
       </div>
       <div className="sb-actions">
