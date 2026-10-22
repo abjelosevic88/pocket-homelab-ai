@@ -11,6 +11,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -303,4 +305,67 @@ func TestRecipePlaceholders(t *testing.T) {
 func itoa(n int64) string {
 	b, _ := json.Marshal(n)
 	return string(b)
+}
+
+// The server-wide lists read the CLIs' own files, which every chat on the
+// server login shares: each person sees only their own chats there, and the
+// unclaimed ones (terminal, Paseo) only admins.
+func TestServerSessionsArePerPerson(t *testing.T) {
+	s, h, root := testServer(t)
+	admin, au := person(t, s, h, "admin@example.com", "admin", false)
+	alice, alu := person(t, s, h, "alice@example.com", "member", true)
+	bob, _ := person(t, s, h, "bob@example.com", "member", true)
+	mine, hers := thread(t, s, au.ID, root), thread(t, s, alu.ID, root)
+	dir := filepath.Join(s.cfg.ClaudeHome, "projects", "-w")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, sid := range []string{mine.ProviderSessionID, hers.ProviderSessionID, "terminal-1"} {
+		line := `{"type":"user","uuid":"p1","timestamp":"2026-10-21T10:00:00Z","entrypoint":"cli","cwd":"/w","message":{"role":"user","content":"secret of ` + sid + `"}}` + "\n"
+		if err := os.WriteFile(filepath.Join(dir, sid+".jsonl"), []byte(line), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sees := func(c *client) []string {
+		var hist struct {
+			Sessions []agent.ServerSession `json:"sessions"`
+		}
+		c.want("GET", "/api/v1/history", nil, 200, &hist)
+		var runs struct {
+			Runs []agent.Run `json:"runs"`
+		}
+		c.want("GET", "/api/v1/runs?from=2026-10-21T00:00:00Z", nil, 200, &runs)
+		out := []string{}
+		for _, x := range hist.Sessions {
+			out = append(out, x.SessionID)
+		}
+		sort.Strings(out)
+		ran := []string{}
+		for _, x := range runs.Runs {
+			ran = append(ran, x.SessionID)
+		}
+		sort.Strings(ran)
+		if strings.Join(out, ",") != strings.Join(ran, ",") {
+			t.Fatalf("history %v but runs %v", out, ran)
+		}
+		return out
+	}
+	want := func(c *client, who string, ids ...string) {
+		t.Helper()
+		sort.Strings(ids)
+		if got := sees(c); strings.Join(got, ",") != strings.Join(ids, ",") {
+			t.Fatalf("%s sees %v, want %v", who, got, ids)
+		}
+	}
+	want(admin, "admin", mine.ProviderSessionID, "terminal-1")
+	want(alice, "alice", hers.ProviderSessionID)
+	want(bob, "bob")
+	for _, c := range []*client{admin, bob} {
+		c.want("POST", "/api/v1/history/import", map[string]string{"provider": "claude", "session_id": hers.ProviderSessionID}, 404, nil)
+	}
+	alice.want("POST", "/api/v1/history/import", map[string]string{"provider": "claude", "session_id": "terminal-1"}, 404, nil)
+
+	// a deleted thread's session file stays on disk, and stays hers
+	alice.want("DELETE", "/api/v1/threads/"+hers.ID, nil, 204, nil)
+	want(admin, "admin after delete", mine.ProviderSessionID, "terminal-1")
 }

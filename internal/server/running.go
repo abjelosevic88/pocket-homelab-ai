@@ -22,9 +22,9 @@ type runningItem struct {
 	Status   string `json:"status"`    // running | waiting
 }
 
-// runningFor lists what is running for a person: everything the CLIs on the
-// server are doing (only for people who may run agents — these are the
-// server user's sessions) plus the person's own Pocket AI threads.
+// runningFor lists what is running for a person: what the CLIs on the server
+// are doing that the person may see (sessionFilter; only for people who may
+// run agents) plus the person's own Pocket AI threads.
 func (s *Server) runningFor(ctx context.Context, u *store.User) []runningItem {
 	out := []runningItem{}
 	seen := map[string]bool{}
@@ -37,9 +37,10 @@ func (s *Server) runningFor(ctx context.Context, u *store.User) []runningItem {
 	}
 	if u.MayRun() {
 		mine := s.accountIDsFor(ctx, u)
+		visible := s.sessionFilter(ctx, u)
 		for _, a := range s.rt.activeSnapshot() {
-			if !mine[a.Provider+"/"+strconv.FormatInt(a.Account, 10)] {
-				continue // someone else's login
+			if !mine[a.Provider+"/"+strconv.FormatInt(a.Account, 10)] || !visible(a.Provider, a.SessionID, a.Account) {
+				continue // someone else's login or chat
 			}
 			it := runningItem{ActiveSession: a, Status: "running"}
 			if t := byID[a.Provider+":"+a.SessionID]; t != nil {

@@ -39,7 +39,13 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	known := s.store.SessionThreadsAll(ctx, me(r))
 	out := []agent.ServerSession{}
 	total := 0
-	sessions := agent.Sessions(s.homesFor(ctx, userFrom(ctx)), s.cfg.PaseoHome)
+	sessions := []agent.ServerSession{}
+	visible := s.sessionFilter(ctx, userFrom(ctx))
+	for _, x := range agent.Sessions(s.homesFor(ctx, userFrom(ctx)), s.cfg.PaseoHome) {
+		if visible(x.Provider, x.SessionID, x.Account) {
+			sessions = append(sessions, x)
+		}
+	}
 	sessions = append(sessions, agent.Sessions(s.askHomes(me(r)), "")...)
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].UpdatedAt > sessions[j].UpdatedAt })
 	for _, x := range sessions {
@@ -59,6 +65,32 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": out, "total": total})
+}
+
+// sessionFilter says which of the server's CLI sessions a person may see. A
+// session one of Pocket AI's threads used is that thread's person's alone
+// (admins included: nobody sees anyone else's chats). The rest (terminal,
+// Paseo, other apps) are the server user's own work: admins see them, and so
+// does whoever owns the login they ran on.
+func (s *Server) sessionFilter(ctx context.Context, u *store.User) func(provider, sessionID string, account int64) bool {
+	if u == nil {
+		return func(string, string, int64) bool { return false }
+	}
+	owners := s.store.SessionOwners(ctx)
+	own := map[string]bool{}
+	list, _ := s.store.ListAccounts(ctx)
+	for _, a := range list {
+		if a.UserID != nil && *a.UserID == u.ID {
+			own[acctKey(a.Provider, a.ID)] = true
+		}
+	}
+	admin := u.Role == "admin"
+	return func(provider, sessionID string, account int64) bool {
+		if uid, ok := owners[provider+":"+sessionID]; ok {
+			return uid == u.ID
+		}
+		return admin || own[acctKey(provider, account)]
+	}
 }
 
 // threadOrigin: a session Pocket AI started itself is "pocket-ai" (or
@@ -100,7 +132,13 @@ func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
 		to = t
 	}
 	known := s.store.SessionThreadsAll(r.Context(), me(r))
-	runs := agent.Runs(s.homesFor(r.Context(), userFrom(r.Context())), s.cfg.PaseoHome, from, to)
+	runs := []agent.Run{}
+	visible := s.sessionFilter(r.Context(), userFrom(r.Context()))
+	for _, x := range agent.Runs(s.homesFor(r.Context(), userFrom(r.Context())), s.cfg.PaseoHome, from, to) {
+		if visible(x.Provider, x.SessionID, x.Account) {
+			runs = append(runs, x)
+		}
+	}
 	runs = append(runs, agent.Runs(s.askHomes(me(r)), "", from, to)...)
 	sort.Slice(runs, func(i, j int) bool { return runs[i].StartedAt > runs[j].StartedAt })
 	for i := range runs {
@@ -129,6 +167,10 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 	}
 	if t, err := s.store.ThreadBySession(ctx, me(r), in.Provider, in.SessionID); err == nil {
 		writeJSON(w, http.StatusOK, s.rt.decorate(t))
+		return
+	}
+	if account, _ := s.sessionAccount(ctx, userFrom(ctx), in.Provider, in.SessionID); !s.sessionFilter(ctx, userFrom(ctx))(in.Provider, in.SessionID, account) {
+		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
 	t, err := s.importSession(ctx, userFrom(ctx), in.Provider, in.SessionID)

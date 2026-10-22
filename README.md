@@ -83,6 +83,9 @@ narrower and lives with the other Pocket apps:
 
 - a plain web app/PWA on your own domain and network — no relay, no separate account;
 - Pocket accounts and Sign in with Pocket Core, per-person data, an admin switch for who may run agents;
+  the server-wide lists (On this server, Today, Running now) show each person only their own chats, and
+  terminal / Paseo sessions only to admins. (Agents still run as the server's user, so whoever may run
+  agents can read its files: give that switch only to people you trust with a shell.)
 - built around looking after a server: recipes with placeholders on the start screen, schedules that answer
   OK / ATTENTION and only notify on attention, pushes through the Apprise / ntfy route the box already uses;
 - every Claude Code and Codex session on the server listed and resumable, full-text search, usage per day;

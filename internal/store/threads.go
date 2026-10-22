@@ -42,6 +42,9 @@ func (s *Store) CreateThread(ctx context.Context, t *Thread) error {
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, t.UserID, t.Title, t.Provider, t.Model, t.Effort, t.Mode, t.Speed, t.Cwd, nullInt(t.WorkspaceID), t.ProviderSessionID, t.LogOffset,
 		t.Status, t.Source, t.SourceRef, jsonMarshal(t.Usage), now, now, now, t.NoMemory, t.AccountID)
+	if err == nil {
+		s.claimSession(ctx, t)
+	}
 	return err
 }
 
@@ -106,7 +109,37 @@ func (s *Store) UpdateThread(ctx context.Context, t *Thread) error {
 		updated_at = ?, activity_at = ?, account_id = ? WHERE id = ?`,
 		t.Title, t.Model, t.Effort, t.Mode, t.Speed, t.Cwd, nullInt(t.WorkspaceID), t.ProviderSessionID, t.LogOffset, t.Status, t.Error,
 		boolInt(t.Pinned), boolInt(t.Archived), boolInt(t.Unread), t.Preview, t.LastPrompt, t.PromptAt, jsonMarshal(t.Usage), t.UpdatedAt, t.ActivityAt, t.AccountID, t.ID)
+	if err == nil {
+		s.claimSession(ctx, t)
+	}
 	return err
+}
+
+// claimSession records that the thread's CLI session is its person's (the
+// first claim wins).
+func (s *Store) claimSession(ctx context.Context, t *Thread) {
+	if t.ProviderSessionID == "" || t.UserID == 0 {
+		return
+	}
+	_, _ = s.DB.ExecContext(ctx, `INSERT OR IGNORE INTO session_owners (provider, session_id, user_id) VALUES (?, ?, ?)`, t.Provider, t.ProviderSessionID, t.UserID)
+}
+
+// SessionOwners maps "provider:session id" to the person whose thread used it.
+func (s *Store) SessionOwners(ctx context.Context) map[string]int64 {
+	out := map[string]int64{}
+	rows, err := s.DB.QueryContext(ctx, `SELECT provider, session_id, user_id FROM session_owners`)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var p, sid string
+		var uid int64
+		if rows.Scan(&p, &sid, &uid) == nil {
+			out[p+":"+sid] = uid
+		}
+	}
+	return out
 }
 
 // DeleteThread removes a thread and its timeline.
