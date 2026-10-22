@@ -61,7 +61,7 @@ export function ThreadRow({ t, active, onOpen }: { t: Thread; active: boolean; o
 }
 
 export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onPalette: () => void }) {
-  const { threads, workspaces, user, settings, live } = useApp()
+  const { threads, workspaces, user, settings, live, status } = useApp()
   const navigate = useNavigate()
   const loc = useLocation()
   const [q, setQ] = useState('')
@@ -119,6 +119,7 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
           <img src="/favicon.svg" alt="" className="sb-logo" />
           <span className="sb-title"><b>{settings?.title && settings.title !== 'Pocket AI' ? settings.title : <>Pocket <span className="accent-text">AI</span></>}</b></span>
         </button>
+        {status?.version && <span className="sb-version" title={`Version ${status.version}`}>{/^\d/.test(status.version) ? 'v' + status.version : status.version}</span>}
         {!live && <span className="live-off" title="Live updates dropped — reconnecting; lists may be out of date"><span className="live-dot" />Reconnecting…</span>}
         <button type="button" className="btn ghost icon-only sm" aria-label="Search and commands" title="Search and commands (⌘K)" onClick={onPalette}><Icon name="search" size={16} /></button>
       </div>

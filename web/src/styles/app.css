@@ -93,3 +93,5 @@
 .sb-home:hover .sb-logo { transform: scale(1.06); }
 .sb-home .sb-logo { transition: transform .15s var(--ease); flex-shrink: 0; }
 .sb-home:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 2px; }
+/* version pill, as in every Pocket app */
+.sb-version { flex: none; padding: 1px 5px; border-radius: 6px; background: var(--surface-2); color: var(--muted); font-size: 10px; font-weight: 600; line-height: 15px; font-variant-numeric: tabular-nums; cursor: default; user-select: all; }
