@@ -7,6 +7,8 @@ import { Icon } from './icons'
 import { Markdown } from './Markdown'
 import { RequestSummary } from './RequestCard'
 import { ToolRow } from './ToolRow'
+import { ToolActivity } from './ToolActivity'
+import { groupToolActivity } from '../lib/tool-activity'
 import { Modal } from './ui'
 
 export function Images({ images }: { images: ItemImage[] }) {
@@ -151,9 +153,11 @@ export function Timeline({ items, showThinking, streamingKey, onFork, threadId, 
   }
   return (
     <div className="timeline">
-      {shown.map(it => (
-        <div key={it.key} className={`tl-item ${initial.current!.has(it.key) ? '' : 'appear'} ${it.key === streamingKey ? 'streaming' : ''}`}>
-          {it.kind === 'turn' && it.turn ? <TurnFoot t={it.turn} onFork={it.key === lastTurn ? onFork : undefined} />
+      {groupToolActivity(shown).map(entry => {
+        const it = entry.type === 'item' ? entry.item : entry.items[0]
+        return (
+        <div key={entry.key} className={`tl-item ${initial.current!.has(it.key) ? '' : 'appear'} ${it.key === streamingKey ? 'streaming' : ''}`}>
+          {entry.type === 'tools' ? <ToolActivity items={entry.items} /> : it.kind === 'turn' && it.turn ? <TurnFoot t={it.turn} onFork={it.key === lastTurn ? onFork : undefined} />
             : <ItemView item={it} showThinking={showThinking} threadId={threadId} />}
           {it.kind === 'user' && it.unsent && (
             <div className="unsent-tag"><Icon name="alert" size={12} /><span>Not sent — Pocket AI restarted before it went out.</span>
@@ -162,7 +166,7 @@ export function Timeline({ items, showThinking, streamingKey, onFork, threadId, 
             </div>
           )}
         </div>
-      ))}
+      )})}
     </div>
   )
 }

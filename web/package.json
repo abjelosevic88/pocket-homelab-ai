@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:activity": "node --test tests/tool-activity.test.ts"
   },
   "dependencies": {
     "react": "^19.1.0",

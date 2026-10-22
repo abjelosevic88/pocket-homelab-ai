@@ -463,3 +463,19 @@
 .sb-bottom .sb-foot { margin-top: 0; padding-top: 4px; }
 .sb-bottom .usage-widget { margin: 0 0 6px; width: 100%; }
 .limit-pin:not(.on) svg { opacity: .55; }
+
+/* Consecutive tool calls share one stable summary; details scroll locally. */
+.tool-name { min-width: 0; flex-shrink: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-name.friendly { flex: 1; }
+.tool-raw-name { overflow-wrap: anywhere; }
+.tool-activity { min-width: 0; border: 1px solid var(--hairline); border-radius: 10px; background: var(--surface); overflow: hidden; }
+.tool-activity-head { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 38px; padding: 7px 10px; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; text-align: left; }
+.tool-activity-head:hover { background: var(--hover); }
+.tool-activity-head > svg { flex-shrink: 0; }
+.tool-activity-title { flex: 1; min-width: 0; color: var(--text-2); font-weight: 600; }
+.tool-activity-count, .tool-activity-active { white-space: nowrap; flex-shrink: 0; font-size: 11px; }
+.tool-activity-active { color: var(--accent); }
+.tool-activity.running { border-color: var(--accent-ring); }
+.tool-activity.open > .tool-activity-head .tool-caret { transform: rotate(180deg); }
+.tool-activity-body { display: grid; gap: 5px; padding: 8px; border-top: 1px solid var(--hairline); max-height: min(400px, 45dvh); overflow: auto; overscroll-behavior: contain; }
+.tool-activity-body .tool { background: transparent; }

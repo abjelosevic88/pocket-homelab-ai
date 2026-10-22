@@ -1,6 +1,7 @@
 // One tool call: a one-line summary that opens to its input and output.
 import { memo, useState } from 'react'
 import type { ToolInfo, ToolKind } from '../lib/types'
+import { toolLabel } from '../lib/tool-activity'
 import { Icon } from './icons'
 import { copyText, Spinner } from './ui'
 
@@ -56,6 +57,8 @@ function Clip({ text, label }: { text: string; label: string }) {
 export const ToolRow = memo(function ToolRow({ tool }: { tool: ToolInfo }) {
   const [open, setOpen] = useState(false)
   const kind = tool.kind || 'other'
+  const label = toolLabel(tool)
+  const friendly = label !== tool.name
   const status = tool.status || 'done'
   const command = kind === 'bash' ? field(tool.input, 'command', 'cmd') : ''
   const path = field(tool.input, 'file_path', 'path', 'notebook_path')
@@ -73,8 +76,8 @@ export const ToolRow = memo(function ToolRow({ tool }: { tool: ToolInfo }) {
     <div className={`tool ${status} ${open ? 'open' : ''}`}>
       <button type="button" className="tool-head" onClick={() => setOpen(o => !o)} aria-expanded={open}>
         <span className="tool-ico"><Icon name={KIND_ICON[kind] || 'wrench'} size={14} /></span>
-        <span className="tool-name">{tool.name}</span>
-        <span className="tool-title ellipsis">{title !== tool.name ? title : ''}</span>
+        <span className={`tool-name ${friendly ? 'friendly' : ''}`} title={label}>{label}</span>
+        {!friendly && <span className="tool-title ellipsis">{title !== tool.name ? title : ''}</span>}
         <span className="tool-state">
           {status === 'running' && <Spinner size={12} />}
           {status === 'error' && <span className="badge danger">{tool.exit_code !== undefined && tool.exit_code !== 0 ? `exit ${tool.exit_code}` : 'error'}</span>}
@@ -84,6 +87,7 @@ export const ToolRow = memo(function ToolRow({ tool }: { tool: ToolInfo }) {
       </button>
       {open && (
         <div className="tool-body">
+          {friendly && <div className="muted xsmall tool-raw-name">{tool.name}</div>}
           {command && <div className="tool-sec"><pre className="tool-pre cmd">$ {command}</pre></div>}
           {tool.diff && <div className="tool-sec"><div className="tool-sec-h"><span>{path || 'Changes'}</span></div><Diff text={tool.diff} /></div>}
           {restInput && <Clip text={restInput} label="Input" />}
