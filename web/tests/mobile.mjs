@@ -23,13 +23,18 @@ try {
     Object.defineProperty(window, 'visualViewport', { value: v })
     window.testViewport = (height, offsetTop = 0, scale = 1) => { Object.assign(v, { height, offsetTop, scale }); v.dispatchEvent(new Event('resize')); v.dispatchEvent(new Event('scroll')) }
    }, {theme,width})
-   const pending = []
+   const pending = [], askPrompts = []
    let memories = [], workflows = []
    const records = [{ tool: 'pocket_tasks_summary', checked_at: new Date().toISOString(), duration_ms: 123, data: { source_url: 'https://tasks.example/today', result: { overdue: 3, next: [{ id: 1, title: 'Review a very long invoice title that must wrap on a narrow phone', due: '2026-10-22', item_url: 'https://tasks.example/inbox?task=1' }] } } }]
-   const calls = [{ id: 'fixture-action', thread_id: 'fixture', tool: 'pocket_notes_update', input: { id: 1, data: { title: 'Monthly spending', content: 'A long document\nWith multiple lines', category: 'Quick Notes' } }, result: { structuredContent: { source_url: 'https://notes.example/note/1', result: { title: 'Monthly spending', etag: 'after' } } }, before: { old: true }, is_write: true, status: 'done', duration_ms: 320, created_at: new Date().toISOString() }]
+   records[0].data.result.next.push(...[2,3,4].map(id => ({id,title:`Another task ${id}`,item_url:`https://tasks.example/inbox?task=${id}`})))
+   records.push({tool:'pocket_calendar_events',checked_at:new Date().toISOString(),duration_ms:20,data:{source_url:'https://calendar.example',result:[]}})
+   records.push({tool:'pocket_collaborator_summary',checked_at:new Date().toISOString(),duration_ms:20,data:{result:{open_reviews:1,waiting:[{review:{id:1,title:'Approve contract'}}],recent:[{id:2,summary:'Started a reading session'}]}}})
+   records.push({tool:'pocket_garage_reminders',checked_at:new Date().toISOString(),duration_ms:20,error:'This source could not be read.'})
+   const calls = [{ id: 'fixture-action' , thread_id: 'fixture', tool: 'pocket_notes_update', input: { id: 1, data: { title: 'Monthly spending', content: 'A long document\nWith multiple lines', category: 'Quick Notes' } }, result: { structuredContent: { source_url: 'https://notes.example/note/1', result: { title: 'Monthly spending', etag: 'after' } } }, before: { old: true }, is_write: true, status: 'done', duration_ms: 320, created_at: new Date().toISOString() }]
    await c.route(base + '/**', async route => {
     const url = new URL(route.request().url()), p = url.pathname, method = route.request().method()
     const json = v => route.fulfill({ json: v })
+    if (p === '/api/v1/ask/threads' && method === 'POST') { askPrompts.push(route.request().postDataJSON().text); return json({id:'fixture'}) }
     if (p === '/api/v1/assistant/status') return json({ connected: true })
     if (p === '/api/v1/briefing' || p === '/api/v1/app-search') return json({ date: '2026-10-22', timezone: 'Europe/Sarajevo', coverage: 'Fixture overview', sections: records })
     if (p === '/api/v1/app-calls') return json(calls)
@@ -91,7 +96,19 @@ try {
    await overflow()
    for (const page of ['briefing', 'memory', 'workflows', 'actions']) {
     await p.goto(base + '/' + page); await p.locator('.assistant-page').waitFor(); await p.waitForTimeout(150); await overflow()
-    if (page === 'briefing') { await p.getByRole('link', { name: 'Open source' }).first().waitFor(); assert((await p.locator('.data-fields').count()) > 0) }
+    if (page === 'briefing') {
+     await p.getByRole('link', { name: 'Open source: Tasks', exact:true }).waitFor()
+     assert.equal(await p.locator('.briefing-items').getByText('Started a reading session',{exact:true}).count(),0); await p.locator('.briefing-items').getByText('Approve contract',{exact:true}).waitFor()
+     const task = p.locator('.briefing-card').filter({has:p.getByRole('heading',{name:'Tasks',exact:true})})
+     assert.equal(await task.locator('.briefing-items li').count(),3)
+     await task.getByRole('button',{name:'Show 1 more',exact:true}).click(); assert.equal(await task.locator('.briefing-items li').count(),4)
+     await task.getByRole('button',{name:'Show less',exact:true}).click()
+     await task.locator('.briefing-source > summary').click(); await task.locator('.data-fields').first().waitFor()
+     await p.getByLabel('Search my apps',{exact:true}).fill('Golf'); await p.getByRole('button',{name:'Search',exact:true}).click(); await p.getByRole('heading',{name:'Search results',exact:true}).waitFor()
+     await p.getByRole('button',{name:'Back to today',exact:true}).click(); await p.getByRole('button',{name:'Summarize my day',exact:true}).waitFor()
+     await p.getByRole('button',{name:'Summarize my day',exact:true}).click(); await p.waitForURL('**/t/fixture'); assert.match(askPrompts.at(-1),/concise briefing for today/)
+     await p.goto(base+'/briefing'); await p.locator('.briefing-grid').waitFor(); assert.equal(await p.getByRole('button',{name:'Ask about Car maintenance',exact:true}).isDisabled(),true)
+    }
     if (page === 'memory') { await p.getByLabel('Name', { exact: true }).fill('My car'); await p.getByLabel('Preference', { exact: true }).fill('Use the Golf'); await p.getByRole('button', { name: 'Save preference', exact: true }).click(); await p.getByRole('button', { name: 'Forget', exact: true }).waitFor(); await p.getByRole('button', { name: 'Forget', exact: true }).click() }
     if (page === 'actions') { await p.locator('.app-call details > summary').first().click(); await p.getByText('Monthly spending', {exact:true}).first().waitFor() }
     if (page === 'workflows') {
@@ -110,7 +127,7 @@ try {
    await p.goto(base + '/t/fixture'); await p.locator('.batch-review').waitFor(); assert.equal(await p.locator('.md table').count(), 1); assert.equal(await p.evaluate(() => !!window.badMarkdown), false); assert.equal(await p.locator('a.file-chip').count(), 1)
    if(env.AI_TEST_DEBUG) { console.log(await p.evaluate(() => Object.fromEntries(['.app','.thread-page','.thread-bottom','.req-dock','.batch-review','.batch-review summary','.composer'].map(s => { const e=document.querySelector(s), r=e?.getBoundingClientRect();return [s,r?{top:r.top,bottom:r.bottom,scroll:e.scrollHeight,client:e.clientHeight}:null] })))); await p.screenshot({path:'/tmp/pocket-batch-debug.png'}) }
    await p.locator('.batch-review > summary').click(); await p.locator('.batch-review input[type=checkbox]').first().check(); await p.getByRole('button', { name: 'Allow 1 selected' }).click(); await p.waitForTimeout(150); assert.deepEqual(pending, ['ask-1']); await overflow()
-   assert.deepEqual(errors, []); summary.push({ width, theme, checks: 'home, searchable dropdowns, keyboard, sources, memory, workflow, actions, markdown, attachment, selected approval, overflow' })
+   assert.deepEqual(errors, []); summary.push({ width, theme, checks: 'home, searchable dropdowns, keyboard, briefing expansion/search/summary, unavailable sources, memory, workflow, actions, markdown, attachment, selected approval, overflow' })
   } finally { await c.close() }
  }
  console.log(JSON.stringify(summary, null, 2))

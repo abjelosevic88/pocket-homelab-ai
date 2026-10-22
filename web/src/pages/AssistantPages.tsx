@@ -1,3 +1,4 @@
+import { Icon } from '../components/icons'
 import { Select } from '../components/Select'
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
@@ -14,7 +15,7 @@ interface Overview { date?: string; timezone?: string; coverage: string; unavail
 const sectionTitles: Record<string,string> = { pocket_tasks_summary:'Tasks', pocket_money_bills:'Bills & subscriptions', pocket_calendar_events:'Calendar', pocket_collaborator_summary:'Reviews', pocket_garage_reminders:'Car maintenance' }
 function displayWhen(value: unknown) { const s=String(value); if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return new Date(s+'T12:00:00').toLocaleDateString(); if (s.includes('T') && !Number.isNaN(Date.parse(s))) return new Date(s).toLocaleString(); return s }
 function formatMinor(amount: number, currency: string) { try { const f = new Intl.NumberFormat(undefined, { style:'currency', currency }); const digits = f.resolvedOptions().maximumFractionDigits ?? 2; return f.format(amount / 10 ** digits) } catch { return `${amount} minor units (${currency})` } }
-function BriefingData({ section, onAsk }: { section: Section; onAsk: (text: string) => void }) {
+function briefingContent(section: Section) {
  const envelope = (section.data && typeof section.data === 'object' ? section.data : {}) as Record<string, unknown>
  const result = envelope.result ?? section.data
  const items: Record<string, unknown>[] = []
@@ -26,29 +27,59 @@ function BriefingData({ section, onAsk }: { section: Section; onAsk: (text: stri
   if (typeof (o.title ?? o.name ?? o.summary) === 'string' && !('omitted' in o)) { items.push(o); return }
   for (const [k, x] of Object.entries(o)) if (!['participants', 'accounts', 'categories', 'members'].includes(k)) visit(x, depth + 1)
  }
- visit(result)
+ // Review activity is history, not work waiting for the user. Keep it in
+ // source details while the briefing lists actionable reviews and tasks.
+ if (section.tool === 'pocket_collaborator_summary' && result && typeof result === 'object' && !Array.isArray(result)) {
+  const review = result as Record<string, unknown>
+  visit(review.waiting); visit(review.tasks)
+ } else visit(result)
  const counts = result && !Array.isArray(result) && typeof result === 'object' ? Object.entries(result).filter(([k, v]) => typeof v === 'number' && /^(overdue|due_today|today|total|open|open_reviews|open_tasks|done_today|to_review|to_approve|completed|active|due|waiting)$/.test(k)) : []
  const source = safeURL(envelope.source_url) ? envelope.source_url : safeURL(envelope.app_url) ? envelope.app_url : ''
- return <>
-  {counts.length > 0 && <div className="briefing-counts">{counts.map(([k, v]) => <span key={k}><b>{String(v)}</b> {friendly(k)}</span>)}</div>}
-  {items.length ? <ul className="briefing-items">{items.map((item, i) => {
-   const title = String(item.title ?? item.name ?? item.summary), href = safeURL(item.item_url) ? item.item_url : source
-   const when = item.due ?? item.due_date ?? item.next_date ?? item.start ?? item.date
-   const amount = typeof item.amount === 'number' && typeof item.currency === 'string' && section.tool.startsWith('pocket_money_') ? formatMinor(item.amount,item.currency) : ''
-   return <li key={String(item.id ?? i)}><div>{href ? <a href={href} target="_blank" rel="noopener noreferrer"><b>{title}</b> ↗</a> : <b>{title}</b>}{when ? <p className="muted small">{displayWhen(when)}{item.status ? ` · ${item.status}` : ''}</p> : null}{amount && <p>{amount}</p>}</div><button className="btn sm" onClick={() => onAsk(`Help me with “${title}” in ${friendly(section.tool)}. Source: ${href}. Record ID: ${item.id ?? 'not supplied'}. Read the current record, then show any proposed change for approval.`)}>Help with this</button></li>
-  })}</ul> : <p className="muted small">No items to show. Source details include any additional totals.</p>}
-  {source && <a href={source} target="_blank" rel="noopener noreferrer">Open source ↗</a>}
-  <details className="briefing-source"><summary>Source details</summary><DataView value={section.data} /></details>
- </>
+ return { items, counts, source }
+}
+const sectionIcons: Record<string, string> = { pocket_calendar_events: 'calendar', pocket_tasks_summary: 'check', pocket_money_bills: 'receipt', pocket_collaborator_summary: 'review', pocket_garage_reminders: 'wrench' }
+function BriefingCard({ section, onAsk, asking }: { section: Section; onAsk: (text: string) => void; asking: boolean }) {
+ const [expanded, setExpanded] = useState(false)
+ const { items, counts, source } = briefingContent(section)
+ const title = sectionTitles[section.tool] || friendly(section.tool)
+ const visible = expanded ? items : items.slice(0, 3)
+ return <article className="assistant-card briefing-card">
+  <header className="briefing-card-head"><span className="briefing-card-icon"><Icon name={sectionIcons[section.tool] || 'search'} size={17} /></span><h2>{title}</h2><button type="button" className="briefing-ask" disabled={asking || !!section.error} aria-label={`Ask about ${title}`} onClick={() => onAsk(`Help me with ${friendly(section.tool)}. Read the current data and suggest the next action; show any proposed change for approval.`)}><Icon name="sparkles" size={14} />Ask</button></header>
+  {section.error ? <p role="alert" className="briefing-empty">{section.error}</p> : <>
+   {counts.length > 0 && <div className="briefing-counts">{counts.map(([k, v]) => <span key={k}><b>{String(v)}</b> {friendly(k)}</span>)}</div>}
+   {items.length ? <ul className="briefing-items">{visible.map((item, i) => {
+    const itemTitle = String(item.title ?? item.name ?? item.summary), href = safeURL(item.item_url) ? item.item_url : source
+    const when = item.due ?? item.due_date ?? item.next_date ?? item.start ?? item.date
+    const amount = typeof item.amount === 'number' && typeof item.currency === 'string' && section.tool.startsWith('pocket_money_') ? formatMinor(item.amount,item.currency) : ''
+    return <li key={`${item.id ?? 'item'}-${i}`}><div className="briefing-item-content">{href ? <a href={href} target="_blank" rel="noopener noreferrer">{itemTitle}<Icon name="external" size={12} /></a> : <b>{itemTitle}</b>}<div className="briefing-item-meta">{when ? <span>{displayWhen(when)}</span> : null}{item.status ? <span>{friendly(String(item.status))}</span> : null}{amount && <span className="briefing-amount">{amount}</span>}</div></div><button type="button" className="briefing-item-ask" disabled={asking} aria-label={`Ask about ${itemTitle}`} title={`Ask about ${itemTitle}`} onClick={() => onAsk(`Help me with “${itemTitle}” in ${friendly(section.tool)}. Source: ${href}. Record ID: ${item.id ?? 'not supplied'}. Read the current record, then show any proposed change for approval.`)}><Icon name="sparkles" size={14} /><span>Ask</span></button></li>
+   })}</ul> : <p className="briefing-empty">{section.tool === 'pocket_calendar_events' ? 'No calendar events in today’s overview.' : 'No items in this overview.'}</p>}
+   {items.length > 3 && <button type="button" className="briefing-expand" aria-expanded={expanded} onClick={() => setExpanded(v => !v)}>{expanded ? 'Show less' : `Show ${items.length - 3} more`}<Icon name={expanded ? 'chevron-up' : 'chevron-down'} size={14} /></button>}
+  </>}
+  <div className="briefing-source-link">{source && <a href={source} aria-label={`Open source: ${title}`} target="_blank" rel="noopener noreferrer">Open {title}<Icon name="external" size={12} /></a>}</div>
+  <details className="briefing-source"><summary>Details &amp; source</summary><p>Checked {new Date(section.checked_at).toLocaleString()} · {(section.duration_ms / 1000).toFixed(1)}s</p><DataView value={section.data} /></details>
+ </article>
 }
 export function BriefingPage({ onMenu }: { onMenu?: () => void }) {
- const [data, setData] = useState<Overview | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false), [q, setQ] = useState('')
+ const [data, setData] = useState<Overview | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false), [q, setQ] = useState(''), [query, setQuery] = useState(''), [asking, setAsking] = useState(false)
  const navigate = useNavigate(), { toast } = useToast()
- async function load(search = false) { setBusy(true); setError(''); try { setData(await api.get<Overview>(`${V1}/${search ? `app-search?q=${encodeURIComponent(q)}` : 'briefing'}`)) } catch (e) { setError(errMsg(e)) } finally { setBusy(false) } }
+ async function load(search = false) { const term = search ? q.trim() : ''; if (search && !term) return; setBusy(true); setError(''); try { const next = await api.get<Overview>(`${V1}/${search ? `app-search?q=${encodeURIComponent(term)}` : 'briefing'}`); setData(next); setQuery(term); if (!search) setQ('') } catch (e) { setError(errMsg(e)) } finally { setBusy(false) } }
  useEffect(() => { void load() }, [])
- async function ask(prompt: string) { try { const t = await api.post<Thread>(`${V1}/ask/threads`, { text: prompt }); navigate(`/t/${t.id}`) } catch (e) { toast(errMsg(e), 'err') } }
- return <Frame title="Briefing" sub="Your day across Pocket apps. Agent runs are still on Today." onMenu={onMenu}><form className="row" onSubmit={e => { e.preventDefault(); void load(true) }}><input aria-label="Search my apps" placeholder="Search all my apps…" value={q} maxLength={200} onChange={e => setQ(e.target.value)} /><button className="btn" disabled={busy || !q.trim()}>Search</button><button type="button" className="btn" disabled={busy} onClick={() => load()}>Refresh day</button></form>{error && <p role="alert" className="callout danger">{error}</p>}{busy && <p role="status">Reading your apps…</p>}{data && <><p className="muted small">{data.date} {data.timezone} · {data.coverage}</p><button className="btn primary" onClick={() => ask('Give me a concise briefing for today: appointments, overdue and due tasks, bills, review work and maintenance. Link each item and explain any unavailable sources.')}>Ask for a concise briefing</button>{data.unavailable?.length ? <p className="muted">Unavailable: {data.unavailable.map(friendly).join(', ')}. Connect these apps to include them.</p> : null}<div className="briefing-grid">{data.sections.map(s => <article className="assistant-card" key={s.tool}><h2>{sectionTitles[s.tool] || friendly(s.tool)}</h2><p className="muted xsmall">Checked {new Date(s.checked_at).toLocaleTimeString()} · {(s.duration_ms / 1000).toFixed(1)}s</p>{s.error ? <p role="alert">{s.error}</p> : <BriefingData section={s} onAsk={ask} />}<button className="btn sm" onClick={() => ask(`Help me with ${friendly(s.tool)}. Read the current data and suggest the next action; show any proposed change for approval.`)}>Ask about this</button></article>)}</div></>}</Frame>
+ async function ask(prompt: string) { if (asking) return; setAsking(true); try { const t = await api.post<Thread>(`${V1}/ask/threads`, { text: prompt }); navigate(`/t/${t.id}`) } catch (e) { toast(errMsg(e), 'err') } finally { setAsking(false) } }
+ const sections = [...(data?.sections || [])].sort((a,b) => {
+  const hasContent = (s: Section) => !s.error && (briefingContent(s).items.length > 0 || briefingContent(s).counts.some(([,n]) => Number(n) > 0))
+  return Number(hasContent(b)) - Number(hasContent(a))
+ })
+ const available = data?.sections.filter(s => !s.error).length || 0
+ const dateLabel = data?.date ? new Date(data.date + 'T12:00:00').toLocaleDateString(undefined, { weekday:'long', month:'long', day:'numeric' }) : 'Your day'
+ return <Frame title="Briefing" sub="Your day across Pocket apps, in one place." onMenu={onMenu}>
+  <div className="briefing-heading"><div><h2>{query ? 'Search results' : dateLabel}</h2><p>{query ? `For “${query}”` : 'Appointments, tasks and upcoming commitments.'}</p></div><button type="button" className="briefing-summarize" disabled={busy || asking || !available} aria-busy={asking} onClick={() => ask(query ? `Search my apps for ${JSON.stringify(query)} and summarize the relevant results with source links. Explain any missing sources.` : 'Give me a concise briefing for today: appointments, overdue and due tasks, bills, review work and maintenance. Link each item and explain any unavailable sources.')}><Icon name="sparkles" size={16} />{asking ? 'Starting…' : query ? 'Ask about results' : 'Summarize my day'}<Icon name="chevron-right" size={14} /></button></div>
+  <form className="briefing-search" role="search" aria-label="Search Pocket apps" onSubmit={e => { e.preventDefault(); void load(true) }}><div className="briefing-search-input"><Icon name="search" size={16} /><input aria-label="Search my apps" placeholder="Search across your apps…" value={q} maxLength={200} onChange={e => setQ(e.target.value)} /><button type="submit" disabled={busy || !q.trim()}>Search</button></div><button type="button" className="briefing-refresh" disabled={busy} onClick={() => load()}><Icon name={query ? 'arrow-left' : 'refresh'} size={15} />{query ? 'Back to today' : 'Refresh'}</button></form>
+  {error && <p role="alert" className="callout danger">{error}</p>}
+  {busy && <p role="status" className="muted small">Reading your apps…</p>}
+  {data && <><div className="briefing-overview-meta"><span>{available} of {data.sections.length + (data.unavailable?.length || 0)} sources available</span><details><summary>About this {query ? 'search' : 'briefing'}</summary><p>{data.timezone && `${data.timezone} · `}{data.coverage}</p>{data.unavailable?.length ? <p>Not connected: {data.unavailable.map(friendly).join(', ')}.</p> : null}</details></div>{data.unavailable?.length ? <p className="muted small">Some apps aren’t connected. Open “About this briefing” for details.</p> : null}<div className="briefing-grid" aria-busy={busy}>{sections.map(s => <BriefingCard section={s} onAsk={ask} asking={asking} key={s.tool} />)}</div></>}
+ </Frame>
 }
+
 interface Memory { id: number; label: string; value: string; enabled: boolean }
 export function MemoryPage({ onMenu }: { onMenu?: () => void }) {
  const [items, setItems] = useState<Memory[]>([]), [edit, setEdit] = useState<Memory>({ id: 0, label: '', value: '', enabled: true }), [busy, setBusy] = useState(false)
