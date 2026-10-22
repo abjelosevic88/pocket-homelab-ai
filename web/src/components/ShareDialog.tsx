@@ -76,7 +76,8 @@ export function PrivacyBadge({ thread, access, onShare }: { thread: Thread; acce
     </span>
   }
   const label = n ? <>Shared · {n === 1 ? thread.shares![0].name : `${n} people`}</> : <>Private</>
-  const title = n ? `Shared with ${thread.shares!.map(s => `${s.name} (${s.role === 'chat' ? 'can chat' : 'can view'})`).join(', ')} — click to change` : 'Only you can see this chat — click to share it'
+  const title = n ? `Shared with ${thread.shares!.map(s => `${s.name} (${s.role === 'chat' ? 'can chat' : 'can view'})`).join(', ')} — click to change`
+    : thread.source === 'ask' ? 'Only you can see this chat — Ask chats can’t be shared' : 'Only you can see this chat — click to share it'
   return <button type="button" className={`privacy-badge ${n ? 'shared' : 'private'}`} title={title} onClick={onShare} disabled={!onShare}>
     <Icon name={n ? 'users' : 'lock'} size={11} />{label}
   </button>

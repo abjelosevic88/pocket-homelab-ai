@@ -237,7 +237,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
             </h1>
           )}
           <div className="thread-sub">
-            {t.source !== 'ask' && <PrivacyBadge thread={t} access={access} onShare={owner ? () => setSharing(true) : undefined} />}
+            <PrivacyBadge thread={t} access={access} onShare={owner && t.source !== 'ask' ? () => setSharing(true) : undefined} />
             <ProviderBadge provider={t.provider} size="xs" />
             <span className="ellipsis mono" title={t.cwd}>{shortPath(t.cwd)}</span>
             {t.usage?.cost_usd > 0 && <span className="tnum" title="Cost so far">{fmtCost(t.usage.cost_usd)}</span>}

@@ -76,7 +76,7 @@ export function TabBar({ tabs, active, close, move }: ReturnType<typeof useTabs>
                   : <Icon name={t?.provider === 'codex' ? 'codex' : 'claude'} size={13} />}
               </span>
               <span className="tab-title">{t ? threadTitle(t) : '…'}</span>
-              {t && t.source !== 'ask' && <span className={`tab-privacy ${t.shares?.length ? 'shared' : ''}`} title={t.shares?.length ? (t.owner_name && t.owner_id !== user?.id ? `Shared by ${t.owner_name}` : 'Shared') : 'Private'}>
+              {t && <span className={`tab-privacy ${t.shares?.length ? 'shared' : ''}`} title={t.shares?.length ? (t.owner_name && t.owner_id !== user?.id ? `Shared by ${t.owner_name}` : 'Shared') : 'Private'}>
                 <Icon name={t.shares?.length ? 'users' : 'lock'} size={10} /></span>}
               <button type="button" className="tab-x" aria-label="Close tab" title="Close tab (middle-click)" onClick={e => { e.stopPropagation(); close([id]) }}><Icon name="x" size={12} /></button>
             </div>
