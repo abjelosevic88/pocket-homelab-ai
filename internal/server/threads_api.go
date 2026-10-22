@@ -40,6 +40,11 @@ func (s *Server) threadRoutes(r chi.Router) {
 
 // requireRun answers 403 unless the person may start agents.
 func (s *Server) requireRun(w http.ResponseWriter, r *http.Request) bool {
+	if id := chi.URLParam(r, "id"); id != "" {
+		if t, err := s.store.GetThread(r.Context(), me(r), id); err == nil && t.Source == "ask" {
+			return true
+		}
+	}
 	if !userFrom(r.Context()).MayRun() {
 		writeErr(w, http.StatusForbidden, "an admin has not allowed you to run agents on this server")
 		return false
@@ -323,6 +328,10 @@ func (s *Server) handlePatchThread(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+	if t.Source == "ask" && (in.Mode != nil || in.Speed != nil) {
+		writeErr(w, 400, "Ask uses fixed permissions")
+		return
+	}
 	restart := false
 	if in.Speed != nil && *in.Speed != t.Speed {
 		model := t.Model
@@ -518,6 +527,10 @@ func (s *Server) handleRespond(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+	if t.Source == "ask" && in.Decision == "allow_session" {
+		writeErr(w, 400, "Approve each Ask change individually")
+		return
+	}
 	switch in.Decision {
 	case "allow", "allow_session", "deny":
 	default:
@@ -552,6 +565,10 @@ func (s *Server) handleFork(w http.ResponseWriter, r *http.Request) {
 	}
 	t := s.thread(w, r)
 	if t == nil {
+		return
+	}
+	if t.Source == "ask" {
+		writeErr(w, 400, "Start a new Ask conversation from the item")
 		return
 	}
 	if t.ProviderSessionID == "" {

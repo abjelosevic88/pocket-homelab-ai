@@ -151,6 +151,7 @@ func (s *Server) Router() http.Handler {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Compress(5, "application/json", "text/html", "text/css", "application/javascript", "text/plain", "text/markdown"))
 
+	r.Get("/pocket-ask.js", s.core.AskWidget("ai"))
 	r.Get("/healthz", s.handleHealth)
 	r.Get("/readyz", s.handleReady)
 	r.Get("/api/health", s.handleHealth)
@@ -183,6 +184,7 @@ func (s *Server) Router() http.Handler {
 
 			// Threads, messages, requests, search, usage: threads_api.go.
 			s.threadRoutes(r)
+			s.askRoutes(r)
 			// Images for prompts: uploads.go.
 			s.uploadRoutes(r)
 			// Workspaces, folder picker, recipes: library_api.go.

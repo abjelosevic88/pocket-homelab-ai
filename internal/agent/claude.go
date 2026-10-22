@@ -88,7 +88,9 @@ func StartClaude(ctx context.Context, o Options, sink Sink) (Session, error) {
 	if mode == "" {
 		mode = "default"
 	}
-	if mode == "bypassPermissions" {
+	if o.Restricted {
+		args = append(args, "--restricted", "--permission-mode", "manual", "--tools", "", "--strict-mcp-config", "--mcp-config", o.MCPConfig, "--setting-sources", "", "--disable-slash-commands", "--settings", `{"disableAllHooks":true}`, "--allowedTools", "mcp__pocket__*")
+	} else if mode == "bypassPermissions" {
 		args = append(args, "--dangerously-skip-permissions")
 	} else {
 		// allow switching to full access later without a restart
@@ -101,7 +103,11 @@ func StartClaude(ctx context.Context, o Options, sink Sink) (Session, error) {
 		}
 	}
 	if strings.TrimSpace(o.SystemPrompt) != "" {
-		args = append(args, "--append-system-prompt", o.SystemPrompt)
+		flag := "--append-system-prompt"
+		if o.Restricted {
+			flag = "--system-prompt"
+		}
+		args = append(args, flag, o.SystemPrompt)
 	}
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = o.Cwd
@@ -191,6 +197,9 @@ func (s *claudeSession) Interrupt() error {
 }
 
 func (s *claudeSession) SetMode(mode string) error {
+	if s.opts.Restricted {
+		return errors.New("Pocket Ask permissions cannot be changed")
+	}
 	s.mu.Lock()
 	s.reqSeq++
 	id := fmt.Sprintf("mode-%d", s.reqSeq)
@@ -870,6 +879,14 @@ func (s *claudeSession) handleControl(id string, raw json.RawMessage) {
 		// hooks / MCP messages we do not serve: answer so the CLI does not hang.
 		_ = s.write(map[string]any{"type": "control_response", "response": map[string]any{
 			"subtype": "error", "request_id": id, "error": "not supported by Pocket AI"}})
+		return
+	}
+	if s.opts.Restricted {
+		behavior := "deny"
+		if strings.HasPrefix(req.ToolName, "mcp__pocket__") {
+			behavior = "allow"
+		}
+		_ = s.write(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": id, "response": map[string]any{"behavior": behavior, "updatedInput": req.Input, "message": "Pocket Ask only permits Pocket tools"}}})
 		return
 	}
 	p := claudePending{toolName: req.ToolName, input: req.Input, suggestions: req.Suggestions, kind: "permission", toolUseID: req.ToolUseID}

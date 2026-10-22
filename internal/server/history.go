@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,7 +41,10 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	known := s.store.SessionThreadsAll(ctx, me(r))
 	out := []agent.ServerSession{}
 	total := 0
-	for _, x := range agent.Sessions(s.cfg.ClaudeHome, s.cfg.CodexHome, s.cfg.PaseoHome) {
+	sessions := agent.Sessions(s.cfg.ClaudeHome, s.cfg.CodexHome, s.cfg.PaseoHome)
+	sessions = append(sessions, agent.Sessions(filepath.Join(s.cfg.DataDir, "ask-claude", strconv.FormatInt(me(r), 10)), "", "")...)
+	sort.Slice(sessions, func(i, j int) bool { return sessions[i].UpdatedAt > sessions[j].UpdatedAt })
+	for _, x := range sessions {
 		if th, ok := known[x.Provider+":"+x.SessionID]; ok {
 			x.ThreadID = th.ID
 			x.Origin = threadOrigin(th.Source, x.Origin)
@@ -97,6 +103,8 @@ func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	known := s.store.SessionThreadsAll(r.Context(), me(r))
 	runs := agent.Runs(s.cfg.ClaudeHome, s.cfg.CodexHome, s.cfg.PaseoHome, from, to)
+	runs = append(runs, agent.Runs(filepath.Join(s.cfg.DataDir, "ask-claude", strconv.FormatInt(me(r), 10)), "", "", from, to)...)
+	sort.Slice(runs, func(i, j int) bool { return runs[i].StartedAt > runs[j].StartedAt })
 	for i := range runs {
 		if th, ok := known[runs[i].Provider+":"+runs[i].SessionID]; ok {
 			runs[i].ThreadID = th.ID

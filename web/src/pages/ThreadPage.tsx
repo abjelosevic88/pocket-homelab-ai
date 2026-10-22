@@ -42,7 +42,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const scroller = useRef<HTMLDivElement>(null)
   const composer = useRef<ComposerHandle>(null)
   const atBottomRef = useRef(true)
-  const canRun = !!user && (user.role === 'admin' || user.can_run)
+  const canRun = !!user && (user.role === 'admin' || user.can_run || thread?.source === 'ask')
   const forkNewTab = useForkNewTab(id)
   const { running: runningNow } = useApp()
   const otherRunning = runningNow.filter(r => r.thread_id !== id).length
@@ -198,7 +198,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const menu: MenuItem[] = [
     { label: t.pinned ? 'Unpin' : 'Pin to top', icon: 'bookmark', onSelect: () => patch({ pinned: !t.pinned }) },
     { label: 'Rename', icon: 'edit', onSelect: () => { setTitleDraft(t.title || threadTitle(t)); setEditingTitle(true) } },
-    { label: 'Fork into a new thread', icon: 'fork', disabled: !t.provider_session_id || !canRun, onSelect: fork },
+    { label: 'Fork into a new thread', icon: 'fork', disabled: t.source === 'ask' || !t.provider_session_id || !canRun, onSelect: fork },
     { label: 'Export as Markdown', icon: 'download', onSelect: () => download(`${V1}/threads/${id}/export.md`) },
     'sep',
     { label: t.archived ? 'Move out of archive' : 'Archive', icon: 'archive', onSelect: async () => { const th = await patch({ archived: !t.archived }); if (th?.archived) { dropThread(id); toast('Archived') } } },
@@ -239,7 +239,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
               {items.length === 0 && <div className="muted center small" style={{ padding: 30 }}>Nothing here yet.</div>}
               {t.source === 'import' && items.length > 0 && <div className="notice info"><Icon name="history" size={14} /><span>Imported from the server’s {providerName(t.provider)} history — sending a message continues that session.</span></div>}
               <Timeline key={id} threadId={t.provider === 'claude' ? id : undefined} items={visible} onResend={canRun ? resend : undefined} onDropUnsent={dropUnsent} showThinking={!!settings?.show_thinking} streamingKey={streamingKey}
-                onFork={t.provider_session_id && canRun && !running ? forkNewTab : undefined} />
+                onFork={t.source !== 'ask' && t.provider_session_id && canRun && !running ? forkNewTab : undefined} />
               {t.status === 'error' && t.error && <div className="notice error"><Icon name="alert" size={14} /><span>{t.error}</span></div>}
             </>
           )}
@@ -261,7 +261,8 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
             <Composer ref={composer} draftKey={id} autoFocus onSend={send} running={running} onStop={t.external && !t.live ? undefined : interrupt} disabled={!!t.external && !t.live}
               placeholder={t.external && !t.live ? 'It is running in another app right now — you can reply here once it has finished' : running ? 'Add a message — it is sent when the agent is done…' : pending.length ? 'Or type an answer…' : `Reply to ${providerName(t.provider)}…`}
               footer={<>
-                {p && <span className="thread-pickers"><AgentPicker compact showProvider={false} value={{ provider: t.provider, model: t.model, effort: t.effort, mode: t.mode, speed: t.speed || '' }}
+                {t.source === 'ask' && <span className="muted small">Pocket Ask · each change needs your approval · <a href={t.source_ref} target="_blank" rel="noopener noreferrer">Source item ↗</a></span>}
+                {p && t.source !== 'ask' && <span className="thread-pickers"><AgentPicker compact showProvider={false} value={{ provider: t.provider, model: t.model, effort: t.effort, mode: t.mode, speed: t.speed || '' }}
                   onChange={ch => patch(ch as Partial<Thread>)} /></span>}
               </>} />
           ) : (

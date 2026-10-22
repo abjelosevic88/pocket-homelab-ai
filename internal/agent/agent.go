@@ -164,6 +164,8 @@ type Sink interface {
 
 // Options start a session.
 type Options struct {
+	Restricted   bool // Pocket Ask: only the supplied MCP server, no built-in tools
+	MCPConfig    string
 	Bin          string
 	Cwd          string
 	Model        string

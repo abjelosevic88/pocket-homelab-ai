@@ -349,6 +349,12 @@ func (rt *engine) startRun(t *store.Thread) (*run, error) {
 		o.ResumeID, o.Fork = strings.TrimPrefix(t.SourceRef, "fork:"), true
 	}
 	sink := &runSink{rt: rt, r: r}
+	if t.Source == "ask" {
+		if err := rt.s.prepareAsk(ctx, t, sink, &o); err != nil {
+			cancel()
+			return nil, err
+		}
+	}
 	var err error
 	switch t.Provider {
 	case "claude":
@@ -600,8 +606,14 @@ func (rt *engine) respond(t *store.Thread, reqID string, resp agent.Response) er
 	if !ok {
 		return badRequest("that request is no longer waiting")
 	}
-	if err := r.sess.Respond(reqID, resp); err != nil {
-		return err
+	var answerErr error
+	if t.Source == "ask" && strings.HasPrefix(reqID, "ask-") {
+		answerErr = rt.s.answerAsk(t, reqID, resp)
+	} else {
+		answerErr = r.sess.Respond(reqID, resp)
+	}
+	if answerErr != nil {
+		return answerErr
 	}
 	r.mu.Lock()
 	delete(r.pending, reqID)
