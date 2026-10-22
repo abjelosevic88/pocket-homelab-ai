@@ -243,6 +243,9 @@ export interface Upload { id: string; name: string; mime: string; size: number; 
 
 export interface Workspace { id: number; name: string; path: string; color: string; sort_order: number; threads: number; created_at: string }
 
+export interface GitBranch { name: string; remote?: boolean; current?: boolean; upstream?: string; time?: number; subject?: string }
+export interface GitInfo { repo: boolean; root?: string; branch?: string; detached?: boolean; head?: string; dirty: number; ahead: number; behind: number; branches?: GitBranch[] }
+
 export interface DirListing { path: string; parent: string; dirs: { name: string; path: string; git: boolean }[]; roots: string[] }
 
 export interface AgentChoice { provider: ProviderId | ''; model: string; effort: string; mode: string; speed?: string; cwd: string }

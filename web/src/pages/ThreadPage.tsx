@@ -9,6 +9,7 @@ import type { Item, Thread, ThreadDetail, Upload } from '../lib/types'
 import { RunBar, useForkNewTab } from '../components/RunBar'
 import { QueueStrip } from '../components/QueueStrip'
 import { AgentPicker } from '../components/AgentPicker'
+import { BranchButton } from '../components/BranchPicker'
 import { ContextMeter, ProviderBadge } from '../components/bits'
 import { Composer, type ComposerHandle } from '../components/Composer'
 import { Icon } from '../components/icons'
@@ -271,6 +272,8 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
             <PrivacyBadge thread={t} access={access} onShare={owner ? () => setSharing(true) : undefined} />
             <ProviderBadge provider={t.provider} size="xs" />
             <span className="ellipsis mono" title={t.cwd}>{shortPath(t.cwd)}</span>
+            {canRun && t.source !== 'ask' && t.cwd && <BranchButton cwd={t.cwd} className="btn ghost" refreshKey={`${id}:${t.status}`}
+              lockedReason={running || t.status === 'waiting' || t.external || t.subagents?.length ? 'The agent is working in this folder — switch once it is done.' : undefined} />}
             {t.usage?.cost_usd > 0 && <span className="tnum" title="Cost so far">{fmtCost(t.usage.cost_usd)}</span>}
             <ContextMeter used={t.usage?.context_tokens || 0} window={t.usage?.context_window || 0} />
           </div>
