@@ -166,7 +166,7 @@ func (s *Server) briefing(ctx context.Context, uid int64, tid string, cat map[st
 	now := time.Now().In(s.loc(ctx, uid))
 	day := now.Format("2006-01-02")
 	next := now.AddDate(0, 0, 1).Format("2006-01-02")
-	planned := []appRead{{Name: "pocket_calendar_events", Args: map[string]any{"query": map[string]any{"from": day, "to": next, "tz": now.Location().String()}}}, {Name: "pocket_tasks_summary", Args: map[string]any{}}, {Name: "pocket_money_bills", Args: map[string]any{}}, {Name: "pocket_collaborator_summary", Args: map[string]any{}}, {Name: "pocket_garage_reminders", Args: map[string]any{}}}
+	planned := []appRead{{Name: "pocket_calendar_events", Args: map[string]any{"query": map[string]any{"from": day, "to": next, "tz": now.Location().String()}}}, {Name: "pocket_tasks_summary", Args: map[string]any{}}, {Name: "pocket_money_bills", Args: map[string]any{}}, {Name: "pocket_collaborator_summary", Args: map[string]any{}}, {Name: "pocket_garage_reminders", Args: map[string]any{}}, {Name: "pocket_bookshelf_reading", Args: map[string]any{}}}
 	reads := []appRead{}
 	unavailable := []string{}
 	for _, r := range planned {
@@ -176,7 +176,7 @@ func (s *Server) briefing(ctx context.Context, uid int64, tid string, cat map[st
 			unavailable = append(unavailable, r.Name)
 		}
 	}
-	return map[string]any{"date": day, "timezone": now.Location().String(), "coverage": "Calendar for today; task/review dashboards; recurring bills and maintenance reminders. Collections are limited to 20 entries, and bill dates may be estimates.", "unavailable": unavailable, "sections": s.parallelReads(ctx, uid, tid, reads)}
+	return map[string]any{"date": day, "timezone": now.Location().String(), "coverage": "Calendar for today; task/review dashboards; recurring bills and maintenance reminders; books being read with today's pages and finish estimates. Collections are limited to 20 entries, and bill dates may be estimates.", "unavailable": unavailable, "sections": s.parallelReads(ctx, uid, tid, reads)}
 }
 func (s *Server) handleBriefing(w http.ResponseWriter, r *http.Request) {
 	cat, err := s.catalog(r.Context(), me(r))
