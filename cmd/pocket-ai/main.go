@@ -140,7 +140,9 @@ func serve() {
 			return
 		}
 		log.Info("restart requested: waiting until no agent is working")
-		srv.WaitIdle(ctx, 30*time.Minute)
+		// no time limit: a long turn must never be killed by an update
+		// (`systemctl --user restart pocket-ai` still forces it)
+		srv.WaitIdle(ctx, 0)
 		log.Info("restarting for the update")
 		cancel()
 	}()

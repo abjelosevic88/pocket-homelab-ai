@@ -110,12 +110,18 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		s.log.Info("admin user created from environment", "email", u.Email)
 	}
 	_ = s.store.PurgeSessions(ctx)
-	s.store.ResetRunning(ctx)
+	cut := s.store.ResetRunning(ctx)
 	s.changed.Store(time.Now().UnixNano())
 	if err := s.loadSecretKey(); err != nil {
 		return err
 	}
 	s.rt.start(ctx)
+	// say so in the thread, or a turn cut off by a crash or a manual restart
+	// just looks stuck
+	for _, id := range cut {
+		s.rt.saveItem(id, agent.Item{Key: fmt.Sprintf("restart-%d", time.Now().UnixNano()), Kind: "notice", Level: "warn",
+			Text: "Pocket AI restarted while the agent was working, so this turn stopped. Send a message (e.g. “continue”) to pick up where it left off."})
+	}
 	go s.housekeeping(ctx)
 	go s.scheduleLoop(ctx)
 	_, _ = s.store.DB.ExecContext(ctx, `UPDATE workflows SET last_status='interrupted' WHERE last_status='running'`)
@@ -421,8 +427,16 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // WaitIdle returns once no thread has a turn running or messages queued (or
 // after max): a restart then cuts nobody off.
 func (s *Server) WaitIdle(ctx context.Context, max time.Duration) {
-	deadline := time.Now().Add(max)
-	for (s.rt.busyCount() > 0 || len(s.inferenceSlots) > 0) && time.Now().Before(deadline) {
+	start := time.Now()
+	nextLog := start.Add(10 * time.Minute)
+	for s.rt.busyCount() > 0 || len(s.inferenceSlots) > 0 {
+		if max > 0 && time.Since(start) > max {
+			return
+		}
+		if time.Now().After(nextLog) {
+			s.log.Info("restart still waiting for agents to finish", "working", s.rt.busyCount()+len(s.inferenceSlots), "waited", time.Since(start).Round(time.Minute))
+			nextLog = nextLog.Add(10 * time.Minute)
+		}
 		select {
 		case <-ctx.Done():
 			return
