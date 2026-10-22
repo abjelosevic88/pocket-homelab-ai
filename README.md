@@ -132,3 +132,7 @@ perform web searches. At most four requests run at once, each bounded to 140
 seconds. Busy responses and model failures are surfaced to the calling app.
 
 Pocket AI model selection: AI settings offer the models discovered from your connected Claude account. “Use Pocket AI default” follows your current model in Pocket AI (Sonnet when no model is set). An explicit choice is saved per person in this app and never changes the Pocket AI default or your OpenAI model. Loading models does not create a chat or send a generation prompt. If a saved model is no longer offered, choose another model or return to the default; generation does not silently substitute a different model.
+
+### Personal model defaults
+
+Set your default for connected apps in **Pocket AI → Settings → App defaults**. This is personal to your account and applies on the next text-generation request in Travel, Money, Day, and Bookshelf when the app uses “Use Pocket AI default”. A model chosen in an individual app takes precedence. “Follow Claude default” preserves existing behavior: use your Claude model under Agents, or Sonnet when no specific model is selected. Claude and Codex chat defaults remain under Agents. Core manages app connections and permissions; model preferences live in Pocket AI alongside your connected accounts.

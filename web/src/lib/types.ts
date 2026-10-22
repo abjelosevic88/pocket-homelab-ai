@@ -48,6 +48,7 @@ export interface LoginState { state: 'idle' | 'starting' | 'waiting' | 'checking
 
 export interface Settings {
   title: string
+  app_model: string
   default_provider: ProviderId
   default_cwd: string
   claude: AgentDefaults

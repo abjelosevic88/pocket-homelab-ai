@@ -107,7 +107,51 @@ for line in sys.stdin:
 			t.Fatalf("accepted unlisted model %q: %d %s", model, code, body)
 		}
 	}
-	for _, path := range []string{"/api/v1/threads", "/api/v1/settings", "/api/v1/accounts"} {
+
+	// A personal central default takes precedence over chat defaults, but an app
+	// override still wins. All changes go through the real settings API.
+	code, body = personal.do("GET", "/api/v1/settings/app-models", "", nil)
+	if code != 200 || !strings.Contains(string(body), `"claude_default_model":"opus"`) {
+		t.Fatalf("personal catalog: %d %s", code, body)
+	}
+	code, body = personal.do("PUT", "/api/v1/settings", "application/json", []byte(`{"app_model":"sonnet"}`))
+	if code != 200 || !strings.Contains(string(body), `"app_model":"sonnet"`) {
+		t.Fatalf("save central default: %d %s", code, body)
+	}
+	saved, _ := s.store.GetSettings(t.Context(), user.ID)
+	if saved.AppModel != "sonnet" || saved.Claude.Model != "opus" {
+		t.Fatalf("central preference changed chat defaults: %+v", saved)
+	}
+	code, body = c.do("GET", "/api/v1/inference/models", "", nil)
+	if code != 200 || !strings.Contains(string(body), `"default_model":"sonnet"`) {
+		t.Fatalf("apps did not see central default: %d %s", code, body)
+	}
+	code, body = c.do("POST", "/api/v1/inference", "application/json", []byte(`{"prompt":"private"}`))
+	if code != 200 || !strings.Contains(string(body), `pocket-ai/sonnet`) {
+		t.Fatalf("central default not used: %d %s", code, body)
+	}
+	code, body = c.do("POST", "/api/v1/inference", "application/json", []byte(`{"prompt":"private","model":"opus"}`))
+	if code != 200 || !strings.Contains(string(body), `pocket-ai/opus`) {
+		t.Fatalf("per-app override lost: %d %s", code, body)
+	}
+	code, body = personal.do("PUT", "/api/v1/settings", "application/json", []byte(`{"enter_sends":false}`))
+	if code != 200 || !strings.Contains(string(body), `"app_model":"sonnet"`) {
+		t.Fatalf("partial update lost central preference: %d %s", code, body)
+	}
+	code, body = personal.do("PUT", "/api/v1/settings", "application/json", []byte(`{"app_model":"not-offered"}`))
+	if code != 400 {
+		t.Fatalf("accepted unavailable central default: %d %s", code, body)
+	}
+	code, body = personal.do("PUT", "/api/v1/settings", "application/json", []byte(`{"app_model":""}`))
+	if code != 200 {
+		t.Fatalf("clear central preference: %d %s", code, body)
+	}
+	code, body = c.do("POST", "/api/v1/inference", "application/json", []byte(`{"prompt":"private"}`))
+	if code != 200 || !strings.Contains(string(body), `pocket-ai/opus`) {
+		t.Fatalf("cleared preference did not follow Claude: %d %s", code, body)
+	}
+	personal.do("PUT", "/api/v1/settings", "application/json", []byte(`{"app_model":"sonnet"}`))
+	for _, path := range []string{"/api/v1/threads", "/api/v1/settings", "/api/v1/accounts", "/api/v1/settings/app-models"} {
 		code, body := c.do("GET", path, "", nil)
 		if code != 401 {
 			t.Fatalf("inference token reached %s: %d %s", path, code, body)
@@ -118,7 +162,11 @@ for line in sys.stdin:
 		t.Fatalf("accepted arbitrary execution options: %d", code)
 	}
 
-	_, other := person(t, s, h, "another@example.test", "member", true)
+	otherClient, other := person(t, s, h, "another@example.test", "member", true)
+	code, body = otherClient.do("GET", "/api/v1/settings", "", nil)
+	if code != 200 || !strings.Contains(string(body), `"app_model":""`) {
+		t.Fatalf("central default leaked to another person: %d %s", code, body)
+	}
 	account := &store.Account{Provider: "claude", Label: "Other person's account", Home: root, UserID: &other.ID}
 	if err := s.store.CreateAccount(t.Context(), account); err != nil {
 		t.Fatal(err)

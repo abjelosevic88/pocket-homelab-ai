@@ -25,6 +25,7 @@ type Settings struct {
 	Title         string `json:"title"`
 	SetupComplete bool   `json:"setup_complete"`
 
+	AppModel        string        `json:"app_model"`        // empty follows Claude defaults
 	DefaultProvider string        `json:"default_provider"` // claude | codex
 	DefaultCwd      string        `json:"default_cwd"`
 	Claude          AgentDefaults `json:"claude"`
@@ -86,6 +87,8 @@ func (s *Store) GetSettings(ctx context.Context, userID int64) (Settings, error)
 			}
 		case "setup_complete":
 			st.SetupComplete = v == "1"
+		case "app_model":
+			st.AppModel = v
 		case "default_provider":
 			st.DefaultProvider = v
 		case "default_cwd":
@@ -151,7 +154,7 @@ func b2s(b bool) string {
 // SaveSettings stores a person's preferences (not the notify token).
 func (s *Store) SaveSettings(ctx context.Context, userID int64, st Settings) error {
 	return s.putUserSettings(ctx, userID, map[string]string{
-		"default_provider": st.DefaultProvider, "default_cwd": st.DefaultCwd,
+		"app_model": st.AppModel, "default_provider": st.DefaultProvider, "default_cwd": st.DefaultCwd,
 		"claude.model": st.Claude.Model, "claude.effort": st.Claude.Effort, "claude.mode": st.Claude.Mode,
 		"codex.model": st.Codex.Model, "codex.effort": st.Codex.Effort, "codex.mode": st.Codex.Mode,
 		"claude.speed": st.Claude.Speed, "codex.speed": st.Codex.Speed,

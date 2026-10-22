@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/agent"
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
 	core "github.com/abjelosevic88/pocket-homelab-core/sdk"
 )
 
@@ -61,19 +62,10 @@ func (s *Server) handleInference(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "AI settings")
 		return
 	}
-	if err := s.checkAccount(r.Context(), u, "claude", st.Claude.Account); err != nil {
+	home, err := s.inferenceHome(r.Context(), u, st)
+	if err != nil {
 		writeErr(w, 403, err.Error())
 		return
-	}
-	// Resolve the selected account without falling back to another person's login.
-	home := s.defaultHome("claude")
-	if st.Claude.Account != 0 {
-		a, err := s.store.GetAccount(r.Context(), st.Claude.Account)
-		if err != nil || !mayUseAccount(u, a) || a.Provider != "claude" {
-			writeErr(w, 403, "Claude account unavailable")
-			return
-		}
-		home = a.Home
 	}
 	base := filepath.Join(s.cfg.DataDir, "inference")
 	if err := os.MkdirAll(base, 0700); err != nil {
@@ -87,12 +79,13 @@ func (s *Server) handleInference(w http.ResponseWriter, r *http.Request) {
 	}
 	defer os.RemoveAll(cwd)
 	cwd, _ = filepath.Abs(cwd)
-	model := st.Claude.Model
-	if model == "" || model == "default" {
-		model = "sonnet"
+	model := appDefaultModel(st)
+	requestedModel := body.Model
+	if requestedModel == "" {
+		requestedModel = st.AppModel
 	}
 	effort := "medium"
-	if r.Method == http.MethodGet || body.Model != "" {
+	if r.Method == http.MethodGet || requestedModel != "" {
 		models, err := s.inferenceModels(r.Context(), fmt.Sprintf("%d:%s", u.ID, home), home, cwd)
 		if err != nil {
 			writeErr(w, 503, "Could not load models from your Claude account; try again shortly")
@@ -111,7 +104,7 @@ func (s *Server) handleInference(w http.ResponseWriter, r *http.Request) {
 		}
 		found := false
 		for _, m := range models {
-			if m.ID == body.Model {
+			if m.ID == requestedModel {
 				effort = ""
 				for _, e := range m.efforts {
 					if e == "medium" {
@@ -124,10 +117,10 @@ func (s *Server) handleInference(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if !found {
-			writeErr(w, 400, "This model is no longer offered by your Claude account; choose an available model or Use Pocket AI default")
+			writeErr(w, 400, "This model is no longer offered by your Claude account; choose another model in this app or update Pocket AI Settings → App defaults")
 			return
 		}
-		model = body.Model
+		model = requestedModel
 	}
 	system := body.System
 	if body.JSON {
@@ -194,4 +187,88 @@ func (s *Server) inferenceModels(ctx context.Context, key, home, cwd string) ([]
 	}
 	s.inferenceModelCache[key] = inferenceModelEntry{models: models, at: time.Now()}
 	return models, nil
+}
+
+func claudeDefaultModel(st store.Settings) string {
+	if st.Claude.Model == "" || st.Claude.Model == "default" {
+		return "sonnet"
+	}
+	return st.Claude.Model
+}
+
+func appDefaultModel(st store.Settings) string {
+	if st.AppModel != "" {
+		return st.AppModel
+	}
+	return claudeDefaultModel(st)
+}
+
+func (s *Server) inferenceHome(ctx context.Context, u *store.User, st store.Settings) (string, error) {
+	if err := s.checkAccount(ctx, u, "claude", st.Claude.Account); err != nil {
+		return "", err
+	}
+	home := s.defaultHome("claude")
+	if st.Claude.Account != 0 {
+		a, err := s.store.GetAccount(ctx, st.Claude.Account)
+		if err != nil || !mayUseAccount(u, a) || a.Provider != "claude" {
+			return "", errors.New("Claude account unavailable")
+		}
+		home = a.Home
+	}
+	return home, nil
+}
+
+// The personal settings screen uses the same account and catalog as delegated
+// generation; it never accesses somebody else's provider list or credentials.
+func (s *Server) personalInferenceModels(ctx context.Context, u *store.User, st store.Settings) ([]inferenceModel, error) {
+	home, err := s.inferenceHome(ctx, u, st)
+	if err != nil {
+		return nil, err
+	}
+	select {
+	case s.inferenceSlots <- struct{}{}:
+		defer func() { <-s.inferenceSlots }()
+	default:
+		return nil, errors.New("Pocket AI is busy; try again shortly")
+	}
+	base := filepath.Join(s.cfg.DataDir, "inference")
+	if err := os.MkdirAll(base, 0700); err != nil {
+		return nil, err
+	}
+	cwd, err := os.MkdirTemp(base, "models-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(cwd)
+	cwd, _ = filepath.Abs(cwd)
+	return s.inferenceModels(ctx, fmt.Sprintf("%d:%s", u.ID, home), home, cwd)
+}
+
+func (s *Server) handleAppModels(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r.Context())
+	st, err := s.store.GetSettings(r.Context(), u.ID)
+	if err != nil {
+		s.fail(w, err, "settings")
+		return
+	}
+	models, err := s.personalInferenceModels(r.Context(), u, st)
+	if err != nil {
+		writeErr(w, 503, err.Error())
+		return
+	}
+	out := struct {
+		core.InferenceModels
+		ClaudeDefaultModel string `json:"claude_default_model"`
+		ClaudeDefaultName  string `json:"claude_default_name"`
+	}{InferenceModels: core.InferenceModels{Models: []core.InferenceModel{}, DefaultModel: appDefaultModel(st), DefaultName: appDefaultModel(st)}, ClaudeDefaultModel: claudeDefaultModel(st), ClaudeDefaultName: claudeDefaultModel(st)}
+	for _, m := range models {
+		out.Models = append(out.Models, m.InferenceModel)
+		if m.ID == out.DefaultModel {
+			out.DefaultName = m.Name
+		}
+		if m.ID == out.ClaudeDefaultModel {
+			out.ClaudeDefaultName = m.Name
+		}
+	}
+	writeJSON(w, 200, out)
 }

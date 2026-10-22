@@ -12,6 +12,7 @@ import (
 
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/notify"
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
+	core "github.com/abjelosevic88/pocket-homelab-core/sdk"
 )
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +49,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		Title           *string              `json:"title"`
+		AppModel        *string              `json:"app_model"`
 		DefaultProvider *string              `json:"default_provider"`
 		DefaultCwd      *string              `json:"default_cwd"`
 		Claude          *store.AgentDefaults `json:"claude"`
@@ -96,6 +98,32 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Codex != nil {
 		st.Codex = *in.Codex
+	}
+	if in.AppModel != nil {
+		model := *in.AppModel
+		if !core.ValidInferenceModel(model) {
+			writeErr(w, 400, "invalid app default model")
+			return
+		}
+		if model != "" {
+			models, err := s.personalInferenceModels(ctx, u, st)
+			if err != nil {
+				writeErr(w, 503, "Could not load models from your Claude account; try again shortly")
+				return
+			}
+			found := false
+			for _, m := range models {
+				if m.ID == model {
+					found = true
+					break
+				}
+			}
+			if !found {
+				writeErr(w, 400, "Choose a model offered by your connected Claude account")
+				return
+			}
+		}
+		st.AppModel = model
 	}
 	if in.SystemPrompt != nil {
 		st.SystemPrompt = strings.TrimSpace(*in.SystemPrompt)

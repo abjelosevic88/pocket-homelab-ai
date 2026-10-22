@@ -217,6 +217,7 @@ func (s *Server) Router() http.Handler {
 			r.Delete("/users/{id}", s.handleDeleteUser)
 
 			r.Get("/settings", s.handleGetSettings)
+			r.Get("/settings/app-models", s.handleAppModels)
 			r.Put("/settings", s.handlePutSettings)
 			r.Get("/settings/system", s.handleSystemInfo)
 			r.Post("/notify/test", s.handleTestNotify)
