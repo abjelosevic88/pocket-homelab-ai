@@ -95,7 +95,6 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
         {onMenu && <button type="button" className="btn ghost icon-only menu-btn" aria-label="Threads" onClick={onMenu}><Icon name="menu" size={19} />{needYou.length > 0 ? <span className="menu-badge">{needYou.length}</span> : running.length > 0 && <span className="menu-run-dot" />}</button>}
         <span className="grow" />
         <AskButton />
-        <button type="button" className="btn ghost icon-only" aria-label="Settings" onClick={() => navigate('/settings')}><Icon name="settings" size={17} /></button>
       </header>
       <div className="home-scroll">
         <div className="home-inner">
