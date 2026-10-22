@@ -14,6 +14,7 @@ import ThreadPage from './ThreadPage'
 import RecipesPage from './RecipesPage'
 import SchedulesPage from './SchedulesPage'
 import HistoryPage from './HistoryPage'
+import SharedPage from './SharedPage'
 import TodayPage from './TodayPage'
 import UsagePage from './UsagePage'
 import { BriefingPage, MemoryPage, ActionsPage, WorkflowsPage } from './AssistantPages'
@@ -83,6 +84,7 @@ function ShellInner() {
             <Route path="/recipes" element={<RecipesPage onMenu={onMenu} />} />
             <Route path="/schedules" element={<SchedulesPage onMenu={onMenu} />} />
             <Route path="/history" element={<HistoryPage onMenu={onMenu} />} />
+            <Route path="/shared" element={<SharedPage onMenu={onMenu} />} />
             <Route path="/today" element={<TodayPage onMenu={onMenu} />} />
             <Route path="/briefing" element={<BriefingPage onMenu={onMenu} />} />
             <Route path="/memory" element={<MemoryPage onMenu={onMenu} />} />

@@ -275,3 +275,13 @@
  .briefing-counts { row-gap:12px; }
  .briefing-counts span { padding:0 10px; }
 }
+
+/* Shared page */
+.shared-row { align-items: center; }
+.shared-row .srv-ico { align-self: flex-start; }
+.shared-people { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.shared-person { display: inline-flex; align-items: center; gap: 3px; height: 18px; padding: 0 7px; border-radius: 999px; background: var(--surface-3); color: var(--text-2); font-weight: 600; }
+.shared-person.chat { background: var(--accent-soft); color: var(--accent-ink); }
+.shared-kind { display: inline-flex; align-items: center; gap: 3px; }
+.shared-from b { color: var(--text-2); font-weight: 600; }
+.shared-none { padding: 4px 2px 8px; }

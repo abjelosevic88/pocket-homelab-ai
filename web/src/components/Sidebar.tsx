@@ -98,6 +98,7 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
     }
     return out
   }, [shown, showArchive])
+  const sharedN = (threads || []).filter(t => !mine(t) || !!t.shares?.length).length
   const needYou = (base || []).filter(t => t.status === 'waiting' || t.pending > 0).length
 
   const searchAll = async () => {
@@ -131,6 +132,7 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
         {nav('/recipes', 'zap', 'Recipes')}
         {nav('/schedules', 'clock', 'Schedules')}
         {(user?.role === 'admin' || user?.can_run) && nav('/history', 'history', 'On this server')}
+        {nav('/shared', 'users', 'Shared', sharedN > 0 ? <span className="badge">{sharedN}</span> : undefined)}
         {nav('/usage', 'chart', 'Usage')}
       </nav>
 
