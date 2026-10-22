@@ -12,11 +12,11 @@
 .fchip:hover { background: var(--surface-2); }
 .fchip.on { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); color: var(--accent-ink, var(--accent)); font-weight: 600; }
 .odot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex-shrink: 0; }
-.odot.paseo { background: #818cf8; } .odot.terminal { background: #34d399; } .odot.pocket-ai { background: var(--accent); }
-.odot.schedule { background: #f59e0b; } .odot.app { background: var(--faint); }
-.origin-chip.schedule { background: color-mix(in srgb, #f59e0b 16%, transparent); color: #d97706; }
-[data-theme="dark"] .origin-chip.schedule { color: #fbbf24; }
-.origin-chip.app { background: var(--surface-2); color: var(--muted); }
+.odot.o-paseo { background: #818cf8; } .odot.o-terminal { background: #34d399; } .odot.o-pocket-ai { background: var(--accent); }
+.odot.o-schedule { background: #f59e0b; } .odot.o-app { background: var(--faint); }
+.origin-chip.o-schedule { background: color-mix(in srgb, #f59e0b 16%, transparent); color: #d97706; }
+[data-theme="dark"] .origin-chip.o-schedule { color: #fbbf24; }
+.origin-chip.o-app { background: var(--surface-2); color: var(--muted); }
 
 /* provider mark in a soft tile */
 .srv-ico { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; flex-shrink: 0; }

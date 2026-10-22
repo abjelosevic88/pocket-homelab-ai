@@ -52,6 +52,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		if th, ok := known[x.Provider+":"+x.SessionID]; ok {
 			x.ThreadID = th.ID
 			x.Origin = threadOrigin(th.Source, x.Origin)
+			x.SharedWith = s.rt.sharedNames(th.ID)
 		}
 		if (provider != "" && provider != "all" && x.Provider != provider) || (origin != "" && x.Origin != origin) {
 			continue
@@ -145,6 +146,7 @@ func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
 		if th, ok := known[runs[i].Provider+":"+runs[i].SessionID]; ok {
 			runs[i].ThreadID = th.ID
 			runs[i].Origin = threadOrigin(th.Source, runs[i].Origin)
+			runs[i].SharedWith = s.rt.sharedNames(th.ID)
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"from": from.Format(time.RFC3339), "to": to.Format(time.RFC3339), "runs": runs})

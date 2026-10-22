@@ -508,3 +508,6 @@ button.privacy-badge:disabled { cursor: default; }
 .share-person { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-top: 1px solid var(--hairline); }
 .share-person:first-child { border-top: 0; }
 .share-person-name { display: grid; min-width: 0; font-weight: 600; }
+.privacy-badge.sm { height: 16px; padding: 0 6px; font-size: 10.5px; gap: 3px; }
+.privacy-badge.sm.icon-only { width: 16px; padding: 0; justify-content: center; background: transparent; color: var(--faint); }
+.privacy-badge.sm.icon-only.shared { color: var(--accent); }

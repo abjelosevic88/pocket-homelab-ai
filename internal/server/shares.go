@@ -129,6 +129,16 @@ func (rt *engine) sharedWith(uid int64) []string {
 	return out
 }
 
+// sharedNames are the names of the people a thread is shared with (nil = private).
+func (rt *engine) sharedNames(threadID string) []string {
+	st, _ := rt.sharesOf(threadID)
+	var out []string
+	for _, sh := range st.Shares {
+		out = append(out, sh.Name)
+	}
+	return out
+}
+
 // sharers are the people a thread is shared with.
 func (rt *engine) sharers(threadID string) []int64 {
 	st, _ := rt.sharesOf(threadID)

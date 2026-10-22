@@ -18,8 +18,9 @@ import (
 // running or waiting in Pocket AI.
 type runningItem struct {
 	agent.ActiveSession
-	ThreadID string `json:"thread_id"` // the person's thread for it, if any
-	Status   string `json:"status"`    // running | waiting
+	ThreadID   string   `json:"thread_id"` // the person's thread for it, if any
+	Status     string   `json:"status"`    // running | waiting
+	SharedWith []string `json:"shared_with,omitempty"`
 }
 
 // runningFor lists what is running for a person: what the CLIs on the server
@@ -44,7 +45,7 @@ func (s *Server) runningFor(ctx context.Context, u *store.User) []runningItem {
 			}
 			it := runningItem{ActiveSession: a, Status: "running"}
 			if t := byID[a.Provider+":"+a.SessionID]; t != nil {
-				it.ThreadID = t.ID
+				it.ThreadID, it.SharedWith = t.ID, s.rt.sharedNames(t.ID)
 				s.rt.decorate(t)
 				if t.Live {
 					it.Origin = "pocket-ai"
@@ -77,7 +78,7 @@ func (s *Server) runningFor(ctx context.Context, u *store.User) []runningItem {
 		}
 		out = append(out, runningItem{ActiveSession: agent.ActiveSession{Provider: t.Provider, SessionID: t.ProviderSessionID, Cwd: t.Cwd,
 			Title: t.Title, Prompt: prompt, PromptAt: firstNonEmpty(t.PromptAt, t.ActivityAt), UpdatedAt: t.ActivityAt, Origin: "pocket-ai"},
-			ThreadID: t.ID, Status: status})
+			ThreadID: t.ID, Status: status, SharedWith: s.rt.sharedNames(t.ID)})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].PromptAt > out[j].PromptAt })
 	return out

@@ -292,6 +292,8 @@ export interface ServerSession {
   running: boolean
   running_at?: string
   thread_id: string
+  /** Its Pocket AI thread is shared with these people (absent = private). */
+  shared_with?: string[]
 }
 
 /** One prompt and the agent's work on it (the Today page). */
@@ -313,6 +315,8 @@ export interface Run {
   follow_ups?: number
   output_tokens?: number
   thread_id?: string
+  /** Its Pocket AI thread is shared with these people (absent = private). */
+  shared_with?: string[]
 }
 
 export interface SearchHit { thread_id: string; title: string; provider: ProviderId; snippet: string; item_key: string; activity_at: string }
@@ -359,6 +363,8 @@ export interface RunningItem {
   subagents?: number
   thread_id: string
   status: 'running' | 'waiting'
+  /** Its Pocket AI thread is shared with these people (absent = private). */
+  shared_with?: string[]
 }
 
 export interface Subagent { id: string; description: string; activity?: string; type?: string; started_at: string; tool_uses?: number }

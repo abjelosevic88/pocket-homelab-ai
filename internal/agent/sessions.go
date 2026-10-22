@@ -16,44 +16,46 @@ import (
 // Run is one prompt and the agent's work on it, read from a CLI's own
 // session file (so it covers Pocket AI, Paseo, the terminal and any app).
 type Run struct {
-	Provider     string `json:"provider"`
-	SessionID    string `json:"session_id"`
-	Key          string `json:"key,omitempty"` // timeline item of the prompt (Claude: "u-<uuid>")
-	Title        string `json:"title"`         // the session's title
-	Prompt       string `json:"prompt"`
-	Images       int    `json:"images,omitempty"`
-	Cwd          string `json:"cwd"`
-	Origin       string `json:"origin"` // pocket-ai | schedule | paseo | terminal | app
-	Model        string `json:"model,omitempty"`
-	StartedAt    string `json:"started_at"`
-	EndedAt      string `json:"ended_at,omitempty"`
-	DurationMS   int64  `json:"duration_ms"`
-	Status       string `json:"status"` // running | done | interrupted | unfinished
-	Tools        int    `json:"tools"`
-	FollowUps    int    `json:"follow_ups,omitempty"` // messages sent while it worked
-	OutputTokens int64  `json:"output_tokens,omitempty"`
-	ThreadID     string `json:"thread_id,omitempty"`
-	Account      int64  `json:"account_id"`
+	Provider     string   `json:"provider"`
+	SessionID    string   `json:"session_id"`
+	Key          string   `json:"key,omitempty"` // timeline item of the prompt (Claude: "u-<uuid>")
+	Title        string   `json:"title"`         // the session's title
+	Prompt       string   `json:"prompt"`
+	Images       int      `json:"images,omitempty"`
+	Cwd          string   `json:"cwd"`
+	Origin       string   `json:"origin"` // pocket-ai | schedule | paseo | terminal | app
+	Model        string   `json:"model,omitempty"`
+	StartedAt    string   `json:"started_at"`
+	EndedAt      string   `json:"ended_at,omitempty"`
+	DurationMS   int64    `json:"duration_ms"`
+	Status       string   `json:"status"` // running | done | interrupted | unfinished
+	Tools        int      `json:"tools"`
+	FollowUps    int      `json:"follow_ups,omitempty"` // messages sent while it worked
+	OutputTokens int64    `json:"output_tokens,omitempty"`
+	ThreadID     string   `json:"thread_id,omitempty"`
+	Account      int64    `json:"account_id"`
+	SharedWith   []string `json:"shared_with,omitempty"` // its Pocket AI thread is shared with them (server fills it)
 }
 
 // ServerSession is what "On this server" shows about one CLI session.
 type ServerSession struct {
-	Provider   string `json:"provider"`
-	SessionID  string `json:"session_id"`
-	Title      string `json:"title"`
-	LastPrompt string `json:"last_prompt"`
-	Cwd        string `json:"cwd"`
-	Origin     string `json:"origin"`
-	Model      string `json:"model,omitempty"`
-	StartedAt  string `json:"started_at"`
-	UpdatedAt  string `json:"updated_at"`
-	Runs       int    `json:"runs"`
-	WorkMS     int64  `json:"work_ms"` // time the agent spent on its runs
-	Running    bool   `json:"running"`
-	RunningAt  string `json:"running_at,omitempty"` // when the running prompt was sent
-	ThreadID   string `json:"thread_id"`
-	Account    int64  `json:"account_id"`
-	Path       string `json:"-"`
+	Provider   string   `json:"provider"`
+	SessionID  string   `json:"session_id"`
+	Title      string   `json:"title"`
+	LastPrompt string   `json:"last_prompt"`
+	Cwd        string   `json:"cwd"`
+	Origin     string   `json:"origin"`
+	Model      string   `json:"model,omitempty"`
+	StartedAt  string   `json:"started_at"`
+	UpdatedAt  string   `json:"updated_at"`
+	Runs       int      `json:"runs"`
+	WorkMS     int64    `json:"work_ms"` // time the agent spent on its runs
+	Running    bool     `json:"running"`
+	RunningAt  string   `json:"running_at,omitempty"` // when the running prompt was sent
+	ThreadID   string   `json:"thread_id"`
+	Account    int64    `json:"account_id"`
+	SharedWith []string `json:"shared_with,omitempty"` // its Pocket AI thread is shared with them (server fills it)
+	Path       string   `json:"-"`
 }
 
 // sessionScan is the parsed state of one session file. Files only grow, so

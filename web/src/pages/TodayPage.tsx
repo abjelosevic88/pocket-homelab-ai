@@ -11,6 +11,7 @@ import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
 import { elapsed, useNow } from '../components/RunningList'
 import { Empty, errMsg, Loading, Segmented } from '../components/ui'
+import { PrivacyChip } from '../components/ShareDialog'
 
 type Prov = 'all' | ProviderId
 const midnight = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate())
@@ -109,7 +110,7 @@ export default function TodayPage({ onMenu }: { onMenu?: () => void }) {
           </div>
           <div className="chip-row" role="group" aria-label="Where it ran">
             <button type="button" className={`fchip ${origin === '' ? 'on' : ''}`} onClick={() => setOrigin('')}>Everywhere</button>
-            {ORIGINS.map(o => <button key={o.id} type="button" className={`fchip ${origin === o.id ? 'on' : ''}`} onClick={() => setOrigin(origin === o.id ? '' : o.id)}><span className={`odot ${o.id}`} />{o.label}</button>)}
+            {ORIGINS.map(o => <button key={o.id} type="button" className={`fchip ${origin === o.id ? 'on' : ''}`} onClick={() => setOrigin(origin === o.id ? '' : o.id)}><span className={`odot o-${o.id}`} />{o.label}</button>)}
           </div>
           {err && <div className="callout danger"><Icon name="alert" size={15} /><span>{err}</span></div>}
           {!runs ? <Loading label="Reading the session files…" /> : (
@@ -164,7 +165,8 @@ function RunCard({ r, now, onOpen }: { r: Run; now: number; onOpen: () => void }
           <span className="run-at-m tnum">{hhmm(r.started_at)}</span>
           <span className={`run-st ${r.status}`}>{r.status === 'running' ? <span className="spinner" /> : <Icon name={st.icon} size={12} />}{st.label}</span>
           <span className={`srv-ico sm ${r.provider}`}><Icon name={r.provider} size={12} /></span>
-          <span className={`origin-chip ${r.origin}`}>{originLabel(r.origin)}</span>
+          <span className={`origin-chip o-${r.origin}`}>{originLabel(r.origin)}</span>
+          <PrivacyChip sharedWith={r.shared_with} />
           <span className="grow" />
           {dur && <span className="run-dur tnum"><Icon name="clock" size={12} />{dur}</span>}
         </span>

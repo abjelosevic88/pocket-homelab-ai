@@ -60,9 +60,9 @@
 .run-prompt { color: var(--text-2); font-size: 13px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; line-height: 1.4; }
 .run-foot { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .origin-chip { font-size: 10.5px; font-weight: 600; letter-spacing: .02em; padding: 2px 7px; border-radius: 999px; background: var(--surface-2); color: var(--muted); white-space: nowrap; }
-.origin-chip.paseo { background: color-mix(in srgb, #6366f1 16%, transparent); color: #818cf8; }
-.origin-chip.terminal { background: color-mix(in srgb, #10b981 16%, transparent); color: #34d399; }
-.origin-chip.pocket-ai { background: var(--accent-soft); color: var(--accent-ink); }
+.origin-chip.o-paseo { background: color-mix(in srgb, #6366f1 16%, transparent); color: #818cf8; }
+.origin-chip.o-terminal { background: color-mix(in srgb, #10b981 16%, transparent); color: #34d399; }
+.origin-chip.o-pocket-ai { background: var(--accent-soft); color: var(--accent-ink); }
 .warn-text { color: var(--warning); }
 .run-side { padding: 0 6px 6px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 1px; }
 .run-side .sb-h { display: flex; align-items: center; justify-content: space-between; }

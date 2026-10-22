@@ -11,6 +11,7 @@ import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
 import { elapsed, useNow } from '../components/RunningList'
 import { Empty, errMsg, Loading, Segmented, Spinner, useDebounce } from '../components/ui'
+import { PrivacyChip } from '../components/ShareDialog'
 
 type Prov = 'all' | ProviderId
 
@@ -69,7 +70,7 @@ export default function HistoryPage({ onMenu }: { onMenu?: () => void }) {
           </div>
           <div className="chip-row" role="group" aria-label="Where it ran">
             <button type="button" className={`fchip ${origin === '' ? 'on' : ''}`} onClick={() => setOrigin('')}>Everywhere</button>
-            {ORIGINS.map(o => <button key={o.id} type="button" className={`fchip ${origin === o.id ? 'on' : ''}`} onClick={() => setOrigin(origin === o.id ? '' : o.id)}><span className={`odot ${o.id}`} />{o.label}</button>)}
+            {ORIGINS.map(o => <button key={o.id} type="button" className={`fchip ${origin === o.id ? 'on' : ''}`} onClick={() => setOrigin(origin === o.id ? '' : o.id)}><span className={`odot o-${o.id}`} />{o.label}</button>)}
           </div>
           {err && <div className="callout danger"><Icon name="alert" size={15} /><span>{err}</span></div>}
           {!data ? <Loading label="Reading the session files…" /> : data.sessions.length === 0 ? (
@@ -108,7 +109,8 @@ function SessionRow({ s, busy, onOpen }: { s: ServerSession; busy: boolean; onOp
         <span className="srv-title">{s.title || 'Untitled session'}</span>
         {showLast && <span className="srv-last"><Icon name="message" size={11} />{s.last_prompt}</span>}
         <span className="srv-meta">
-          <span className={`origin-chip ${s.origin}`}>{originLabel(s.origin)}</span>
+          <span className={`origin-chip o-${s.origin}`}>{originLabel(s.origin)}</span>
+          <PrivacyChip sharedWith={s.shared_with} />
           <span className="mono ellipsis">{shortPath(s.cwd)}</span>
           <span>{s.runs} {s.runs === 1 ? 'run' : 'runs'}</span>
           {s.work_ms > 0 && <span title="Time the agent spent working">{fmtDuration(s.work_ms)} worked</span>}

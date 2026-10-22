@@ -13,6 +13,7 @@ import { ProviderBadge, ThreadStatus } from './bits'
 import { Icon } from './icons'
 import { type Option, Select } from './Select'
 import { Avatar, Kbd, Spinner } from './ui'
+import { PrivacyChip } from './ShareDialog'
 
 function groupOf(t: Thread): string {
   if (t.pinned) return 'Pinned'
@@ -47,7 +48,7 @@ export function ThreadRow({ t, active, onOpen }: { t: Thread; active: boolean; o
         <span className="th-meta">
           <ProviderBadge provider={t.provider} size="xs" />
           {t.source === 'schedule' && <Icon name="clock" size={11} />}
-          {t.shares?.length ? <Icon name="users" size={11} /> : null}
+          <PrivacyChip sharedWith={t.shares?.map(s => s.name)} iconOnly />
           <span className="ellipsis">{t.owner_name && user && t.owner_id !== user.id ? `${t.owner_name} · ${baseName(t.cwd)}` : baseName(t.cwd)}</span>
         </span>
       </span>

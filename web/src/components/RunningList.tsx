@@ -9,6 +9,7 @@ import type { RunningItem, Thread } from '../lib/types'
 import { ProviderBadge } from './bits'
 import { Icon } from './icons'
 import { errMsg, useToast } from './ui'
+import { PrivacyChip } from './ShareDialog'
 
 /** Four dots taking turns — the "working" mark used everywhere. */
 export function RunDots({ waiting = false, size = 14 }: { waiting?: boolean; size?: number }) {
@@ -66,7 +67,7 @@ export function RunningList({ compact = false, onOpened }: { compact?: boolean; 
             <RunDots waiting={r.status === 'waiting'} size={12} />
             <span className="th-main">
               <span className="th-title ellipsis">{r.title || r.prompt || 'Session'}</span>
-              <span className="th-meta"><span className="ellipsis">{ORIGIN[r.origin] || r.origin} · {baseName(r.cwd)}{!!r.subagents && ` · ${r.subagents} sub-agent${r.subagents === 1 ? '' : 's'}`}</span></span>
+              <span className="th-meta"><PrivacyChip sharedWith={r.shared_with} iconOnly /><span className="ellipsis">{ORIGIN[r.origin] || r.origin} · {baseName(r.cwd)}{!!r.subagents && ` · ${r.subagents} sub-agent${r.subagents === 1 ? '' : 's'}`}</span></span>
             </span>
             <span className="run-time tnum">{elapsed(r.prompt_at, now)}</span>
           </button>
@@ -83,7 +84,8 @@ export function RunningList({ compact = false, onOpened }: { compact?: boolean; 
             <span className="run-card-top">
               <RunDots waiting={r.status === 'waiting'} />
               <ProviderBadge provider={r.provider} size="xs" />
-              <span className={`origin-chip ${r.origin}`}>{ORIGIN[r.origin] || r.origin}</span>
+              <span className={`origin-chip o-${r.origin}`}>{ORIGIN[r.origin] || r.origin}</span>
+              <PrivacyChip sharedWith={r.shared_with} />
               <span className="grow" />
               <span className="run-time tnum"><Icon name="clock" size={11} />{elapsed(r.prompt_at, now)}</span>
             </span>

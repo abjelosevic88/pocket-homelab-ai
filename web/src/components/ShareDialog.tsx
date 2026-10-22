@@ -90,3 +90,12 @@ export function PrivacyBadge({ thread, access, onShare }: { thread: Thread; acce
     <Icon name={n ? 'users' : 'lock'} size={11} />{label}
   </button>
 }
+
+/** A list row's chip: Private, or Shared (who with in the tooltip). */
+export function PrivacyChip({ sharedWith, iconOnly = false }: { sharedWith?: string[]; iconOnly?: boolean }) {
+  const shared = !!sharedWith?.length
+  const title = shared ? `Shared with ${sharedWith!.join(', ')}` : 'Private — only you can see it'
+  return <span className={`privacy-badge sm ${shared ? 'shared' : 'private'} ${iconOnly ? 'icon-only' : ''}`} title={title} aria-label={title}>
+    <Icon name={shared ? 'users' : 'lock'} size={10} />{!iconOnly && (shared ? 'Shared' : 'Private')}
+  </span>
+}
