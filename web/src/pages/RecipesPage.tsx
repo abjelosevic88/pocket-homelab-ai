@@ -9,7 +9,7 @@ import { FolderButton } from '../components/FolderPicker'
 import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
 import { useRunRecipe } from '../components/RecipeRunner'
-import { Confirm, Empty, errMsg, Field, Loading, MenuButton, Modal, Spinner, Switch, useAsync, useToast } from '../components/ui'
+import { Confirm, Empty, errMsg, Field, Loading, MenuButton, Modal, Spinner, Switch, useAsync, useToast, type MenuItem, useContextMenu } from '../components/ui'
 
 type Draft = Omit<Recipe, 'id' | 'runs' | 'created_at' | 'updated_at' | 'sort_order'> & { id?: number; sort_order?: number }
 
@@ -29,6 +29,7 @@ export default function RecipesPage({ onMenu }: { onMenu?: () => void }) {
   const run = useRunRecipe()
   const [edit, setEdit] = useState<Draft | null>(null)
   const [del, setDel] = useState<Recipe | null>(null)
+  const ctx = useContextMenu()
   const [starters, setStarters] = useState(false)
   const canRun = !!user && (user.role === 'admin' || user.can_run)
 
@@ -55,8 +56,16 @@ export default function RecipesPage({ onMenu }: { onMenu?: () => void }) {
             </Empty>
           ) : (
             <div className="list-cards">
-              {recipes.map(r => (
-                <div key={r.id} className="list-card">
+              {ctx.menu}{recipes.map(r => {
+                const more: MenuItem[] = [
+                  { label: 'Edit…', icon: 'edit', onSelect: () => setEdit({ ...r }) },
+                  { label: r.pinned ? 'Unpin from start page' : 'Pin to start page', icon: 'bookmark', onSelect: () => togglePin(r) },
+                  { label: 'Duplicate', icon: 'copy', onSelect: () => setEdit({ ...r, id: undefined, name: r.name + ' (copy)' }) },
+                  'sep',
+                  { label: 'Delete…', icon: 'trash', danger: true, onSelect: () => setDel(r) },
+                ]
+                return (
+                <div key={r.id} className="list-card" onContextMenu={e => ctx.open(e, more)}>
                   <span className="recipe-ico lg">{r.icon || '✦'}</span>
                   <div className="grow" style={{ minWidth: 0 }}>
                     <div className="list-card-title">{r.name}{r.pinned && <Icon name="bookmark" size={12} className="faint" />}{promptVars(r.prompt).length > 0 && <span className="badge">asks {promptVars(r.prompt).length}</span>}</div>
@@ -65,16 +74,10 @@ export default function RecipesPage({ onMenu }: { onMenu?: () => void }) {
                   </div>
                   <div className="list-card-actions">
                     <button type="button" className="btn sm" disabled={!canRun} onClick={() => run(r)}><Icon name="play" size={11} />Run</button>
-                    <MenuButton label={`More for ${r.name}`} align="right" items={[
-                      { label: 'Edit…', icon: 'edit', onSelect: () => setEdit({ ...r }) },
-                      { label: r.pinned ? 'Unpin from start page' : 'Pin to start page', icon: 'bookmark', onSelect: () => togglePin(r) },
-                      { label: 'Duplicate', icon: 'copy', onSelect: () => setEdit({ ...r, id: undefined, name: r.name + ' (copy)' }) },
-                      'sep',
-                      { label: 'Delete…', icon: 'trash', danger: true, onSelect: () => setDel(r) },
-                    ]}><Icon name="more" size={16} /></MenuButton>
+                    <MenuButton label={`More for ${r.name}`} align="right" items={more}><Icon name="more" size={16} /></MenuButton>
                   </div>
                 </div>
-              ))}
+              )})}
             </div>
           )}
         </div>

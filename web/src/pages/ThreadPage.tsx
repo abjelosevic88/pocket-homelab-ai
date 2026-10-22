@@ -20,7 +20,7 @@ import { Select } from '../components/Select'
 import { Timeline } from '../components/Timeline'
 import { PrivacyBadge, ShareDialog } from '../components/ShareDialog'
 import { accessOf } from '../lib/share'
-import { Confirm, download, Empty, errMsg, Loading, type MenuItem, MenuButton, Modal, Spinner, useToast } from '../components/ui'
+import { Confirm, download, Empty, errMsg, Loading, type MenuItem, MenuButton, Modal, Spinner, useContextMenu, useToast } from '../components/ui'
 
 function upsert(list: Item[], it: Item): Item[] {
   const i = list.findIndex(x => x.key === it.key)
@@ -53,6 +53,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const atBottomRef = useRef(true)
   const canRun = !!user && (user.role === 'admin' || user.can_run || thread?.source === 'ask')
   const forkNewTab = useForkNewTab(id)
+  const ctx = useContextMenu()
   const { running: runningNow } = useApp()
   const otherRunning = runningNow.filter(r => r.thread_id !== id).length
 
@@ -257,7 +258,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
     <div className="thread-page">
       <header className="thread-head">
         {onMenu && <button type="button" className="btn ghost icon-only menu-btn" aria-label="Threads" onClick={onMenu}><Icon name="menu" size={19} />{otherRunning > 0 && <span className="menu-run-dot" />}</button>}
-        <div className="grow thread-head-main">
+        <div className="grow thread-head-main" onContextMenu={e => { if (!editingTitle) ctx.open(e, menu) }}>
           {editingTitle ? (
             <form onSubmit={e => { e.preventDefault(); setEditingTitle(false); if (titleDraft.trim() !== t.title) patch({ title: titleDraft.trim() }) }}>
               <input className="title-input" autoFocus value={titleDraft} onChange={e => setTitleDraft(e.target.value)} onBlur={() => { setEditingTitle(false); if (titleDraft.trim() && titleDraft.trim() !== t.title) patch({ title: titleDraft.trim() }) }}
@@ -346,6 +347,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
         <p className="muted small">Starts a new continuation before this message. Your original conversation is kept. Files and app changes already made are unchanged.</p>
       </Modal>}
       {sharing && <ShareDialog thread={t} onClose={() => setSharing(false)} onSaved={th => { setThread(th); upsertThread(th) }} />}
+      {ctx.menu}
       {confirmDelete && <Confirm title="Delete this thread?" message="The conversation disappears from Pocket AI. The CLI’s own session file on the server stays." onCancel={() => setConfirmDelete(false)} onConfirm={remove} />}
     </div>
   )

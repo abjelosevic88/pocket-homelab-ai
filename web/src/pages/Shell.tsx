@@ -8,6 +8,7 @@ import { RecipeRunnerProvider, useRunRecipe } from '../components/RecipeRunner'
 import { ShortcutsSheet } from '../components/ShortcutsSheet'
 import { Sidebar } from '../components/Sidebar'
 import { TabBar, useTabs } from '../components/TabBar'
+import { useBusyFavicon } from '../lib/favicon'
 import { modalOpen, useIsMobile, useMediaQuery } from '../components/ui'
 import HomePage from './HomePage'
 import ThreadPage from './ThreadPage'
@@ -25,7 +26,7 @@ function typing(e: KeyboardEvent) {
 }
 
 function ShellInner() {
-  const { setThemeMode, theme, settings } = useApp()
+  const { setThemeMode, theme, settings, threads, running, user } = useApp()
   const navigate = useNavigate()
   const loc = useLocation()
   const mobile = useIsMobile()
@@ -37,6 +38,10 @@ function ShellInner() {
   const runRecipe = useRunRecipe()
   const tabsOn = settings?.thread_tabs !== false && !mobile
   const tabs = useTabs(tabsOn)
+  const mine = (threads || []).filter(t => !t.owner_id || t.owner_id === user?.id)
+  useBusyFavicon(
+    running.some(r => r.status === 'running') || mine.some(t => t.status === 'running'),
+    running.some(r => r.status === 'waiting') || mine.some(t => t.status === 'waiting' || t.pending > 0))
   useEffect(() => setDrawerOpen(false), [drawer, loc.pathname])
   useEffect(() => { if ((loc.state as { shortcuts?: boolean } | null)?.shortcuts) setShortcuts(true) }, [loc.state])
 

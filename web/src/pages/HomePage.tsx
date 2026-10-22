@@ -15,7 +15,8 @@ import { Icon } from '../components/icons'
 import { AskButton } from '../components/AskButton'
 import { useRunRecipe } from '../components/RecipeRunner'
 import { ThreadRow } from '../components/Sidebar'
-import { errMsg, useToast } from '../components/ui'
+import { errMsg, useContextMenu, useToast } from '../components/ui'
+import { useThreadMenu } from '../components/ThreadMenu'
 
 const LAST = 'pai-new-thread'
 
@@ -30,6 +31,8 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
   const { user, settings, providers, providersReady, accounts, workspaces, recipes, threads, upsertThread, running } = useApp()
   const { toast } = useToast()
   const navigate = useNavigate()
+  const ctx = useContextMenu()
+  const tm = useThreadMenu()
   const runRecipe = useRunRecipe()
   const canRun = !!user && (user.role === 'admin' || user.can_run)
   const [choice, setChoice] = useState<Choice | null>(null)
@@ -198,7 +201,8 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
             <section className="home-sec">
               <div className="home-sec-h"><h2>Recent</h2></div>
               <div className="home-recent">
-                {recent.map(t => <ThreadRow key={t.id} t={t} active={false} onOpen={() => navigate(`/t/${t.id}`)} />)}
+                {recent.map(t => <ThreadRow key={t.id} t={t} active={false} onOpen={() => navigate(`/t/${t.id}`)} onContextMenu={e => ctx.open(e, () => tm.items(t))} />)}
+                {ctx.menu}{tm.dialogs}
               </div>
             </section>
           )}

@@ -5,7 +5,7 @@ import { baseName, shortPath } from '../../lib/format'
 import type { Workspace } from '../../lib/types'
 import { FolderButton } from '../../components/FolderPicker'
 import { Icon } from '../../components/icons'
-import { Confirm, Empty, errMsg, Field, MenuButton, Modal, Spinner, useToast } from '../../components/ui'
+import { Confirm, Empty, errMsg, Field, MenuButton, Modal, Spinner, useToast, type MenuItem, useContextMenu } from '../../components/ui'
 import { Section } from './common'
 
 const COLORS = ['#7c3aed', '#2563eb', '#0891b2', '#059669', '#ca8a04', '#ea580c', '#dc2626', '#db2777', '#64748b']
@@ -15,26 +15,29 @@ export function WorkspacesTab() {
   const { toast } = useToast()
   const [edit, setEdit] = useState<Partial<Workspace> | null>(null)
   const [del, setDel] = useState<Workspace | null>(null)
+  const ctx = useContextMenu()
   return (
     <div className="stack loose">
       <Section title="Your folders" sub="They show up in the folder picker and as a filter above the thread list."
         actions={<button type="button" className="btn primary sm" onClick={() => setEdit({ color: COLORS[workspaces.length % COLORS.length] })}><Icon name="plus" size={14} />Add folder</button>}>
         {workspaces.length === 0 ? <Empty title="No folders yet" icon="folder">Add the places you work in most — your notes repo, ~/Projects/…, the server’s config folder.</Empty> : (
           <div className="set-people">
-            {workspaces.map(w => (
-              <div key={w.id} className="set-person">
+            {ctx.menu}{workspaces.map(w => {
+              const more: MenuItem[] = [
+                { label: 'Edit…', icon: 'edit', onSelect: () => setEdit(w) },
+                'sep',
+                { label: 'Remove…', icon: 'trash', danger: true, onSelect: () => setDel(w) },
+              ]
+              return (
+              <div key={w.id} className="set-person" onContextMenu={e => ctx.open(e, more)}>
                 <span className="ws-dot" style={{ background: w.color || 'var(--accent)' }}><Icon name="folder" size={14} /></span>
                 <div className="grow" style={{ minWidth: 0 }}>
                   <div className="set-person-name">{w.name}</div>
                   <div className="muted small mono ellipsis">{shortPath(w.path)}{w.threads ? <span className="faint"> · {w.threads} threads</span> : null}</div>
                 </div>
-                <MenuButton label={`More for ${w.name}`} align="right" items={[
-                  { label: 'Edit…', icon: 'edit', onSelect: () => setEdit(w) },
-                  'sep',
-                  { label: 'Remove…', icon: 'trash', danger: true, onSelect: () => setDel(w) },
-                ]}><Icon name="more" size={16} /></MenuButton>
+                <MenuButton label={`More for ${w.name}`} align="right" items={more}><Icon name="more" size={16} /></MenuButton>
               </div>
-            ))}
+            )})}
           </div>
         )}
       </Section>

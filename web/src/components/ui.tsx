@@ -316,6 +316,21 @@ export function MenuButton({ items, children, className = 'btn ghost icon-only',
   )
 }
 
+/** Right-click menus: `onContextMenu={e => ctx.open(e, items)}` on the row, `{ctx.menu}` once in the tree.
+ *  Text you can select keeps the browser's own menu (inputs, the selection, links). */
+export function useContextMenu() {
+  const [state, setState] = useState<{ anchor: Anchor; items: MenuItem[] } | null>(null)
+  const open = useCallback((e: React.MouseEvent, items: MenuItem[] | (() => MenuItem[])) => {
+    const el = e.target as Element
+    if (el.closest?.('input, textarea, [contenteditable="true"], a[href]') || (window.getSelection()?.toString() || '').trim()) return
+    e.preventDefault()
+    e.stopPropagation()
+    setState({ anchor: { x: e.clientX, y: e.clientY, w: 0, h: 0 }, items: typeof items === 'function' ? items() : items })
+  }, [])
+  const menu = state ? <Menu anchor={state.anchor} items={state.items} onClose={() => setState(null)} /> : null
+  return { open, menu }
+}
+
 // ---------- misc ----------
 
 export async function copyText(text: string): Promise<boolean> {
