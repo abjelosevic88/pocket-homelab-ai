@@ -1,6 +1,6 @@
 import { Select } from '../components/Select'
 // Start a thread: pick the agent and folder, type (or paste a screenshot), go. Recipes one tap away.
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
@@ -40,7 +40,15 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
   const [noMemory, setNoMemory] = useState(false)
   const [connected, setConnected] = useState<boolean | null>(null)
   const appComposer = useRef<ComposerHandle>(null)
-  useEffect(() => { api.get<{ connected: boolean }>(`${V1}/assistant/status`).then(v => setConnected(v.connected)).catch(() => setConnected(false)) }, [])
+  const checkAsk = useCallback(() => { api.get<{ connected: boolean }>(`${V1}/assistant/status`).then(v => setConnected(v.connected)).catch(() => setConnected(false)) }, [])
+  useEffect(() => { checkAsk() }, [checkAsk])
+  // connecting happens in the Ask panel (Pocket Core): look again when it closes or the tab comes back
+  useEffect(() => {
+    if (connected !== false) return
+    const t = setInterval(checkAsk, 5000)
+    window.addEventListener('focus', checkAsk)
+    return () => { clearInterval(t); window.removeEventListener('focus', checkAsk) }
+  }, [connected, checkAsk])
   const askApps = async (text: string, uploadIds: string[]) => {
     try { const t = await api.post<Thread>(`${V1}/ask/threads`, { text, model: askModel, no_memory: noMemory, upload_ids: uploadIds, account_id: askAccount ?? undefined }); upsertThread(t); navigate(`/t/${t.id}`); return true }
     catch (e) { toast(errMsg(e), 'err'); return false }
@@ -120,7 +128,9 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
             <button type="button" aria-pressed={mode === 'server'} onClick={() => setMode('server')}><Icon name="terminal" size={15} />Work on the server</button>
           </div>
           {mode === 'apps' ? <>
-            {connected === false && <div className="callout info">Connect Ask from any Pocket app first using its Ask button, then return here.</div>}
+            {connected === false && <div className="callout info ask-connect"><Icon name="sparkles" size={15} />
+              <span className="grow">Ask reads your Pocket apps as you, so connect it once: sign in to Pocket Core in the panel and approve.</span>
+              <button type="button" className="btn primary sm" onClick={() => window.dispatchEvent(new CustomEvent('pocket-ask'))}>Connect Ask</button></div>}
             <Composer ref={appComposer} big draftKey="new-apps" onSend={askApps} placeholder="Ask about your money, notes, tasks, documents… or attach a receipt" footer={<div className="app-composer-options">
               <Select className="ghost inline" size="sm" label="App assistant model" value={askModel} onChange={setAskModel} options={[{ value: 'haiku', label: 'Haiku' }, { value: 'sonnet', label: 'Sonnet' }, { value: 'opus', label: 'Opus' }]} />
               {askAccounts.length > 0 && <Select className="ghost inline" size="sm" label="Claude account" value={askAccount ?? settings?.claude?.account_id ?? 0} onChange={setAskAccount} options={askAccounts} width={280}
