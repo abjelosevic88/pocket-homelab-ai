@@ -1,3 +1,4 @@
+import { AskButton } from './AskButton'
 import React from 'react'
 import { Icon } from './icons'
 
@@ -10,7 +11,7 @@ export function PageHead({ title, sub, onMenu, actions, icon }: { title: string;
         <h1>{title}</h1>
         {sub && <p className="page-sub">{sub}</p>}
       </div>
-      {actions && <div className="row page-actions">{actions}</div>}
+      <div className="row page-actions">{actions}<AskButton /></div>
     </header>
   )
 }

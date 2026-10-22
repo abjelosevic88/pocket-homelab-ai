@@ -193,7 +193,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
 
   if (missing) return (
     <div className="thread-page">
-      <header className="thread-head">{onMenu && <button type="button" className="btn ghost icon-only" aria-label="Threads" onClick={onMenu}><Icon name="menu" size={19} /></button>}</header>
+      <header className="thread-head">{onMenu && <button type="button" className="btn ghost icon-only" aria-label="Threads" onClick={onMenu}><Icon name="menu" size={19} /></button>}<span className="grow" /><AskButton /></header>
       <Empty title="This thread is gone" icon="message">It was deleted, or it belongs to someone else and isn’t shared with you. <button type="button" className="link-btn" onClick={() => navigate('/')}>Start a new one</button></Empty>
     </div>
   )

@@ -3,13 +3,12 @@ import { Select } from '../components/Select'
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { api, V1 } from '../lib/api'
-import { AskButton } from '../components/AskButton'
 import { PageHead } from '../components/PageHead'
 import { AppCall, CallCard, DataView, friendly, safeURL } from '../components/AppEvidence'
 import { errMsg, useToast } from '../components/ui'
 import type { Thread } from '../lib/types'
 
-function Frame({ title, sub, onMenu, children }: { title: string; sub: string; onMenu?: () => void; children: ReactNode }) { return <div className="page"><PageHead title={title} sub={sub} onMenu={onMenu} actions={<AskButton />} /><div className="page-scroll"><div className="page-inner assistant-page">{children}</div></div></div> }
+function Frame({ title, sub, onMenu, children }: { title: string; sub: string; onMenu?: () => void; children: ReactNode }) { return <div className="page"><PageHead title={title} sub={sub} onMenu={onMenu} /><div className="page-scroll"><div className="page-inner assistant-page">{children}</div></div></div> }
 interface Section { tool: string; data?: unknown; error?: string; checked_at: string; duration_ms: number }
 interface Overview { date?: string; timezone?: string; coverage: string; unavailable?: string[]; sections: Section[] }
 const sectionTitles: Record<string,string> = { pocket_tasks_summary:'Tasks', pocket_money_bills:'Bills & subscriptions', pocket_calendar_events:'Calendar', pocket_collaborator_summary:'Reviews', pocket_garage_reminders:'Car maintenance' }
