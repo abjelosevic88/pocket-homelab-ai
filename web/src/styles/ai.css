@@ -479,3 +479,6 @@
 .tool-activity.open > .tool-activity-head .tool-caret { transform: rotate(180deg); }
 .tool-activity-body { display: grid; gap: 5px; padding: 8px; border-top: 1px solid var(--hairline); max-height: min(400px, 45dvh); overflow: auto; overscroll-behavior: contain; }
 .tool-activity-body .tool { background: transparent; }
+
+/* Native Ask entry point: part of the header, never over the composer. */
+.ask-header-btn { min-height: 44px; padding: 0 10px; flex-shrink: 0; gap: 5px; }

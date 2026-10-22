@@ -12,6 +12,7 @@ import { AgentPicker } from '../components/AgentPicker'
 import { ContextMeter, ProviderBadge } from '../components/bits'
 import { Composer, type ComposerHandle } from '../components/Composer'
 import { Icon } from '../components/icons'
+import { AskButton } from '../components/AskButton'
 import { RequestCard } from '../components/RequestCard'
 import { Select } from '../components/Select'
 import { Timeline } from '../components/Timeline'
@@ -196,6 +197,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   // the text the agent is writing right now gets a blinking cursor
   const streamingKey = running && (lastItem?.kind === 'assistant' || lastItem?.kind === 'thinking') ? lastItem.key : undefined
   const menu: MenuItem[] = [
+    ...(document.querySelector('pocket-ask-launcher') ? [{ label: 'Ask about an item…', icon: 'sparkles' as const, onSelect: () => window.dispatchEvent(new Event('pocket-ask-pick')) }] : []),
     { label: t.pinned ? 'Unpin' : 'Pin to top', icon: 'bookmark', onSelect: () => patch({ pinned: !t.pinned }) },
     { label: 'Rename', icon: 'edit', onSelect: () => { setTitleDraft(t.title || threadTitle(t)); setEditingTitle(true) } },
     { label: 'Fork into a new thread', icon: 'fork', disabled: t.source === 'ask' || !t.provider_session_id || !canRun, onSelect: fork },
@@ -228,6 +230,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
           </div>
         </div>
         <div className="thread-head-actions">
+          <AskButton />
           <MenuButton items={menu} label="Thread menu" align="right"><Icon name="more" size={17} /></MenuButton>
         </div>
       </header>
