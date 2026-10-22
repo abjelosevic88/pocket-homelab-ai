@@ -62,7 +62,10 @@ export const ToolRow = memo(function ToolRow({ tool }: { tool: ToolInfo }) {
   const status = tool.status || 'done'
   const command = kind === 'bash' ? field(tool.input, 'command', 'cmd') : ''
   const path = field(tool.input, 'file_path', 'path', 'notebook_path')
-  const title = tool.title || command || path || tool.name
+  // "Write demo.go" under the name "Write" reads twice: drop the repeated word
+  const rawTitle = command || tool.title || path || tool.name
+  const title = rawTitle.startsWith(tool.name + ' ') ? rawTitle.slice(tool.name.length + 1) : rawTitle
+  const shownName = kind === 'bash' ? 'Shell' : label
   const restInput = (() => {
     if (kind === 'bash' && command) {
       const o = { ...(tool.input as Record<string, unknown>) }
@@ -76,8 +79,8 @@ export const ToolRow = memo(function ToolRow({ tool }: { tool: ToolInfo }) {
     <div className={`tool ${status} ${open ? 'open' : ''}`}>
       <button type="button" className="tool-head" onClick={() => setOpen(o => !o)} aria-expanded={open}>
         <span className="tool-ico"><Icon name={KIND_ICON[kind] || 'wrench'} size={14} /></span>
-        <span className={`tool-name ${friendly ? 'friendly' : ''}`} title={label}>{label}</span>
-        {!friendly && <span className="tool-title ellipsis">{title !== tool.name ? title : ''}</span>}
+        <span className={`tool-name ${friendly ? 'friendly' : ''}`} title={label}>{shownName}</span>
+        {!friendly && <span className="tool-title ellipsis" title={title}>{title !== tool.name ? title : ''}</span>}
         <span className="tool-state">
           {status === 'running' && <Spinner size={12} />}
           {status === 'error' && <span className="badge danger">{tool.exit_code !== undefined && tool.exit_code !== 0 ? `exit ${tool.exit_code}` : 'error'}</span>}

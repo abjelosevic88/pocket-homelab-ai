@@ -501,17 +501,6 @@
 .tool-name { min-width: 0; flex-shrink: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool-name.friendly { flex: 1; }
 .tool-raw-name { overflow-wrap: anywhere; }
-.tool-activity { min-width: 0; border: 1px solid var(--hairline); border-radius: 10px; background: var(--surface); overflow: hidden; }
-.tool-activity-head { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 38px; padding: 7px 10px; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; text-align: left; }
-.tool-activity-head:hover { background: var(--hover); }
-.tool-activity-head > svg { flex-shrink: 0; }
-.tool-activity-title { flex: 1; min-width: 0; color: var(--text-2); font-weight: 600; }
-.tool-activity-count, .tool-activity-active { white-space: nowrap; flex-shrink: 0; font-size: 11px; }
-.tool-activity-active { color: var(--accent); }
-.tool-activity.running { border-color: var(--accent-ring); }
-.tool-activity.open > .tool-activity-head .tool-caret { transform: rotate(180deg); }
-.tool-activity-body { display: grid; gap: 5px; padding: 8px; border-top: 1px solid var(--hairline); max-height: min(400px, 45dvh); overflow: auto; overscroll-behavior: contain; }
-.tool-activity-body .tool { background: transparent; }
 
 /* Native Ask entry point: part of the header, never over the composer. */
 .ask-header-btn { min-height: 44px; padding: 0 10px; flex-shrink: 0; gap: 5px; }
@@ -543,3 +532,23 @@ button.privacy-badge:disabled { cursor: default; }
 @media (hover: none) { .message-actions { opacity: .8; } }
 .message-editor { display: block; width: 100%; min-height: 140px; max-height: 50dvh; resize: vertical; margin: 8px 0 12px; }
 @media (pointer: coarse) { .message-actions .btn { width: 36px; height: 36px; } }
+
+/* Tool calls and thinking as quiet one-line rows (Paseo-style): no cards,
+   icon + name + muted detail, the caret only on hover, details indented. */
+.tool { border: 0; border-radius: 0; background: none; overflow: visible; }
+.tool.running { border-color: transparent; }
+.tool-head, .thinking-h { display: flex; align-items: center; gap: 9px; width: 100%; height: 28px; padding: 0; border: 0; background: none; font: inherit; font-size: 13.5px; font-style: normal; color: var(--muted); cursor: pointer; text-align: left; min-width: 0; }
+.tool-head:hover, .thinking-h:hover { background: none; color: var(--text-2); }
+.tool-ico, .thinking-h > .icon:first-child { color: var(--faint); flex-shrink: 0; }
+.tool-name { font-weight: 500; color: var(--text-2); }
+.tool-title { font-family: inherit; font-size: 13.5px; color: var(--muted); }
+.tool-head:hover .tool-title { color: var(--text-2); }
+.tool-caret { opacity: 0; transition: opacity .12s, transform .15s; }
+.tool-head:hover .tool-caret, .thinking-h:hover .tool-caret, .tool.open .tool-caret, .thinking.open .tool-caret { opacity: 1; }
+.tool.running .tool-ico { color: var(--accent); }
+.tool.error .tool-ico, .tool.error .tool-name { color: var(--danger); }
+.tool-body { border-top: 0; margin: 2px 0 8px 6px; padding: 4px 0 4px 15px; border-left: 2px solid var(--border); }
+.thinking-body { margin: 2px 0 8px 6px; padding: 4px 0 4px 15px; font-style: normal; color: var(--muted); }
+.tool-run { display: flex; flex-direction: column; gap: 0; }
+/* consecutive tool / thinking rows sit together instead of 10px apart */
+.tl-item:has(> .tool-run, > .tool, > .thinking) + .tl-item:has(> .tool-run, > .tool, > .thinking) { margin-top: -10px; }
