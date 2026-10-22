@@ -80,48 +80,37 @@ func (s *Server) handleInference(w http.ResponseWriter, r *http.Request) {
 	defer os.RemoveAll(cwd)
 	cwd, _ = filepath.Abs(cwd)
 	model := appDefaultModel(st)
-	requestedModel := body.Model
-	if requestedModel == "" {
-		requestedModel = st.AppModel
+	models, err := s.inferenceModels(r.Context(), fmt.Sprintf("%d:%s", u.ID, home), home, cwd)
+	if err != nil {
+		writeErr(w, 503, "Could not load models from your Claude account; try again shortly")
+		return
 	}
-	effort := "medium"
-	if r.Method == http.MethodGet || requestedModel != "" {
-		models, err := s.inferenceModels(r.Context(), fmt.Sprintf("%d:%s", u.ID, home), home, cwd)
-		if err != nil {
-			writeErr(w, 503, "Could not load models from your Claude account; try again shortly")
-			return
-		}
-		if r.Method == http.MethodGet {
-			out := core.InferenceModels{Models: []core.InferenceModel{}, DefaultModel: model, DefaultName: model}
-			for _, m := range models {
-				out.Models = append(out.Models, m.InferenceModel)
-				if m.ID == model {
-					out.DefaultName = m.Name
-				}
-			}
-			writeJSON(w, 200, out)
-			return
-		}
-		found := false
+	if r.Method == http.MethodGet {
+		out := core.InferenceModels{Models: []core.InferenceModel{}, DefaultModel: model, DefaultName: model}
 		for _, m := range models {
-			if m.ID == requestedModel {
-				effort = ""
-				for _, e := range m.efforts {
-					if e == "medium" {
-						effort = e
-						break
-					}
-				}
-				found = true
-				break
+			out.Models = append(out.Models, m.InferenceModel)
+			if m.ID == model {
+				out.DefaultName = m.Name
 			}
 		}
-		if !found {
-			writeErr(w, 400, "This model is no longer offered by your Claude account; choose another model in this app or update Pocket AI Settings → App defaults")
-			return
-		}
-		model = requestedModel
+		writeJSON(w, 200, out)
+		return
 	}
+	if body.Model != "" {
+		model = body.Model
+	}
+	var selected *inferenceModel
+	for i := range models {
+		if models[i].ID == model {
+			selected = &models[i]
+			break
+		}
+	}
+	if selected == nil {
+		writeErr(w, 400, "This model is no longer offered by your Claude account; choose another model in this app or update Pocket AI Settings → App defaults")
+		return
+	}
+	effort := inferenceEffort(st.AppEffort, selected.efforts)
 	system := body.System
 	if body.JSON {
 		system += "\nReturn only one valid JSON object. No markdown fences or commentary."
@@ -258,17 +247,42 @@ func (s *Server) handleAppModels(w http.ResponseWriter, r *http.Request) {
 	}
 	out := struct {
 		core.InferenceModels
-		ClaudeDefaultModel string `json:"claude_default_model"`
-		ClaudeDefaultName  string `json:"claude_default_name"`
-	}{InferenceModels: core.InferenceModels{Models: []core.InferenceModel{}, DefaultModel: appDefaultModel(st), DefaultName: appDefaultModel(st)}, ClaudeDefaultModel: claudeDefaultModel(st), ClaudeDefaultName: claudeDefaultModel(st)}
+		ModelEfforts       map[string][]string `json:"model_efforts"`
+		DefaultEffort      string              `json:"default_effort"`
+		ClaudeDefaultModel string              `json:"claude_default_model"`
+		ClaudeDefaultName  string              `json:"claude_default_name"`
+	}{ModelEfforts: map[string][]string{}, InferenceModels: core.InferenceModels{Models: []core.InferenceModel{}, DefaultModel: appDefaultModel(st), DefaultName: appDefaultModel(st)}, ClaudeDefaultModel: claudeDefaultModel(st), ClaudeDefaultName: claudeDefaultModel(st)}
 	for _, m := range models {
 		out.Models = append(out.Models, m.InferenceModel)
+		out.ModelEfforts[m.ID] = append([]string{}, m.efforts...)
 		if m.ID == out.DefaultModel {
 			out.DefaultName = m.Name
+			out.DefaultEffort = inferenceEffort(st.AppEffort, m.efforts)
 		}
 		if m.ID == out.ClaudeDefaultModel {
 			out.ClaudeDefaultName = m.Name
 		}
 	}
 	writeJSON(w, 200, out)
+}
+
+func supportsEffort(levels []string, effort string) bool {
+	for _, level := range levels {
+		if level == effort {
+			return true
+		}
+	}
+	return false
+}
+
+// A shared effort also applies to app-specific models. Unsupported levels use
+// Automatic: medium when available, otherwise let the model choose.
+func inferenceEffort(preferred string, supported []string) string {
+	if preferred != "" && supportsEffort(supported, preferred) {
+		return preferred
+	}
+	if supportsEffort(supported, "medium") {
+		return "medium"
+	}
+	return ""
 }

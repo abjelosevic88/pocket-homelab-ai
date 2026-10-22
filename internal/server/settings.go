@@ -49,6 +49,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		Title           *string              `json:"title"`
+		AppEffort       *string              `json:"app_effort"`
 		AppModel        *string              `json:"app_model"`
 		DefaultProvider *string              `json:"default_provider"`
 		DefaultCwd      *string              `json:"default_cwd"`
@@ -100,30 +101,46 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		st.Codex = *in.Codex
 	}
 	if in.AppModel != nil {
-		model := *in.AppModel
-		if !core.ValidInferenceModel(model) {
+		if !core.ValidInferenceModel(*in.AppModel) {
 			writeErr(w, 400, "invalid app default model")
 			return
 		}
-		if model != "" {
-			models, err := s.personalInferenceModels(ctx, u, st)
-			if err != nil {
-				writeErr(w, 503, "Could not load models from your Claude account; try again shortly")
-				return
-			}
-			found := false
-			for _, m := range models {
-				if m.ID == model {
-					found = true
-					break
-				}
-			}
-			if !found {
-				writeErr(w, 400, "Choose a model offered by your connected Claude account")
-				return
+		st.AppModel = *in.AppModel
+	}
+	if in.AppEffort != nil {
+		switch *in.AppEffort {
+		case "", "low", "medium", "high", "xhigh", "max":
+		default:
+			writeErr(w, 400, "invalid app effort level")
+			return
+		}
+		st.AppEffort = *in.AppEffort
+	}
+	if (in.AppModel != nil && st.AppModel != "") || ((in.AppModel != nil || in.AppEffort != nil) && st.AppEffort != "") {
+		models, err := s.personalInferenceModels(ctx, u, st)
+		if err != nil {
+			writeErr(w, 503, "Could not load models from your Claude account; try again shortly")
+			return
+		}
+		var selected *inferenceModel
+		for i := range models {
+			if models[i].ID == appDefaultModel(st) {
+				selected = &models[i]
+				break
 			}
 		}
-		st.AppModel = model
+		if selected == nil {
+			writeErr(w, 400, "Choose a model offered by your connected Claude account")
+			return
+		}
+		if st.AppEffort != "" && !supportsEffort(selected.efforts, st.AppEffort) {
+			if in.AppEffort != nil && *in.AppEffort != "" {
+				writeErr(w, 400, "This model does not support that effort level")
+				return
+			}
+			// A model change must not leave an incompatible default behind.
+			st.AppEffort = ""
+		}
 	}
 	if in.SystemPrompt != nil {
 		st.SystemPrompt = strings.TrimSpace(*in.SystemPrompt)

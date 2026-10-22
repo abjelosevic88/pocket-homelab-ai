@@ -8,6 +8,8 @@ import { Section, useSaveSettings } from './common'
 
 interface ModelCatalog {
   models: { id: string; name: string; description?: string }[]
+  model_efforts: Record<string, string[]>
+  default_effort: string
   default_model: string
   default_name: string
   claude_default_model: string
@@ -40,6 +42,17 @@ export function AppDefaultsTab() {
     ...models.map(m => ({ value: m.id, label: m.name, description: m.description })),
     ...(value && !models.some(m => m.id === value) ? [{ value, label: `${value}${missing ? ' (unavailable)' : ' (saved)'}` }] : []),
   ]
+  const effectiveModel = value || catalog?.claude_default_model || ''
+  const efforts = catalog?.model_efforts[effectiveModel] || []
+  const effort = settings.app_effort || ''
+  const effortNames: Record<string, string> = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' }
+  const automatic = efforts.includes('medium') ? 'Medium' : 'Model default'
+  const unsupported = !!effort && !!catalog && !efforts.includes(effort)
+  const effortOptions = [
+    { value: '', label: `Automatic · ${automatic}` },
+    ...efforts.map(level => ({ value: level, label: effortNames[level] || level })),
+    ...(effort && !efforts.includes(effort) ? [{ value: effort, label: `${effortNames[effort] || effort} (${catalog ? 'unavailable for this model' : 'saved'})` }] : []),
+  ]
   const current = value ? models.find(m => m.id === value)?.name || value : catalog?.claude_default_name
   return (
     <div className="stack loose">
@@ -49,9 +62,23 @@ export function AppDefaultsTab() {
             <span className="label">Default model for apps</span>
             <Select label="Default model for apps" value={value} options={options} disabled={loading || saving} onChange={async model => {
               setSaving(true)
-              try { await save({ app_model: model }, 'App default saved') } finally { setSaving(false) }
+              try {
+                const supported = catalog?.model_efforts[model || catalog.claude_default_model] || []
+                await save({ app_model: model, app_effort: !effort || supported.includes(effort) ? effort : '' }, 'App default saved')
+              } finally { setSaving(false) }
             }} />
             <span className="help">Changes save automatically and apply to your next request in any app set to “Use Pocket AI default”. A model selected in an individual app takes precedence.</span>
+          </div>
+          <div className="field">
+            <span className="label">Effort level for apps</span>
+            <Select label="Effort level for apps" value={effort} options={effortOptions} disabled={loading || saving || !catalog || !efforts.length} onChange={async level => {
+              setSaving(true)
+              try { await save({ app_effort: level }, 'App effort saved') } finally { setSaving(false) }
+            }} />
+            <span className="help">Higher effort allows more reasoning and may take longer. Automatic uses Medium when supported, otherwise the model’s own default.</span>
+            {!loading && catalog && !efforts.length && <span className="help">This model does not offer an effort setting.</span>}
+            {unsupported && <span className="help" role="status">Your saved effort is not supported by this model; Automatic applies.</span>}
+            <span className="help">Applies across connected apps, including apps with their own model choice. Unsupported levels use Automatic. Changing the default model resets an unsupported effort to Automatic.</span>
           </div>
           {loading && <p className="muted small" role="status">Loading models from your Claude account…</p>}
           {saving && <p className="muted small" role="status">Saving…</p>}

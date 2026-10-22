@@ -50,10 +50,10 @@ assert args[args.index('--setting-sources')+1] == ''
 for line in sys.stdin:
     m=json.loads(line)
     if m.get('type')=='control_request' and m.get('request_id')=='probe':
-        print(json.dumps({'type':'control_response','response':{'request_id':'probe','response':{'models':[{'value':'default','displayName':'Default'},{'value':'sonnet','displayName':'Test Sonnet'},{'value':'opus','displayName':'Test Opus'}]}}}),flush=True)
+        print(json.dumps({'type':'control_response','response':{'request_id':'probe','response':{'models':[{'value':'default','displayName':'Default'},{'value':'sonnet','displayName':'Test Sonnet','supportedEffortLevels':['low','medium','high']},{'value':'opus','displayName':'Test Opus','supportedEffortLevels':['medium','high','max']},{'value':'legacy','displayName':'Legacy'}]}}}),flush=True)
         continue
     if m.get('type')=='user':
-        print(json.dumps({'type':'assistant','message':{'id':'answer','content':[{'type':'text','text':'{"ok":true}'}]}}),flush=True)
+        print(json.dumps({'type':'assistant','message':{'id':'answer','content':[{'type':'text','text':json.dumps({'ok':True,'effort':args[args.index('--effort')+1] if '--effort' in args else ''})}]}}),flush=True)
         print(json.dumps({'type':'result','subtype':'success','usage':{'input_tokens':3,'output_tokens':4}}),flush=True)
         break
 `
@@ -81,7 +81,7 @@ for line in sys.stdin:
 
 	code, body = c.do("GET", "/api/v1/inference/models", "", nil)
 	var catalog core.InferenceModels
-	if err := json.Unmarshal(body, &catalog); err != nil || code != 200 || len(catalog.Models) != 2 || catalog.DefaultModel != "sonnet" || catalog.DefaultName != "Test Sonnet" {
+	if err := json.Unmarshal(body, &catalog); err != nil || code != 200 || len(catalog.Models) != 3 || catalog.DefaultModel != "sonnet" || catalog.DefaultName != "Test Sonnet" {
 		t.Fatalf("model discovery: %d %s", code, body)
 	}
 	code, body = c.do("POST", "/api/v1/inference", "application/json", []byte(`{"prompt":"private","model":"opus"}`))
@@ -122,6 +122,60 @@ for line in sys.stdin:
 	if saved.AppModel != "sonnet" || saved.Claude.Model != "opus" {
 		t.Fatalf("central preference changed chat defaults: %+v", saved)
 	}
+
+	code, body = personal.do("GET", "/api/v1/settings/app-models", "", nil)
+	if code != 200 || !strings.Contains(string(body), `"sonnet":["low","medium","high"]`) {
+		t.Fatalf("effort catalog missing: %d %s", code, body)
+	}
+	code, body = personal.do("PUT", "/api/v1/settings", "application/json", []byte(`{"app_effort":"high"}`))
+	if code != 200 || !strings.Contains(string(body), `"app_effort":"high"`) {
+		t.Fatalf("save effort: %d %s", code, body)
+	}
+	checkEffort := func(model, want string) {
+		t.Helper()
+		input, _ := json.Marshal(map[string]string{"prompt": "private", "model": model})
+		code, raw := c.do("POST", "/api/v1/inference", "application/json", input)
+		var reply core.InferenceReply
+		var text struct {
+			Effort string `json:"effort"`
+		}
+		if code != 200 || json.Unmarshal(raw, &reply) != nil || json.Unmarshal([]byte(reply.Text), &text) != nil || text.Effort != want {
+			t.Fatalf("CLI effort for %q: %d %s; want %q", model, code, raw, want)
+		}
+	}
+	code, body = personal.do("PUT", "/api/v1/settings", "application/json", []byte(`{"enter_sends":false}`))
+	if code != 200 || !strings.Contains(string(body), `"app_effort":"high"`) {
+		t.Fatalf("partial update lost effort: %d %s", code, body)
+	}
+	effortPeer, _ := person(t, s, h, "effort-peer@example.test", "member", true)
+	code, body = effortPeer.do("GET", "/api/v1/settings", "", nil)
+	if code != 200 || !strings.Contains(string(body), `"app_effort":""`) {
+		t.Fatalf("effort leaked to another user: %d %s", code, body)
+	}
+	checkEffort("", "high")
+	checkEffort("opus", "high")
+	checkEffort("legacy", "")
+	for _, effort := range []string{"max", "nonsense", "high\n--tools"} {
+		input, _ := json.Marshal(map[string]string{"app_effort": effort})
+		code, raw := personal.do("PUT", "/api/v1/settings", "application/json", input)
+		if code != 400 {
+			t.Fatalf("accepted unsupported effort %q: %d %s", effort, code, raw)
+		}
+	}
+	saved, _ = s.store.GetSettings(t.Context(), user.ID)
+	if saved.AppEffort != "high" {
+		t.Fatal("invalid updates or app override changed shared effort")
+	}
+	code, body = personal.do("PUT", "/api/v1/settings", "application/json", []byte(`{"app_model":"legacy"}`))
+	if code != 200 || !strings.Contains(string(body), `"app_effort":""`) {
+		t.Fatalf("model change left unsupported effort: %d %s", code, body)
+	}
+	checkEffort("", "")
+	code, body = personal.do("PUT", "/api/v1/settings", "application/json", []byte(`{"app_model":"sonnet","app_effort":""}`))
+	if code != 200 {
+		t.Fatalf("reset effort: %d %s", code, body)
+	}
+	checkEffort("", "medium")
 	code, body = c.do("GET", "/api/v1/inference/models", "", nil)
 	if code != 200 || !strings.Contains(string(body), `"default_model":"sonnet"`) {
 		t.Fatalf("apps did not see central default: %d %s", code, body)
@@ -164,7 +218,7 @@ for line in sys.stdin:
 
 	otherClient, other := person(t, s, h, "another@example.test", "member", true)
 	code, body = otherClient.do("GET", "/api/v1/settings", "", nil)
-	if code != 200 || !strings.Contains(string(body), `"app_model":""`) {
+	if code != 200 || !strings.Contains(string(body), `"app_model":""`) || !strings.Contains(string(body), `"app_effort":""`) {
 		t.Fatalf("central default leaked to another person: %d %s", code, body)
 	}
 	account := &store.Account{Provider: "claude", Label: "Other person's account", Home: root, UserID: &other.ID}
@@ -185,4 +239,22 @@ for line in sys.stdin:
 		t.Fatalf("listed another person's account models: %d %s", code, body)
 	}
 
+}
+
+func TestInferenceEffortCompatibility(t *testing.T) {
+	for _, tc := range []struct {
+		saved  string
+		levels []string
+		want   string
+	}{
+		{"", []string{"low", "medium", "high"}, "medium"},
+		{"high", []string{"low", "medium", "high"}, "high"},
+		{"max", []string{"medium", "high"}, "medium"},
+		{"high", nil, ""},
+		{"", []string{"low", "high"}, ""},
+	} {
+		if got := inferenceEffort(tc.saved, tc.levels); got != tc.want {
+			t.Errorf("effort %q / %v = %q, want %q", tc.saved, tc.levels, got, tc.want)
+		}
+	}
 }
