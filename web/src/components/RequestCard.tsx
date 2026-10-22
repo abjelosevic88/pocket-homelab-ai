@@ -6,7 +6,7 @@ import { Icon } from './icons'
 import { ActionPreview } from './AppEvidence'
 import { Markdown } from './Markdown'
 import { Diff } from './ToolRow'
-import { errMsg, Spinner, useToast } from './ui'
+import { errMsg, Spinner, useToast, noGrammarly } from './ui'
 
 type Decision = 'allow' | 'allow_session' | 'deny'
 
@@ -95,7 +95,7 @@ export function RequestCard({ threadId, req, onDone }: { threadId: string; req: 
       <div className="req-card plan">
         <div className="req-h"><Icon name="list-checks" size={16} /><b>Plan ready for review</b></div>
         <div className="req-plan"><Markdown text={req.plan || ''} /></div>
-        {denying && <textarea autoFocus className="req-msg" placeholder="What should change in the plan?" value={message} onChange={e => setMessage(e.target.value)} rows={2} />}
+        {denying && <textarea {...noGrammarly} autoFocus className="req-msg" placeholder="What should change in the plan?" value={message} onChange={e => setMessage(e.target.value)} rows={2} />}
         <div className="req-actions">
           {denying
             ? <><button type="button" className="btn ghost" onClick={() => setDenying(false)}>Back</button><button type="button" className="btn" disabled={!!busy} onClick={() => answer('deny', { message: message.trim() || 'Keep planning.' })}>{busy === 'deny' && <Spinner />}Send feedback</button></>
@@ -113,7 +113,7 @@ export function RequestCard({ threadId, req, onDone }: { threadId: string; req: 
       {pv.path && !pv.command && <div className="mono small ellipsis">{pv.path}</div>}
       {pv.diff && <div className="req-diff"><Diff text={pv.diff} /></div>}
       {req.id.startsWith('ask-') ? <ActionPreview input={req.input} /> : pv.rest && <pre className="tool-pre">{pv.rest.slice(0, 3000)}</pre>}
-      {denying && <textarea autoFocus className="req-msg" placeholder="Optional: tell the agent why, or what to do instead" value={message} onChange={e => setMessage(e.target.value)} rows={2} />}
+      {denying && <textarea {...noGrammarly} autoFocus className="req-msg" placeholder="Optional: tell the agent why, or what to do instead" value={message} onChange={e => setMessage(e.target.value)} rows={2} />}
       <div className="req-actions">
         {denying ? <>
           <button type="button" className="btn ghost" onClick={() => setDenying(false)}>Back</button>

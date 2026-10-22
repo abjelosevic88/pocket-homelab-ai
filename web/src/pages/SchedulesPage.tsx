@@ -9,7 +9,7 @@ import { AgentPicker } from '../components/AgentPicker'
 import { FolderButton } from '../components/FolderPicker'
 import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
-import { Confirm, Empty, errMsg, Field, Loading, MenuButton, Modal, Segmented, Spinner, Switch, useAsync, useDebounce, useToast, type MenuItem, useContextMenu } from '../components/ui'
+import { Confirm, Empty, errMsg, Field, Loading, MenuButton, Modal, Segmented, Spinner, Switch, useAsync, useDebounce, useToast, type MenuItem, useContextMenu, noGrammarly } from '../components/ui'
 import { AgentSummary } from './RecipesPage'
 
 type Draft = Pick<Schedule, 'name' | 'prompt' | 'provider' | 'model' | 'effort' | 'mode' | 'speed' | 'cwd' | 'spec' | 'notify' | 'enabled'> & { id?: number }
@@ -131,7 +131,7 @@ function ScheduleDialog({ draft, onClose, onSaved }: { draft: Draft; onClose: ()
       <div className="stack">
         <Field label="Name"><input autoFocus value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder="Morning server check" /></Field>
         <Field label="Prompt" help="The agent is also asked to start its answer with OK: or ATTENTION: — that decides whether you are notified.">
-          <textarea value={f.prompt} onChange={e => setF({ ...f, prompt: e.target.value })} rows={5} />
+          <textarea {...noGrammarly} value={f.prompt} onChange={e => setF({ ...f, prompt: e.target.value })} rows={5} />
         </Field>
         <Field label="When" help={<>e.g. {SPEC_EXAMPLES.map((x, i) => <span key={x}>{i > 0 && ', '}<button type="button" className="link-btn" onClick={() => setF({ ...f, spec: x })}><code>{x}</code></button></span>)}</>}>
           <input value={f.spec} onChange={e => setF({ ...f, spec: e.target.value })} className="mono" spellCheck={false} autoCapitalize="off" />

@@ -20,7 +20,7 @@ import { Select } from '../components/Select'
 import { Timeline } from '../components/Timeline'
 import { PrivacyBadge, ShareDialog } from '../components/ShareDialog'
 import { accessOf } from '../lib/share'
-import { Confirm, download, Empty, errMsg, Loading, type MenuItem, MenuButton, Modal, Spinner, useContextMenu, useToast } from '../components/ui'
+import { Confirm, download, Empty, errMsg, Loading, type MenuItem, MenuButton, Modal, Spinner, useContextMenu, useToast, noGrammarly } from '../components/ui'
 
 function upsert(list: Item[], it: Item): Item[] {
   const i = list.findIndex(x => x.key === it.key)
@@ -342,7 +342,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
         <button type="button" className="btn primary" disabled={rewindDisabled || (!messageDraft.trim() && !editMessage.images?.length && !editMessage.files?.length && !editMessage.log_images)} onClick={() => { void rewind(editMessage, messageDraft) }}>{rewinding ? <Spinner size={14} /> : <Icon name="send" size={14} />}Save & send</button>
       </>}>
         <label htmlFor="edit-message-text" className="field-label">Message</label>
-        <textarea id="edit-message-text" className="message-editor" autoFocus value={messageDraft} onChange={e => setMessageDraft(e.target.value)} disabled={rewinding} rows={6} />
+        <textarea {...noGrammarly} id="edit-message-text" className="message-editor" autoFocus value={messageDraft} onChange={e => setMessageDraft(e.target.value)} disabled={rewinding} rows={6} />
         {(!!editMessage.images?.length || !!editMessage.files?.length || !!editMessage.log_images) && <p className="muted small">The original attachments will be included.</p>}
         <p className="muted small">Starts a new continuation before this message. Your original conversation is kept. Files and app changes already made are unchanged.</p>
       </Modal>}

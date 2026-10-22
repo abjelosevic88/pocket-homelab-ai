@@ -5,7 +5,7 @@ import { useApp } from '../lib/app-context'
 import { isTouch } from '../lib/format'
 import type { Recipe, Upload } from '../lib/types'
 import { Icon } from './icons'
-import { Spinner, useToast } from './ui'
+import { Spinner, useToast, noGrammarly } from './ui'
 
 interface Attachment {
   lid: string
@@ -235,7 +235,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
           ))}
         </div>
       )}
-      <textarea ref={ta} rows={big ? 3 : 1} value={text} disabled={disabled} placeholder={placeholder} aria-label="Message"
+      <textarea {...noGrammarly} ref={ta} rows={big ? 3 : 1} value={text} disabled={disabled} placeholder={placeholder} aria-label="Message"
         onChange={e => setText(e.target.value)} onKeyDown={onKey} onPaste={onPaste} enterKeyHint={isTouch() ? 'enter' : 'send'} />
       <div className="composer-bar">
         <input ref={fileInput} type="file" accept="image/*,.pdf,.docx,.xlsx,.pptx,.odt,.ods,.odp,.txt,.md,.csv,.tsv,.json,.xml" multiple hidden onChange={e => { addFiles(Array.from(e.target.files || [])); e.target.value = '' }} />
