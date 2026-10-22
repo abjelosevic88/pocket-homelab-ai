@@ -180,10 +180,6 @@ func (s *Server) handlePutShares(w http.ResponseWriter, r *http.Request) {
 	if t == nil {
 		return
 	}
-	if t.Source == "ask" {
-		writeErr(w, http.StatusBadRequest, "Ask chats can't be shared")
-		return
-	}
 	var in struct {
 		Shares []store.ThreadShare `json:"shares"`
 	}
@@ -205,6 +201,10 @@ func (s *Server) handlePutShares(w http.ResponseWriter, r *http.Request) {
 		switch sh.Role {
 		case "view":
 		case "chat":
+			if t.Source == "ask" { // it reads the owner's apps as the owner
+				writeErr(w, http.StatusBadRequest, "Ask chats read your apps as you, so others can only view them")
+				return
+			}
 			if !u.MayRun() {
 				writeErr(w, http.StatusBadRequest, displayName(u)+" may not run agents, so they can only view")
 				return

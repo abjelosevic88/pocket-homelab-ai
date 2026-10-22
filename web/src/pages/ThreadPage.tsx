@@ -208,7 +208,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const menu: MenuItem[] = !owner ? [
     { label: 'Export as Markdown', icon: 'download', onSelect: () => download(`${V1}/threads/${id}/export.md`) },
   ] : [
-    ...(t.source !== 'ask' ? [{ label: t.shares?.length ? 'Sharing…' : 'Share…', icon: 'users', onSelect: () => setSharing(true) }, 'sep' as const] : []),
+    { label: t.shares?.length ? 'Sharing…' : 'Share…', icon: 'users', onSelect: () => setSharing(true) }, 'sep',
     { label: 'Save as workflow', icon: 'zap', onSelect: () => navigate('/workflows', { state: { name: t.title, prompt: t.last_prompt || '' } }) },
     { label: t.no_memory ? 'Enable saved memory' : 'Don’t use memory in this conversation', icon: 'bookmark', onSelect: () => patch({ no_memory: !t.no_memory }) },
     ...(document.querySelector('pocket-ask-launcher') ? [{ label: 'Ask about an item…', icon: 'sparkles' as const, onSelect: () => window.dispatchEvent(new Event('pocket-ask-pick')) }] : []),
@@ -237,7 +237,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
             </h1>
           )}
           <div className="thread-sub">
-            <PrivacyBadge thread={t} access={access} onShare={owner && t.source !== 'ask' ? () => setSharing(true) : undefined} />
+            <PrivacyBadge thread={t} access={access} onShare={owner ? () => setSharing(true) : undefined} />
             <ProviderBadge provider={t.provider} size="xs" />
             <span className="ellipsis mono" title={t.cwd}>{shortPath(t.cwd)}</span>
             {t.usage?.cost_usd > 0 && <span className="tnum" title="Cost so far">{fmtCost(t.usage.cost_usd)}</span>}
@@ -259,7 +259,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
               <Timeline key={id} threadId={t.provider === 'claude' ? id : undefined} items={visible} onResend={canSend ? resend : undefined} onDropUnsent={canSend ? dropUnsent : undefined} showThinking={!!settings?.show_thinking} streamingKey={streamingKey}
                 onFork={owner && t.source !== 'ask' && t.provider_session_id && canRun && !running ? forkNewTab : undefined}
                 owner={sharedOwner} />
-              <ThreadEvidence id={id} revision={visible.filter(i => i.kind === 'turn').length} />
+              {owner && <ThreadEvidence id={id} revision={visible.filter(i => i.kind === 'turn').length} />}
               {t.status === 'error' && t.error && <div className="notice error"><Icon name="alert" size={14} /><span>{t.error}</span></div>}
             </>
           )}

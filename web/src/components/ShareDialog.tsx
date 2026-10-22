@@ -31,6 +31,7 @@ export function ShareDialog({ thread, onClose, onSaved }: { thread: Thread; onCl
     } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
   }
   const count = Object.values(roles).filter(Boolean).length
+  const ask = thread.source === 'ask'
 
   return (
     <Modal title="Share this chat" onClose={onClose} size="sm" footer={<>
@@ -38,10 +39,17 @@ export function ShareDialog({ thread, onClose, onSaved }: { thread: Thread; onCl
       <button type="button" className="btn" onClick={onClose}>Cancel</button>
       <button type="button" className="btn primary" onClick={save} disabled={busy || people === null}>Save</button>
     </>}>
-      <p className="muted small share-intro">
-        The agent keeps working on your login, in your folder. <b>Can view</b> reads along live. <b>Can chat</b> also sends
-        messages and answers what the agent asks — so it may change things on this server.
-      </p>
+      {ask ? (
+        <p className="muted small share-intro">
+          This chat reads your apps as you, so others can only <b>view</b> it: they read the conversation live, but can’t
+          send anything. The raw app results under “Sources & app activity” stay yours.
+        </p>
+      ) : (
+        <p className="muted small share-intro">
+          The agent keeps working on your login, in your folder. <b>Can view</b> reads along live. <b>Can chat</b> also sends
+          messages and answers what the agent asks — so it may change things on this server.
+        </p>
+      )}
       {people === null ? <Loading /> : people.length === 0 ? (
         <div className="muted small">Nobody else uses this Pocket AI yet. An admin adds people under Settings → Users.</div>
       ) : (
@@ -51,13 +59,13 @@ export function ShareDialog({ thread, onClose, onSaved }: { thread: Thread; onCl
               <Avatar name={p.name} email={p.email} size={28} />
               <span className="grow share-person-name">
                 <span className="ellipsis">{p.name}</span>
-                {!p.can_run && <span className="muted xsmall">May not run agents — view only</span>}
+                {!p.can_run && !ask && <span className="muted xsmall">May not run agents — view only</span>}
               </span>
               <Segmented size="sm" label={`Access for ${p.name}`} value={roles[p.id] || ''} onChange={v => setRoles(r => ({ ...r, [p.id]: v }))}
                 options={[
                   { value: '' as Role, label: <Icon name="lock" size={13} />, title: 'No access' },
                   { value: 'view' as Role, label: 'View', title: 'Can view' },
-                  ...(p.can_run ? [{ value: 'chat' as Role, label: 'Chat', title: 'Can chat' }] : []),
+                  ...(p.can_run && !ask ? [{ value: 'chat' as Role, label: 'Chat', title: 'Can chat' }] : []),
                 ]} />
             </div>
           ))}
@@ -77,7 +85,7 @@ export function PrivacyBadge({ thread, access, onShare }: { thread: Thread; acce
   }
   const label = n ? <>Shared · {n === 1 ? thread.shares![0].name : `${n} people`}</> : <>Private</>
   const title = n ? `Shared with ${thread.shares!.map(s => `${s.name} (${s.role === 'chat' ? 'can chat' : 'can view'})`).join(', ')} — click to change`
-    : thread.source === 'ask' ? 'Only you can see this chat — Ask chats can’t be shared' : 'Only you can see this chat — click to share it'
+    : 'Only you can see this chat — click to share it'
   return <button type="button" className={`privacy-badge ${n ? 'shared' : 'private'}`} title={title} onClick={onShare} disabled={!onShare}>
     <Icon name={n ? 'users' : 'lock'} size={11} />{label}
   </button>

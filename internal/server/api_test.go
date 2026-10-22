@@ -445,3 +445,21 @@ func TestSharedThreads(t *testing.T) {
 	alice.want("DELETE", path, nil, 204, nil)
 	carol.want("GET", path, nil, 404, nil)
 }
+
+// Ask chats read the owner's apps as the owner: shareable to view, never to chat.
+func TestAskChatsShareViewOnly(t *testing.T) {
+	s, h, root := testServer(t)
+	alice, au := person(t, s, h, "alice@example.com", "member", true)
+	bob, bu := person(t, s, h, "bob@example.com", "member", true)
+	th := thread(t, s, au.ID, root)
+	th.Source = "ask"
+	if _, err := s.store.DB.Exec(`UPDATE threads SET source = 'ask' WHERE id = ?`, th.ID); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/threads/" + th.ID
+	alice.want("PUT", path+"/shares", map[string]any{"shares": []store.ThreadShare{{UserID: bu.ID, Role: "chat"}}}, 400, nil)
+	alice.want("PUT", path+"/shares", map[string]any{"shares": []store.ThreadShare{{UserID: bu.ID, Role: "view"}}}, 200, nil)
+	bob.want("GET", path, nil, 200, nil)
+	bob.want("POST", path+"/messages", map[string]string{"text": "show me her bank balance"}, 403, nil)
+	bob.want("GET", "/api/v1/app-calls?thread="+th.ID, nil, 404, nil)
+}
