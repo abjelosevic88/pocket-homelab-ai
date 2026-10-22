@@ -20,8 +20,8 @@ export function toolLabel(tool: Pick<ToolInfo, 'name'>): string {
 
 export type ActivityEntry = { type: 'item'; key: string; item: Item } | { type: 'tools'; key: string; items: Item[] }
 
-// Only consecutive routine calls collapse. Messages, permissions, failures and
-// image previews keep their place. The first key stays stable as a run grows.
+// Consecutive routine calls form one run of rows. Messages, permissions,
+// failures and image previews keep their place. The first key stays stable as a run grows.
 export function groupToolActivity(items: Item[]): ActivityEntry[] {
   const out: ActivityEntry[] = []
   for (const item of items) {

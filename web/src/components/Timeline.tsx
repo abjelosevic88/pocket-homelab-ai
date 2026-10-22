@@ -42,7 +42,7 @@ function Thinking({ text, defaultOpen }: { text: string; defaultOpen: boolean })
   return (
     <div className={`thinking ${open ? 'open' : ''}`}>
       <button type="button" className="thinking-h" onClick={() => setOpen(o => !o)} aria-expanded={open}>
-        <Icon name="brain" size={13} /><span>Thinking</span><Icon name="chevron-down" size={13} className="tool-caret" />
+        <Icon name="brain" size={14} /><span>Thinking</span><Icon name="chevron-down" size={14} className="tool-caret" />
       </button>
       {open && <div className="thinking-body">{text}</div>}
     </div>
