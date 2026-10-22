@@ -109,6 +109,12 @@ owner's login, folder and settings; PATCH, DELETE, fork and sharing stay the own
 others, 404 for anyone it isn't shared with, admins included). `GET /threads` lists threads shared
 with you after your own (`owner_id` ≠ you). Messages sent in a shared thread carry `by` / `by_id`.
 
+Pocket app tools run on the apps of whoever sent the message a turn answers (the owner's saved memory
+is only added to the owner's own messages). In a shared thread a change waits for that person
+(`request.for_id` / `for`) and only they may answer it. Ask chats can be shared with `chat` to anyone
+(no run permission needed; the sender needs Ask connected), and `/app-calls?thread=` shows each person
+only their own calls.
+
 `waiting` = the agent asked something (permission / question / plan) and waits for an answer.
 
 | Method | Path | Body / query | Returns |
