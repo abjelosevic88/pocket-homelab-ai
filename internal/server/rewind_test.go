@@ -152,3 +152,59 @@ func TestRewindPreservesAskRestrictions(t *testing.T) {
 		t.Fatal("Ask restrictions lost")
 	}
 }
+
+func TestForkAtEarlierResponse(t *testing.T) {
+	s, h, root := testServer(t)
+	owner, u := person(t, s, h, "fork-at@example.test", "admin", true)
+	ctx := context.Background()
+	th := thread(t, s, u.ID, root)
+	for _, it := range []agent.Item{
+		{Key: "t1", Kind: "turn"},
+		{Key: "u2", Kind: "user", Text: "now delete the snapshots"},
+		{Key: "a2", Kind: "assistant", Text: "FUTURE RESPONSE"},
+		{Key: "t2", Kind: "turn"},
+	} {
+		data, _ := json.Marshal(it)
+		if _, err := s.store.UpsertItem(ctx, th.ID, it.Key, it.Kind, data, it.Text); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(s.cfg.ClaudeHome, "projects", "-tmp", th.ProviderSessionID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	log := `{"type":"user","uuid":"one","message":{"content":"how full is the zpool"}}
+{"type":"assistant","uuid":"a1","parentUuid":"one","message":{"content":[{"type":"text","text":"The zpool is 61% full."}]}}
+{"type":"user","uuid":"two","parentUuid":"a1","message":{"content":"now delete the snapshots"}}
+{"type":"assistant","uuid":"a2","parentUuid":"two","message":{"content":[{"type":"text","text":"FUTURE RESPONSE"}]}}
+`
+	if err := os.WriteFile(path, []byte(log), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// The original keeps working: forking an earlier, finished turn is still fine.
+	th.Status = "running"
+	_ = s.store.UpdateThread(ctx, th)
+	endpoint := "/api/v1/threads/" + th.ID + "/fork"
+	var n store.Thread
+	owner.want("POST", endpoint, map[string]any{"after": "t1"}, 201, &n)
+	if n.Source != "fork" || n.SourceRef != th.ID || n.ProviderSessionID == "" || n.ProviderSessionID == th.ProviderSessionID || !strings.HasPrefix(n.Title, "Fork of ") {
+		t.Fatalf("wrong fork: %+v", n)
+	}
+	history, _ := s.store.ListItems(ctx, n.ID)
+	if len(history) != 3 || history[2].Key != "t1" {
+		t.Fatalf("wrong prefix: %+v", history)
+	}
+	copied, err := agent.FindClaude(s.cfg.ClaudeHome, n.ProviderSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(copied)
+	if strings.Contains(string(data), "FUTURE") || strings.Contains(string(data), "snapshots") {
+		t.Fatal("later context leaked into the fork")
+	}
+	// The latest response forks the whole session, as before.
+	owner.want("POST", endpoint, map[string]any{"after": "t2"}, 201, &n)
+	if n.SourceRef != "fork:"+th.ProviderSessionID {
+		t.Fatalf("latest turn should fork the live session: %+v", n)
+	}
+}
