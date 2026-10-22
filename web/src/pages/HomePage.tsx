@@ -113,12 +113,29 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
             </div>
           )}
 
-          <div className="home-mode" role="group" aria-label="Assistant mode"><button className={`btn ${mode === 'apps' ? 'primary' : ''}`} aria-pressed={mode === 'apps'} onClick={() => setMode('apps')}>Ask my apps</button><button className={`btn ${mode === 'server' ? 'primary' : ''}`} aria-pressed={mode === 'server'} onClick={() => setMode('server')}>Work on the server</button></div>
+          <div className="home-mode" role="group" aria-label="Assistant mode">
+            <button type="button" aria-pressed={mode === 'apps'} onClick={() => setMode('apps')}><Icon name="sparkles" size={15} />Ask my apps</button>
+            <button type="button" aria-pressed={mode === 'server'} onClick={() => setMode('server')}><Icon name="terminal" size={15} />Work on the server</button>
+          </div>
           {mode === 'apps' ? <>
             {connected === false && <div className="callout info">Connect Ask from any Pocket app first using its Ask button, then return here.</div>}
-            <Composer ref={appComposer} big draftKey="new-apps" onSend={askApps} placeholder="Ask about your money, notes, tasks, documents… or attach a receipt" footer={<div className="row wrap"><label className="row">Model <Select className="inline" label="App assistant model" value={askModel} onChange={setAskModel} options={[{ value: 'haiku', label: 'Haiku' }, { value: 'sonnet', label: 'Sonnet' }, { value: 'opus', label: 'Opus' }]} /></label><label className="row small"><input type="checkbox" checked={noMemory} onChange={e => setNoMemory(e.target.checked)} />Don’t use memory</label></div>} />
-            <div className="app-suggestions">{['What needs my attention today?', 'How much did I spend this month?', 'Find my car expenses without counting duplicates', 'Create a spending note in Quick Notes'].map(prompt => <button className="btn" key={prompt} onClick={() => { appComposer.current?.setText(prompt); appComposer.current?.focus() }}>{prompt}</button>)}</div>
-            <div className="row wrap home-shortcuts"><button className="btn ghost" onClick={() => navigate('/briefing')}>My briefing</button><button className="btn ghost" onClick={() => navigate('/workflows')}>Workflows</button><button className="btn ghost" onClick={() => navigate('/memory')}>Memory</button></div>
+            <Composer ref={appComposer} big draftKey="new-apps" onSend={askApps} placeholder="Ask about your money, notes, tasks, documents… or attach a receipt" footer={<div className="app-composer-options">
+              <Select className="ghost inline" size="sm" label="App assistant model" value={askModel} onChange={setAskModel} options={[{ value: 'haiku', label: 'Haiku' }, { value: 'sonnet', label: 'Sonnet' }, { value: 'opus', label: 'Opus' }]} />
+              <button type="button" className="memory-choice" aria-label="Use saved memory" aria-pressed={!noMemory} title={noMemory ? 'Saved memory is off for this conversation' : 'Use saved preferences in this conversation'} onClick={() => setNoMemory(v => !v)}><Icon name="brain" size={14} /><span>Memory {noMemory ? 'off' : 'on'}</span></button>
+            </div>} />
+            <div className="app-suggestions" role="group" aria-label="Suggested questions">
+              {[
+                { icon: 'today', label: 'Today’s priorities', prompt: 'What needs my attention today?' },
+                { icon: 'receipt', label: 'Monthly spending', prompt: 'How much did I spend this month?' },
+                { icon: 'wrench', label: 'Car expenses', prompt: 'Find my car expenses without counting duplicates' },
+                { icon: 'edit', label: 'Make a spending note', prompt: 'Create a spending note in Quick Notes' },
+              ].map(({ icon, label, prompt }) => <button type="button" key={prompt} title={prompt} onClick={() => { appComposer.current?.setText(prompt); appComposer.current?.focus() }}><Icon name={icon} size={15} /><span>{label}</span></button>)}
+            </div>
+            <nav className="home-shortcuts" aria-label="Assistant pages">
+              <button type="button" onClick={() => navigate('/briefing')}><Icon name="today" size={14} />My briefing</button>
+              <button type="button" onClick={() => navigate('/workflows')}><Icon name="repeat" size={14} />Workflows</button>
+              <button type="button" onClick={() => navigate('/memory')}><Icon name="brain" size={14} />Memory</button>
+            </nav>
           </> : !canRun ? (
             <div className="callout info"><Icon name="lock" size={15} /><span>Agents run with the server’s own account, so an admin has to allow you first (Settings → Users → “May run agents”). You can still look at usage and set things up.</span></div>
           ) : !choice ? null : (

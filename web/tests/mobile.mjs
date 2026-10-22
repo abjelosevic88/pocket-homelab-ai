@@ -44,12 +44,17 @@ try {
     ] })
     if (p.startsWith('/api/v1/threads/fixture/requests/')) { pending.push(decodeURIComponent(p.split('/').pop())); return json({ ok: true }) }
     if (p === '/api/v1/threads/fixture/events') return route.fulfill({ contentType: 'text/event-stream', body: ': fixture\n\n' })
-    if (env.AI_TEST_ASSETS && !p.startsWith('/api/') && p !== '/pocket-ask.js') { const file = path.join(env.AI_TEST_ASSETS, p.startsWith('/assets/') ? p : 'index.html'); if (fs.existsSync(file)) return route.fulfill({ path: file }) }
+    if (env.AI_TEST_ASSETS && !p.startsWith('/api/') && p !== '/pocket-ask.js') { const file = path.join(env.AI_TEST_ASSETS, p.startsWith('/assets/') || path.extname(p) ? p : 'index.html'); if (fs.existsSync(file)) return route.fulfill({ path: file }) }
     return route.continue()
    })
    const p = await c.newPage(), errors = []; p.on('pageerror', e => errors.push(e.message))
    async function overflow() { assert.equal(await p.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, `Overflow at ${width}: ${p.url()}`) }
    await p.goto(base + '/'); await p.getByRole('button', { name: 'Ask my apps', exact: true }).waitFor(); assert.equal(await p.getByRole('button', { name: 'Ask my apps', exact: true }).getAttribute('aria-pressed'), 'true')
+   const memoryChoice = p.getByRole('button', { name: 'Use saved memory', exact: true })
+   assert.equal(await memoryChoice.getAttribute('aria-pressed'), 'true'); await memoryChoice.click(); assert.equal(await memoryChoice.getAttribute('aria-pressed'), 'false'); await memoryChoice.click()
+   await p.getByRole('button', { name: 'Car expenses', exact: true }).click(); assert.equal(await p.locator('.composer textarea').inputValue(), 'Find my car expenses without counting duplicates')
+   await p.locator('.composer textarea').fill(''); await p.locator('.home-hero h1').click()
+   if (screenshots) { await p.waitForTimeout(250); await p.screenshot({ path: path.join(screenshots, `home-${width}-${theme}.png`) }) }
    // Every value picker, even a three-item model list, follows Inventory's
    // searchable pattern. These choices stay local or hit workflow fixtures.
    const modelPicker = p.getByRole('button', { name: 'App assistant model', exact: true })
