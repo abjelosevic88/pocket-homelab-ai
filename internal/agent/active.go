@@ -26,6 +26,7 @@ type ActiveSession struct {
 	UpdatedAt string `json:"updated_at"`
 	Origin    string `json:"origin"`              // pocket-ai | paseo | terminal | app
 	Subagents int    `json:"subagents,omitempty"` // background sub-agents still working
+	Account   int64  `json:"account_id"`
 }
 
 // Running sessions older than this without a write are treated as dead
@@ -33,11 +34,23 @@ type ActiveSession struct {
 const activeWindow = 15 * time.Minute
 
 // ActiveSessions lists the sessions with a turn in progress.
-func ActiveSessions(claudeHome, codexHome, paseoHome string) []ActiveSession {
+func ActiveSessions(h Homes, paseoHome string) []ActiveSession {
 	paseo := paseoSessions(paseoHome)
 	var out []ActiveSession
-	out = append(out, activeClaude(claudeHome, paseo)...)
-	out = append(out, activeCodex(codexHome, paseo)...)
+	seen := map[string]bool{}
+	h.each(func(provider string, a AccountHome) {
+		list := activeClaude(a.Dir, paseo)
+		if provider == "codex" {
+			list = activeCodex(a.Dir, paseo)
+		}
+		for _, x := range list {
+			if k := x.Provider + "/" + x.SessionID; !seen[k] {
+				seen[k] = true
+				x.Account = a.ID
+				out = append(out, x)
+			}
+		}
+	})
 	sort.Slice(out, func(i, j int) bool { return out[i].PromptAt > out[j].PromptAt })
 	return out
 }

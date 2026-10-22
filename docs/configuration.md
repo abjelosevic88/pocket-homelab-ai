@@ -18,7 +18,7 @@ Everything is an environment variable (the systemd unit reads `~/.config/pocket-
 | `ROOTS` | your home | Folders agents may start in and the folder picker shows, comma-separated, `~` allowed. Symlinks are resolved: a link out of a root is outside. |
 | `AGENT_HOME` | your home | What `~` means, and the default folder. |
 | `CLAUDE_BIN`, `CODEX_BIN` | `claude`, `codex` | The CLIs. Use absolute paths when the service PATH differs from your shell's. |
-| `CLAUDE_HOME` | `~/.claude` | Where Claude Code keeps sessions (for **On this server**). Codex history comes from `codex app-server`. |
+| `CLAUDE_HOME`, `CODEX_HOME` | `~/.claude`, `~/.codex` | The server's own login (account 0): where its sessions are read from. More logins are added in Settings → Agents → Accounts, each in its own folder next to these. |
 | `IDLE_TIMEOUT` | `20m` | A thread's CLI process stops after this long idle; the next message resumes the session. |
 | `MAX_LIVE` | `12` | Most CLI processes at once; the longest-idle ones are stopped first. |
 | `UPLOAD_MAX_MB` | `20` | Per image. PNG, JPEG, GIF, WebP (the web app shrinks big photos and converts HEIC where the browser can decode it). |

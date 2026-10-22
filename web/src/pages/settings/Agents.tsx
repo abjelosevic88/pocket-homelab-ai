@@ -6,6 +6,7 @@ import { FolderButton } from '../../components/FolderPicker'
 import { Icon } from '../../components/icons'
 import { Field, Loading, SettingRow, Spinner } from '../../components/ui'
 import { Section, StatusDot, useSaveSettings } from './common'
+import { AccountsSection } from './Accounts'
 
 export function AgentsTab() {
   const { settings, providers, reloadProviders } = useApp()
@@ -40,6 +41,8 @@ export function AgentsTab() {
           </Section>
         )
       })}
+      <AccountsSection />
+
       <div className="row"><button type="button" className="btn" disabled={checking} onClick={async () => { setChecking(true); await reloadProviders().finally(() => setChecking(false)) }}>{checking ? <Spinner /> : <Icon name="refresh" size={14} />}Check the CLIs again</button></div>
 
       <Section title="Extra instructions" sub="Added to the system prompt of every agent you start (both CLIs). Good for things like “Answer briefly. This is my home server; ask before restarting containers.”">

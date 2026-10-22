@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -33,7 +34,7 @@ type engine struct {
 	runs      map[string]*run                       // thread id → live process
 	watchers  map[string]map[chan sseEvent]struct{} // thread id → SSE clients of that thread
 	userSubs  map[int64]map[chan sseEvent]struct{}  // user id → SSE clients of /events
-	limits    map[string]*provLimits                // provider → plan limit windows
+	limits    map[string]*provLimits                // limitsKey (provider[:account]) → plan limit windows
 	limitsAt  time.Time                             // last full read (both CLIs)
 	limitsMu  sync.Mutex                            // one full read at a time
 	starting  map[string]chan struct{}              // thread id → start in progress
@@ -49,6 +50,7 @@ type run struct {
 	threadID string
 	userID   int64
 	provider string
+	account  int64 // the login it runs on (0 = the server's own)
 	sess     agent.Session
 	cancel   context.CancelFunc
 
@@ -78,7 +80,13 @@ func newRuntime(s *Server) *engine {
 
 func (rt *engine) start(ctx context.Context) {
 	rt.ctx = ctx
-	for _, p := range []string{"claude", "codex"} {
+	keys := []string{"claude", "codex"}
+	if list, err := rt.s.store.ListAccounts(ctx); err == nil {
+		for _, a := range list {
+			keys = append(keys, limitsKey(a.Provider, a.ID))
+		}
+	}
+	for _, p := range keys {
 		var l provLimits
 		if v := rt.s.store.BoxSetting(ctx, "limits."+p); v != "" && json.Unmarshal([]byte(v), &l) == nil {
 			rt.limits[p] = &l
@@ -341,12 +349,19 @@ func (rt *engine) startRun(t *store.Thread) (*run, error) {
 		return nil, badRequest("the folder " + t.Cwd + " does not exist any more")
 	}
 	ctx, cancel := context.WithCancel(rt.ctx)
-	r := &run{threadID: t.ID, userID: t.UserID, provider: t.Provider, cancel: cancel, pending: map[string]bool{},
+	r := &run{threadID: t.ID, userID: t.UserID, provider: t.Provider, account: t.AccountID, cancel: cancel, pending: map[string]bool{},
 		live: map[string]*agent.Item{}, dirty: map[string]bool{}, lastUsed: time.Now()}
 	o := agent.Options{Cwd: t.Cwd, Model: t.Model, Effort: t.Effort, Mode: t.Mode, Speed: t.Speed, ResumeID: t.ProviderSessionID,
 		SystemPrompt: rt.systemPrompt(ctx, t.UserID), Env: []string{"POCKET_AI=1"}, Log: rt.s.log}
 	if o.ResumeID == "" && strings.HasPrefix(t.SourceRef, "fork:") {
 		o.ResumeID, o.Fork = strings.TrimPrefix(t.SourceRef, "fork:"), true
+	}
+	// The account's folder, with the session in it (it may have been
+	// started on another login).
+	o.Env = append(o.Env, rt.s.accountEnv(ctx, t.Provider, t.AccountID)...)
+	if err := rt.s.ensureSession(ctx, t, o.ResumeID); err != nil {
+		cancel()
+		return nil, err
 	}
 	sink := &runSink{rt: rt, r: r}
 	if t.Source == "ask" {
@@ -379,7 +394,7 @@ func (rt *engine) startRun(t *store.Thread) (*run, error) {
 		cancel()
 		return nil, err
 	}
-	rt.s.log.Info("agent started", "thread", t.ID, "provider", t.Provider, "model", t.Model, "mode", t.Mode, "resume", o.ResumeID != "", "cwd", t.Cwd)
+	rt.s.log.Info("agent started", "thread", t.ID, "provider", t.Provider, "account", t.AccountID, "model", t.Model, "mode", t.Mode, "resume", o.ResumeID != "", "cwd", t.Cwd)
 	return r, nil
 }
 
@@ -820,6 +835,9 @@ func (k *runSink) Context(c agent.Context) {
 
 // provLimits are one provider's plan limit windows.
 type provLimits struct {
+	Provider  string         `json:"provider,omitempty"`
+	AccountID int64          `json:"account_id"`
+	Label     string         `json:"label,omitempty"` // the account's name (filled in per snapshot)
 	Windows   []agent.Window `json:"windows"`
 	Note      string         `json:"note,omitempty"`
 	Resets    *agent.Resets  `json:"resets,omitempty"` // Codex free resets
@@ -830,7 +848,16 @@ type provLimits struct {
 // Limits merges what a running CLI reports (it only reports the windows of
 // the model in use) into the full picture by window id.
 func (k *runSink) Limits(provider string, w []agent.Window) {
-	k.rt.setLimits(provider, w, nil, false, "")
+	k.rt.setLimits(limitsKey(provider, k.r.account), w, nil, false, "")
+}
+
+// limitsKey names the limits of one login: "claude", "codex" for the
+// server's own, "claude:3" for account 3.
+func limitsKey(provider string, account int64) string {
+	if account == 0 {
+		return provider
+	}
+	return provider + ":" + strconv.FormatInt(account, 10)
 }
 
 // setLimits stores windows: replace=true for a full read, otherwise merge.
@@ -869,14 +896,76 @@ func (rt *engine) setLimits(provider string, w []agent.Window, note *string, rep
 	b, _ := json.Marshal(cur)
 	rt.mu.Unlock()
 	_ = rt.s.store.SetBoxSetting(rt.ctx, "limits."+provider, string(b))
-	snap := rt.limitsSnapshot()
+	rt.publishLimits()
+}
+
+// publishLimits sends every connected person the limits of the logins they
+// may use.
+func (rt *engine) publishLimits() {
 	rt.mu.Lock()
+	uids := make([]int64, 0, len(rt.userSubs))
+	for uid := range rt.userSubs {
+		uids = append(uids, uid)
+	}
+	rt.mu.Unlock()
+	for _, uid := range uids {
+		snap := rt.limitsSnapshot(uid)
+		rt.mu.Lock()
+		for ch := range rt.userSubs[uid] {
+			deliver(ch, sseEvent{Name: "limits", Data: snap})
+		}
+		rt.mu.Unlock()
+	}
+}
+
+// dropLimits forgets the limits of a removed account.
+func (rt *engine) dropLimits(key string) {
+	rt.mu.Lock()
+	delete(rt.limits, key)
+	rt.mu.Unlock()
+	_ = rt.s.store.SetBoxSetting(rt.ctx, "limits."+key, "")
+	rt.publishLimits()
+}
+
+// refreshLimitsNow reads the limits again right away (a new login).
+func (rt *engine) refreshLimitsNow() {
+	rt.mu.Lock()
+	rt.limitsAt = time.Time{}
+	rt.mu.Unlock()
+	rt.refreshLimits(false)
+}
+
+// publishAccounts tells the web apps that the list of logins changed.
+func (rt *engine) publishAccounts() {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
 	for _, subs := range rt.userSubs {
 		for ch := range subs {
-			deliver(ch, sseEvent{Name: "limits", Data: snap})
+			deliver(ch, sseEvent{Name: "accounts", Data: map[string]any{}})
+		}
+	}
+}
+
+// stopAccount stops the idle processes of an account (signed out, removed);
+// busy ones restart on their next turn.
+func (rt *engine) stopAccount(id int64) {
+	rt.mu.Lock()
+	var ids []string
+	for tid, r := range rt.runs {
+		if r.account == id {
+			r.mu.Lock()
+			busy := r.running || len(r.pending) > 0 || len(r.queue) > 0
+			r.stale = r.stale || busy
+			r.mu.Unlock()
+			if !busy {
+				ids = append(ids, tid)
+			}
 		}
 	}
 	rt.mu.Unlock()
+	for _, tid := range ids {
+		rt.stop(tid)
+	}
 }
 
 // refreshLimits reads the full plan limits from both CLIs (at most every
@@ -895,35 +984,56 @@ func (rt *engine) refreshLimits(wait bool) {
 		}
 		ctx, cancel := context.WithTimeout(rt.ctx, 45*time.Second)
 		defer cancel()
+		type login struct {
+			provider string
+			id       int64
+			env      []string
+		}
+		logins := []login{{"claude", 0, nil}, {"codex", 0, nil}}
+		if list, err := rt.s.store.ListAccounts(ctx); err == nil {
+			for _, a := range list {
+				logins = append(logins, login{a.Provider, a.ID, agent.AccountEnv(a.Provider, a.Home)})
+			}
+		}
 		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			w, note, err := agent.ClaudeLimits(ctx, rt.s.cfg.ClaudeBin, rt.s.cfg.Home)
-			if err != nil {
-				rt.s.log.Debug("claude limits", "err", err)
-				rt.setLimits("claude", nil, nil, false, err.Error())
-				return
+		for _, l := range logins {
+			key := limitsKey(l.provider, l.id)
+			if l.id != 0 && !rt.s.signedIn(l.provider, l.id) {
+				rt.setLimits(key, nil, nil, false, "Not signed in")
+				continue
 			}
-			rt.setLimits("claude", w, &note, true, "")
-		}()
-		go func() {
-			defer wg.Done()
-			w, resets, err := agent.CodexLimits(ctx, rt.s.cfg.CodexBin)
-			if err != nil {
-				rt.s.log.Debug("codex limits", "err", err)
-				rt.setLimits("codex", nil, nil, false, err.Error())
-				return
+			wg.Add(1)
+			if l.provider == "claude" {
+				go func() {
+					defer wg.Done()
+					w, note, err := agent.ClaudeLimits(ctx, rt.s.cfg.ClaudeBin, rt.s.cfg.Home, l.env)
+					if err != nil {
+						rt.s.log.Debug("claude limits", "account", l.id, "err", err)
+						rt.setLimits(key, nil, nil, false, err.Error())
+						return
+					}
+					rt.setLimits(key, w, &note, true, "")
+				}()
+				continue
 			}
-			rt.mu.Lock() // before setLimits, which sends the update
-			if rt.limits["codex"] == nil {
-				rt.limits["codex"] = &provLimits{}
-			}
-			rt.limits["codex"].Resets = resets
-			rt.mu.Unlock()
-			none := ""
-			rt.setLimits("codex", w, &none, true, "")
-		}()
+			go func() {
+				defer wg.Done()
+				w, resets, err := agent.CodexLimits(ctx, rt.s.cfg.CodexBin, l.env)
+				if err != nil {
+					rt.s.log.Debug("codex limits", "account", l.id, "err", err)
+					rt.setLimits(key, nil, nil, false, err.Error())
+					return
+				}
+				rt.mu.Lock() // before setLimits, which sends the update
+				if rt.limits[key] == nil {
+					rt.limits[key] = &provLimits{}
+				}
+				rt.limits[key].Resets = resets
+				rt.mu.Unlock()
+				none := ""
+				rt.setLimits(key, w, &none, true, "")
+			}()
+		}
 		wg.Wait()
 		rt.mu.Lock()
 		rt.limitsAt = time.Now()
@@ -943,14 +1053,32 @@ func (rt *engine) limitsStale(d time.Duration) bool {
 	return time.Since(rt.limitsAt) > d
 }
 
-func (rt *engine) limitsSnapshot() map[string]any {
+func (rt *engine) limitsSnapshot(uid int64) map[string]any {
+	u, _ := rt.s.store.GetUser(rt.ctx, uid)
+	labels := map[string]string{"claude": "", "codex": ""}
+	if list, err := rt.s.store.ListAccounts(rt.ctx); err == nil {
+		for _, a := range list {
+			if mayUseAccount(u, a) {
+				labels[limitsKey(a.Provider, a.ID)] = a.Label
+			}
+		}
+	}
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	out := map[string]any{}
-	for p, l := range rt.limits {
+	for k, l := range rt.limits {
+		label, ok := labels[k]
+		if !ok {
+			continue
+		}
 		cp := *l
+		cp.Provider, cp.Label = k, label
+		if i := strings.IndexByte(k, ':'); i > 0 {
+			cp.Provider = k[:i]
+			cp.AccountID, _ = strconv.ParseInt(k[i+1:], 10, 64)
+		}
 		cp.Windows = append([]agent.Window(nil), l.Windows...)
-		out[p] = cp
+		out[k] = cp
 	}
 	return out
 }

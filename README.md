@@ -36,6 +36,10 @@ Personal app assistance: [Briefing, workflows, memory, sources and document uplo
   `AGENTS.md`, MCP servers, skills and settings all apply, exactly as in a terminal.
 - Model, effort and permission mode per thread (Claude: ask first, accept edits, plan, auto, full access; Codex:
   ask first, sandboxed, read only, full access), changeable mid-thread — the session is resumed with the new flags.
+- **More than one account**: add more Claude Code / Codex logins in Settings (signed in from the browser, each
+  in its own folder, sharing your settings and skills), pick the account per thread next to the model, and
+  switch mid-thread when one hits its limit; the conversation is moved over and carries on. Limits show per
+  account.
 - Every thread is a real CLI session: it resumes after a restart, and **On this server** lists the sessions you
   started in a terminal (or in another tool) so you can open and continue them here.
 

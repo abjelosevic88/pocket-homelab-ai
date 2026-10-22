@@ -94,3 +94,8 @@
 .set-dl dt { width: 150px; flex-shrink: 0; color: var(--muted); }
 .set-dl dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 
+
+/* Accounts: signing a CLI login in from the browser */
+.signin-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 14px; }
+.signin-steps li { padding-left: 4px; }
+.signin-steps .field { margin-top: 8px; }

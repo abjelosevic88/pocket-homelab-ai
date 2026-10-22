@@ -49,6 +49,39 @@ Claude modes: `default` (asks before edits/commands), `acceptEdits`, `plan`, `au
 Codex modes: `untrusted` (asks for everything but reads), `on-request` (asks when it wants to leave the sandbox),
 `full-access` (no sandbox, never asks), `read-only`.
 
+## Accounts (more than one CLI login)
+
+Each Claude Code / Codex login is a config folder of its own (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`). Account `0`
+is the server's own login (`~/.claude`, `~/.codex`) and has no row; added accounts live next to it
+(`~/.claude-<name>`, `~/.codex-<name>`) and share its settings, skills, plugins (and Claude's MCP servers /
+Codex's `config.toml`) through symlinks. Login, history and plan limits are per account.
+
+`GET /accounts` → the logins the person may use (`?manage=1`: admins also see everyone's; `?refresh=1` asks
+the CLIs again instead of the 10-minute cache):
+
+```json
+[{"id": 0, "provider": "claude", "label": "Server login", "home": "/home/me/.claude", "user_id": null, "default": true,
+  "signed_in": true, "email": "me@…", "plan": "max", "checked_at": "…"},
+ {"id": 3, "provider": "codex", "label": "Second Pro", "home": "/home/me/.codex-second-pro", "user_id": 2, "default": false,
+  "signed_in": false}]
+```
+
+Admin only: `POST /accounts {provider, label, user_id?}` (creates the folder; `user_id` null = everyone who may
+run agents), `PATCH /accounts/{id} {label?, user_id?}`, `DELETE /accounts/{id}` (threads continue on account 0;
+the folder stays on disk), `POST /accounts/{id}/logout`.
+
+Signing in from the browser: `POST /accounts/{id}/login` starts `claude auth login` / `codex login --device-auth`
+and answers `{state, url, code, need_code}`. Claude: open `url`, then `POST /accounts/{id}/login/code {code}`
+with the code the page shows. Codex: open `url` and type `code`; `GET /accounts/{id}/login?wait=1` long-polls
+until `state` is `done` or `failed`. `DELETE /accounts/{id}/login` cancels.
+
+Threads carry `account_id`; `POST /threads` takes it (default: the person's `account_id` in the provider
+defaults). `PATCH /threads/{id} {account_id}` switches: the next turn runs on that login, the session file is
+copied into its folder first (the newest copy wins), and a notice is added to the timeline. Plan limits are
+keyed `claude` / `codex` for account 0 and `claude:3` for account 3 (with `label`, `account_id`). "On this
+server", Today and Running now read every folder the person may use (`account_id` on each session).
+The SSE stream sends `accounts` when the list or a sign-in changes.
+
 ## Threads
 
 `Thread`:

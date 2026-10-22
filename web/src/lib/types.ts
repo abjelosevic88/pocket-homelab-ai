@@ -26,7 +26,25 @@ export interface AuthStatus {
 export type ProviderId = 'claude' | 'codex'
 export type NotifyKind = 'apprise' | 'ntfy' | 'webhook'
 
-export interface AgentDefaults { model: string; effort: string; mode: string; speed?: string }
+export interface AgentDefaults { model: string; effort: string; mode: string; speed?: string; account_id?: number }
+
+/** A Claude Code / Codex login on the server. id 0 = the server's own login. */
+export interface Account {
+  id: number
+  provider: ProviderId
+  label: string
+  home: string
+  user_id: number | null
+  default: boolean
+  signed_in: boolean
+  email?: string
+  plan?: string
+  error?: string
+  checked_at?: string
+}
+
+/** A sign-in started from Settings (Claude: paste the code; Codex: type the code on the page). */
+export interface LoginState { state: 'idle' | 'starting' | 'waiting' | 'checking' | 'done' | 'failed' | 'cancelled'; url?: string; code?: string; need_code?: boolean; error?: string; code_sent?: boolean }
 
 export interface Settings {
   title: string
@@ -109,6 +127,8 @@ export interface Thread {
   id: string
   title: string
   provider: ProviderId
+  /** The login it runs on (0 = the server's own). */
+  account_id: number
   model: string
   effort: string
   mode: string
@@ -289,8 +309,9 @@ export interface LimitWindow { id?: string; name: string; used: number; resets_a
 export interface ResetCredit { title: string; granted_at?: string; expires_at?: string }
 /** Codex's free "reset my limits" credits; each one expires. */
 export interface Resets { available: number; credits?: ResetCredit[] }
-export interface ProviderLimits { windows: LimitWindow[]; updated_at: string; note?: string; error?: string; resets?: Resets }
-export type Limits = Partial<Record<ProviderId, ProviderLimits>>
+export interface ProviderLimits { provider?: ProviderId; account_id?: number; label?: string; windows: LimitWindow[]; updated_at: string; note?: string; error?: string; resets?: Resets }
+/** Keyed "claude" / "codex" for the server's own login, "claude:3" for account 3. */
+export type Limits = Record<string, ProviderLimits | undefined>
 
 export interface UsageReport {
   days: { date: string; cost_usd: number; input_tokens: number; output_tokens: number; turns: number }[]

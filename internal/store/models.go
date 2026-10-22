@@ -66,6 +66,7 @@ type Thread struct {
 	UserID            int64  `json:"-"`
 	Title             string `json:"title"`
 	Provider          string `json:"provider"`
+	AccountID         int64  `json:"account_id"` // 0 = the server's own login
 	Model             string `json:"model"`
 	Effort            string `json:"effort"`
 	Mode              string `json:"mode"`

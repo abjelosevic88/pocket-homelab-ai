@@ -1,11 +1,11 @@
 // Provider / model / effort / mode pickers, fed by GET /providers.
 import { useApp } from '../lib/app-context'
-import type { Provider, ProviderId, Settings } from '../lib/types'
+import type { Account, Provider, ProviderId, Settings } from '../lib/types'
 import { type Option, Select } from './Select'
 import { Segmented } from './ui'
 import { Icon } from './icons'
 
-export interface AgentValue { provider: ProviderId | ''; model: string; effort: string; mode: string; speed?: string }
+export interface AgentValue { provider: ProviderId | ''; model: string; effort: string; mode: string; speed?: string; account_id?: number }
 
 const EFFORT_LABEL: Record<string, string> = { minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max', none: 'None' }
 export const effortLabel = (e: string) => EFFORT_LABEL[e] || e
@@ -18,7 +18,19 @@ export function defaultsFor(p: Provider | undefined, s: Settings | null): Omit<A
     effort: mine?.effort || p?.default_effort || '',
     mode: mine?.mode || p?.default_mode || '',
     speed: mine?.speed || '',
+    account_id: mine?.account_id || 0,
   }
+}
+
+/** Logins to pick from; empty when the provider has only the server's own. */
+export function accountOptions(accounts: Account[], pid: ProviderId): Option<number>[] {
+  const list = accounts.filter(a => a.provider === pid)
+  if (list.length < 2) return []
+  return list.map(a => ({
+    value: a.id, label: a.label, keywords: a.email,
+    description: a.signed_in ? [a.plan, a.email].filter(Boolean).join(' · ') : (a.error || 'Not signed in — Settings → Agents'),
+    disabled: !a.signed_in,
+  }))
 }
 
 export function modelOptions(p: Provider | undefined, allowDefault: boolean): Option<string>[] {
@@ -77,9 +89,10 @@ export function ProviderToggle({ value, onChange, allowDefault = false }: { valu
 
 /** Model, effort and mode for a chosen provider — a form block or a compact chip row. */
 export function AgentPicker({ value, onChange, allowDefault = false, compact = false, showProvider = true }: { value: AgentValue; onChange: (patch: Partial<AgentValue>) => void; allowDefault?: boolean; compact?: boolean; showProvider?: boolean }) {
-  const { providers, settings } = useApp()
+  const { providers, settings, accounts } = useApp()
   const pid = (value.provider || settings?.default_provider || 'claude') as ProviderId
   const p = providers.find(x => x.id === pid)
+  const accts = allowDefault ? [] : accountOptions(accounts, pid)
   const models = modelOptions(p, allowDefault)
   const efforts = effortOptions(p, value.model, allowDefault)
   const modes = modeOptions(p, allowDefault)
@@ -88,6 +101,8 @@ export function AgentPicker({ value, onChange, allowDefault = false, compact = f
   const cls = compact ? 'inline ghost' : ''
   const pickers = (
     <>
+      {accts.length > 0 && <Select size={size} className={cls} label="Account" value={value.account_id || 0} options={accts} onChange={v => onChange({ account_id: v })} width={compact ? 280 : 'trigger'}
+        renderValue={o => <span className="ellipsis">{compact && <Icon name="user" size={12} className="inline-ico" />}{o?.label ?? 'Account'}</span>} />}
       {models.length > 0 && <Select size={size} className={cls} label="Model" value={value.model} options={models} onChange={v => onChange({ model: v })} width={compact ? 280 : 'trigger'}
         renderValue={compact ? o => <span className="ellipsis"><Icon name={pid} size={14} className={`inline-ico prov-glyph ${pid}`} />{shortLabel(String(o?.label ?? 'Model'))}</span> : undefined} />}
       {efforts.length > 0 && <Select size={size} className={cls} label="Effort" value={value.effort} options={efforts} onChange={v => onChange({ effort: v })} width={compact ? 180 : 'trigger'}

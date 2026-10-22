@@ -14,8 +14,8 @@ type CodexReader struct {
 }
 
 // OpenCodexReader starts the app-server.
-func OpenCodexReader(ctx context.Context, bin string) (*CodexReader, error) {
-	c, err := startRPC(bin, os.TempDir(), nil)
+func OpenCodexReader(ctx context.Context, bin string, env []string) (*CodexReader, error) {
+	c, err := startRPC(bin, os.TempDir(), env)
 	if err != nil {
 		return nil, err
 	}

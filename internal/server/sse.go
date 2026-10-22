@@ -70,7 +70,7 @@ func (s *Server) handleUserEvents(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	_ = writeEvent(w, sseEvent{Name: "limits", Data: s.rt.limitsSnapshot()})
+	_ = writeEvent(w, sseEvent{Name: "limits", Data: s.rt.limitsSnapshot(uid)})
 	fl.Flush()
 	s.stream(w, r, fl, ch)
 }

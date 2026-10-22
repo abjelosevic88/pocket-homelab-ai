@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { api, qs, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { fmtCost, fmtTokens, providerName, resetsIn, when } from '../lib/format'
-import { isPinned, limitKey, limitRows, limitTone, usedFrac } from '../components/UsageWidget'
+import { isPinned, limitKey, limitRows, limitSources, limitTone, usedFrac } from '../components/UsageWidget'
 import type { LimitWindow, ProviderId, Resets, UsageReport } from '../lib/types'
 import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
@@ -63,6 +63,7 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
   const max = Math.max(1e-9, ...series.map(val))
   const total = series.reduce((a, x) => a + val(x), 0)
   const providers = (['claude', 'codex'] as ProviderId[])
+  const sources = limitSources(limits)
   // Pins pick what the sidebar panel shows. No pins = all; unpinning the
   // last one leaves a marker that matches nothing, so the panel is empty.
   const togglePin = (key: string) => {
@@ -77,19 +78,19 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
       <div className="page-scroll">
         <div className="page-inner stack loose">
           <section className="card">
-            <div className="card-head"><div className="grow"><h2>Plan limits</h2><p className="muted small">Read from the Claude Code and Codex accounts on the server, including per-model limits.</p></div>
+            <div className="card-head"><div className="grow"><h2>Plan limits</h2><p className="muted small">Read from every Claude Code and Codex login on the server, including per-model limits.</p></div>
               <button type="button" className="btn sm ghost icon-only" aria-label="Refresh limits" title="Refresh" disabled={refreshing}
                 onClick={async () => { setRefreshing(true); try { r.setData(await api.get<UsageReport>(`${V1}/usage${qs({ days, refresh: 1 })}`)) } finally { setRefreshing(false) } }}>
                 <Icon name="refresh" size={15} className={refreshing ? 'spin' : ''} /></button></div>
             <div className="card-body">
               <div className="two-col">
-                {providers.map(p => {
-                  const l = limits[p]
+                {(sources.length ? sources : providers.map(p => ({ src: p as string, p, label: '' }))).map(({ src, p, label }) => {
+                  const l = limits[src]
                   return (
-                    <div key={p} className="limit-box">
-                      <div className="limit-prov"><span className={`prov-dot prov-${p}`} /><b>{providerName(p)}</b>{l?.updated_at && <span className="muted xsmall">· {when(l.updated_at)}</span>}</div>
+                    <div key={src} className="limit-box">
+                      <div className="limit-prov"><span className={`prov-dot prov-${p}`} /><b>{providerName(p)}</b>{label && <span>{label}</span>}{l?.updated_at && <span className="muted xsmall">· {when(l.updated_at)}</span>}</div>
                       {l?.windows?.length ? l.windows.map(w => <LimitBar key={w.id || w.name} w={w}
-                        pinned={isPinned(settings?.usage_pinned, limitKey(p, w))} onPin={settings?.usage_widget !== false ? () => togglePin(limitKey(p, w)) : undefined} />) : <p className="muted small" style={{ margin: 0 }}>{l?.error ? 'Could not read the limits: ' + l.error : 'Reading the limits…'}</p>}
+                        pinned={isPinned(settings?.usage_pinned, limitKey(src, w))} onPin={settings?.usage_widget !== false ? () => togglePin(limitKey(src, w)) : undefined} />) : <p className="muted small" style={{ margin: 0 }}>{l?.error ? 'Could not read the limits: ' + l.error : 'Reading the limits…'}</p>}
                       {l?.note && <p className="muted xsmall" style={{ margin: 0 }}><Icon name="info" size={12} className="inline-ico" />{l.note}</p>}
                       {l?.resets && <FreeResets r={l.resets} />}
                     </div>

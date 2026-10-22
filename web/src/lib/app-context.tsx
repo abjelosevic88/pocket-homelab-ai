@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { api, V1 } from './api'
 import { openSSE } from './sse'
-import type { AuthStatus, Limits, Provider, Recipe, Settings, SettingsResponse, Thread, User, Workspace, RunningItem } from './types'
+import type { Account, AuthStatus, Limits, Provider, Recipe, Settings, SettingsResponse, Thread, User, Workspace, RunningItem } from './types'
 
 export type ThemeMode = 'system' | 'light' | 'dark'
 
@@ -11,6 +11,9 @@ interface AppState {
   sr: SettingsResponse | null
   settings: Settings | null
   providers: Provider[]
+  /** Logins agents can run on (the server's own first, per provider). */
+  accounts: Account[]
+  reloadAccounts: () => Promise<void>
   /** GET /providers answered (or failed) at least once. */
   providersReady: boolean
   threads: Thread[] | null
@@ -71,6 +74,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [sr, setSr] = useState<SettingsResponse | null>(null)
   const [providers, setProviders] = useState<Provider[]>([])
   const [providersReady, setProvidersReady] = useState(false)
+  const [accounts, setAccounts] = useState<Account[]>([])
   const [threads, setThreads] = useState<Thread[] | null>(null)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [recipes, setRecipes] = useState<Recipe[]>([])
@@ -106,6 +110,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const reloadThreads = useCallback(async () => { setThreads(sortThreads((await api.get<Thread[]>(`${V1}/threads`)) || [])) }, [])
   const reloadWorkspaces = useCallback(async () => { setWorkspaces((await api.get<Workspace[]>(`${V1}/workspaces`).catch(() => [])) || []) }, [])
   const reloadRecipes = useCallback(async () => { setRecipes((await api.get<Recipe[]>(`${V1}/recipes`).catch(() => [])) || []) }, [])
+  const reloadAccounts = useCallback(async () => { setAccounts((await api.get<Account[]>(`${V1}/accounts`).catch(() => [])) || []) }, [])
   const reloadProviders = useCallback(async () => { setProviders((await api.get<Provider[]>(`${V1}/providers`).catch(() => [])) || []); setProvidersReady(true) }, [])
 
   const refresh = useCallback(async () => {
@@ -124,10 +129,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         reloadWorkspaces(),
         reloadRecipes(),
         reloadProviders(),
+        reloadAccounts(),
       ])
       setSr(s)
     }
-  }, [reloadThreads, reloadWorkspaces, reloadRecipes, reloadProviders])
+  }, [reloadThreads, reloadWorkspaces, reloadRecipes, reloadProviders, reloadAccounts])
 
   useEffect(() => {
     refresh().catch(() => setStatus({ needs_setup: false, auth_mode: 'local', authenticated: false, user: null, version: '', title: 'Pocket AI' }))
@@ -178,11 +184,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       },
       thread_removed: () => { reloadThreads().catch(() => {}) },
       limits: d => setLimits((d || {}) as Limits),
+      accounts: () => { reloadAccounts().catch(() => {}) },
       running: () => reloadRunning(),
       ping: () => {},
     }, { onOpen: () => { setLive(true); reloadThreads().catch(() => {}); reloadRunning() }, onDown: () => setLive(false) })
     return () => { close(); setLive(false) }
-  }, [user, upsertThread, reloadThreads, reloadRunning])
+  }, [user, upsertThread, reloadThreads, reloadRunning, reloadAccounts])
 
   // App badge (installed PWA) = threads that need you.
   useEffect(() => {
@@ -204,9 +211,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const value = useMemo<AppState>(() => ({
-    status, user, sr, settings, providers, providersReady, threads, workspaces, recipes, limits, running, viewing, setViewing, live, themeMode, theme, setThemeMode, refresh,
+    status, user, sr, settings, providers, providersReady, accounts, reloadAccounts, threads, workspaces, recipes, limits, running, viewing, setViewing, live, themeMode, theme, setThemeMode, refresh,
     reloadThreads, reloadWorkspaces, reloadRecipes, reloadProviders, upsertThread, dropThread, saveSettings, setUser,
-  }), [status, user, sr, settings, providers, providersReady, threads, workspaces, recipes, limits, running, viewing, setViewing, live, themeMode, theme, setThemeMode, refresh, reloadThreads, reloadWorkspaces, reloadRecipes, reloadProviders, upsertThread, dropThread, saveSettings])
+  }), [status, user, sr, settings, providers, providersReady, accounts, reloadAccounts, threads, workspaces, recipes, limits, running, viewing, setViewing, live, themeMode, theme, setThemeMode, refresh, reloadThreads, reloadWorkspaces, reloadRecipes, reloadProviders, upsertThread, dropThread, saveSettings])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

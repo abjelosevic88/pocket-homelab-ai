@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/agent"
@@ -35,7 +36,11 @@ func (s *Server) runningFor(ctx context.Context, u *store.User) []runningItem {
 		}
 	}
 	if u.MayRun() {
+		mine := s.accountIDsFor(ctx, u)
 		for _, a := range s.rt.activeSnapshot() {
+			if !mine[a.Provider+"/"+strconv.FormatInt(a.Account, 10)] {
+				continue // someone else's login
+			}
 			it := runningItem{ActiveSession: a, Status: "running"}
 			if t := byID[a.Provider+":"+a.SessionID]; t != nil {
 				it.ThreadID = t.ID
@@ -99,7 +104,7 @@ func (rt *engine) activeLoop(ctx context.Context) {
 		watching := len(rt.userSubs) > 0
 		rt.mu.Unlock()
 		if watching || last == nil {
-			list := agent.ActiveSessions(rt.s.cfg.ClaudeHome, rt.s.cfg.CodexHome, rt.s.cfg.PaseoHome)
+			list := agent.ActiveSessions(rt.s.homes(ctx), rt.s.cfg.PaseoHome)
 			b, _ := json.Marshal(list)
 			if string(b) != string(last) {
 				rt.mu.Lock()

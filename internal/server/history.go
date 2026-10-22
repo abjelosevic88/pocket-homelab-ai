@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -41,8 +39,8 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	known := s.store.SessionThreadsAll(ctx, me(r))
 	out := []agent.ServerSession{}
 	total := 0
-	sessions := agent.Sessions(s.cfg.ClaudeHome, s.cfg.CodexHome, s.cfg.PaseoHome)
-	sessions = append(sessions, agent.Sessions(filepath.Join(s.cfg.DataDir, "ask-claude", strconv.FormatInt(me(r), 10)), "", "")...)
+	sessions := agent.Sessions(s.homesFor(ctx, userFrom(ctx)), s.cfg.PaseoHome)
+	sessions = append(sessions, agent.Sessions(s.askHomes(me(r)), "")...)
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].UpdatedAt > sessions[j].UpdatedAt })
 	for _, x := range sessions {
 		if th, ok := known[x.Provider+":"+x.SessionID]; ok {
@@ -102,8 +100,8 @@ func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
 		to = t
 	}
 	known := s.store.SessionThreadsAll(r.Context(), me(r))
-	runs := agent.Runs(s.cfg.ClaudeHome, s.cfg.CodexHome, s.cfg.PaseoHome, from, to)
-	runs = append(runs, agent.Runs(filepath.Join(s.cfg.DataDir, "ask-claude", strconv.FormatInt(me(r), 10)), "", "", from, to)...)
+	runs := agent.Runs(s.homesFor(r.Context(), userFrom(r.Context())), s.cfg.PaseoHome, from, to)
+	runs = append(runs, agent.Runs(s.askHomes(me(r)), "", from, to)...)
 	sort.Slice(runs, func(i, j int) bool { return runs[i].StartedAt > runs[j].StartedAt })
 	for i := range runs {
 		if th, ok := known[runs[i].Provider+":"+runs[i].SessionID]; ok {
@@ -145,9 +143,10 @@ func (s *Server) importSession(ctx context.Context, u *store.User, provider, ses
 	var items []agent.Item
 	var cwd, title string
 	logOffset := int64(-1)
+	account, dir := s.sessionAccount(ctx, u, provider, sessionID)
 	switch provider {
 	case "claude":
-		path, err := agent.FindClaude(s.cfg.ClaudeHome, sessionID)
+		path, err := agent.FindClaude(dir, sessionID)
 		if err != nil {
 			return nil, badRequest("that Claude Code session is not on this server")
 		}
@@ -165,7 +164,7 @@ func (s *Server) importSession(ctx context.Context, u *store.User, provider, ses
 		}
 	case "codex":
 		var err error
-		items, cwd, title, err = agent.ReadCodex(ctx, s.cfg.CodexBin, sessionID)
+		items, cwd, title, err = agent.ReadCodex(ctx, s.cfg.CodexBin, sessionID, s.accountEnv(ctx, provider, account))
 		if err != nil {
 			return nil, err
 		}
@@ -182,7 +181,7 @@ func (s *Server) importSession(ctx context.Context, u *store.User, provider, ses
 	} else {
 		cwd = s.cfg.Home
 	}
-	t := &store.Thread{ID: uuid.NewString(), UserID: u.ID, Provider: provider, ProviderSessionID: sessionID, Cwd: cwd,
+	t := &store.Thread{ID: uuid.NewString(), UserID: u.ID, Provider: provider, AccountID: account, ProviderSessionID: sessionID, Cwd: cwd,
 		Model: def.Model, Effort: def.Effort, Mode: def.Mode, Source: "import", Title: titleFrom(title), LogOffset: logOffset}
 	t.WorkspaceID = s.store.WorkspaceForPath(ctx, u.ID, cwd)
 	if err := s.store.CreateThread(ctx, t); err != nil {

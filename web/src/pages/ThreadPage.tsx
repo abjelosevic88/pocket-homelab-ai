@@ -272,7 +272,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
               placeholder={t.external && !t.live ? 'It is running in another app right now — you can reply here once it has finished' : running ? 'Add a message — it is sent when the agent is done…' : pending.length ? 'Or type an answer…' : `Reply to ${providerName(t.provider)}…`}
               footer={<>
                 {t.source === 'ask' && <span className="muted small">Pocket Ask · each change needs your approval · <a href={t.source_ref} target="_blank" rel="noopener noreferrer">Source item ↗</a></span>}
-                {p && t.source !== 'ask' && <span className="thread-pickers"><AgentPicker compact showProvider={false} value={{ provider: t.provider, model: t.model, effort: t.effort, mode: t.mode, speed: t.speed || '' }}
+                {p && t.source !== 'ask' && <span className="thread-pickers"><AgentPicker compact showProvider={false} value={{ provider: t.provider, model: t.model, effort: t.effort, mode: t.mode, speed: t.speed || '', account_id: t.account_id || 0 }}
                   onChange={ch => patch(ch as Partial<Thread>)} /></span>}
               </>} />
           ) : (

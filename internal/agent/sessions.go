@@ -33,6 +33,7 @@ type Run struct {
 	FollowUps    int    `json:"follow_ups,omitempty"` // messages sent while it worked
 	OutputTokens int64  `json:"output_tokens,omitempty"`
 	ThreadID     string `json:"thread_id,omitempty"`
+	Account      int64  `json:"account_id"`
 }
 
 // ServerSession is what "On this server" shows about one CLI session.
@@ -51,6 +52,7 @@ type ServerSession struct {
 	Running    bool   `json:"running"`
 	RunningAt  string `json:"running_at,omitempty"` // when the running prompt was sent
 	ThreadID   string `json:"thread_id"`
+	Account    int64  `json:"account_id"`
 	Path       string `json:"-"`
 }
 
@@ -393,7 +395,7 @@ type sessionFile struct {
 // `since` (zero = all).
 func sessionFiles(claudeHome, codexHome string, since time.Time) []sessionFile {
 	var out []sessionFile
-	if dirs, err := os.ReadDir(filepath.Join(claudeHome, "projects")); err == nil {
+	if dirs, err := os.ReadDir(filepath.Join(claudeHome, "projects")); claudeHome != "" && err == nil {
 		for _, d := range dirs {
 			if !d.IsDir() {
 				continue
@@ -409,6 +411,9 @@ func sessionFiles(claudeHome, codexHome string, since time.Time) []sessionFile {
 				}
 			}
 		}
+	}
+	if codexHome == "" {
+		return out
 	}
 	_ = filepath.WalkDir(filepath.Join(codexHome, "sessions"), func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".jsonl") {
@@ -467,6 +472,9 @@ func finish(r Run, mod time.Time, live liveFn) Run {
 type liveFn func(provider, sessionID string) (busy, known bool)
 
 func liveCheck(claudeHome string) liveFn {
+	if claudeHome == "" {
+		return func(string, string) (bool, bool) { return false, false }
+	}
 	procs, ok := ClaudeProcs(claudeHome)
 	return func(provider, sessionID string) (bool, bool) {
 		if provider != "claude" || !ok {
@@ -478,12 +486,11 @@ func liveCheck(claudeHome string) liveFn {
 }
 
 // Runs lists every run started in [from, to), newest first.
-func Runs(claudeHome, codexHome, paseoHome string, from, to time.Time) []Run {
+func Runs(h Homes, paseoHome string, from, to time.Time) []Run {
 	paseo := paseoSessionsWithin(paseoHome, time.Since(from)+48*time.Hour)
-	live := liveCheck(claudeHome)
 	out := []Run{}
-	for _, f := range sessionFiles(claudeHome, codexHome, from) {
-		sc := scanSession(f.provider, f.path, f.info)
+	for _, f := range accountFiles(h, from) {
+		sc := f.scan
 		origin := sc.originName(paseo)
 		title := sc.title
 		if p, ok := paseo[sc.sessionID]; ok && p.Title != "" {
@@ -495,8 +502,8 @@ func Runs(claudeHome, codexHome, paseoHome string, from, to time.Time) []Run {
 				continue
 			}
 			x := *r
-			x.Provider, x.SessionID, x.Cwd, x.Origin, x.Title = f.provider, sc.sessionID, sc.cwd, origin, title
-			x = finish(x, f.info.ModTime(), live)
+			x.Provider, x.SessionID, x.Cwd, x.Origin, x.Title, x.Account = f.provider, sc.sessionID, sc.cwd, origin, title, f.account
+			x = finish(x, f.info.ModTime(), f.live)
 			if x.Prompt == "" {
 				x.Prompt = "(no prompt text)"
 			}
@@ -509,17 +516,17 @@ func Runs(claudeHome, codexHome, paseoHome string, from, to time.Time) []Run {
 
 // Sessions lists the sessions of both CLIs that have at least one run,
 // newest activity first.
-func Sessions(claudeHome, codexHome, paseoHome string) []ServerSession {
+func Sessions(h Homes, paseoHome string) []ServerSession {
 	paseo := paseoSessionsWithin(paseoHome, 0)
-	live := liveCheck(claudeHome)
 	out := []ServerSession{}
-	for _, f := range sessionFiles(claudeHome, codexHome, time.Time{}) {
-		sc := scanSession(f.provider, f.path, f.info)
-		if len(sc.runs) == 0 || sc.sessionID == "" {
+	for _, f := range accountFiles(h, time.Time{}) {
+		sc := f.scan
+		if len(sc.runs) == 0 {
 			continue
 		}
 		s := ServerSession{Provider: f.provider, SessionID: sc.sessionID, Title: sc.title, Cwd: sc.cwd, Origin: sc.originName(paseo),
-			Model: sc.model, StartedAt: sc.runs[0].StartedAt, UpdatedAt: f.info.ModTime().UTC().Format(time.RFC3339), Runs: len(sc.runs), Path: f.path}
+			Model: sc.model, StartedAt: sc.runs[0].StartedAt, UpdatedAt: f.info.ModTime().UTC().Format(time.RFC3339), Runs: len(sc.runs), Path: f.path,
+			Account: f.account}
 		if p, ok := paseo[sc.sessionID]; ok && p.Title != "" {
 			s.Title = p.Title
 		}
@@ -528,7 +535,7 @@ func Sessions(claudeHome, codexHome, paseoHome string) []ServerSession {
 		}
 		last := *sc.runs[len(sc.runs)-1]
 		last.Provider, last.SessionID = f.provider, sc.sessionID
-		last = finish(last, f.info.ModTime(), live)
+		last = finish(last, f.info.ModTime(), f.live)
 		s.LastPrompt = last.Prompt
 		if last.Status == "running" {
 			s.Running, s.RunningAt = true, last.StartedAt
@@ -539,10 +546,49 @@ func Sessions(claudeHome, codexHome, paseoHome string) []ServerSession {
 	return out
 }
 
+type accountFile struct {
+	sessionFile
+	account int64
+	scan    *sessionScan
+	live    liveFn
+}
+
+// accountFiles scans the session files of every account changed since
+// `since`. A session moved to another account exists in both folders; the
+// copy written last is the one that counts (and names the account).
+func accountFiles(h Homes, since time.Time) []accountFile {
+	var all []accountFile
+	h.each(func(provider string, a AccountHome) {
+		claude, codex, live := a.Dir, "", liveCheck(a.Dir)
+		if provider == "codex" {
+			claude, codex, live = "", a.Dir, liveCheck("")
+		}
+		for _, f := range sessionFiles(claude, codex, since) {
+			sc := scanSession(f.provider, f.path, f.info)
+			if sc.sessionID == "" {
+				continue
+			}
+			all = append(all, accountFile{sessionFile: f, account: a.ID, scan: sc, live: live})
+		}
+	})
+	best := map[string]int{}
+	out := all[:0]
+	for _, f := range all {
+		k := f.provider + "/" + f.scan.sessionID
+		if i, ok := best[k]; ok {
+			if f.info.ModTime().After(out[i].info.ModTime()) {
+				out[i] = f
+			}
+			continue
+		}
+		best[k] = len(out)
+		out = append(out, f)
+	}
+	return out
+}
+
 // WarmSessions reads every session file once (in the background at start),
 // so the first look at "On this server" or Today is quick.
-func WarmSessions(claudeHome, codexHome string) {
-	for _, f := range sessionFiles(claudeHome, codexHome, time.Time{}) {
-		scanSession(f.provider, f.path, f.info)
-	}
+func WarmSessions(h Homes) {
+	accountFiles(h, time.Time{})
 }

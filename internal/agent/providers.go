@@ -26,7 +26,7 @@ func cliVersion(ctx context.Context, bin string) (string, error) {
 
 // ProbeClaude asks Claude Code for its version, models and account without
 // sending a prompt (the initialize handshake only).
-func ProbeClaude(ctx context.Context, bin, cwd string) Provider {
+func ProbeClaude(ctx context.Context, bin, cwd string, env []string) Provider {
 	if bin == "" {
 		bin = "claude"
 	}
@@ -46,7 +46,7 @@ func ProbeClaude(ctx context.Context, bin, cwd string) Provider {
 	cmd := exec.CommandContext(ctx, bin, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-prompt-tool", "stdio",
 		"--settings", `{"fastMode":true}`)
 	cmd.Dir = cwd
-	cmd.Env = os.Environ()
+	cmd.Env = append(os.Environ(), env...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, _ := cmd.StdinPipe()
 	stdout, _ := cmd.StdoutPipe()
@@ -123,7 +123,7 @@ func claudeFastNote(reason string) string {
 }
 
 // ProbeCodex asks the Codex app-server for its models and account.
-func ProbeCodex(ctx context.Context, bin, cwd string) Provider {
+func ProbeCodex(ctx context.Context, bin, cwd string, env []string) Provider {
 	if bin == "" {
 		bin = "codex"
 	}
@@ -135,7 +135,7 @@ func ProbeCodex(ctx context.Context, bin, cwd string) Provider {
 		return p
 	}
 	p.Version, p.Available = v, true
-	c, err := startRPC(bin, cwd, nil)
+	c, err := startRPC(bin, cwd, env)
 	if err != nil {
 		p.Error = err.Error()
 		return p

@@ -26,7 +26,7 @@ function greeting() {
 }
 
 export default function HomePage({ onMenu }: { onMenu?: () => void }) {
-  const { user, settings, providers, providersReady, workspaces, recipes, threads, upsertThread, running } = useApp()
+  const { user, settings, providers, providersReady, accounts, workspaces, recipes, threads, upsertThread, running } = useApp()
   const { toast } = useToast()
   const navigate = useNavigate()
   const runRecipe = useRunRecipe()
@@ -76,6 +76,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
       const t = await api.post<Thread>(`${V1}/threads`, {
         provider: choice.provider, model: choice.model || undefined, effort: choice.effort || undefined, mode: choice.mode || undefined,
         speed: choice.speed ?? undefined,
+        account_id: accounts.some(a => a.provider === choice.provider && a.id === choice.account_id && a.signed_in) ? choice.account_id : undefined,
         cwd: choice.cwd || undefined, workspace_id: ws?.id, text, upload_ids: uploadIds,
       })
       upsertThread(t)

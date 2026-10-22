@@ -465,8 +465,8 @@ func (t codexTurn) footer() (Item, bool) {
 }
 
 // ListCodex lists Codex threads through the app-server, newest first.
-func ListCodex(ctx context.Context, bin, q string, limit int) ([]Past, error) {
-	c, err := startRPC(bin, os.TempDir(), nil)
+func ListCodex(ctx context.Context, bin, q string, limit int, env []string) ([]Past, error) {
+	c, err := startRPC(bin, os.TempDir(), env)
 	if err != nil {
 		return nil, err
 	}
@@ -512,8 +512,8 @@ func ListCodex(ctx context.Context, bin, q string, limit int) ([]Past, error) {
 }
 
 // ReadCodex loads a Codex thread's turns as timeline items.
-func ReadCodex(ctx context.Context, bin, threadID string) (items []Item, cwd, title string, err error) {
-	c, err := startRPC(bin, os.TempDir(), nil)
+func ReadCodex(ctx context.Context, bin, threadID string, env []string) (items []Item, cwd, title string, err error) {
+	c, err := startRPC(bin, os.TempDir(), env)
 	if err != nil {
 		return nil, "", "", err
 	}

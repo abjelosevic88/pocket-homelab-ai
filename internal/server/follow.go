@@ -86,6 +86,7 @@ func (rt *engine) followClaude(ctx context.Context, threadID string) {
 	defer tick.Stop()
 	defer rt.setExternal(threadID, false)
 	var path, sid string
+	var acct int64
 	var lastLine time.Time
 	log := &agent.ClaudeLog{}
 	n := 0
@@ -95,11 +96,12 @@ func (rt *engine) followClaude(ctx context.Context, threadID string) {
 		if err != nil {
 			return
 		}
-		if t.ProviderSessionID != sid { // a fork or the first message gave it a new session
-			sid, path = t.ProviderSessionID, ""
+		if t.ProviderSessionID != sid || t.AccountID != acct { // a fork, the first message or another account
+			sid, acct, path = t.ProviderSessionID, t.AccountID, ""
 		}
 		if path == "" && sid != "" {
-			path, _ = agent.FindClaude(rt.s.cfg.ClaudeHome, sid)
+			dir, _ := rt.s.accountHome(ctx, t.Provider, t.AccountID)
+			path, _ = agent.FindClaude(dir, sid)
 		}
 		if path != "" {
 			rt.claudeTick(ctx, t, path, log, &lastLine)
@@ -123,7 +125,8 @@ func (rt *engine) claudeElsewhere(t *store.Thread, path string, scan bool) {
 		rt.setExtSubs(t.ID, nil) // Pocket AI drives it: its own events say it all
 		return
 	}
-	procs, ok := agent.ClaudeProcs(rt.s.cfg.ClaudeHome)
+	dir, _ := rt.s.accountHome(rt.ctx, t.Provider, t.AccountID)
+	procs, ok := agent.ClaudeProcs(dir)
 	if !ok {
 		return // no registry (older Claude Code): the log-based guess stands
 	}
@@ -254,7 +257,7 @@ func (rt *engine) followCodex(ctx context.Context, threadID string) {
 		live := rt.get(threadID) != nil
 		if !live && (first || size != lastSize) {
 			if reader == nil {
-				if reader, err = agent.OpenCodexReader(ctx, rt.s.cfg.CodexBin); err != nil {
+				if reader, err = agent.OpenCodexReader(ctx, rt.s.cfg.CodexBin, rt.s.accountEnv(ctx, t.Provider, t.AccountID)); err != nil {
 					rt.s.log.Debug("follow codex", "thread", threadID, "err", err)
 					reader = nil
 				}
@@ -372,7 +375,8 @@ func (rt *engine) endOffset(t *store.Thread) {
 	if t.Provider != "claude" || t.ProviderSessionID == "" {
 		return
 	}
-	if path, err := agent.FindClaude(rt.s.cfg.ClaudeHome, t.ProviderSessionID); err == nil {
+	dir, _ := rt.s.accountHome(rt.ctx, t.Provider, t.AccountID)
+	if path, err := agent.FindClaude(dir, t.ProviderSessionID); err == nil {
 		if size := agent.FileSize(path); size >= 0 {
 			rt.saveOffset(rt.ctx, t.ID, size)
 		}

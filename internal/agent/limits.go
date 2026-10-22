@@ -18,7 +18,7 @@ import (
 // numbers its /usage screen shows, per-model weekly limits (Fable, …)
 // included — through the get_usage control request. No prompt is sent and
 // no session is written.
-func ClaudeLimits(ctx context.Context, bin, cwd string) ([]Window, string, error) {
+func ClaudeLimits(ctx context.Context, bin, cwd string, env []string) ([]Window, string, error) {
 	if bin == "" {
 		bin = "claude"
 	}
@@ -27,7 +27,7 @@ func ClaudeLimits(ctx context.Context, bin, cwd string) ([]Window, string, error
 	cmd := exec.CommandContext(ctx, bin, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
 		"--permission-prompt-tool", "stdio", "--no-session-persistence")
 	cmd.Dir = cwd
-	cmd.Env = os.Environ()
+	cmd.Env = append(os.Environ(), env...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, _ := cmd.StdinPipe()
 	stdout, _ := cmd.StdoutPipe()
@@ -136,8 +136,8 @@ type ResetCredit struct {
 }
 
 // CodexLimits reads the plan limits and the free resets Codex has granted.
-func CodexLimits(ctx context.Context, bin string) ([]Window, *Resets, error) {
-	c, err := startRPC(bin, os.TempDir(), nil)
+func CodexLimits(ctx context.Context, bin string, env []string) ([]Window, *Resets, error) {
+	c, err := startRPC(bin, os.TempDir(), env)
 	if err != nil {
 		return nil, nil, err
 	}

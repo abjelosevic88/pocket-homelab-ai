@@ -76,8 +76,8 @@ func (s *Server) providers(ctx context.Context, refresh bool) []agent.Provider {
 	defer cancel()
 	out := make([]agent.Provider, 2)
 	done := make(chan struct{}, 2)
-	go func() { out[0] = agent.ProbeClaude(ctx, s.cfg.ClaudeBin, s.cfg.Home); done <- struct{}{} }()
-	go func() { out[1] = agent.ProbeCodex(ctx, s.cfg.CodexBin, s.cfg.Home); done <- struct{}{} }()
+	go func() { out[0] = agent.ProbeClaude(ctx, s.cfg.ClaudeBin, s.cfg.Home, nil); done <- struct{}{} }()
+	go func() { out[1] = agent.ProbeCodex(ctx, s.cfg.CodexBin, s.cfg.Home, nil); done <- struct{}{} }()
 	<-done
 	<-done
 	s.provList, s.provAt = out, time.Now()
@@ -108,6 +108,7 @@ func (s *Server) handleListThreads(w http.ResponseWriter, r *http.Request) {
 
 type newThread struct {
 	Provider    string   `json:"provider"`
+	AccountID   *int64   `json:"account_id"` // nil = the person's default for the provider
 	Model       string   `json:"model"`
 	Effort      string   `json:"effort"`
 	Mode        string   `json:"mode"`
@@ -144,6 +145,16 @@ func (s *Server) createThread(ctx context.Context, u *store.User, in newThread, 
 		Title: strings.TrimSpace(in.Title)}
 	if !validMode(t.Provider, t.Mode) {
 		return nil, badRequest("unknown mode " + t.Mode)
+	}
+	t.AccountID = def.Account
+	if in.AccountID != nil {
+		t.AccountID = *in.AccountID
+	}
+	if err := s.checkAccount(ctx, u, t.Provider, t.AccountID); err != nil {
+		if in.AccountID != nil {
+			return nil, err
+		}
+		t.AccountID = 0 // a saved default that is gone: the server login
 	}
 	t.Speed = def.Speed
 	if in.Speed != nil {
@@ -339,14 +350,27 @@ func (s *Server) handlePatchThread(w http.ResponseWriter, r *http.Request) {
 		Effort   *string `json:"effort"`
 		Mode     *string `json:"mode"`
 		Speed    *string `json:"speed"`
+		Account  *int64  `json:"account_id"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	if t.Source == "ask" && (in.Mode != nil || in.Speed != nil) {
+	if t.Source == "ask" && (in.Mode != nil || in.Speed != nil || in.Account != nil) {
 		writeErr(w, 400, "Ask uses fixed permissions")
 		return
+	}
+	switched := ""
+	if in.Account != nil && *in.Account != t.AccountID {
+		if !s.requireRun(w, r) {
+			return
+		}
+		if err := s.checkAccount(r.Context(), userFrom(r.Context()), t.Provider, *in.Account); err != nil {
+			s.fail(w, err, "account")
+			return
+		}
+		t.AccountID = *in.Account
+		switched = s.accountLabel(r.Context(), t.Provider, t.AccountID)
 	}
 	if in.NoMemory != nil {
 		t.NoMemory = *in.NoMemory
@@ -382,6 +406,16 @@ func (s *Server) handlePatchThread(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Effort != nil && *in.Effort != t.Effort {
 		t.Effort, restart = *in.Effort, true
+	}
+	if switched != "" {
+		// The next turn runs on the other login: a new process, the session
+		// file copied over first (startRun → ensureSession).
+		restart = true
+		text := "From here on this conversation runs on " + switched + "."
+		if t.ProviderSessionID != "" {
+			text += " The conversation so far was moved over; the first reply may take a little longer (the new account has nothing cached yet)."
+		}
+		s.rt.saveItem(t.ID, agent.Item{Key: "acct-" + uuid.NewString()[:8], Kind: "notice", Level: "info", Text: text})
 	}
 	modeChanged := false
 	if in.Mode != nil && *in.Mode != t.Mode {
@@ -599,7 +633,7 @@ func (s *Server) handleFork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	n := &store.Thread{ID: uuid.NewString(), UserID: t.UserID, Title: "Fork of " + t.Title, Provider: t.Provider, Model: t.Model,
+	n := &store.Thread{ID: uuid.NewString(), UserID: t.UserID, Title: "Fork of " + t.Title, Provider: t.Provider, AccountID: t.AccountID, Model: t.Model,
 		Effort: t.Effort, Mode: t.Mode, Speed: t.Speed, Cwd: t.Cwd, WorkspaceID: t.WorkspaceID, Source: "fork", SourceRef: "fork:" + t.ProviderSessionID}
 	if err := s.store.CreateThread(ctx, n); err != nil {
 		s.fail(w, err, "fork")
@@ -735,7 +769,7 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 			s.rt.refreshLimits(false)
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"days": all, "providers": prov, "limits": s.rt.limitsSnapshot()})
+	writeJSON(w, http.StatusOK, map[string]any{"days": all, "providers": prov, "limits": s.rt.limitsSnapshot(me(r))})
 }
 
 // handleLimits is the plan limits alone, for the always-on usage panel: it
@@ -745,7 +779,7 @@ func (s *Server) handleLimits(w http.ResponseWriter, r *http.Request) {
 	if userFrom(r.Context()).MayRun() && s.rt.limitsStale(10*time.Minute) {
 		s.rt.refreshLimits(false)
 	}
-	writeJSON(w, http.StatusOK, s.rt.limitsSnapshot())
+	writeJSON(w, http.StatusOK, s.rt.limitsSnapshot(me(r)))
 }
 
 // promptLine is how a prompt shows in the "Running now" list (the

@@ -56,12 +56,15 @@ type Server struct {
 	provMu   sync.Mutex
 	provList []agent.Provider
 	provAt   time.Time
+
+	accts accountState // logins: status cache, sign-ins in progress (accounts.go)
 }
 
 // New creates a server.
 func New(cfg *config.Config, st *store.Store, log *slog.Logger, webFS fs.FS) *Server {
 	ua := "PocketAI/" + Version + " (+https://github.com/abjelosevic88/pocket-homelab-ai)"
-	s := &Server{cfg: cfg, store: st, log: log, webFS: webFS, started: time.Now()}
+	s := &Server{cfg: cfg, store: st, log: log, webFS: webFS, started: time.Now(),
+		accts: accountState{status: map[string]acctStatus{}, logins: map[int64]*loginRun{}}}
 	s.rt = newRuntime(s)
 	agent.Version = Version
 	s.http = &http.Client{Timeout: 60 * time.Second}
@@ -113,8 +116,8 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	_, _ = s.store.DB.ExecContext(ctx, `UPDATE workflows SET last_status='interrupted' WHERE last_status='running'`)
 	go s.workflowLoop(ctx)
 	_, _ = s.store.DB.ExecContext(ctx, `UPDATE app_calls SET status=CASE WHEN status='pending' THEN 'denied' WHEN is_write=1 THEN 'unknown' ELSE 'interrupted' END WHERE status IN ('running','pending')`)
-	go agent.WarmSessions(s.cfg.ClaudeHome, s.cfg.CodexHome) // first parse of every session file takes a while
-	go func() { s.providers(ctx, true) }()                   // warm the provider cache
+	go agent.WarmSessions(s.homes(ctx))    // first parse of every session file takes a while
+	go func() { s.providers(ctx, true) }() // warm the provider cache
 	if s.core.Configured() {
 		go s.coreLoop(ctx)
 	}
@@ -198,6 +201,8 @@ func (s *Server) Router() http.Handler {
 			// Schedules: schedules.go. CLI history: history.go.
 			s.scheduleRoutes(r)
 			s.historyRoutes(r)
+			// More Claude Code / Codex logins: accounts.go.
+			s.accountRoutes(r)
 
 			r.Get("/users", s.handleListUsers)
 			r.Post("/users", s.handleCreateUser)

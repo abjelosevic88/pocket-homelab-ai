@@ -26,7 +26,8 @@ func (s *Server) handleLogImage(w http.ResponseWriter, r *http.Request) {
 	ck := t.ProviderSessionID + "|" + key + "|" + strconv.Itoa(n)
 	img, ok := logImages.get(ck)
 	if !ok {
-		path, err := agent.FindClaude(s.cfg.ClaudeHome, t.ProviderSessionID)
+		dir, _ := s.accountHome(r.Context(), t.Provider, t.AccountID)
+		path, err := agent.FindClaude(dir, t.ProviderSessionID)
 		if err != nil {
 			writeErr(w, http.StatusNotFound, "the session file is gone")
 			return
