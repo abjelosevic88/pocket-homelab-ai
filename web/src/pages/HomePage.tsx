@@ -58,9 +58,9 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
     const same = saved.provider === pid
     setChoice({
       provider: pid,
-      model: same && saved.model && p?.models.some(m => m.id === saved.model) ? saved.model : d.model,
+      model: same && saved.model && p?.models?.some(m => m.id === saved.model) ? saved.model : d.model,
       effort: same && saved.effort ? saved.effort : d.effort,
-      mode: same && saved.mode && p?.modes.some(m => m.id === saved.mode) ? saved.mode : d.mode,
+      mode: same && saved.mode && p?.modes?.some(m => m.id === saved.mode) ? saved.mode : d.mode,
       speed: same && saved.speed !== undefined && (saved.speed === '' || p?.speeds?.some(s => s.id === saved.speed && s.available)) ? saved.speed : d.speed,
       cwd: saved.cwd || settings.default_cwd || '',
     })

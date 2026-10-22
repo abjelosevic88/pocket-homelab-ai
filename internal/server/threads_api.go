@@ -80,6 +80,20 @@ func (s *Server) providers(ctx context.Context, refresh bool) []agent.Provider {
 	go func() { out[1] = agent.ProbeCodex(ctx, s.cfg.CodexBin, s.cfg.Home, nil); done <- struct{}{} }()
 	<-done
 	<-done
+	for i := range out { // a CLI that is missing still answers with lists, not null
+		if out[i].Models == nil {
+			out[i].Models = []agent.Model{}
+		}
+		if out[i].Efforts == nil {
+			out[i].Efforts = []string{}
+		}
+		if out[i].Modes == nil {
+			out[i].Modes = []agent.Mode{}
+		}
+		if out[i].Speeds == nil {
+			out[i].Speeds = []agent.Speed{}
+		}
+	}
 	s.provList, s.provAt = out, time.Now()
 	return out
 }

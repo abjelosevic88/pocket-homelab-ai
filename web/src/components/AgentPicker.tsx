@@ -39,7 +39,7 @@ export function modelOptions(p: Provider | undefined, allowDefault: boolean): Op
   return opts
 }
 export function effortOptions(p: Provider | undefined, model: string, allowDefault: boolean): Option<string>[] {
-  const m = p?.models.find(x => x.id === model)
+  const m = p?.models?.find(x => x.id === model)
   const list = (m?.efforts?.length ? m.efforts : p?.efforts) || []
   const opts: Option<string>[] = list.map(e => ({ value: e, label: effortLabel(e) }))
   if (allowDefault) opts.unshift({ value: '', label: 'My default' })
@@ -54,7 +54,7 @@ export function modeOptions(p: Provider | undefined, allowDefault: boolean): Opt
 /** Speeds the model can run at; empty when there is no choice to make. */
 export function speedOptions(p: Provider | undefined, model: string, allowDefault: boolean): Option<string>[] {
   const speeds = p?.speeds || []
-  const m = p?.models.find(x => x.id === model)
+  const m = p?.models?.find(x => x.id === model)
   if (speeds.length < 2 || (m && !m.fast)) return []
   const opts: Option<string>[] = speeds.map(s => ({ value: s.id, label: s.name, description: s.available ? s.description : s.note, disabled: !s.available }))
   if (allowDefault) opts.unshift({ value: '__default', label: 'My default' })
@@ -67,8 +67,8 @@ function shortLabel(label: string) {
   return i > 0 ? <>{label.slice(0, i)}<span className="lbl-long">{label.slice(i)}</span></> : label
 }
 
-export function modeName(p: Provider | undefined, id: string) { return p?.modes.find(m => m.id === id)?.name || id }
-export function modelName(p: Provider | undefined, id: string) { return p?.models.find(m => m.id === id)?.name || id }
+export function modeName(p: Provider | undefined, id: string) { return p?.modes?.find(m => m.id === id)?.name || id }
+export function modelName(p: Provider | undefined, id: string) { return p?.models?.find(m => m.id === id)?.name || id }
 
 /** Claude Code / Codex toggle. */
 export function ProviderToggle({ value, onChange, allowDefault = false }: { value: ProviderId | ''; onChange: (p: ProviderId | '') => void; allowDefault?: boolean }) {
