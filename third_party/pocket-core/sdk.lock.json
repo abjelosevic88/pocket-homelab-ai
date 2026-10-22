@@ -10,7 +10,7 @@
     "sdk/outbox.go": "97af57aa64a068b2bed90df8962d39819223fdb076b14c76da8ced0b8b7623f2",
     "sdk/platform.go": "ccc7b75deb04c2ef1944478826c966525d219dc297cd27dfda18a7c0f30e8f30",
     "sdk/sdk.go": "e91f4f7051b0fcbf595ad31b90e1dae1725e88223f96e5b658f6463b670ca833",
-    "sdk/ask-widget.js": "811ef79d9258dfd8063bc1586ea40532ce2d7c3ce4c06f3fd4c41eb87dae1db0",
+    "sdk/ask-widget.js": "11838e19511c352bbabc6a831120a4e6af3befd0cd0c4def468634de8d5ebdec",
     "go.mod": "02ee26d5d5845133f27b034689f2123a9763faab3324ca45d61094be42983e5c",
     "LICENSE": "1ee9dcf9984f9334729d3763bf714b60bc380f995888cc6d998b1608320de185",
     "sdk/inference.go": "514e29fe5a19eb593b6be1f67d1584a5f964e1dac4abbb670d0094ae013a3eed"
