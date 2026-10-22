@@ -511,7 +511,11 @@ button.privacy-badge:disabled { cursor: default; }
 .privacy-badge.sm.icon-only.shared { color: var(--accent); }
 .callout.ask-connect { align-items: center; }
 
-.message-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; margin: 2px 0 10px; color: var(--muted); }
-.message-actions .btn { min-height: 32px; }
+/* Edit / rewind under a sent message: quiet icons, revealed on hover. */
+.message-actions { display: flex; justify-content: flex-end; gap: 2px; margin: -2px 2px 8px; opacity: 0; transition: opacity .12s; }
+.tl-item:hover .message-actions, .message-actions:focus-within { opacity: 1; }
+.message-actions .btn { color: var(--faint); }
+.message-actions .btn:hover:not(:disabled) { color: var(--text); }
+@media (hover: none) { .message-actions { opacity: .8; } }
 .message-editor { display: block; width: 100%; min-height: 140px; max-height: 50dvh; resize: vertical; margin: 8px 0 12px; }
-@media (pointer: coarse) { .message-actions .btn { min-height: 44px; } }
+@media (pointer: coarse) { .message-actions .btn { width: 36px; height: 36px; } }
