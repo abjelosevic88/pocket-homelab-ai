@@ -21,7 +21,7 @@ export function AccountsSection() {
   const [refresh, setRefresh] = useState(0)
   const list = useAsync(() => api.get<Account[]>(`${V1}/accounts?manage=${isAdmin ? 1 : 0}${refresh ? '&refresh=1' : ''}`), [refresh, isAdmin])
   const people = useAsync(() => isAdmin ? api.get<User[]>(`${V1}/users`) : Promise.resolve([] as User[]), [isAdmin])
-  const [adding, setAdding] = useState(false)
+  const [adding, setAdding] = useState<ProviderId | null>(null)
   const [edit, setEdit] = useState<Account | null>(null)
   const [signIn, setSignIn] = useState<Account | null>(null)
   const [del, setDel] = useState<Account | null>(null)
@@ -37,7 +37,7 @@ export function AccountsSection() {
       actions={<>
         <button type="button" className="btn sm ghost icon-only" aria-label="Check the accounts again" title="Check again" disabled={list.loading} onClick={() => setRefresh(n => n + 1)}>
           <Icon name="refresh" size={14} className={list.loading ? 'spin' : ''} /></button>
-        {isAdmin && <button type="button" className="btn primary sm" onClick={() => setAdding(true)}><Icon name="plus" size={14} />Add account</button>}
+        {isAdmin && <button type="button" className="btn primary sm" onClick={() => setAdding('claude')}><Icon name="plus" size={14} />Add account</button>}
       </>}>
       {!list.data ? <div className="loading"><Spinner /> Checking the logins…</div> : (
         <div className="acct-groups">
@@ -45,8 +45,13 @@ export function AccountsSection() {
             const rows = list.data!.filter(a => a.provider === pid)
             if (!rows.length) return null
             return (
-              <div key={pid} className="acct-group">
-                <div className="acct-group-h"><span className={`prov-dot prov-${pid}`} />{pid === 'claude' ? 'Claude Code' : 'Codex'}</div>
+              <div key={pid} className={`acct-group ${pid}`}>
+                <div className="acct-group-h">
+                  <span className={`acct-group-ico ${pid}`}><Icon name={pid} size={16} /></span>
+                  <span className="acct-group-name">{pid === 'claude' ? 'Claude Code' : 'Codex'}</span>
+                  <span className="acct-group-n">{rows.length} {rows.length === 1 ? 'login' : 'logins'}</span>
+                  {isAdmin && <button type="button" className="btn sm ghost acct-group-add" onClick={() => setAdding(pid)}><Icon name="plus" size={13} />Add</button>}
+                </div>
                 {rows.map(a => (
                   <div key={a.id} className="acct-row">
                     <StatusDot status={a.signed_in ? 'ok' : a.error ? 'error' : 'off'}
@@ -80,8 +85,8 @@ export function AccountsSection() {
         </div>
       )}
       {list.error && <p className="danger-text small">{list.error}</p>}
-      {(adding || edit) && <AccountDialog account={edit} people={people.data || []} onClose={() => { setAdding(false); setEdit(null) }}
-        onSaved={a => { const wasNew = adding; setAdding(false); setEdit(null); done(); if (wasNew && a) setSignIn(a) }} />}
+      {(adding || edit) && <AccountDialog account={edit} provider={adding || 'claude'} people={people.data || []} onClose={() => { setAdding(null); setEdit(null) }}
+        onSaved={a => { const wasNew = !!adding; setAdding(null); setEdit(null); done(); if (wasNew && a) setSignIn(a) }} />}
       {signIn && <SignInDialog account={signIn} onClose={() => { setSignIn(null); done() }} />}
       {del && <Confirm title={`Remove ${del.label}?`} confirmLabel="Remove"
         message={<>Its threads continue on the server login (the conversation is copied over on their next message). The folder <code>{del.home}</code> with the login and session files stays on the server.</>}
@@ -90,9 +95,9 @@ export function AccountsSection() {
   )
 }
 
-function AccountDialog({ account, people, onClose, onSaved }: { account: Account | null; people: User[]; onClose: () => void; onSaved: (a?: Account) => void }) {
+function AccountDialog({ account, provider: initial, people, onClose, onSaved }: { account: Account | null; provider: ProviderId; people: User[]; onClose: () => void; onSaved: (a?: Account) => void }) {
   const { toast } = useToast()
-  const [provider, setProvider] = useState<ProviderId>(account?.provider || 'claude')
+  const [provider, setProvider] = useState<ProviderId>(account?.provider || initial)
   const [label, setLabel] = useState(account?.label || '')
   const [owner, setOwner] = useState<number>(account?.user_id ?? 0)
   const [busy, setBusy] = useState(false)
