@@ -312,6 +312,14 @@ func StartCodex(ctx context.Context, o Options, sink Sink) (Session, error) {
 	if strings.TrimSpace(o.SystemPrompt) != "" {
 		params["developerInstructions"] = o.SystemPrompt
 	}
+	if o.MCPConfig != "" {
+		config, err := codexPocketConfig(o.MCPConfig)
+		if err != nil {
+			c.close()
+			return nil, err
+		}
+		params["config"] = config
+	}
 	if o.Speed != "" {
 		params["serviceTier"] = o.Speed
 	}
@@ -940,4 +948,31 @@ func mcpText(raw json.RawMessage) string {
 		return strings.Join(b, "\n")
 	}
 	return string(raw)
+}
+
+// Translate the private, per-session MCP proxy config without writing global
+// Codex configuration or handing the Core credential to the agent process.
+func codexPocketConfig(path string) (map[string]any, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var config struct {
+		Servers map[string]struct {
+			URL     string            `json:"url"`
+			Headers map[string]string `json:"headers"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		return nil, err
+	}
+	pocket, ok := config.Servers["pocket"]
+	if !ok || pocket.URL == "" {
+		return nil, errors.New("missing Pocket tool connection")
+	}
+	return map[string]any{"mcp_servers.pocket": map[string]any{
+		"url": pocket.URL, "http_headers": pocket.Headers, "enabled": true,
+		"startup_timeout_sec": 15, "tool_timeout_sec": 660,
+		"default_tools_approval_mode": "approve",
+	}}, nil
 }

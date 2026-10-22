@@ -5,7 +5,7 @@ const capital = (text: string) => text ? text[0].toUpperCase() + text.slice(1) :
 const apps: Record<string, string> = { ai: 'AI', core: 'Core', money: 'Money', notes: 'Notes', tasks: 'Tasks', split: 'Split', habits: 'Habits' }
 
 export function toolLabel(tool: Pick<ToolInfo, 'name'>): string {
-  const parts = tool.name.split('__')
+  const parts = tool.name.startsWith('pocket.pocket_') ? ['mcp', 'pocket', tool.name.slice(7)] : tool.name.split('__')
   if (parts[0] !== 'mcp' || parts.length < 3) return tool.name
   const server = parts[1], name = parts.slice(2).join('__')
   if (server !== 'pocket' || !name.startsWith('pocket_')) return `${capital(words(server))} · ${capital(words(name))}`

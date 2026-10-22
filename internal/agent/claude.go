@@ -96,6 +96,9 @@ func StartClaude(ctx context.Context, o Options, sink Sink) (Session, error) {
 		// allow switching to full access later without a restart
 		args = append(args, "--permission-mode", mode, "--allow-dangerously-skip-permissions")
 	}
+	if !o.Restricted && o.MCPConfig != "" {
+		args = append(args, "--mcp-config", o.MCPConfig, "--allowedTools", "mcp__pocket__*")
+	}
 	if o.ResumeID != "" {
 		args = append(args, "--resume", o.ResumeID)
 		if o.Fork {

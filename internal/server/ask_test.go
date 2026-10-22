@@ -16,13 +16,22 @@ import (
 	core "github.com/abjelosevic88/pocket-homelab-core/sdk"
 )
 
+type pocketModeSession struct{ agent.Session }
+
+func (*pocketModeSession) SetMode(string) error { return nil }
+
 func TestAskApprovalIsEnforcedByServer(t *testing.T) {
+	for _, source := range []string{"ask", "app"} {
+		t.Run(source, func(t *testing.T) { testPocketApproval(t, source) })
+	}
+}
+func testPocketApproval(t *testing.T, source string) {
 	s, h, root := testServer(t)
-	a, u := person(t, s, h, "ask@example.test", "member", false)
+	a, u := person(t, s, h, "ask@example.test", "member", source != "ask")
 	b, _ := person(t, s, h, "other-ask@example.test", "member", false)
 	th := thread(t, s, u.ID, root)
-	th.Source = "ask"
-	_, _ = s.store.DB.Exec(`UPDATE threads SET source='ask' WHERE id=?`, th.ID)
+	th.Source = source
+	_, _ = s.store.DB.Exec(`UPDATE threads SET source=? WHERE id=?`, source, th.ID)
 	_, _ = s.store.DB.Exec(`INSERT INTO ask_contexts VALUES(?,?)`, th.ID, `{"app":"notes","url":"https://notes.test/notes/1"}`)
 	sealed, _ := s.seal("pcma_test_connection")
 	_, _ = s.store.DB.Exec(`INSERT INTO ask_connections VALUES(?,?)`, u.ID, sealed)
@@ -51,17 +60,20 @@ func TestAskApprovalIsEnforcedByServer(t *testing.T) {
 	s.core = core.New(upstream.URL, core.Options{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	r := &run{threadID: th.ID, userID: u.ID, pending: map[string]bool{}, live: map[string]*agent.Item{}, dirty: map[string]bool{}, lastUsed: time.Now()}
+	r := &run{sess: &pocketModeSession{}, threadID: th.ID, userID: u.ID, pending: map[string]bool{}, live: map[string]*agent.Item{}, dirty: map[string]bool{}, lastUsed: time.Now()}
 	s.rt.mu.Lock()
 	s.rt.runs[th.ID] = r
 	s.rt.mu.Unlock()
 	defer func() { s.rt.mu.Lock(); delete(s.rt.runs, th.ID); s.rt.mu.Unlock() }()
-	var opts agent.Options
-	if err := s.prepareAsk(ctx, th, &runSink{rt: s.rt, r: r}, &opts); err != nil {
+	opts := agent.Options{Mode: "full-access", SystemPrompt: "Original instructions"}
+	if err := s.preparePocketTools(ctx, th, &runSink{rt: s.rt, r: r}, &opts); err != nil {
 		t.Fatal(err)
 	}
-	if !opts.Restricted || opts.Mode != "default" {
+	if source == "ask" && (!opts.Restricted || opts.Mode != "default") {
 		t.Fatal("Ask was not restricted")
+	}
+	if source != "ask" && (opts.Restricted || opts.Mode != "full-access" || !strings.HasPrefix(opts.SystemPrompt, "Original instructions")) {
+		t.Fatal("Native coding options changed")
 	}
 	raw, _ := os.ReadFile(opts.MCPConfig)
 	if strings.Contains(string(raw), "pcma_test") {
@@ -109,8 +121,12 @@ func TestAskApprovalIsEnforcedByServer(t *testing.T) {
 		if id == "" {
 			t.Fatal("write failed to ask for approval")
 		}
-		if sent.Load() != before {
-			t.Fatal("write ran before approval")
+		s.rt.setMode(th, "full-access")
+		r.mu.Lock()
+		stillPending := r.pending[id]
+		r.mu.Unlock()
+		if !stillPending || sent.Load() != before {
+			t.Fatal("mode change bypassed Pocket write approval")
 		}
 		b.want("POST", "/api/v1/threads/"+th.ID+"/requests/"+id, map[string]string{"decision": "allow"}, 403, nil)
 		a.want("POST", "/api/v1/threads/"+th.ID+"/requests/"+id, map[string]string{"decision": "allow_session"}, 400, nil)
@@ -131,8 +147,10 @@ func TestAskApprovalIsEnforcedByServer(t *testing.T) {
 			t.Fatal("incorrect dispatch after approval")
 		}
 	}
-	a.want("PATCH", "/api/v1/threads/"+th.ID, map[string]string{"mode": "bypassPermissions"}, 400, nil)
-	a.want("POST", "/api/v1/threads/"+th.ID+"/fork", map[string]any{}, 400, nil)
+	if source == "ask" {
+		a.want("PATCH", "/api/v1/threads/"+th.ID, map[string]string{"mode": "bypassPermissions"}, 400, nil)
+		a.want("POST", "/api/v1/threads/"+th.ID+"/fork", map[string]any{}, 400, nil)
+	}
 	a.want("POST", "/api/v1/ask/connect", map[string]string{"token": "pcma_other"}, 403, nil)
 	b.want("GET", "/api/v1/ask/threads/"+th.ID, nil, 404, nil)
 	b.want("GET", "/api/v1/ask-context/"+th.ID, nil, 404, nil)

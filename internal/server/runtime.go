@@ -350,10 +350,19 @@ func (rt *engine) startRun(t *store.Thread) (*run, error) {
 	}
 	sink := &runSink{rt: rt, r: r}
 	if t.Source == "ask" {
-		if err := rt.s.prepareAsk(ctx, t, sink, &o); err != nil {
+		if err := rt.s.preparePocketTools(ctx, t, sink, &o); err != nil {
 			cancel()
 			return nil, err
 		}
+	} else if _, err := rt.s.askToken(ctx, t.UserID); err == nil {
+		// An existing per-person connection is shared with ordinary coding
+		// threads. Core still checks access and the proxy still gates writes.
+		if err := rt.s.preparePocketTools(ctx, t, sink, &o); err != nil {
+			rt.s.log.Warn("Pocket app tools unavailable", "thread", t.ID, "err", err)
+			o.SystemPrompt += "\nPocket app tools are currently unavailable. For app-data questions, explain that the user should reconnect Pocket Ask; do not search credentials or databases as a workaround."
+		}
+	} else {
+		o.SystemPrompt += "\nFor questions about Pocket app data, the user can enable the Ask connection in an application. Do not search credentials or databases to substitute for that connection."
 	}
 	var err error
 	switch t.Provider {
@@ -607,7 +616,7 @@ func (rt *engine) respond(t *store.Thread, reqID string, resp agent.Response) er
 		return badRequest("that request is no longer waiting")
 	}
 	var answerErr error
-	if t.Source == "ask" && strings.HasPrefix(reqID, "ask-") {
+	if strings.HasPrefix(reqID, "ask-") {
 		answerErr = rt.s.answerAsk(t, reqID, resp)
 	} else {
 		answerErr = r.sess.Respond(reqID, resp)
@@ -667,6 +676,10 @@ func (rt *engine) setMode(t *store.Thread, mode string) {
 	}
 	r.mu.Unlock()
 	for _, id := range ids {
+		// App writes always require a decision on this exact operation.
+		if strings.HasPrefix(id, "ask-") {
+			continue
+		}
 		st, err := rt.s.store.GetItem(rt.ctx, t.ID, "req-"+id)
 		if err != nil {
 			continue

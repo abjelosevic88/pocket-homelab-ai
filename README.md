@@ -37,9 +37,15 @@
 - Every thread is a real CLI session: it resumes after a restart, and **On this server** lists the sessions you
   started in a terminal (or in another tool) so you can open and continue them here.
 
+**Pocket apps, directly**
+- Enable Pocket Ask once from an app. Ordinary Claude and Codex threads then use that person's app tools directly, including when resuming a saved conversation.
+- Spending questions use Money's aggregate report in one call; Notes tools identify folders by their paths. Agents can combine app reads and prepare changes without searching server files for API credentials.
+- Every Pocket write requires approval of that operation, even in a full-access coding thread. Your coding model, effort and permissions stay as selected.
+- See [Pocket Ask architecture and access rules](https://github.com/abjelosevic88/pocket-homelab-core/blob/main/docs/ask.md).
+
 **Made for the phone**
 - Streams text, thinking, tool calls with their output, diffs of edited files, and the agent's to-do list as it
-  works. Collapsed one-line rows for tools, expandable when you care.
+  works. Consecutive tool calls share a compact summary; expand it to inspect each input and result. Errors and image previews remain visible.
 - Permission prompts, questions (`AskUserQuestion`, Codex `request_user_input`) and plans to approve appear as
   cards above the composer. Allow once, allow for the session, or deny with a note.
 - **Images in the prompt**: paste a screenshot, drag one in, or use the camera/photo library on an iPhone. Claude

@@ -527,7 +527,7 @@ func (s *Server) handleRespond(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	if t.Source == "ask" && in.Decision == "allow_session" {
+	if (t.Source == "ask" || strings.HasPrefix(chi.URLParam(r, "rid"), "ask-")) && in.Decision == "allow_session" {
 		writeErr(w, 400, "Approve each Ask change individually")
 		return
 	}

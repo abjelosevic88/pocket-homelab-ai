@@ -34,6 +34,7 @@ test('incoming calls and completion keep the group key stable', () => {
 })
 test('tool names are readable while preserving ordinary names and action meaning', () => {
   assert.equal(toolLabel(call('x').tool!), 'Read Money transactions')
+  assert.equal(toolLabel({ name: 'pocket.pocket_money_summary' }), 'Read Money summary')
   assert.equal(toolLabel({ name: 'mcp__pocket__pocket_notes_update' }), 'Notes · Update')
   assert.equal(toolLabel({ name: 'mcp__pocket__pocket_list_apps' }), 'List Pocket apps')
   assert.equal(toolLabel({ name: 'mcp__github__search_repositories' }), 'Github · Search repositories')
