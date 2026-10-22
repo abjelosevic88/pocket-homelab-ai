@@ -106,7 +106,7 @@ export function AgentPicker({ value, onChange, allowDefault = false, compact = f
       {models.length > 0 && <Select size={size} className={cls} label="Model" value={value.model} options={models} onChange={v => onChange({ model: v })} width={compact ? 280 : 'trigger'}
         renderValue={compact ? o => <span className="ellipsis"><Icon name={pid} size={14} className={`inline-ico prov-glyph ${pid}`} />{shortLabel(String(o?.label ?? 'Model'))}</span> : undefined} />}
       {efforts.length > 0 && <Select size={size} className={cls} label="Effort" value={value.effort} options={efforts} onChange={v => onChange({ effort: v })} width={compact ? 180 : 'trigger'}
-        renderValue={o => <span className="ellipsis">{compact ? <><Icon name="brain" size={12} className="inline-ico lbl-short" /><span className="muted lbl-long">Effort </span></> : null}{o?.label ?? 'Effort'}</span>} />}
+        renderValue={o => <span className="ellipsis">{compact ? <Icon name="brain" size={12} className="inline-ico" /> : null}{o?.label ?? 'Effort'}</span>} />}
       {modes.length > 0 && <Select size={size} className={cls} label="Permissions" value={value.mode} options={modes} onChange={v => onChange({ mode: v })} width={compact ? 300 : 'trigger'}
         renderValue={compact ? o => <span className="ellipsis"><Icon name="shield" size={12} className="inline-ico" />{o?.label ?? 'Mode'}</span> : undefined} />}
       {speeds.length > 0 && (compact ? (() => {
