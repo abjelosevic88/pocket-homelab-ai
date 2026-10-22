@@ -141,7 +141,7 @@ function TurnFoot({ t, onFork }: { t: TurnInfo; onFork?: () => void }) {
   )
 }
 
-export function Timeline({ items, showThinking, streamingKey, onFork, threadId, onResend, onDropUnsent, owner }: { items: Item[]; showThinking: boolean; streamingKey?: string; onFork?: () => void; threadId?: string; onResend?: (it: Item) => void; onDropUnsent?: (it: Item) => void; owner?: Owner }) {
+export function Timeline({ items, showThinking, streamingKey, onFork, threadId, onResend, onDropUnsent, onEdit, onRewind, rewindDisabled, owner }: { items: Item[]; showThinking: boolean; streamingKey?: string; onFork?: () => void; threadId?: string; onResend?: (it: Item) => void; onDropUnsent?: (it: Item) => void; onEdit?: (it: Item) => void; onRewind?: (it: Item) => void; rewindDisabled?: boolean; owner?: Owner }) {
   // Items there when the thread opened render still; anything that arrives
   // while you watch slides in.
   const initial = useRef<Set<string> | null>(null)
@@ -162,6 +162,10 @@ export function Timeline({ items, showThinking, streamingKey, onFork, threadId, 
         <div key={entry.key} className={`tl-item ${initial.current!.has(it.key) ? '' : 'appear'} ${it.key === streamingKey ? 'streaming' : ''}`}>
           {entry.type === 'tools' ? <ToolActivity items={entry.items} /> : it.kind === 'turn' && it.turn ? <TurnFoot t={it.turn} onFork={it.key === lastTurn ? onFork : undefined} />
             : <ItemView item={it} showThinking={showThinking} threadId={threadId} ownerId={owner?.id} ownerName={owner?.name} />}
+          {it.kind === 'user' && !it.queued && !it.unsent && (onEdit || onRewind) && <div className="message-actions">
+            {onEdit && <button type="button" className="btn ghost sm" disabled={rewindDisabled} onClick={() => onEdit(it)} title={rewindDisabled ? 'Stop the agent and clear its queue before editing' : 'Edit this message and continue from here'}><Icon name="edit" size={13} />Edit message</button>}
+            {onRewind && <button type="button" className="btn ghost sm" disabled={rewindDisabled} onClick={() => onRewind(it)} title={rewindDisabled ? 'Stop the agent and clear its queue before rewinding' : 'Start before this message, keeping the original conversation'}><Icon name="undo" size={13} />Rewind here</button>}
+          </div>}
           {it.kind === 'user' && it.unsent && (
             <div className="unsent-tag"><Icon name="alert" size={12} /><span>Not sent — Pocket AI restarted before it went out.</span>
               {onResend && <button type="button" className="btn sm" onClick={() => onResend(it)}>Send again</button>}

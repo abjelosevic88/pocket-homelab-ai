@@ -5,7 +5,7 @@ import { api, ApiError, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { fmtCost, providerName, shortPath, threadTitle } from '../lib/format'
 import { openSSE } from '../lib/sse'
-import type { Item, Thread, ThreadDetail } from '../lib/types'
+import type { Item, Thread, ThreadDetail, Upload } from '../lib/types'
 import { RunBar, useForkNewTab } from '../components/RunBar'
 import { QueueStrip } from '../components/QueueStrip'
 import { AgentPicker } from '../components/AgentPicker'
@@ -19,7 +19,7 @@ import { Select } from '../components/Select'
 import { Timeline } from '../components/Timeline'
 import { PrivacyBadge, ShareDialog } from '../components/ShareDialog'
 import { accessOf } from '../lib/share'
-import { Confirm, download, Empty, errMsg, Loading, type MenuItem, MenuButton, Spinner, useToast } from '../components/ui'
+import { Confirm, download, Empty, errMsg, Loading, type MenuItem, MenuButton, Modal, Spinner, useToast } from '../components/ui'
 
 function upsert(list: Item[], it: Item): Item[] {
   const i = list.findIndex(x => x.key === it.key)
@@ -41,6 +41,9 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [editMessage, setEditMessage] = useState<Item | null>(null)
+  const [messageDraft, setMessageDraft] = useState('')
+  const [rewinding, setRewinding] = useState(false)
   const [sharing, setSharing] = useState(false)
   const [atBottom, setAtBottom] = useState(true)
   const [newBelow, setNewBelow] = useState(false)
@@ -70,7 +73,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   }, [id, upsertThread, toast])
 
   useEffect(() => {
-    setThread(null); setItems(null); setMissing(false); setEditingTitle(false); atBottomRef.current = true; setAtBottom(true); setNewBelow(false)
+    setThread(null); setItems(null); setMissing(false); setEditingTitle(false); setEditMessage(null); atBottomRef.current = true; setAtBottom(true); setNewBelow(false)
     load()
     setViewing(id)
     return () => setViewing(null)
@@ -183,6 +186,30 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const fork = async () => {
     try { const th = await api.post<Thread>(`${V1}/threads/${id}/fork`); upsertThread(th); navigate(`/t/${th.id}`); toast('Forked — this is the copy') } catch (e) { toast(errMsg(e), 'err') }
   }
+  const rewind = async (item: Item, editedText?: string) => {
+    if (rewinding) return
+    setRewinding(true)
+    try {
+      const result = await api.post<{ thread: Thread; draft: { text: string; uploads: Upload[] } }>(`${V1}/threads/${id}/rewind`, { key: item.key })
+      const next = result.thread
+      const text = editedText ?? result.draft.text
+      sessionStorage.setItem('pai-draft-' + next.id, text)
+      sessionStorage.setItem('pai-draft-uploads-' + next.id, JSON.stringify(result.draft.uploads))
+      upsertThread(next)
+      if (editedText !== undefined) {
+        try {
+          const sent = await api.post<{ thread: Thread }>(`${V1}/threads/${next.id}/messages`, { text, upload_ids: result.draft.uploads.map(u => u.id) })
+          upsertThread(sent.thread)
+          sessionStorage.removeItem('pai-draft-' + next.id)
+          sessionStorage.removeItem('pai-draft-uploads-' + next.id)
+        } catch (e) { toast('The continuation is ready, but sending failed: ' + errMsg(e), 'err') }
+      }
+      setEditMessage(null)
+      navigate(`/t/${next.id}`)
+      toast(editedText === undefined ? 'Rewound — edit the restored draft and send when ready. Original conversation kept.' : 'Original conversation kept in your history')
+    } catch (e) { toast(errMsg(e), 'err') }
+    finally { setRewinding(false) }
+  }
   const remove = async () => {
     setConfirmDelete(false)
     try { await api.del(`${V1}/threads/${id}`); dropThread(id); navigate('/'); toast('Thread deleted') } catch (e) { toast(errMsg(e), 'err') }
@@ -205,6 +232,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const canSend = canRun && access !== 'view'
   const sharedOwner = t.shares?.length ? { id: t.owner_id, name: t.owner_name || 'Owner' } : undefined
   const running = t.status === 'running'
+  const rewindDisabled = rewinding || running || t.status === 'waiting' || !!t.external || t.queued > 0 || t.pending > 0 || !!t.subagents?.length
   const lastItem = visible[visible.length - 1]
   // the text the agent is writing right now gets a blinking cursor
   const streamingKey = running && (lastItem?.kind === 'assistant' || lastItem?.kind === 'thinking') ? lastItem.key : undefined
@@ -258,9 +286,12 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
           {items === null ? <Loading /> : (
             <>
               {items.length === 0 && <div className="muted center small" style={{ padding: 30 }}>Nothing here yet.</div>}
+              {t.source === 'rewind' && <div className="notice info"><Icon name="undo" size={14} /><span>Continued from an earlier message. <button type="button" className="link-btn" onClick={() => navigate(`/t/${t.source_ref}`)}>Open original conversation</button>. Files and app changes already made are unchanged.</span></div>}
               {t.source === 'import' && items.length > 0 && <div className="notice info"><Icon name="history" size={14} /><span>Imported from the server’s {providerName(t.provider)} history — sending a message continues that session.</span></div>}
               <Timeline key={id} threadId={t.provider === 'claude' ? id : undefined} items={visible} onResend={canSend ? resend : undefined} onDropUnsent={canSend ? dropUnsent : undefined} showThinking={!!settings?.show_thinking} streamingKey={streamingKey}
                 onFork={owner && t.source !== 'ask' && t.provider_session_id && canRun && !running ? forkNewTab : undefined}
+                onEdit={owner && canRun ? it => { setMessageDraft(it.text || ''); setEditMessage(it) } : undefined}
+                onRewind={owner && canRun ? it => { void rewind(it) } : undefined} rewindDisabled={rewindDisabled}
                 owner={sharedOwner} />
               <ThreadEvidence id={id} revision={visible.filter(i => i.kind === 'turn').length} />
               {t.status === 'error' && t.error && <div className="notice error"><Icon name="alert" size={14} /><span>{t.error}</span></div>}
@@ -288,7 +319,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
           {access === 'view' ? (
             <div className="callout info"><Icon name="eye" size={15} /><span>{t.owner_name || 'Someone'} shared this chat with you to read. They can let you chat in it too.</span></div>
           ) : canRun ? (
-            <Composer ref={composer} draftKey={id} autoFocus onSend={send} running={running} onStop={t.external && !t.live ? undefined : interrupt} disabled={!!t.external && !t.live}
+            <Composer key={id} ref={composer} draftKey={id} autoFocus onSend={send} running={running} onStop={t.external && !t.live ? undefined : interrupt} disabled={!!t.external && !t.live}
               placeholder={t.external && !t.live ? 'It is running in another app right now — you can reply here once it has finished' : running ? 'Add a message — it is sent when the agent is done…' : pending.length ? 'Or type an answer…' : `Reply to ${providerName(t.provider)}…`}
               footer={<>
                 {t.source === 'ask' && owner && <span className="muted small">Pocket Ask · each change needs your approval · <a href={t.source_ref} target="_blank" rel="noopener noreferrer">Source item ↗</a></span>}
@@ -302,6 +333,15 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
         </div>
       </div>
 
+      {editMessage && <Modal title={<span id="edit-message-title">Edit message</span>} labelledBy="edit-message-title" onClose={() => { if (!rewinding) setEditMessage(null) }} footer={<>
+        <button type="button" className="btn" disabled={rewinding} onClick={() => setEditMessage(null)}>Cancel</button>
+        <button type="button" className="btn primary" disabled={rewindDisabled || (!messageDraft.trim() && !editMessage.images?.length && !editMessage.files?.length && !editMessage.log_images)} onClick={() => { void rewind(editMessage, messageDraft) }}>{rewinding ? <Spinner size={14} /> : <Icon name="send" size={14} />}Save & send</button>
+      </>}>
+        <label htmlFor="edit-message-text" className="field-label">Message</label>
+        <textarea id="edit-message-text" className="message-editor" autoFocus value={messageDraft} onChange={e => setMessageDraft(e.target.value)} disabled={rewinding} rows={6} />
+        {(!!editMessage.images?.length || !!editMessage.files?.length || !!editMessage.log_images) && <p className="muted small">The original attachments will be included.</p>}
+        <p className="muted small">Starts a new continuation before this message. Your original conversation is kept. Files and app changes already made are unchanged.</p>
+      </Modal>}
       {sharing && <ShareDialog thread={t} onClose={() => setSharing(false)} onSaved={th => { setThread(th); upsertThread(th) }} />}
       {confirmDelete && <Confirm title="Delete this thread?" message="The conversation disappears from Pocket AI. The CLI’s own session file on the server stays." onCancel={() => setConfirmDelete(false)} onConfirm={remove} />}
     </div>
