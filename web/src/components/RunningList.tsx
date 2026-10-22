@@ -1,6 +1,6 @@
 // "Running now": every prompt an agent is working on — in Pocket AI, Paseo,
 // a terminal or any other app — with how long it has been going.
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
@@ -54,7 +54,12 @@ export function useOpenRunning() {
 }
 
 export function RunningList({ compact = false, onOpened }: { compact?: boolean; onOpened?: () => void }) {
-  const { running } = useApp()
+  const { running: raw, threads } = useApp()
+  // a thread renamed in Pocket AI shows its new name right away
+  const running = useMemo(() => raw.map(r => {
+    const t = r.thread_id ? threads?.find(x => x.id === r.thread_id) : undefined
+    return t?.title ? { ...r, title: t.title } : r
+  }), [raw, threads])
   const now = useNow(1000)
   const open = useOpenRunning()
   if (!running.length) return null
