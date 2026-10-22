@@ -46,6 +46,9 @@ func (s *Server) runningFor(ctx context.Context, u *store.User) []runningItem {
 			it := runningItem{ActiveSession: a, Status: "running"}
 			if t := byID[a.Provider+":"+a.SessionID]; t != nil {
 				it.ThreadID, it.SharedWith = t.ID, s.rt.sharedNames(t.ID)
+				if t.Title != "" { // a rename in Pocket AI wins over the CLI log's title
+					it.Title = t.Title
+				}
 				s.rt.decorate(t)
 				if t.Live {
 					it.Origin = "pocket-ai"
