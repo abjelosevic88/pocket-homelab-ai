@@ -31,18 +31,21 @@ type engine struct {
 	ctx context.Context
 
 	mu        sync.Mutex
-	runs      map[string]*run                       // thread id → live process
-	watchers  map[string]map[chan sseEvent]struct{} // thread id → SSE clients of that thread
-	userSubs  map[int64]map[chan sseEvent]struct{}  // user id → SSE clients of /events
-	limits    map[string]*provLimits                // limitsKey (provider[:account]) → plan limit windows
-	limitsAt  time.Time                             // last full read (both CLIs)
-	limitsMu  sync.Mutex                            // one full read at a time
-	starting  map[string]chan struct{}              // thread id → start in progress
-	followers map[string]*follower                  // thread id → log follower (follow.go)
-	external  map[string]bool                       // thread id → running somewhere else
-	extSubs   map[string][]agent.Subagent           // thread id → sub-agents of a session run elsewhere
-	extSubsAt map[string]time.Time                  // when extSubs last went out
-	active    []agent.ActiveSession                 // last scan of the CLIs' session files (running.go)
+	runs      map[string]*run                      // thread id → live process
+	watchers  map[string]map[chan sseEvent]int64   // thread id → SSE clients of that thread → their person
+	userSubs  map[int64]map[chan sseEvent]struct{} // user id → SSE clients of /events
+	limits    map[string]*provLimits               // limitsKey (provider[:account]) → plan limit windows
+	limitsAt  time.Time                            // last full read (both CLIs)
+	limitsMu  sync.Mutex                           // one full read at a time
+	starting  map[string]chan struct{}             // thread id → start in progress
+	followers map[string]*follower                 // thread id → log follower (follow.go)
+	external  map[string]bool                      // thread id → running somewhere else
+	extSubs   map[string][]agent.Subagent          // thread id → sub-agents of a session run elsewhere
+	extSubsAt map[string]time.Time                 // when extSubs last went out
+	active    []agent.ActiveSession                // last scan of the CLIs' session files (running.go)
+
+	sharesMu sync.RWMutex
+	shares   map[string]store.SharedThread // thread id → owner and shares (shares.go); nil = not loaded yet
 }
 
 // run is one live CLI process attached to a thread.
@@ -73,7 +76,7 @@ type queued struct {
 }
 
 func newRuntime(s *Server) *engine {
-	return &engine{s: s, runs: map[string]*run{}, watchers: map[string]map[chan sseEvent]struct{}{},
+	return &engine{s: s, runs: map[string]*run{}, watchers: map[string]map[chan sseEvent]int64{},
 		userSubs: map[int64]map[chan sseEvent]struct{}{}, limits: map[string]*provLimits{}, starting: map[string]chan struct{}{},
 		followers: map[string]*follower{}, external: map[string]bool{}, extSubs: map[string][]agent.Subagent{}, extSubsAt: map[string]time.Time{}}
 }
@@ -124,6 +127,11 @@ func (rt *engine) decorate(t *store.Thread) *store.Thread {
 		r.mu.Unlock()
 	}
 	t.External = rt.isExternal(t.ID)
+	if st, ok := rt.sharesOf(t.ID); ok {
+		t.Shares, t.OwnerName = st.Shares, st.OwnerName
+	} else {
+		t.Shares, t.OwnerName = nil, ""
+	}
 	rt.mu.Lock()
 	if subs := rt.extSubs[t.ID]; len(subs) > 0 && !ownSubs {
 		t.Subagents = append([]agent.Subagent(nil), subs...)
@@ -132,22 +140,28 @@ func (rt *engine) decorate(t *store.Thread) *store.Thread {
 	return t
 }
 
-// viewing reports whether someone has the thread open right now.
-func (rt *engine) viewing(threadID string) bool {
+// viewing reports whether the thread's owner has it open right now (people
+// it is shared with reading along don't count).
+func (rt *engine) viewing(t *store.Thread) bool {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
-	return len(rt.watchers[threadID]) > 0
+	for _, uid := range rt.watchers[t.ID] {
+		if uid == t.UserID {
+			return true
+		}
+	}
+	return false
 }
 
 // ---------- SSE fan-out ----------
 
-func (rt *engine) subscribeThread(threadID string) chan sseEvent {
+func (rt *engine) subscribeThread(threadID string, uid int64) chan sseEvent {
 	ch := make(chan sseEvent, 512)
 	rt.mu.Lock()
 	if rt.watchers[threadID] == nil {
-		rt.watchers[threadID] = map[chan sseEvent]struct{}{}
+		rt.watchers[threadID] = map[chan sseEvent]int64{}
 	}
-	rt.watchers[threadID][ch] = struct{}{}
+	rt.watchers[threadID][ch] = uid
 	rt.mu.Unlock()
 	return ch
 }
@@ -159,6 +173,17 @@ func (rt *engine) unsubscribeThread(threadID string, ch chan sseEvent) {
 		delete(rt.watchers, threadID)
 	}
 	rt.mu.Unlock()
+}
+
+// dropViewer ends the person's streams of a thread (it is no longer shared with them).
+func (rt *engine) dropViewer(threadID string, uid int64) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	for ch, who := range rt.watchers[threadID] {
+		if who == uid {
+			deliver(ch, sseEvent{Name: "revoked", Data: map[string]string{"id": threadID}})
+		}
+	}
 }
 
 func (rt *engine) subscribeUser(uid int64) chan sseEvent {
@@ -204,12 +229,16 @@ func (rt *engine) toUser(uid int64, ev sseEvent) {
 	}
 }
 
-// publishThread sends the thread's current state to its viewers and to its owner's lists.
+// publishThread sends the thread's current state to its viewers and to the
+// lists of its owner and of everyone it is shared with.
 func (rt *engine) publishThread(t *store.Thread) {
 	rt.decorate(t)
 	ev := sseEvent{Name: "thread", Data: t}
 	rt.toThread(t.ID, ev)
 	rt.toUser(t.UserID, ev)
+	for _, uid := range rt.sharers(t.ID) {
+		rt.toUser(uid, ev)
+	}
 }
 
 // ---------- items ----------
@@ -1194,7 +1223,7 @@ func (k *runSink) TurnDone(ti agent.TurnInfo) {
 	if !ti.OK && !ti.Interrupted {
 		t.Status, t.Error = "error", ti.Error
 	}
-	viewing := rt.viewing(t.ID)
+	viewing := rt.viewing(t)
 	if !viewing {
 		t.Unread = true
 	}
@@ -1285,7 +1314,7 @@ func (rt *engine) notify(t *store.Thread, kind, title, body string) {
 			return
 		}
 	}
-	if st.NotifyOnlyAway && rt.viewing(t.ID) {
+	if st.NotifyOnlyAway && rt.viewing(t) {
 		return
 	}
 	rt.s.notifyUser(rt.ctx, t.UserID, kind, title, body, rt.s.threadURL(t.ID))

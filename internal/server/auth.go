@@ -268,6 +268,7 @@ func (s *Server) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "update user")
 		return
 	}
+	s.rt.loadShares() // names in shared threads
 	writeJSON(w, http.StatusOK, u)
 }
 
@@ -395,6 +396,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "update user")
 		return
 	}
+	s.rt.loadShares() // names in shared threads
 	writeJSON(w, http.StatusOK, u)
 }
 
@@ -422,6 +424,7 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "delete user")
 		return
 	}
+	s.rt.loadShares() // their shares went with them
 	w.WriteHeader(http.StatusNoContent)
 }
 

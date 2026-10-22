@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"time"
-
-	"github.com/go-chi/chi/v5"
 )
 
 func sseHeaders(w http.ResponseWriter) (http.Flusher, bool) {
@@ -37,12 +35,11 @@ func writeEvent(w http.ResponseWriter, ev sseEvent) error {
 // handleThreadEvents streams one thread: a snapshot of the thread and of the
 // items still streaming, then every change.
 func (s *Server) handleThreadEvents(w http.ResponseWriter, r *http.Request) {
-	t, err := s.store.GetThread(r.Context(), me(r), chi.URLParam(r, "id"))
-	if err != nil {
-		s.fail(w, err, "thread")
+	t := s.threadAs(w, r, accessView)
+	if t == nil {
 		return
 	}
-	ch := s.rt.subscribeThread(t.ID)
+	ch := s.rt.subscribeThread(t.ID, me(r))
 	defer s.rt.unsubscribeThread(t.ID, ch)
 	defer s.rt.watch(t)() // follow the CLI's log while it is open
 	fl, ok := sseHeaders(w)
@@ -85,14 +82,16 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request, fl http.Flusher,
 		case <-s.rt.ctx.Done(): // shutting down: the browser reconnects to the new process
 			return
 		case ev := <-ch:
-			if writeEvent(w, ev) != nil {
+			if writeEvent(w, ev) != nil || ev.Name == "revoked" {
+				fl.Flush()
 				return
 			}
 			// drain what is already waiting before flushing (deltas come in bursts)
 			for n := 0; n < 64; n++ {
 				select {
 				case ev := <-ch:
-					if writeEvent(w, ev) != nil {
+					if writeEvent(w, ev) != nil || ev.Name == "revoked" {
+						fl.Flush()
 						return
 					}
 					continue

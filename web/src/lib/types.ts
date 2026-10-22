@@ -155,7 +155,16 @@ export interface Thread {
   subagents?: Subagent[]
   last_prompt?: string
   prompt_at?: string
+  /** Whose thread it is, and who else may open it (shared threads). */
+  owner_id: number
+  owner_name?: string
+  shares?: ThreadShare[]
 }
+
+/** Someone a thread is shared with: view reads along, chat also sends. */
+export interface ThreadShare { user_id: number; name: string; role: 'view' | 'chat' }
+/** Someone a thread could be shared with (GET /threads/{id}/shares). */
+export interface SharePerson { id: number; name: string; email: string; can_run: boolean }
 
 export interface ItemImage { id: string; name: string; url: string }
 
@@ -216,6 +225,9 @@ export interface Item {
   turn?: TurnInfo
   log_images?: number
   unsent?: boolean
+  /** Who sent a message in a shared thread. */
+  by?: string
+  by_id?: number
 }
 
 export interface ThreadDetail { thread: Thread; items: Item[] }

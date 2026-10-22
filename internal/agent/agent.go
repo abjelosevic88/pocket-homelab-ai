@@ -25,7 +25,10 @@ type Item struct {
 	LogImages int `json:"log_images,omitempty"`
 	// Unsent: it was waiting in the queue when Pocket AI stopped, so it never
 	// reached the agent.
-	Unsent  bool      `json:"unsent,omitempty"`
+	Unsent bool `json:"unsent,omitempty"`
+	// By: who sent a message in a shared thread (person id and name).
+	ByID    int64     `json:"by_id,omitempty"`
+	By      string    `json:"by,omitempty"`
 	Queued  bool      `json:"queued,omitempty"`
 	Tool    *Tool     `json:"tool,omitempty"`
 	Todos   []Todo    `json:"todos,omitempty"`

@@ -489,3 +489,18 @@
 
 /* Native Ask entry point: part of the header, never over the composer. */
 .ask-header-btn { min-height: 44px; padding: 0 10px; flex-shrink: 0; gap: 5px; }
+
+/* sharing */
+.privacy-badge { display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 7px; border-radius: 999px; border: 0; font: inherit; font-size: 11px; font-weight: 600; white-space: nowrap; flex-shrink: 0; background: var(--surface-3); color: var(--text-2); }
+.privacy-badge.shared { background: var(--accent-soft); color: var(--accent-ink); }
+button.privacy-badge { cursor: pointer; }
+button.privacy-badge:hover:not(:disabled) { filter: brightness(.96); }
+button.privacy-badge:disabled { cursor: default; }
+.tab-privacy { display: grid; place-items: center; color: var(--faint); flex-shrink: 0; }
+.tab-privacy.shared { color: var(--accent); }
+.msg-by { font-size: 11px; color: var(--muted); margin: 0 6px 3px; }
+.share-intro { margin: 0 0 12px; }
+.share-people { display: grid; }
+.share-person { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-top: 1px solid var(--hairline); }
+.share-person:first-child { border-top: 0; }
+.share-person-name { display: grid; min-width: 0; font-weight: 600; }

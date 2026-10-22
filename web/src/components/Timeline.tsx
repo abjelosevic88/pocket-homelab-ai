@@ -1,4 +1,5 @@
 // A thread's items, in order: what you said, what the agent said and did.
+import { useApp } from '../lib/app-context'
 import { memo, useRef, useState } from 'react'
 import { fmtCost, fmtDuration, fmtTokens } from '../lib/format'
 import { V1 } from '../lib/api'
@@ -77,12 +78,13 @@ function logImages(threadId: string | undefined, key: string, n: number): ItemIm
 // Older tool rows only have "[image]" lines in their output.
 const imageCount = (t: ToolInfo) => t.images ?? (t.output || '').split('\n').filter(l => l === '[image]').length
 
-export const ItemView = memo(function ItemView({ item, showThinking, threadId }: { item: Item; showThinking: boolean; threadId?: string }) {
+export const ItemView = memo(function ItemView({ item, showThinking, threadId, ownerId, ownerName }: { item: Item; showThinking: boolean; threadId?: string; ownerId?: number; ownerName?: string }) {
   switch (item.kind) {
     case 'user': {
       const pics = [...(item.images || []), ...logImages(threadId, item.key, item.log_images || 0)]
       return (
         <div className={`msg user ${item.queued ? 'queued' : ''} ${item.unsent ? 'unsent' : ''}`} id={`item-${item.key}`}>
+          {(item.by || ownerName) && <ByLine name={item.by || ownerName!} id={item.by ? item.by_id : ownerId} />}
           <div className="bubble">
             {pics.length > 0 && <Images images={pics} />}
             {item.files?.map(f => <a className="file-chip" key={f.id} href={f.url} download={f.name}>📄 {f.name}</a>)}
@@ -139,7 +141,7 @@ function TurnFoot({ t, onFork }: { t: TurnInfo; onFork?: () => void }) {
   )
 }
 
-export function Timeline({ items, showThinking, streamingKey, onFork, threadId, onResend, onDropUnsent }: { items: Item[]; showThinking: boolean; streamingKey?: string; onFork?: () => void; threadId?: string; onResend?: (it: Item) => void; onDropUnsent?: (it: Item) => void }) {
+export function Timeline({ items, showThinking, streamingKey, onFork, threadId, onResend, onDropUnsent, owner }: { items: Item[]; showThinking: boolean; streamingKey?: string; onFork?: () => void; threadId?: string; onResend?: (it: Item) => void; onDropUnsent?: (it: Item) => void; owner?: Owner }) {
   // Items there when the thread opened render still; anything that arrives
   // while you watch slides in.
   const initial = useRef<Set<string> | null>(null)
@@ -159,7 +161,7 @@ export function Timeline({ items, showThinking, streamingKey, onFork, threadId, 
         return (
         <div key={entry.key} className={`tl-item ${initial.current!.has(it.key) ? '' : 'appear'} ${it.key === streamingKey ? 'streaming' : ''}`}>
           {entry.type === 'tools' ? <ToolActivity items={entry.items} /> : it.kind === 'turn' && it.turn ? <TurnFoot t={it.turn} onFork={it.key === lastTurn ? onFork : undefined} />
-            : <ItemView item={it} showThinking={showThinking} threadId={threadId} />}
+            : <ItemView item={it} showThinking={showThinking} threadId={threadId} ownerId={owner?.id} ownerName={owner?.name} />}
           {it.kind === 'user' && it.unsent && (
             <div className="unsent-tag"><Icon name="alert" size={12} /><span>Not sent — Pocket AI restarted before it went out.</span>
               {onResend && <button type="button" className="btn sm" onClick={() => onResend(it)}>Send again</button>}
@@ -171,3 +173,13 @@ export function Timeline({ items, showThinking, streamingKey, onFork, threadId, 
     </div>
   )
 }
+
+/** A shared thread's owner: messages without a sender are theirs. */
+export interface Owner { id: number; name: string }
+
+// Who sent a message in a shared thread.
+function ByLine({ name, id }: { name: string; id?: number }) {
+  const { user } = useApp()
+  return <div className="msg-by">{id && id === user?.id ? 'You' : name}</div>
+}
+

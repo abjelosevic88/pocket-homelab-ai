@@ -35,7 +35,7 @@ function RowTimer({ since }: { since?: string }) {
 }
 
 export function ThreadRow({ t, active, onOpen }: { t: Thread; active: boolean; onOpen: () => void }) {
-  const { running } = useApp()
+  const { running, user } = useApp()
   // working in Pocket AI, or in Paseo / a terminal on the same session
   const run = running.find(r => r.thread_id === t.id || (!!t.provider_session_id && r.session_id === t.provider_session_id))
   const waiting = t.status === 'waiting' || t.pending > 0 || run?.status === 'waiting'
@@ -47,7 +47,8 @@ export function ThreadRow({ t, active, onOpen }: { t: Thread; active: boolean; o
         <span className="th-meta">
           <ProviderBadge provider={t.provider} size="xs" />
           {t.source === 'schedule' && <Icon name="clock" size={11} />}
-          <span className="ellipsis">{baseName(t.cwd)}</span>
+          {t.shares?.length ? <Icon name="users" size={11} /> : null}
+          <span className="ellipsis">{t.owner_name && user && t.owner_id !== user.id ? `${t.owner_name} · ${baseName(t.cwd)}` : baseName(t.cwd)}</span>
         </span>
       </span>
       <span className="th-side">
@@ -77,7 +78,9 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
 
   const go = (path: string) => { navigate(path); onNavigate() }
   const activeId = loc.pathname.startsWith('/t/') ? loc.pathname.split('/')[2] : ''
-  const base = showArchive ? archived : threads
+  const mine = (t: Thread) => !user || !t.owner_id || t.owner_id === user.id
+  const base = showArchive ? archived : threads && threads.filter(mine)
+  const shared = showArchive || !threads ? [] : threads.filter(t => !mine(t))
   const shown = useMemo(() => {
     let list = base || []
     if (ws) list = list.filter(t => t.workspace_id === ws)
@@ -94,7 +97,7 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
     }
     return out
   }, [shown, showArchive])
-  const needYou = (threads || []).filter(t => t.status === 'waiting' || t.pending > 0).length
+  const needYou = (base || []).filter(t => t.status === 'waiting' || t.pending > 0).length
 
   const searchAll = async () => {
     const n = q.trim()
@@ -164,13 +167,19 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
         <div className="sb-threads">
           {needYou > 0 && !showArchive && <div className="sb-needyou"><Icon name="help-circle" size={13} />{needYou === 1 ? '1 thread needs you' : `${needYou} threads need you`}</div>}
           {base === null && <div className="sb-empty"><Spinner /></div>}
-          {base && shown.length === 0 && <div className="sb-empty">{q || ws ? 'No threads match.' : showArchive ? 'Nothing archived.' : 'No threads yet — start one above.'}</div>}
+          {base && shown.length === 0 && !(shared.length && !q && !ws) && <div className="sb-empty">{q || ws ? 'No threads match.' : showArchive ? 'Nothing archived.' : 'No threads yet — start one above.'}</div>}
           {groups.map(g => (
             <div key={g.name} className="sb-group">
               <div className="sb-h"><span>{g.name}</span></div>
               {g.items.map(t => <ThreadRow key={t.id} t={t} active={t.id === activeId} onOpen={() => go(`/t/${t.id}`)} />)}
             </div>
           ))}
+          {shared.length > 0 && !q && !ws && (
+            <div className="sb-group">
+              <div className="sb-h"><span>Shared with me</span></div>
+              {shared.map(t => <ThreadRow key={t.id} t={t} active={t.id === activeId} onOpen={() => go(`/t/${t.id}`)} />)}
+            </div>
+          )}
         </div>
       )}
 

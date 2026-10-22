@@ -17,6 +17,8 @@ import { BatchReview, ThreadEvidence } from '../components/AppEvidence'
 import { RequestCard } from '../components/RequestCard'
 import { Select } from '../components/Select'
 import { Timeline } from '../components/Timeline'
+import { PrivacyBadge, ShareDialog } from '../components/ShareDialog'
+import { accessOf } from '../lib/share'
 import { Confirm, download, Empty, errMsg, Loading, type MenuItem, MenuButton, Spinner, useToast } from '../components/ui'
 
 function upsert(list: Item[], it: Item): Item[] {
@@ -39,6 +41,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [sharing, setSharing] = useState(false)
   const [atBottom, setAtBottom] = useState(true)
   const [newBelow, setNewBelow] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
@@ -94,10 +97,11 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
       },
       item_removed: d => { const { key } = d as { key: string }; setItems(list => list ? list.filter(x => x.key !== key) : list) },
       thread: d => { const th = d as Thread; if (th?.id === id) { setThread(th); upsertThread(th) } },
+      revoked: () => { setMissing(true); dropThread(id) }, // no longer shared with you
       ping: () => {},
     }, { onOpen: () => { if (!first) load(); first = false } })
     return close
-  }, [id, load, upsertThread])
+  }, [id, load, upsertThread, dropThread])
 
   // mark read while looking at it
   useEffect(() => {
@@ -187,17 +191,24 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   if (missing) return (
     <div className="thread-page">
       <header className="thread-head">{onMenu && <button type="button" className="btn ghost icon-only" aria-label="Threads" onClick={onMenu}><Icon name="menu" size={19} /></button>}</header>
-      <Empty title="This thread is gone" icon="message">It was deleted, or it belongs to someone else. <button type="button" className="link-btn" onClick={() => navigate('/')}>Start a new one</button></Empty>
+      <Empty title="This thread is gone" icon="message">It was deleted, or it belongs to someone else and isn’t shared with you. <button type="button" className="link-btn" onClick={() => navigate('/')}>Start a new one</button></Empty>
     </div>
   )
   if (!t) return <div className="thread-page"><Loading /></div>
 
   const p = providers.find(x => x.id === t.provider)
+  const access = accessOf(t, user)
+  const owner = access === 'owner'
+  const canSend = canRun && access !== 'view'
+  const sharedOwner = t.shares?.length ? { id: t.owner_id, name: t.owner_name || 'Owner' } : undefined
   const running = t.status === 'running'
   const lastItem = visible[visible.length - 1]
   // the text the agent is writing right now gets a blinking cursor
   const streamingKey = running && (lastItem?.kind === 'assistant' || lastItem?.kind === 'thinking') ? lastItem.key : undefined
-  const menu: MenuItem[] = [
+  const menu: MenuItem[] = !owner ? [
+    { label: 'Export as Markdown', icon: 'download', onSelect: () => download(`${V1}/threads/${id}/export.md`) },
+  ] : [
+    ...(t.source !== 'ask' ? [{ label: t.shares?.length ? 'Sharing…' : 'Share…', icon: 'users', onSelect: () => setSharing(true) }, 'sep' as const] : []),
     { label: 'Save as workflow', icon: 'zap', onSelect: () => navigate('/workflows', { state: { name: t.title, prompt: t.last_prompt || '' } }) },
     { label: t.no_memory ? 'Enable saved memory' : 'Don’t use memory in this conversation', icon: 'bookmark', onSelect: () => patch({ no_memory: !t.no_memory }) },
     ...(document.querySelector('pocket-ask-launcher') ? [{ label: 'Ask about an item…', icon: 'sparkles' as const, onSelect: () => window.dispatchEvent(new Event('pocket-ask-pick')) }] : []),
@@ -221,11 +232,12 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
                 onKeyDown={e => { if (e.key === 'Escape') setEditingTitle(false) }} aria-label="Thread title" />
             </form>
           ) : (
-            <h1 className="thread-title ellipsis" onClick={() => { setTitleDraft(t.title || threadTitle(t)); setEditingTitle(true) }} title="Click to rename">
+            <h1 className="thread-title ellipsis" onClick={() => { if (!owner) return; setTitleDraft(t.title || threadTitle(t)); setEditingTitle(true) }} title={owner ? 'Click to rename' : undefined}>
               {t.pinned && <Icon name="bookmark" size={13} className="pin-ico" />}{threadTitle(t)}
             </h1>
           )}
           <div className="thread-sub">
+            {t.source !== 'ask' && <PrivacyBadge thread={t} access={access} onShare={owner ? () => setSharing(true) : undefined} />}
             <ProviderBadge provider={t.provider} size="xs" />
             <span className="ellipsis mono" title={t.cwd}>{shortPath(t.cwd)}</span>
             {t.usage?.cost_usd > 0 && <span className="tnum" title="Cost so far">{fmtCost(t.usage.cost_usd)}</span>}
@@ -244,8 +256,9 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
             <>
               {items.length === 0 && <div className="muted center small" style={{ padding: 30 }}>Nothing here yet.</div>}
               {t.source === 'import' && items.length > 0 && <div className="notice info"><Icon name="history" size={14} /><span>Imported from the server’s {providerName(t.provider)} history — sending a message continues that session.</span></div>}
-              <Timeline key={id} threadId={t.provider === 'claude' ? id : undefined} items={visible} onResend={canRun ? resend : undefined} onDropUnsent={dropUnsent} showThinking={!!settings?.show_thinking} streamingKey={streamingKey}
-                onFork={t.source !== 'ask' && t.provider_session_id && canRun && !running ? forkNewTab : undefined} />
+              <Timeline key={id} threadId={t.provider === 'claude' ? id : undefined} items={visible} onResend={canSend ? resend : undefined} onDropUnsent={canSend ? dropUnsent : undefined} showThinking={!!settings?.show_thinking} streamingKey={streamingKey}
+                onFork={owner && t.source !== 'ask' && t.provider_session_id && canRun && !running ? forkNewTab : undefined}
+                owner={sharedOwner} />
               <ThreadEvidence id={id} revision={visible.filter(i => i.kind === 'turn').length} />
               {t.status === 'error' && t.error && <div className="notice error"><Icon name="alert" size={14} /><span>{t.error}</span></div>}
             </>
@@ -258,7 +271,8 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
         <div className="thread-bottom-inner">
           {(running || t.status === 'waiting' || !!t.subagents?.length) && items && <RunBar t={t} items={items} />}
           <QueueStrip threadId={id} queued={queuedItems} agent={t.provider === 'codex' ? 'Codex' : 'Claude'} onClearAll={clearQueue} />
-          {pending.length > 0 && (
+          {pending.length > 0 && !canSend && access === 'view' && <div className="muted xsmall center">The agent is waiting for an answer from {t.owner_name || 'the owner'}.</div>}
+          {pending.length > 0 && canSend && (
             <div className="req-dock">
               {pending.length > 1 && pending.every(p => p.request?.id.startsWith('ask-')) ? <BatchReview threadId={id} requests={pending.map(p => p.request!)} onDone={load} /> : <>
                 <RequestCard key={pending[0].key} threadId={id} req={pending[0].request!} onDone={() => setItems(list => list && list.map(x => x.key === pending[0].key && x.request ? { ...x, request: { ...x.request, status: 'answered' } } : x))} />
@@ -267,12 +281,15 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
 
             </div>
           )}
-          {canRun ? (
+          {access === 'view' ? (
+            <div className="callout info"><Icon name="eye" size={15} /><span>{t.owner_name || 'Someone'} shared this chat with you to read. They can let you chat in it too.</span></div>
+          ) : canRun ? (
             <Composer ref={composer} draftKey={id} autoFocus onSend={send} running={running} onStop={t.external && !t.live ? undefined : interrupt} disabled={!!t.external && !t.live}
               placeholder={t.external && !t.live ? 'It is running in another app right now — you can reply here once it has finished' : running ? 'Add a message — it is sent when the agent is done…' : pending.length ? 'Or type an answer…' : `Reply to ${providerName(t.provider)}…`}
               footer={<>
                 {t.source === 'ask' && <span className="muted small">Pocket Ask · each change needs your approval · <a href={t.source_ref} target="_blank" rel="noopener noreferrer">Source item ↗</a></span>}
-                {p && t.source !== 'ask' && <span className="thread-pickers"><AgentPicker compact showProvider={false} value={{ provider: t.provider, model: t.model, effort: t.effort, mode: t.mode, speed: t.speed || '', account_id: t.account_id || 0 }}
+                {!owner && <span className="muted small">Chatting in {t.owner_name || 'someone'}’s chat — the agent runs on their login and settings</span>}
+                {owner && p && t.source !== 'ask' && <span className="thread-pickers"><AgentPicker compact showProvider={false} value={{ provider: t.provider, model: t.model, effort: t.effort, mode: t.mode, speed: t.speed || '', account_id: t.account_id || 0 }}
                   onChange={ch => patch(ch as Partial<Thread>)} /></span>}
               </>} />
           ) : (
@@ -281,6 +298,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
         </div>
       </div>
 
+      {sharing && <ShareDialog thread={t} onClose={() => setSharing(false)} onSaved={th => { setThread(th); upsertThread(th) }} />}
       {confirmDelete && <Confirm title="Delete this thread?" message="The conversation disappears from Pocket AI. The CLI’s own session file on the server stays." onCancel={() => setConfirmDelete(false)} onConfirm={remove} />}
     </div>
   )

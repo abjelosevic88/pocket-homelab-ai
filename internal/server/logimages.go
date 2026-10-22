@@ -13,7 +13,7 @@ import (
 // a screenshot pasted with a prompt in Paseo or a terminal, or what a Read of
 // a picture returned. GET /threads/{id}/log-image?key=<item key>&n=<index>
 func (s *Server) handleLogImage(w http.ResponseWriter, r *http.Request) {
-	t := s.thread(w, r)
+	t := s.threadAs(w, r, accessView)
 	if t == nil {
 		return
 	}

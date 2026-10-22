@@ -96,9 +96,18 @@ The SSE stream sends `accounts` when the list or a sign-in changes.
   "preview": "last assistant line…",
   "usage": {"input_tokens":0,"output_tokens":0,"cached_tokens":0,"cost_usd":0,"context_tokens":0,"context_window":0,"turns":0},
   "created_at": "…", "updated_at": "…", "activity_at": "…",
-  "live": true, "pending": 0, "queued": 0
+  "live": true, "pending": 0, "queued": 0,
+  "owner_id": 1, "owner_name": "Alice",            // owner_name only when shared
+  "shares": [{"user_id": 2, "name": "Bob", "role": "view"|"chat"}]   // omitted when private
 }
 ```
+
+**Sharing.** A thread is private to the person who started it until they share it. `view` reads
+along live (timeline, events, export); `chat` also sends messages, manages the queue, stops turns and
+answers requests, and only works while the person may run agents. The agent keeps running on the
+owner's login, folder and settings; PATCH, DELETE, fork and sharing stay the owner's (403 for
+others, 404 for anyone it isn't shared with, admins included). `GET /threads` lists threads shared
+with you after your own (`owner_id` ≠ you). Messages sent in a shared thread carry `by` / `by_id`.
 
 `waiting` = the agent asked something (permission / question / plan) and waits for an answer.
 
@@ -116,6 +125,8 @@ The SSE stream sends `accounts` when the list or a sign-in changes.
 | POST | `/threads/{id}/read` | | 204 — clears `unread` |
 | POST | `/threads/{id}/fork` | | `Thread` — a new thread continuing from the same agent session (Claude: `--fork-session`; Codex: `thread/fork`) |
 | GET | `/threads/{id}/export.md` | | Markdown transcript (download) |
+| GET | `/threads/{id}/shares` | | owner only: `{shares: ThreadShare[], people: [{id, name, email, can_run}]}` |
+| PUT | `/threads/{id}/shares` | `{shares: [{user_id, role: "view"\|"chat"}]}` (the full list; `[]` = private again) | `Thread` — people removed lose it at once, open views included |
 
 ### Item (timeline entry)
 

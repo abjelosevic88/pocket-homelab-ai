@@ -63,7 +63,7 @@ type Usage struct {
 type Thread struct {
 	NoMemory          bool   `json:"no_memory"`
 	ID                string `json:"id"`
-	UserID            int64  `json:"-"`
+	UserID            int64  `json:"owner_id"`
 	Title             string `json:"title"`
 	Provider          string `json:"provider"`
 	AccountID         int64  `json:"account_id"` // 0 = the server's own login
@@ -99,6 +99,9 @@ type Thread struct {
 	External bool `json:"external"`
 	// Subagents at work right now (background sub-agents of a live session).
 	Subagents any `json:"subagents,omitempty"`
+	// Sharing: who else may open it, and whose it is.
+	Shares    []ThreadShare `json:"shares,omitempty"`
+	OwnerName string        `json:"owner_name,omitempty"`
 }
 
 // Item is one stored timeline entry; Data is the JSON the runtime wrote.

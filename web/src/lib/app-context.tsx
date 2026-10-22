@@ -161,6 +161,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => { for (const t of threads || []) if (!prevStatus.current.has(t.id)) prevStatus.current.set(t.id, t.status) }, [threads])
   const settingsRef = useRef(settings)
   settingsRef.current = settings
+  const userRef = useRef(user)
+  userRef.current = user
   // Plan limits for the usage panel: now and every 10 minutes (running turns
   // keep them current in between through the "limits" event).
   useEffect(() => {
@@ -180,7 +182,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         prevStatus.current.set(t.id, t.status)
         upsertThread(t)
         if (before !== t.status) reloadRunning()
-        if (before && before !== t.status) notifyBrowser(t, before, viewingRef.current, settingsRef.current)
+        const theirs = !!t.owner_id && t.owner_id !== userRef.current?.id // shared with me: no pings
+        if (before && before !== t.status && !theirs) notifyBrowser(t, before, viewingRef.current, settingsRef.current)
       },
       thread_removed: () => { reloadThreads().catch(() => {}) },
       limits: d => setLimits((d || {}) as Limits),
@@ -193,10 +196,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // App badge (installed PWA) = threads that need you.
   useEffect(() => {
-    const n = (threads || []).filter(t => t.status === 'waiting' || t.unread).length
+    const n = (threads || []).filter(t => (!t.owner_id || t.owner_id === user?.id) && (t.status === 'waiting' || t.unread)).length
     const nav = navigator as Navigator & { setAppBadge?: (n?: number) => Promise<void>; clearAppBadge?: () => Promise<void> }
     if (n) nav.setAppBadge?.(n).catch(() => {}); else nav.clearAppBadge?.().catch(() => {})
-  }, [threads])
+  }, [threads, user])
 
   const saveSettings = useCallback(async (patch: Partial<Settings> & { notify_token?: string }) => {
     setSr(s => s ? { ...s, settings: { ...s.settings, ...patch } } : s)

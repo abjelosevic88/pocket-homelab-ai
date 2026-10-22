@@ -32,6 +32,7 @@ func (s *Server) threadRoutes(r chi.Router) {
 	r.Post("/threads/{id}/fork", s.handleFork)
 	r.Get("/threads/{id}/export.md", s.handleExport)
 	r.Get("/threads/{id}/log-image", s.handleLogImage)
+	s.shareRoutes(r)
 	r.Get("/running", s.handleRunning)
 	r.Get("/search", s.handleSearch)
 	r.Get("/usage", s.handleUsage)
@@ -52,13 +53,10 @@ func (s *Server) requireRun(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+// thread loads one of the person's own threads (shares.go: threadAs for the
+// ones shared with them).
 func (s *Server) thread(w http.ResponseWriter, r *http.Request) *store.Thread {
-	t, err := s.store.GetThread(r.Context(), me(r), chi.URLParam(r, "id"))
-	if err != nil {
-		s.fail(w, err, "thread")
-		return nil
-	}
-	return s.rt.decorate(t)
+	return s.threadAs(w, r, accessOwner)
 }
 
 func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
@@ -116,6 +114,9 @@ func (s *Server) handleListThreads(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, t := range list {
 		s.rt.decorate(t)
+	}
+	if !queryBool(r, "archived") && queryInt64(r, "workspace") == 0 && r.URL.Query().Get("q") == "" {
+		list = append(list, s.sharedThreads(r.Context(), me(r))...) // under "Shared with me"
 	}
 	writeJSON(w, http.StatusOK, list)
 }
@@ -284,6 +285,9 @@ func (s *Server) postMessage(ctx context.Context, u *store.User, t *store.Thread
 	}
 	in := agent.Input{Text: text}
 	it := agent.Item{Key: "u-" + uuid.NewString(), Kind: "user", Text: text}
+	if _, shared := s.rt.sharesOf(t.ID); shared || u.ID != t.UserID {
+		it.ByID, it.By = u.ID, displayName(u)
+	}
 	for _, id := range uploadIDs {
 		up, err := s.store.GetUpload(ctx, u.ID, id)
 		if err != nil {
@@ -329,7 +333,7 @@ func (s *Server) postMessage(ctx context.Context, u *store.User, t *store.Thread
 }
 
 func (s *Server) handleGetThread(w http.ResponseWriter, r *http.Request) {
-	t := s.thread(w, r)
+	t := s.threadAs(w, r, accessView)
 	if t == nil {
 		return
 	}
@@ -483,7 +487,13 @@ func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {
 		s.removeUploadFile(u.Path)
 		_ = s.store.DeleteUpload(r.Context(), u.UserID, u.ID)
 	}
-	s.rt.toUser(t.UserID, sseEvent{Name: "thread_removed", Data: map[string]string{"id": t.ID}})
+	gone := sseEvent{Name: "thread_removed", Data: map[string]string{"id": t.ID}}
+	s.rt.toUser(t.UserID, gone)
+	for _, uid := range s.rt.sharers(t.ID) {
+		s.rt.toUser(uid, gone)
+		s.rt.dropViewer(t.ID, uid)
+	}
+	s.rt.loadShares()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -491,7 +501,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	if !s.requireRun(w, r) {
 		return
 	}
-	t := s.thread(w, r)
+	t := s.threadAs(w, r, accessChat)
 	if t == nil {
 		return
 	}
@@ -524,14 +534,14 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "send")
 		return
 	}
-	t, _ = s.store.GetThread(r.Context(), me(r), t.ID)
+	t, _ = s.store.GetThreadAny(r.Context(), t.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"queued": queued, "thread": s.rt.decorate(t)})
 }
 
 func (s *Server) handleClearQueue(w http.ResponseWriter, r *http.Request) {
-	if t := s.thread(w, r); t != nil {
+	if t := s.threadAs(w, r, accessChat); t != nil {
 		s.rt.clearQueue(t.ID)
-		if t2, err := s.store.GetThread(r.Context(), me(r), t.ID); err == nil {
+		if t2, err := s.store.GetThreadAny(r.Context(), t.ID); err == nil {
 			s.rt.publishThread(t2)
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -541,7 +551,7 @@ func (s *Server) handleClearQueue(w http.ResponseWriter, r *http.Request) {
 // handleDropQueued removes one message from the queue (or one that was never
 // sent because Pocket AI restarted).
 func (s *Server) handleDropQueued(w http.ResponseWriter, r *http.Request) {
-	t := s.thread(w, r)
+	t := s.threadAs(w, r, accessChat)
 	if t == nil {
 		return
 	}
@@ -566,7 +576,7 @@ func (s *Server) handleSendNow(w http.ResponseWriter, r *http.Request) {
 	if !s.requireRun(w, r) {
 		return
 	}
-	if t := s.thread(w, r); t != nil {
+	if t := s.threadAs(w, r, accessChat); t != nil {
 		if err := s.rt.sendNow(t.ID, chi.URLParam(r, "key")); err != nil {
 			s.fail(w, err, "send now")
 			return
@@ -576,7 +586,7 @@ func (s *Server) handleSendNow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleInterrupt(w http.ResponseWriter, r *http.Request) {
-	if t := s.thread(w, r); t != nil {
+	if t := s.threadAs(w, r, accessChat); t != nil {
 		if err := s.rt.interrupt(t.ID); err != nil {
 			s.fail(w, err, "interrupt")
 			return
@@ -589,7 +599,7 @@ func (s *Server) handleRespond(w http.ResponseWriter, r *http.Request) {
 	if !s.requireRun(w, r) {
 		return
 	}
-	t := s.thread(w, r)
+	t := s.threadAs(w, r, accessChat)
 	if t == nil {
 		return
 	}
@@ -616,11 +626,11 @@ func (s *Server) handleRespond(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMarkRead(w http.ResponseWriter, r *http.Request) {
-	t := s.thread(w, r)
+	t := s.threadAs(w, r, accessView)
 	if t == nil {
 		return
 	}
-	if t.Unread {
+	if t.Unread && t.UserID == me(r) { // unread is the owner's
 		t.Unread = false
 		_ = s.store.UpdateThread(r.Context(), t)
 		s.rt.publishThread(t)
@@ -668,7 +678,7 @@ func (s *Server) handleFork(w http.ResponseWriter, r *http.Request) {
 
 // handleExport writes the thread as Markdown.
 func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
-	t := s.thread(w, r)
+	t := s.threadAs(w, r, accessView)
 	if t == nil {
 		return
 	}

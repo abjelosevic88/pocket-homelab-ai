@@ -134,6 +134,16 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetUpload(w http.ResponseWriter, r *http.Request) {
 	u, err := s.store.GetUpload(r.Context(), me(r), chi.URLParam(r, "id"))
+	if err != nil { // someone else's picture in a shared thread
+		u, err = s.store.GetUploadAny(r.Context(), chi.URLParam(r, "id"))
+		if err == nil {
+			if u.ThreadID == nil {
+				err = store.ErrNotFound
+			} else if _, level := s.threadAccess(r.Context(), userFrom(r.Context()), *u.ThreadID); level == accessNone {
+				err = store.ErrNotFound
+			}
+		}
+	}
 	if err != nil {
 		s.fail(w, err, "upload")
 		return
@@ -149,6 +159,16 @@ func (s *Server) handleGetUpload(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteUpload(w http.ResponseWriter, r *http.Request) {
 	u, err := s.store.GetUpload(r.Context(), me(r), chi.URLParam(r, "id"))
+	if err != nil { // someone else's picture in a shared thread
+		u, err = s.store.GetUploadAny(r.Context(), chi.URLParam(r, "id"))
+		if err == nil {
+			if u.ThreadID == nil {
+				err = store.ErrNotFound
+			} else if _, level := s.threadAccess(r.Context(), userFrom(r.Context()), *u.ThreadID); level == accessNone {
+				err = store.ErrNotFound
+			}
+		}
+	}
 	if err != nil {
 		s.fail(w, err, "upload")
 		return

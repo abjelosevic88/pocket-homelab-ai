@@ -369,3 +369,79 @@ func TestServerSessionsArePerPerson(t *testing.T) {
 	alice.want("DELETE", "/api/v1/threads/"+hers.ID, nil, 204, nil)
 	want(admin, "admin after delete", mine.ProviderSessionID, "terminal-1")
 }
+
+// A shared thread: view reads along, chat also sends; everything else stays
+// the owner's, and unsharing takes it away again.
+func TestSharedThreads(t *testing.T) {
+	s, h, root := testServer(t)
+	alice, au := person(t, s, h, "alice@example.com", "member", true)
+	bob, bu := person(t, s, h, "bob@example.com", "member", true)
+	carol, cu := person(t, s, h, "carol@example.com", "member", false)
+	dave, _ := person(t, s, h, "dave@example.com", "admin", true)
+	th := thread(t, s, au.ID, root)
+	path := "/api/v1/threads/" + th.ID
+
+	bob.want("GET", path, nil, 404, nil)
+	share := func(c *client, code int, shares ...store.ThreadShare) {
+		t.Helper()
+		c.want("PUT", path+"/shares", map[string]any{"shares": shares}, code, nil)
+	}
+	share(alice, 400, store.ThreadShare{UserID: cu.ID, Role: "chat"}) // carol may not run agents
+	share(alice, 200, store.ThreadShare{UserID: bu.ID, Role: "chat"}, store.ThreadShare{UserID: cu.ID, Role: "view"})
+
+	var got struct {
+		Thread store.Thread `json:"thread"`
+	}
+	bob.want("GET", path, nil, 200, &got)
+	if got.Thread.OwnerName != "alice@example.com" || len(got.Thread.Shares) != 2 || got.Thread.UserID != au.ID {
+		t.Fatalf("shared thread: %+v", got.Thread)
+	}
+	var list []store.Thread
+	carol.want("GET", "/api/v1/threads", nil, 200, &list)
+	if len(list) != 1 || list[0].ID != th.ID {
+		t.Fatalf("carol's list: %+v", list)
+	}
+	dave.want("GET", path, nil, 404, nil) // admins too
+	dave.want("GET", "/api/v1/threads", nil, 200, &list)
+	if len(list) != 0 {
+		t.Fatalf("dave's list: %+v", list)
+	}
+
+	// view only reads; nobody but the owner renames, forks, shares or deletes
+	carol.want("POST", path+"/messages", map[string]string{"text": "hi"}, 403, nil)
+	carol.want("POST", path+"/interrupt", nil, 403, nil)
+	for _, c := range []*client{bob, carol} {
+		c.want("PATCH", path, map[string]string{"title": "mine now"}, 403, nil)
+		c.want("DELETE", path, nil, 403, nil)
+		c.want("GET", path+"/shares", nil, 403, nil)
+		c.want("PUT", path+"/shares", map[string]any{"shares": []any{}}, 403, nil)
+		c.want("POST", path+"/fork", nil, 403, nil)
+	}
+
+	// chat sends; the message says who wrote it (the CLI is missing here, so the turn itself fails)
+	bob.call("POST", path+"/messages", map[string]string{"text": "and the other pool?"})
+	var detail struct {
+		Items []map[string]any `json:"items"`
+	}
+	alice.want("GET", path, nil, 200, &detail)
+	found := false
+	for _, it := range detail.Items {
+		if it["kind"] == "user" && it["text"] == "and the other pool?" {
+			found = it["by"] == "bob@example.com" && it["by_id"] == float64(bu.ID)
+		}
+	}
+	if !found {
+		t.Fatalf("bob's message without author: %+v", detail.Items)
+	}
+
+	// unshare
+	share(alice, 200, store.ThreadShare{UserID: cu.ID, Role: "view"})
+	bob.want("GET", path, nil, 404, nil)
+	bob.want("GET", "/api/v1/threads", nil, 200, &list)
+	if len(list) != 0 {
+		t.Fatalf("bob still lists it: %+v", list)
+	}
+	carol.want("GET", path, nil, 200, nil)
+	alice.want("DELETE", path, nil, 204, nil)
+	carol.want("GET", path, nil, 404, nil)
+}
