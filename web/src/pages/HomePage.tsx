@@ -7,7 +7,7 @@ import { useApp } from '../lib/app-context'
 import { shortPath } from '../lib/format'
 import type { ProviderId, Thread } from '../lib/types'
 import { RunningList } from '../components/RunningList'
-import { AgentPicker, type AgentValue, defaultsFor, ProviderToggle } from '../components/AgentPicker'
+import { accountOptions, AgentPicker, type AgentValue, defaultsFor, ProviderToggle } from '../components/AgentPicker'
 import { Composer, type ComposerHandle } from '../components/Composer'
 import { FolderButton } from '../components/FolderPicker'
 import { Icon } from '../components/icons'
@@ -35,12 +35,14 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
   const inited = useRef(false)
   const [mode, setMode] = useState<'apps' | 'server'>('apps')
   const [askModel, setAskModel] = useState('sonnet')
+  const [askAccount, setAskAccount] = useState<number | null>(null) // null = my default Claude account
+  const askAccounts = accountOptions(accounts, 'claude')
   const [noMemory, setNoMemory] = useState(false)
   const [connected, setConnected] = useState<boolean | null>(null)
   const appComposer = useRef<ComposerHandle>(null)
   useEffect(() => { api.get<{ connected: boolean }>(`${V1}/assistant/status`).then(v => setConnected(v.connected)).catch(() => setConnected(false)) }, [])
   const askApps = async (text: string, uploadIds: string[]) => {
-    try { const t = await api.post<Thread>(`${V1}/ask/threads`, { text, model: askModel, no_memory: noMemory, upload_ids: uploadIds }); upsertThread(t); navigate(`/t/${t.id}`); return true }
+    try { const t = await api.post<Thread>(`${V1}/ask/threads`, { text, model: askModel, no_memory: noMemory, upload_ids: uploadIds, account_id: askAccount ?? undefined }); upsertThread(t); navigate(`/t/${t.id}`); return true }
     catch (e) { toast(errMsg(e), 'err'); return false }
   }
 
@@ -121,6 +123,8 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
             {connected === false && <div className="callout info">Connect Ask from any Pocket app first using its Ask button, then return here.</div>}
             <Composer ref={appComposer} big draftKey="new-apps" onSend={askApps} placeholder="Ask about your money, notes, tasks, documents… or attach a receipt" footer={<div className="app-composer-options">
               <Select className="ghost inline" size="sm" label="App assistant model" value={askModel} onChange={setAskModel} options={[{ value: 'haiku', label: 'Haiku' }, { value: 'sonnet', label: 'Sonnet' }, { value: 'opus', label: 'Opus' }]} />
+              {askAccounts.length > 0 && <Select className="ghost inline" size="sm" label="Claude account" value={askAccount ?? settings?.claude?.account_id ?? 0} onChange={setAskAccount} options={askAccounts} width={280}
+                renderValue={o => <span className="ellipsis"><Icon name="user" size={12} className="inline-ico" />{o?.label ?? 'Account'}</span>} />}
               <button type="button" className="memory-choice" aria-label="Use saved memory" aria-pressed={!noMemory} title={noMemory ? 'Saved memory is off for this conversation' : 'Use saved preferences in this conversation'} onClick={() => setNoMemory(v => !v)}><Icon name="brain" size={14} /><span>Memory {noMemory ? 'off' : 'on'}</span></button>
             </div>} />
             <div className="app-suggestions" role="group" aria-label="Suggested questions">

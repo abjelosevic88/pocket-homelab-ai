@@ -134,6 +134,7 @@ type askCreate struct {
 	Source    askSource `json:"source"`
 	UploadIDs []string  `json:"upload_ids"`
 	NoMemory  bool      `json:"no_memory"`
+	AccountID *int64    `json:"account_id"` // Claude login; nil = the person's default
 }
 
 func (s *Server) createAsk(ctx context.Context, u *store.User, in askCreate) (*store.Thread, error) {
@@ -162,6 +163,18 @@ func (s *Server) createAsk(ctx context.Context, u *store.User, in askCreate) (*s
 	}
 	cwd, _ = filepath.Abs(cwd)
 	t := &store.Thread{ID: uuid.NewString(), UserID: u.ID, Provider: "claude", Model: in.Model, Mode: "default", Effort: "medium", Cwd: cwd, Title: oneLine(firstNonEmpty(in.Source.Title, in.Text), 160), Source: "ask", SourceRef: in.Source.URL, NoMemory: in.NoMemory}
+	if st, err := s.store.GetSettings(ctx, u.ID); err == nil {
+		t.AccountID = st.Claude.Account
+	}
+	if in.AccountID != nil {
+		t.AccountID = *in.AccountID
+	}
+	if err := s.checkAccount(ctx, u, "claude", t.AccountID); err != nil {
+		if in.AccountID != nil {
+			return nil, err
+		}
+		t.AccountID = 0
+	}
 	if err := s.store.CreateThread(ctx, t); err != nil {
 		return nil, err
 	}
@@ -322,11 +335,19 @@ func (s *Server) preparePocketTools(ctx context.Context, t *store.Thread, sink *
 		os.Remove(f.Name())
 		return err
 	}
-	configDir, _ := filepath.Abs(filepath.Join(s.cfg.DataDir, "ask-claude", strconv.FormatInt(t.UserID, 10)))
+	// Ask keeps its own Claude folder per person (and per login: the
+	// sign-in comes from that account's folder).
+	name := strconv.FormatInt(t.UserID, 10)
+	home := s.cfg.ClaudeHome
+	if t.AccountID != 0 {
+		name += "-a" + strconv.FormatInt(t.AccountID, 10)
+		home, _ = s.accountHome(ctx, "claude", t.AccountID)
+	}
+	configDir, _ := filepath.Abs(filepath.Join(s.cfg.DataDir, "ask-claude", name))
 	if err := os.MkdirAll(configDir, 0700); err != nil {
 		return err
 	}
-	credentials, _ := filepath.Abs(filepath.Join(s.cfg.ClaudeHome, ".credentials.json"))
+	credentials, _ := filepath.Abs(filepath.Join(home, ".credentials.json"))
 	if _, err := os.Stat(credentials); err == nil {
 		dest := filepath.Join(configDir, ".credentials.json")
 		if _, err := os.Lstat(dest); os.IsNotExist(err) {

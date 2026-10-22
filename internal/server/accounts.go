@@ -768,9 +768,17 @@ func (s *Server) accountIDsFor(ctx context.Context, u *store.User) map[string]bo
 	return out
 }
 
-// askHomes is the Claude folder Pocket Ask keeps per person.
+// askHomes are the Claude folders Pocket Ask keeps per person (one per login).
 func (s *Server) askHomes(uid int64) agent.Homes {
-	return agent.Homes{Claude: []agent.AccountHome{{Dir: filepath.Join(s.cfg.DataDir, "ask-claude", strconv.FormatInt(uid, 10))}}}
+	base := filepath.Join(s.cfg.DataDir, "ask-claude", strconv.FormatInt(uid, 10))
+	h := agent.Homes{Claude: []agent.AccountHome{{Dir: base}}}
+	more, _ := filepath.Glob(base + "-a*")
+	for _, dir := range more {
+		if id, err := strconv.ParseInt(strings.TrimPrefix(dir, base+"-a"), 10, 64); err == nil {
+			h.Claude = append(h.Claude, agent.AccountHome{ID: id, Dir: dir})
+		}
+	}
+	return h
 }
 
 // sessionAccount finds the login a CLI session belongs to: the account
