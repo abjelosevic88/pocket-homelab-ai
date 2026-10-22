@@ -12,7 +12,8 @@ import type { SearchHit, Thread } from '../lib/types'
 import { ProviderBadge, ThreadStatus } from './bits'
 import { Icon } from './icons'
 import { type Option, Select } from './Select'
-import { Avatar, Kbd, Spinner } from './ui'
+import { Avatar, Kbd, Spinner, useContextMenu } from './ui'
+import { useThreadMenu } from './ThreadMenu'
 import { PrivacyChip } from './ShareDialog'
 
 function groupOf(t: Thread): string {
@@ -35,14 +36,14 @@ function RowTimer({ since }: { since?: string }) {
   return <span className="th-time run-time tnum">{elapsed(since, now)}</span>
 }
 
-export function ThreadRow({ t, active, onOpen }: { t: Thread; active: boolean; onOpen: () => void }) {
+export function ThreadRow({ t, active, onOpen, onContextMenu }: { t: Thread; active: boolean; onOpen: () => void; onContextMenu?: (e: React.MouseEvent) => void }) {
   const { running, user } = useApp()
   // working in Pocket AI, or in Paseo / a terminal on the same session
   const run = running.find(r => r.thread_id === t.id || (!!t.provider_session_id && r.session_id === t.provider_session_id))
   const waiting = t.status === 'waiting' || t.pending > 0 || run?.status === 'waiting'
   const working = waiting || t.status === 'running' || !!run
   return (
-    <button type="button" className={`th-row ${active ? 'active' : ''} ${t.unread ? 'unread' : ''} ${working ? 'is-working' : ''}`} onClick={onOpen} title={t.cwd}>
+    <button type="button" className={`th-row ${active ? 'active' : ''} ${t.unread ? 'unread' : ''} ${working ? 'is-working' : ''}`} onClick={onOpen} onContextMenu={onContextMenu} title={t.cwd}>
       <span className="th-main">
         <span className="th-title ellipsis">{threadTitle(t)}</span>
         <span className="th-meta">
@@ -70,6 +71,8 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
   const [ws, setWs] = useState<number>(() => Number(localStorage.getItem('pai-ws') || 0))
   const [archived, setArchived] = useState<Thread[] | null>(null)
   const [showArchive, setShowArchive] = useState(false)
+  const ctx = useContextMenu()
+  const tm = useThreadMenu()
   useEffect(() => { localStorage.setItem('pai-ws', String(ws)) }, [ws])
   useEffect(() => { if (!q.trim()) setHits(null) }, [q])
   useEffect(() => {
@@ -177,13 +180,13 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
           {groups.map(g => (
             <div key={g.name} className="sb-group">
               <div className="sb-h"><span>{g.name}</span></div>
-              {g.items.map(t => <ThreadRow key={t.id} t={t} active={t.id === activeId} onOpen={() => go(`/t/${t.id}`)} />)}
+              {g.items.map(t => <ThreadRow key={t.id} t={t} active={t.id === activeId} onOpen={() => go(`/t/${t.id}`)} onContextMenu={e => ctx.open(e, () => tm.items(t))} />)}
             </div>
           ))}
           {shared.length > 0 && !q && !ws && (
             <div className="sb-group">
               <div className="sb-h"><span>Shared with me</span></div>
-              {shared.map(t => <ThreadRow key={t.id} t={t} active={t.id === activeId} onOpen={() => go(`/t/${t.id}`)} />)}
+              {shared.map(t => <ThreadRow key={t.id} t={t} active={t.id === activeId} onOpen={() => go(`/t/${t.id}`)} onContextMenu={e => ctx.open(e, () => tm.items(t))} />)}
             </div>
           )}
         </div>
@@ -199,6 +202,7 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
         </button>
       </div>
       </div>
+      {ctx.menu}{tm.dialogs}
     </aside>
   )
 }

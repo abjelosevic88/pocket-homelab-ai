@@ -3,7 +3,7 @@ import { api, V1 } from '../../lib/api'
 import { useApp } from '../../lib/app-context'
 import type { User } from '../../lib/types'
 import { Icon } from '../../components/icons'
-import { Avatar, Confirm, Empty, errMsg, Field, Loading, MenuButton, Modal, Segmented, Switch, useAsync, useToast } from '../../components/ui'
+import { Avatar, Confirm, Empty, errMsg, Field, Loading, MenuButton, Modal, Segmented, Switch, useAsync, useToast, type MenuItem, useContextMenu } from '../../components/ui'
 import { Section } from './common'
 
 export function PeopleTab() {
@@ -12,6 +12,7 @@ export function PeopleTab() {
   const list = useAsync(() => api.get<User[]>(`${V1}/users`), [])
   const [edit, setEdit] = useState<Partial<User> | null>(null)
   const [del, setDel] = useState<User | null>(null)
+  const ctx = useContextMenu()
   if (user?.role !== 'admin') return <Empty title="Only admins manage people" icon="users">Ask an admin on this box to add or change accounts.</Empty>
 
   return (
@@ -20,20 +21,22 @@ export function PeopleTab() {
         actions={<button type="button" className="btn primary sm" onClick={() => setEdit({})}><Icon name="plus" size={14} />Add person</button>}>
         {!list.data ? <Loading /> : (
           <div className="set-people">
-            {list.data.map(u => (
-              <div key={u.id} className="set-person">
+            {ctx.menu}{list.data.map(u => {
+              const more: MenuItem[] = [
+                { label: 'Edit…', icon: 'edit', onSelect: () => setEdit(u) },
+                'sep',
+                { label: 'Remove…', icon: 'trash', danger: true, disabled: u.id === user.id, onSelect: () => setDel(u) },
+              ]
+              return (
+              <div key={u.id} className="set-person" onContextMenu={e => ctx.open(e, more)}>
                 <Avatar name={u.name} email={u.email} size={34} />
                 <div className="grow">
                   <div className="set-person-name">{u.name || u.email}{u.id === user.id && <span className="muted small"> (you)</span>}{u.role === 'admin' ? <span className="badge accent">Admin</span> : u.can_run ? <span className="badge ok">May run agents</span> : <span className="badge">View only</span>}</div>
                   <div className="muted small ellipsis">{u.email}</div>
                 </div>
-                <MenuButton label={`More for ${u.name || u.email}`} align="right" items={[
-                  { label: 'Edit…', icon: 'edit', onSelect: () => setEdit(u) },
-                  'sep',
-                  { label: 'Remove…', icon: 'trash', danger: true, disabled: u.id === user.id, onSelect: () => setDel(u) },
-                ]}><Icon name="more" size={16} /></MenuButton>
+                <MenuButton label={`More for ${u.name || u.email}`} align="right" items={more}><Icon name="more" size={16} /></MenuButton>
               </div>
-            ))}
+            )})}
           </div>
         )}
         {status?.auth_mode !== 'local' && <p className="muted small mt">Sign-in mode is <code>{status?.auth_mode}</code>: accounts are also created automatically the first time someone signs in.</p>}

@@ -10,11 +10,14 @@ import { ProviderBadge, ThreadStatus } from '../components/bits'
 import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
 import { ShareDialog } from '../components/ShareDialog'
-import { Empty, Loading } from '../components/ui'
+import { Empty, Loading, useContextMenu } from '../components/ui'
+import { useThreadMenu } from '../components/ThreadMenu'
 
 export default function SharedPage({ onMenu }: { onMenu?: () => void }) {
   const { threads, user, upsertThread } = useApp()
   const navigate = useNavigate()
+  const ctx = useContextMenu()
+  const tm = useThreadMenu()
   const [editing, setEditing] = useState<Thread | null>(null)
   const { withMe, byMe } = useMemo(() => {
     const list = threads || []
@@ -27,7 +30,7 @@ export default function SharedPage({ onMenu }: { onMenu?: () => void }) {
   const row = (t: Thread, mine: boolean) => {
     const access = accessOf(t, user)
     return (
-      <div key={t.id} role="link" tabIndex={0} className="srv-row shared-row" onClick={() => navigate(`/t/${t.id}`)}
+      <div key={t.id} role="link" tabIndex={0} className="srv-row shared-row" onClick={() => navigate(`/t/${t.id}`)} onContextMenu={e => ctx.open(e, () => tm.items(t))}
         onKeyDown={e => { if (e.key === 'Enter') navigate(`/t/${t.id}`) }}>
         <span className={`srv-ico ${t.provider}`}><Icon name={t.provider} size={17} /></span>
         <span className="srv-main">
@@ -78,6 +81,7 @@ export default function SharedPage({ onMenu }: { onMenu?: () => void }) {
           )}
         </div>
       </div>
+      {ctx.menu}{tm.dialogs}
       {editing && <ShareDialog thread={editing} onClose={() => setEditing(null)} onSaved={t => { upsertThread(t); setEditing(null) }} />}
     </div>
   )

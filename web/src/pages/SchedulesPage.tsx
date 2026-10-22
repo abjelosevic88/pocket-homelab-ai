@@ -9,7 +9,7 @@ import { AgentPicker } from '../components/AgentPicker'
 import { FolderButton } from '../components/FolderPicker'
 import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
-import { Confirm, Empty, errMsg, Field, Loading, MenuButton, Modal, Segmented, Spinner, Switch, useAsync, useDebounce, useToast } from '../components/ui'
+import { Confirm, Empty, errMsg, Field, Loading, MenuButton, Modal, Segmented, Spinner, Switch, useAsync, useDebounce, useToast, type MenuItem, useContextMenu } from '../components/ui'
 import { AgentSummary } from './RecipesPage'
 
 type Draft = Pick<Schedule, 'name' | 'prompt' | 'provider' | 'model' | 'effort' | 'mode' | 'speed' | 'cwd' | 'spec' | 'notify' | 'enabled'> & { id?: number }
@@ -32,6 +32,7 @@ export default function SchedulesPage({ onMenu }: { onMenu?: () => void }) {
   const list = useAsync(() => api.get<Schedule[]>(`${V1}/schedules`), [])
   const [edit, setEdit] = useState<Draft | null>(null)
   const [del, setDel] = useState<Schedule | null>(null)
+  const ctx = useContextMenu()
   const [running, setRunning] = useState<number | null>(null)
   const canRun = !!user && (user.role === 'admin' || user.can_run)
   // the "running" status and next run change on their own
@@ -60,10 +61,16 @@ export default function SchedulesPage({ onMenu }: { onMenu?: () => void }) {
             </Empty>
           ) : (
             <div className="list-cards">
-              {list.data.map(s => {
+              {ctx.menu}{list.data.map(s => {
+                const more: MenuItem[] = [
+                  { label: 'Edit…', icon: 'edit', onSelect: () => setEdit({ ...s }) },
+                  { label: 'Duplicate', icon: 'copy', onSelect: () => setEdit({ ...s, id: undefined, name: s.name + ' (copy)' }) },
+                  'sep',
+                  { label: 'Delete…', icon: 'trash', danger: true, onSelect: () => setDel(s) },
+                ]
                 const st = STATUS[s.last_status]
                 return (
-                  <div key={s.id} className={`list-card ${s.enabled ? '' : 'off'}`}>
+                  <div key={s.id} className={`list-card ${s.enabled ? '' : 'off'}`} onContextMenu={e => ctx.open(e, more)}>
                     <Switch checked={s.enabled} onChange={v => toggle(s, v)} label={`Enable ${s.name}`} />
                     <div className="grow" style={{ minWidth: 0 }}>
                       <div className="list-card-title">{s.name}<code className="spec-chip">{s.spec}</code></div>
@@ -80,12 +87,7 @@ export default function SchedulesPage({ onMenu }: { onMenu?: () => void }) {
                     </div>
                     <div className="list-card-actions">
                       <button type="button" className="btn sm" disabled={running === s.id || !canRun} onClick={() => runNow(s)}>{running === s.id ? <Spinner size={11} /> : <Icon name="play" size={11} />}Run now</button>
-                      <MenuButton label={`More for ${s.name}`} align="right" items={[
-                        { label: 'Edit…', icon: 'edit', onSelect: () => setEdit({ ...s }) },
-                        { label: 'Duplicate', icon: 'copy', onSelect: () => setEdit({ ...s, id: undefined, name: s.name + ' (copy)' }) },
-                        'sep',
-                        { label: 'Delete…', icon: 'trash', danger: true, onSelect: () => setDel(s) },
-                      ]}><Icon name="more" size={16} /></MenuButton>
+                      <MenuButton label={`More for ${s.name}`} align="right" items={more}><Icon name="more" size={16} /></MenuButton>
                     </div>
                   </div>
                 )

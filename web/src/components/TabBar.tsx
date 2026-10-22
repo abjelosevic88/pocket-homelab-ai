@@ -7,7 +7,8 @@ import { useApp } from '../lib/app-context'
 import { threadTitle } from '../lib/format'
 import type { Thread } from '../lib/types'
 import { Icon } from './icons'
-import { MenuButton } from './ui'
+import { type MenuItem, MenuButton, useContextMenu } from './ui'
+import { useThreadMenu } from './ThreadMenu'
 
 const KEY = 'pai-tabs'
 const load = (): string[] => { try { const v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v.filter(x => typeof x === 'string') : [] } catch { return [] } }
@@ -43,6 +44,8 @@ export function TabBar({ tabs, active, close, move }: ReturnType<typeof useTabs>
   const { threads, running, user } = useApp()
   const navigate = useNavigate()
   const [drag, setDrag] = useState('')
+  const ctx = useContextMenu()
+  const tm = useThreadMenu()
   const byId = new Map((threads || []).map(t => [t.id, t] as [string, Thread]))
   // tabs of threads that are gone (deleted or archived) drop out — except the
   // one on screen (an archived thread you opened keeps its tab)
@@ -52,6 +55,15 @@ export function TabBar({ tabs, active, close, move }: ReturnType<typeof useTabs>
   if (!shown.length) return null
   const working = (t?: Thread) => !!t && (t.status === 'running' || t.status === 'waiting' || t.pending > 0 || running.some(r => r.thread_id === t.id || (!!t.provider_session_id && r.session_id === t.provider_session_id)))
   const i = shown.indexOf(active)
+  const tabMenu = (id: string, t?: Thread): MenuItem[] => {
+    const at = shown.indexOf(id)
+    return [
+      ...(t ? [...tm.items(t), 'sep' as const] : []),
+      { label: 'Close tab', icon: 'x', onSelect: () => close([id]) },
+      { label: 'Close other tabs', disabled: shown.length < 2, onSelect: () => close(shown.filter(x => x !== id)) },
+      { label: 'Close tabs to the right', disabled: at === shown.length - 1, onSelect: () => close(shown.slice(at + 1)) },
+    ]
+  }
 
   return (
     <div className="tabbar" role="tablist" aria-label="Open threads">
@@ -66,6 +78,7 @@ export function TabBar({ tabs, active, close, move }: ReturnType<typeof useTabs>
               title={t ? threadTitle(t) : ''}
               onClick={() => navigate(`/t/${id}`)}
               onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/t/${id}`) } }}
+              onContextMenu={e => ctx.open(e, () => tabMenu(id, byId.get(id)))}
               onAuxClick={e => { if (e.button === 1) { e.preventDefault(); close([id]) } }}
               onMouseDown={e => { if (e.button === 1) e.preventDefault() }}
               onDragStart={e => { setDrag(id); e.dataTransfer.effectAllowed = 'move' }}
@@ -91,6 +104,7 @@ export function TabBar({ tabs, active, close, move }: ReturnType<typeof useTabs>
         'sep',
         { label: 'Close all tabs', danger: true, onSelect: () => close(shown) },
       ]}><Icon name="more" size={16} /></MenuButton>
+      {ctx.menu}{tm.dialogs}
     </div>
   )
 }

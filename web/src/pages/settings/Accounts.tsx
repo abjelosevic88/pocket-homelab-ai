@@ -8,7 +8,7 @@ import type { Account, LoginState, ProviderId, User } from '../../lib/types'
 import { ProviderToggle } from '../../components/AgentPicker'
 import { Select } from '../../components/Select'
 import { Icon } from '../../components/icons'
-import { Confirm, CopyField, errMsg, Field, MenuButton, Modal, Spinner, useAsync, useToast } from '../../components/ui'
+import { Confirm, CopyField, errMsg, Field, MenuButton, Modal, Spinner, useAsync, useToast, type MenuItem, useContextMenu } from '../../components/ui'
 import { ago, Section, StatusDot } from './common'
 
 /** "max" → "Max", "PRO" → "Pro". */
@@ -25,6 +25,7 @@ export function AccountsSection() {
   const [edit, setEdit] = useState<Account | null>(null)
   const [signIn, setSignIn] = useState<Account | null>(null)
   const [del, setDel] = useState<Account | null>(null)
+  const ctx = useContextMenu()
   const done = () => { list.reload(); reloadAccounts().catch(() => {}) }
   const who = (a: Account) => a.default ? 'Everyone' : a.user_id == null ? 'Everyone who may run agents' : 'Only ' + (people.data?.find(p => p.id === a.user_id)?.name || 'One person')
 
@@ -52,8 +53,16 @@ export function AccountsSection() {
                   <span className="acct-group-n">{rows.length} {rows.length === 1 ? 'login' : 'logins'}</span>
                   {isAdmin && <button type="button" className="btn sm ghost acct-group-add" onClick={() => setAdding(pid)}><Icon name="plus" size={13} />Add</button>}
                 </div>
-                {rows.map(a => (
-                  <div key={a.id} className="acct-row">
+                {rows.map(a => {
+                  const more: MenuItem[] = [
+                    { label: a.signed_in ? 'Sign in again…' : 'Sign in…', icon: 'key', onSelect: () => setSignIn(a) },
+                    { label: 'Edit…', icon: 'edit', onSelect: () => setEdit(a) },
+                    ...(a.signed_in ? [{ label: 'Sign out', icon: 'log-out', onSelect: () => signOut(a) }] : []),
+                    'sep',
+                    { label: 'Remove…', icon: 'trash', danger: true, onSelect: () => setDel(a) },
+                  ]
+                  return (
+                  <div key={a.id} className="acct-row" onContextMenu={isAdmin && !a.default ? e => ctx.open(e, more) : undefined}>
                     <StatusDot status={a.signed_in ? 'ok' : a.error ? 'error' : 'off'}
                       title={(a.signed_in ? 'Signed in' : a.error ? 'Error' : 'Not signed in') + (a.checked_at ? ` · checked ${ago(a.checked_at)}` : '')} />
                     <div className="acct-main">
@@ -68,17 +77,11 @@ export function AccountsSection() {
                     </div>
                     <div className="acct-actions">
                       {isAdmin && !a.default && (
-                        <MenuButton label={`More for ${a.label}`} align="right" items={[
-                          { label: a.signed_in ? 'Sign in again…' : 'Sign in…', icon: 'key', onSelect: () => setSignIn(a) },
-                          { label: 'Edit…', icon: 'edit', onSelect: () => setEdit(a) },
-                          ...(a.signed_in ? [{ label: 'Sign out', icon: 'log-out', onSelect: () => signOut(a) }] : []),
-                          'sep',
-                          { label: 'Remove…', icon: 'trash', danger: true, onSelect: () => setDel(a) },
-                        ]}><Icon name="more" size={16} /></MenuButton>
+                        <MenuButton label={`More for ${a.label}`} align="right" items={more}><Icon name="more" size={16} /></MenuButton>
                       )}
                     </div>
                   </div>
-                ))}
+                )})}
               </div>
             )
           })}
@@ -91,6 +94,7 @@ export function AccountsSection() {
       {del && <Confirm title={`Remove ${del.label}?`} confirmLabel="Remove"
         message={<>Its threads continue on the server login (the conversation is copied over on their next message). The folder <code>{del.home}</code> with the login and session files stays on the server.</>}
         onCancel={() => setDel(null)} onConfirm={async () => { const d = del; setDel(null); try { await api.del(`${V1}/accounts/${d.id}`); toast('Removed'); done() } catch (e) { toast(errMsg(e), 'err') } }} />}
+      {ctx.menu}
     </Section>
   )
 }
