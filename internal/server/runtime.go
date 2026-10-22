@@ -482,6 +482,7 @@ func (rt *engine) send(t *store.Thread, key string, in agent.Input) (bool, error
 	r.lastUsed = time.Now()
 	r.lastText = ""
 	r.mu.Unlock()
+	in = rt.withMemory(r, in)
 	if err := r.sess.Send(in); err != nil {
 		r.mu.Lock()
 		r.running = false
@@ -515,6 +516,7 @@ func (rt *engine) next(r *run) {
 		rt.toThread(r.threadID, sseEvent{Name: "item_removed", Data: map[string]string{"key": q.key}})
 		rt.saveItem(r.threadID, it)
 	}
+	q.in = rt.withMemory(r, q.in)
 	if err := r.sess.Send(q.in); err != nil {
 		r.mu.Lock()
 		r.running = false
@@ -1074,7 +1076,7 @@ func (k *runSink) TurnDone(ti agent.TurnInfo) {
 		DurationMS: ti.DurationMS, InputTokens: ti.InputTokens, OutputTokens: ti.OutputTokens, CachedTokens: ti.CachedTokens, CostUSD: ti.CostUSD})
 	rt.publishThread(t)
 
-	scheduled := t.Source == "schedule" && rt.s.scheduleFinished(t, ti, lastText)
+	scheduled := (t.Source == "schedule" && rt.s.scheduleFinished(t, ti, lastText)) || rt.s.workflowFinished(t, ti, lastText)
 	if !scheduled && queuedN == 0 {
 		switch {
 		case !ti.OK && !ti.Interrupted:
@@ -1195,4 +1197,15 @@ func (s *Server) publish(uid int64, topic, subject string, payload map[string]an
 	if err := s.core.Publish(s.rt.ctx, topic, subject, payload); err != nil && !errors.Is(err, context.Canceled) {
 		s.log.Debug("pocket core: publish", "topic", topic, "err", err)
 	}
+}
+
+// Resolve preferences at dispatch time, including queued turns, so a forgotten
+// preference is never injected from an old in-memory queue snapshot.
+func (rt *engine) withMemory(r *run, in agent.Input) agent.Input {
+	t, err := rt.s.store.GetThread(rt.ctx, r.userID, r.threadID)
+	if err != nil {
+		return in
+	}
+	in.Text += rt.s.memoryContext(rt.ctx, r.userID, t.NoMemory)
+	return in
 }

@@ -105,6 +105,7 @@ export interface Usage {
 export type ThreadStatus = 'idle' | 'running' | 'waiting' | 'error'
 
 export interface Thread {
+  no_memory: boolean
   id: string
   title: string
   provider: ProviderId
@@ -179,6 +180,7 @@ export interface AgentRequest {
 export interface TurnInfo { ok: boolean; duration_ms: number; cost_usd: number; input_tokens: number; output_tokens: number; error?: string }
 
 export interface Item {
+  files?: ItemImage[]
   id: number
   key: string
   kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'todos' | 'request' | 'notice' | 'turn' | string

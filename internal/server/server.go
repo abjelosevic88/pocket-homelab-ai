@@ -42,10 +42,11 @@ type Server struct {
 	errors   atomic.Int64
 	changed  atomic.Int64 // bumps on every write; GET /changes
 
-	core    *core.Client
-	coreMu  sync.Mutex
-	coreOK  bool
-	coreErr string
+	core       *core.Client
+	coreMu     sync.Mutex
+	workflowMu sync.Mutex
+	coreOK     bool
+	coreErr    string
 
 	oidc   *oidcProvider
 	oidcMu sync.Mutex
@@ -109,6 +110,9 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	s.rt.start(ctx)
 	go s.housekeeping(ctx)
 	go s.scheduleLoop(ctx)
+	_, _ = s.store.DB.ExecContext(ctx, `UPDATE workflows SET last_status='interrupted' WHERE last_status='running'`)
+	go s.workflowLoop(ctx)
+	_, _ = s.store.DB.ExecContext(ctx, `UPDATE app_calls SET status=CASE WHEN status='pending' THEN 'denied' WHEN is_write=1 THEN 'unknown' ELSE 'interrupted' END WHERE status IN ('running','pending')`)
 	go agent.WarmSessions(s.cfg.ClaudeHome, s.cfg.CodexHome) // first parse of every session file takes a while
 	go func() { s.providers(ctx, true) }()                   // warm the provider cache
 	if s.core.Configured() {
@@ -123,6 +127,7 @@ func (s *Server) housekeeping(ctx context.Context) {
 	defer t.Stop()
 	for {
 		_ = s.store.PurgeSessions(ctx)
+		_, _ = s.store.DB.ExecContext(ctx, `DELETE FROM app_calls WHERE is_write=0 AND created_at<?`, store.FormatTime(time.Now().Add(-30*24*time.Hour)))
 		if ups, err := s.store.OrphanUploads(ctx, store.FormatTime(time.Now().Add(-24*time.Hour))); err == nil {
 			for _, u := range ups {
 				s.removeUploadFile(u.Path)
@@ -185,6 +190,7 @@ func (s *Server) Router() http.Handler {
 			// Threads, messages, requests, search, usage: threads_api.go.
 			s.threadRoutes(r)
 			s.askRoutes(r)
+			s.assistantRoutes(r)
 			// Images for prompts: uploads.go.
 			s.uploadRoutes(r)
 			// Workspaces, folder picker, recipes: library_api.go.

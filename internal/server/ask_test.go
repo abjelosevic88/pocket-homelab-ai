@@ -88,7 +88,7 @@ func testPocketApproval(t *testing.T, source string) {
 	_ = json.Unmarshal(raw, &conf)
 	server := conf.Servers["pocket"]
 	call := func(name string) int {
-		body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": name, "arguments": map[string]any{"id": 1, "data": map[string]string{"title": "New"}}}})
+		body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": "pocket_call_tool", "arguments": map[string]any{"name": name, "arguments": map[string]any{"id": 1, "data": map[string]string{"title": "New"}}}}})
 		req, _ := http.NewRequest("POST", server.URL, bytes.NewReader(body))
 		req.Header.Set("Authorization", server.Headers["Authorization"])
 		res, err := http.DefaultClient.Do(req)

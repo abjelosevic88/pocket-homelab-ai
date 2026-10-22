@@ -13,6 +13,7 @@ import { ContextMeter, ProviderBadge } from '../components/bits'
 import { Composer, type ComposerHandle } from '../components/Composer'
 import { Icon } from '../components/icons'
 import { AskButton } from '../components/AskButton'
+import { BatchReview, ThreadEvidence } from '../components/AppEvidence'
 import { RequestCard } from '../components/RequestCard'
 import { Select } from '../components/Select'
 import { Timeline } from '../components/Timeline'
@@ -142,13 +143,13 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   // a message that never went out (Pocket AI restarted while it waited)
   const resend = useCallback(async (it: Item) => {
     try {
-      await api.post(`${V1}/threads/${id}/messages`, { text: it.text || '', upload_ids: (it.images || []).map(im => im.id) })
+      await api.post(`${V1}/threads/${id}/messages`, { text: it.text || '', upload_ids: [...(it.images || []), ...(it.files || [])].map(im => im.id) })
       await api.del(`${V1}/threads/${id}/queue/${encodeURIComponent(it.key)}`)
     } catch (e) { toast(errMsg(e), 'err') }
   }, [id, toast])
   const dropUnsent = useCallback((it: Item) => { api.del(`${V1}/threads/${id}/queue/${encodeURIComponent(it.key)}`).catch(e => toast(errMsg(e), 'err')) }, [id, toast])
 
-  const patch = async (p: Partial<Pick<Thread, 'title' | 'pinned' | 'archived' | 'model' | 'effort' | 'mode' | 'speed'>>) => {
+  const patch = async (p: Partial<Pick<Thread, 'title' | 'pinned' | 'archived' | 'model' | 'effort' | 'mode' | 'speed' | 'no_memory'>>) => {
     if (!t) return
     setThread({ ...t, ...p })
     try { const th = await api.patch<Thread>(`${V1}/threads/${id}`, p); setThread(th); upsertThread(th); return th } catch (e) { toast(errMsg(e), 'err'); load() }
@@ -197,6 +198,8 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   // the text the agent is writing right now gets a blinking cursor
   const streamingKey = running && (lastItem?.kind === 'assistant' || lastItem?.kind === 'thinking') ? lastItem.key : undefined
   const menu: MenuItem[] = [
+    { label: 'Save as workflow', icon: 'zap', onSelect: () => navigate('/workflows', { state: { name: t.title, prompt: t.last_prompt || '' } }) },
+    { label: t.no_memory ? 'Enable saved memory' : 'Don’t use memory in this conversation', icon: 'bookmark', onSelect: () => patch({ no_memory: !t.no_memory }) },
     ...(document.querySelector('pocket-ask-launcher') ? [{ label: 'Ask about an item…', icon: 'sparkles' as const, onSelect: () => window.dispatchEvent(new Event('pocket-ask-pick')) }] : []),
     { label: t.pinned ? 'Unpin' : 'Pin to top', icon: 'bookmark', onSelect: () => patch({ pinned: !t.pinned }) },
     { label: 'Rename', icon: 'edit', onSelect: () => { setTitleDraft(t.title || threadTitle(t)); setEditingTitle(true) } },
@@ -243,6 +246,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
               {t.source === 'import' && items.length > 0 && <div className="notice info"><Icon name="history" size={14} /><span>Imported from the server’s {providerName(t.provider)} history — sending a message continues that session.</span></div>}
               <Timeline key={id} threadId={t.provider === 'claude' ? id : undefined} items={visible} onResend={canRun ? resend : undefined} onDropUnsent={dropUnsent} showThinking={!!settings?.show_thinking} streamingKey={streamingKey}
                 onFork={t.source !== 'ask' && t.provider_session_id && canRun && !running ? forkNewTab : undefined} />
+              <ThreadEvidence id={id} revision={visible.filter(i => i.kind === 'turn').length} />
               {t.status === 'error' && t.error && <div className="notice error"><Icon name="alert" size={14} /><span>{t.error}</span></div>}
             </>
           )}
@@ -256,8 +260,11 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
           <QueueStrip threadId={id} queued={queuedItems} agent={t.provider === 'codex' ? 'Codex' : 'Claude'} onClearAll={clearQueue} />
           {pending.length > 0 && (
             <div className="req-dock">
-              <RequestCard key={pending[0].key} threadId={id} req={pending[0].request!} onDone={() => setItems(list => list && list.map(x => x.key === pending[0].key && x.request ? { ...x, request: { ...x.request, status: 'answered' } } : x))} />
-              {pending.length > 1 && <div className="muted xsmall center">{pending.length - 1} more waiting after this one</div>}
+              {pending.length > 1 && pending.every(p => p.request?.id.startsWith('ask-')) ? <BatchReview threadId={id} requests={pending.map(p => p.request!)} onDone={load} /> : <>
+                <RequestCard key={pending[0].key} threadId={id} req={pending[0].request!} onDone={() => setItems(list => list && list.map(x => x.key === pending[0].key && x.request ? { ...x, request: { ...x.request, status: 'answered' } } : x))} />
+                {pending.length > 1 && <div className="muted xsmall center">{pending.length - 1} more waiting after this one</div>}
+              </>}
+
             </div>
           )}
           {canRun ? (

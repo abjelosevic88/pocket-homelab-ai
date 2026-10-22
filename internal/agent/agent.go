@@ -19,6 +19,7 @@ type Item struct {
 	Kind   string  `json:"kind"` // user | assistant | thinking | tool | todos | request | notice | turn
 	Text   string  `json:"text,omitempty"`
 	Images []Image `json:"images,omitempty"`
+	Files  []Image `json:"files,omitempty"`
 	// LogImages counts images that live only in the CLI's session file (a
 	// screenshot pasted in Paseo); the web app fetches them by item key.
 	LogImages int `json:"log_images,omitempty"`

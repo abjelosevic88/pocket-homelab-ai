@@ -85,6 +85,7 @@ export const ItemView = memo(function ItemView({ item, showThinking, threadId }:
         <div className={`msg user ${item.queued ? 'queued' : ''} ${item.unsent ? 'unsent' : ''}`} id={`item-${item.key}`}>
           <div className="bubble">
             {pics.length > 0 && <Images images={pics} />}
+            {item.files?.map(f => <a className="file-chip" key={f.id} href={f.url} download={f.name}>📄 {f.name}</a>)}
             {item.text && <div className="user-text">{item.text}</div>}
           </div>
           {item.queued && <div className="queued-tag"><Icon name="clock" size={11} />queued — sent when the agent is done</div>}

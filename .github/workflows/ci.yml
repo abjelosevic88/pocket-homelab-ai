@@ -23,6 +23,24 @@ jobs:
           go test ./...
       - name: Build binary
         run: CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o pocket-ai ./cmd/pocket-ai
+      - name: Mobile assistant regression suite
+        env:
+          ADMIN_EMAIL: browser-test@example.test
+          ADMIN_PASSWORD: browser-test-password
+          ADMIN_NAME: Browser Test
+          AI_TEST_BASE: http://127.0.0.1:8196
+        run: |
+          cd web && npx playwright install --with-deps chromium && cd ..
+          DATA_DIR=/tmp/pocket-ai-browser AUTH_MODE=local HOST=127.0.0.1 PORT=8196 \
+            BASE_URL=http://127.0.0.1:8196 CORE_URL= SECURE_COOKIES=false \
+            CLAUDE_BIN=/nonexistent/claude CODEX_BIN=/nonexistent/codex ./pocket-ai > /tmp/pocket-ai-browser.log 2>&1 &
+          browser_server_pid=$!
+          trap 'kill "$browser_server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8196/healthz >/dev/null; then break; fi
+            sleep 1
+          done
+          cd web && npm run test:mobile
       - name: Smoke test
         run: |
           DATA_DIR=/tmp/pt AUTH_MODE=none HOST=127.0.0.1 PORT=8195 ./pocket-ai &

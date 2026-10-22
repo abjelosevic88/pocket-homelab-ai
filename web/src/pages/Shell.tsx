@@ -16,6 +16,7 @@ import SchedulesPage from './SchedulesPage'
 import HistoryPage from './HistoryPage'
 import TodayPage from './TodayPage'
 import UsagePage from './UsagePage'
+import { BriefingPage, MemoryPage, ActionsPage, WorkflowsPage } from './AssistantPages'
 
 function typing(e: KeyboardEvent) {
   const t = e.target as HTMLElement | null
@@ -53,6 +54,7 @@ function ShellInner() {
 
   const commands = useMemo<PaletteCommand[]>(() => [
     { id: 'new', label: 'New thread', icon: 'plus', hint: 'C', run: () => navigate('/') },
+    ...['briefing', 'memory', 'actions', 'workflows'].map(path => ({ id: path, label: path[0].toUpperCase() + path.slice(1), icon: 'sparkles', run: () => navigate('/' + path) })),
     { id: 'recipes', label: 'Recipes', icon: 'zap', keywords: 'prompts saved', run: () => navigate('/recipes') },
     { id: 'schedules', label: 'Schedules', icon: 'clock', keywords: 'cron timer automatic', run: () => navigate('/schedules') },
     { id: 'history', label: 'On this server — CLI sessions', icon: 'history', keywords: 'import resume history claude codex', run: () => navigate('/history') },
@@ -82,6 +84,10 @@ function ShellInner() {
             <Route path="/schedules" element={<SchedulesPage onMenu={onMenu} />} />
             <Route path="/history" element={<HistoryPage onMenu={onMenu} />} />
             <Route path="/today" element={<TodayPage onMenu={onMenu} />} />
+            <Route path="/briefing" element={<BriefingPage onMenu={onMenu} />} />
+            <Route path="/memory" element={<MemoryPage onMenu={onMenu} />} />
+            <Route path="/actions" element={<ActionsPage onMenu={onMenu} />} />
+            <Route path="/workflows" element={<WorkflowsPage onMenu={onMenu} />} />
             <Route path="/usage" element={<UsagePage onMenu={onMenu} />} />
             <Route path="*" element={<HomePage onMenu={onMenu} />} />
           </Routes>

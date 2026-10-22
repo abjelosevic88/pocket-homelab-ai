@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { api, V1 } from '../lib/api'
 import type { AgentRequest } from '../lib/types'
 import { Icon } from './icons'
+import { ActionPreview } from './AppEvidence'
 import { Markdown } from './Markdown'
 import { Diff } from './ToolRow'
 import { errMsg, Spinner, useToast } from './ui'
@@ -111,7 +112,7 @@ export function RequestCard({ threadId, req, onDone }: { threadId: string; req: 
       {pv.command && <pre className="tool-pre cmd">$ {pv.command}</pre>}
       {pv.path && !pv.command && <div className="mono small ellipsis">{pv.path}</div>}
       {pv.diff && <div className="req-diff"><Diff text={pv.diff} /></div>}
-      {pv.rest && <pre className="tool-pre">{pv.rest.slice(0, 3000)}</pre>}
+      {req.id.startsWith('ask-') ? <ActionPreview input={req.input} /> : pv.rest && <pre className="tool-pre">{pv.rest.slice(0, 3000)}</pre>}
       {denying && <textarea autoFocus className="req-msg" placeholder="Optional: tell the agent why, or what to do instead" value={message} onChange={e => setMessage(e.target.value)} rows={2} />}
       <div className="req-actions">
         {denying ? <>

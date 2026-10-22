@@ -11,6 +11,7 @@ interface Attachment {
   lid: string
   name: string
   preview: string
+  image?: boolean
   progress: number
   upload?: Upload
   error?: string
@@ -85,12 +86,12 @@ export const Composer = React.forwardRef<ComposerHandle, {
   useEffect(() => { if (autoFocus && !isTouch()) ta.current?.focus() }, [autoFocus, draftKey])
 
   const addFiles = useCallback(async (files: File[]) => {
-    const imgs = files.filter(f => f.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|hei[cf])$/i.test(f.name))
-    if (imgs.length < files.length) toast('Only images can be attached', 'err')
+    const imgs = files.filter(f => f.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|hei[cf]|pdf|docx|xlsx|pptx|odt|ods|odp|txt|md|csv|tsv|json|xml)$/i.test(f.name))
+    if (imgs.length < files.length) toast('Attach images, PDF, Office documents, CSV or text', 'err')
     for (const raw of imgs) {
       const lid = 'a' + ++lidSeq
       const preview = URL.createObjectURL(raw)
-      setAtts(a => [...a, { lid, name: raw.name || 'image', preview, progress: 0 }])
+      setAtts(a => [...a, { lid, name: raw.name || 'image', image: raw.type.startsWith('image/'), preview, progress: 0 }])
       const file = await shrink(raw)
       if (file.size > MAX_BYTES) { setAtts(a => a.map(x => x.lid === lid ? { ...x, error: 'Too big (20 MB max)' } : x)); continue }
       const up = uploadWithProgress<Upload[] | Upload>(`${V1}/uploads`, 'file', [file], p => setAtts(a => a.map(x => x.lid === lid ? { ...x, progress: p } : x)))
@@ -211,7 +212,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
         <div className="att-row">
           {atts.map(a => (
             <div key={a.lid} className={`att ${a.error ? 'err' : ''}`} title={a.error || a.name}>
-              <img src={a.preview} alt={a.name} />
+              {a.image ? <img src={a.preview} alt={a.name} /> : <span className="attachment-file" title={a.name}>📄 {a.name}</span>}
               {!a.upload && !a.error && <div className="att-progress"><span style={{ height: `${Math.round((1 - a.progress) * 100)}%` }} /><Spinner size={16} /></div>}
               {a.error && <div className="att-error"><Icon name="alert" size={16} /></div>}
               <button type="button" className="att-x" aria-label={`Remove ${a.name}`} onClick={() => remove(a)}><Icon name="x" size={12} /></button>
@@ -222,7 +223,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
       <textarea ref={ta} rows={big ? 3 : 1} value={text} disabled={disabled} placeholder={placeholder} aria-label="Message"
         onChange={e => setText(e.target.value)} onKeyDown={onKey} onPaste={onPaste} enterKeyHint={isTouch() ? 'enter' : 'send'} />
       <div className="composer-bar">
-        <input ref={fileInput} type="file" accept="image/*" multiple hidden onChange={e => { addFiles(Array.from(e.target.files || [])); e.target.value = '' }} />
+        <input ref={fileInput} type="file" accept="image/*,.pdf,.docx,.xlsx,.pptx,.odt,.ods,.odp,.txt,.md,.csv,.tsv,.json,.xml" multiple hidden onChange={e => { addFiles(Array.from(e.target.files || [])); e.target.value = '' }} />
         <button type="button" className="btn ghost icon-only sm attach-btn" aria-label="Attach images" title="Attach images (or paste / drop them)" disabled={disabled} onClick={() => fileInput.current?.click()}><Icon name="plus" size={18} /></button>
         <div className="composer-extra">{footer}</div>
         {Speech && <button type="button" className={`btn ghost icon-only sm mic-btn ${listening ? 'rec' : ''}`} aria-label={listening ? 'Stop dictation' : 'Dictate'} title={listening ? 'Stop dictation' : 'Dictate'} disabled={disabled} onClick={toggleDictation}><Icon name="mic" size={17} /></button>}

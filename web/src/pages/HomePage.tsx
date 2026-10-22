@@ -7,7 +7,7 @@ import { shortPath } from '../lib/format'
 import type { ProviderId, Thread } from '../lib/types'
 import { RunningList } from '../components/RunningList'
 import { AgentPicker, type AgentValue, defaultsFor, ProviderToggle } from '../components/AgentPicker'
-import { Composer } from '../components/Composer'
+import { Composer, type ComposerHandle } from '../components/Composer'
 import { FolderButton } from '../components/FolderPicker'
 import { Icon } from '../components/icons'
 import { AskButton } from '../components/AskButton'
@@ -32,6 +32,16 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
   const canRun = !!user && (user.role === 'admin' || user.can_run)
   const [choice, setChoice] = useState<Choice | null>(null)
   const inited = useRef(false)
+  const [mode, setMode] = useState<'apps' | 'server'>('apps')
+  const [askModel, setAskModel] = useState('sonnet')
+  const [noMemory, setNoMemory] = useState(false)
+  const [connected, setConnected] = useState<boolean | null>(null)
+  const appComposer = useRef<ComposerHandle>(null)
+  useEffect(() => { api.get<{ connected: boolean }>(`${V1}/assistant/status`).then(v => setConnected(v.connected)).catch(() => setConnected(false)) }, [])
+  const askApps = async (text: string, uploadIds: string[]) => {
+    try { const t = await api.post<Thread>(`${V1}/ask/threads`, { text, model: askModel, no_memory: noMemory, upload_ids: uploadIds }); upsertThread(t); navigate(`/t/${t.id}`); return true }
+    catch (e) { toast(errMsg(e), 'err'); return false }
+  }
 
   // last choice wins, else the person's defaults
   useEffect(() => {
@@ -91,7 +101,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
           <div className="home-hero">
             <img src="/favicon.svg" alt="" width={46} height={46} />
             <h1>{greeting()}{user?.name ? `, ${user.name.split(' ')[0]}` : ''}</h1>
-            <p className="muted">What should we check, fix or build on the server?</p>
+            <p className="muted">{mode === 'apps' ? 'What would you like to know or get done in your apps?' : 'What should we check, fix or build on the server?'}</p>
           </div>
 
           {needYou.length > 0 && (
@@ -102,7 +112,13 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
             </div>
           )}
 
-          {!canRun ? (
+          <div className="home-mode" role="group" aria-label="Assistant mode"><button className={`btn ${mode === 'apps' ? 'primary' : ''}`} aria-pressed={mode === 'apps'} onClick={() => setMode('apps')}>Ask my apps</button><button className={`btn ${mode === 'server' ? 'primary' : ''}`} aria-pressed={mode === 'server'} onClick={() => setMode('server')}>Work on the server</button></div>
+          {mode === 'apps' ? <>
+            {connected === false && <div className="callout info">Connect Ask from any Pocket app first using its Ask button, then return here.</div>}
+            <Composer ref={appComposer} big draftKey="new-apps" onSend={askApps} placeholder="Ask about your money, notes, tasks, documents… or attach a receipt" footer={<div className="row wrap"><label className="row">Model <select aria-label="App assistant model" value={askModel} onChange={e => setAskModel(e.target.value)}><option value="haiku">Haiku</option><option value="sonnet">Sonnet</option><option value="opus">Opus</option></select></label><label className="row small"><input type="checkbox" checked={noMemory} onChange={e => setNoMemory(e.target.checked)} />Don’t use memory</label></div>} />
+            <div className="app-suggestions">{['What needs my attention today?', 'How much did I spend this month?', 'Find my car expenses without counting duplicates', 'Create a spending note in Quick Notes'].map(prompt => <button className="btn" key={prompt} onClick={() => { appComposer.current?.setText(prompt); appComposer.current?.focus() }}>{prompt}</button>)}</div>
+            <div className="row wrap home-shortcuts"><button className="btn ghost" onClick={() => navigate('/briefing')}>My briefing</button><button className="btn ghost" onClick={() => navigate('/workflows')}>Workflows</button><button className="btn ghost" onClick={() => navigate('/memory')}>Memory</button></div>
+          </> : !canRun ? (
             <div className="callout info"><Icon name="lock" size={15} /><span>Agents run with the server’s own account, so an admin has to allow you first (Settings → Users → “May run agents”). You can still look at usage and set things up.</span></div>
           ) : !choice ? null : (
             <>
@@ -121,7 +137,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
 
           <RunningList />
 
-          {canRun && (
+          {canRun && mode === 'server' && (
             <section className="home-sec">
               <div className="home-sec-h"><h2>Recipes</h2><button type="button" className="link-btn small" onClick={() => navigate('/recipes')}>{pinned.length ? 'All recipes' : 'Add some'}</button></div>
               {pinned.length === 0 ? (

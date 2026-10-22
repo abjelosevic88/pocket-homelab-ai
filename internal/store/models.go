@@ -61,6 +61,7 @@ type Usage struct {
 
 // Thread is one conversation with one agent.
 type Thread struct {
+	NoMemory          bool   `json:"no_memory"`
 	ID                string `json:"id"`
 	UserID            int64  `json:"-"`
 	Title             string `json:"title"`
@@ -113,14 +114,15 @@ type Item struct {
 
 // Upload is a file attached to a message.
 type Upload struct {
-	ID        string  `json:"id"`
-	UserID    int64   `json:"-"`
-	ThreadID  *string `json:"thread_id"`
-	Name      string  `json:"name"`
-	Mime      string  `json:"mime"`
-	Size      int64   `json:"size"`
-	Path      string  `json:"-"`
-	CreatedAt string  `json:"created_at"`
+	ExtractedText string  `json:"-"`
+	ID            string  `json:"id"`
+	UserID        int64   `json:"-"`
+	ThreadID      *string `json:"thread_id"`
+	Name          string  `json:"name"`
+	Mime          string  `json:"mime"`
+	Size          int64   `json:"size"`
+	Path          string  `json:"-"`
+	CreatedAt     string  `json:"created_at"`
 }
 
 // Recipe is a saved prompt.
