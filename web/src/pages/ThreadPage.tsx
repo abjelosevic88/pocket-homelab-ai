@@ -289,7 +289,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
               {t.source === 'rewind' && <div className="notice info"><Icon name="undo" size={14} /><span>Continued from an earlier message. <button type="button" className="link-btn" onClick={() => navigate(`/t/${t.source_ref}`)}>Open original conversation</button>. Files and app changes already made are unchanged.</span></div>}
               {t.source === 'import' && items.length > 0 && <div className="notice info"><Icon name="history" size={14} /><span>Imported from the server’s {providerName(t.provider)} history — sending a message continues that session.</span></div>}
               <Timeline key={id} threadId={t.provider === 'claude' ? id : undefined} items={visible} onResend={canSend ? resend : undefined} onDropUnsent={canSend ? dropUnsent : undefined} showThinking={!!settings?.show_thinking} streamingKey={streamingKey}
-                onFork={owner && t.source !== 'ask' && t.provider_session_id && canRun && !running ? forkNewTab : undefined}
+                onFork={owner && t.source !== 'ask' && t.provider_session_id && canRun ? forkNewTab : undefined}
                 onEdit={owner && canRun ? it => { setMessageDraft(it.text || ''); setEditMessage(it) } : undefined}
                 onRewind={owner && canRun ? it => { void rewind(it) } : undefined} rewindDisabled={rewindDisabled}
                 owner={sharedOwner} />

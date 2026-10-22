@@ -670,6 +670,22 @@ func (s *Server) handleFork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	// Forking at an earlier response = a private copy up to the next prompt.
+	var in struct {
+		After string `json:"after"`
+	}
+	_ = decode(r, &in)
+	if in.After != "" {
+		rows, err := s.store.ListItems(ctx, t.ID)
+		if err != nil {
+			s.fail(w, err, "read history")
+			return
+		}
+		if key := nextSentPrompt(rows, in.After); key != "" {
+			s.branchBefore(w, r, t, key, true)
+			return
+		}
+	}
 	n := &store.Thread{ID: uuid.NewString(), UserID: t.UserID, Title: "Fork of " + t.Title, Provider: t.Provider, AccountID: t.AccountID, Model: t.Model,
 		Effort: t.Effort, Mode: t.Mode, Speed: t.Speed, Cwd: t.Cwd, WorkspaceID: t.WorkspaceID, Source: "fork", SourceRef: "fork:" + t.ProviderSessionID}
 	if err := s.store.CreateThread(ctx, n); err != nil {

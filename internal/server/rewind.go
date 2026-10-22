@@ -37,6 +37,34 @@ func (s *Server) handleRewind(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 409, "stop the agent and clear queued messages before rewinding")
 		return
 	}
+	s.branchBefore(w, r, t, in.Key, false)
+}
+
+// nextSentPrompt is the first sent user message after a turn footer: forking
+// at that turn is a branch before it. "" = the turn is the latest one.
+func nextSentPrompt(rows []*store.Item, turnKey string) string {
+	seen := false
+	for _, row := range rows {
+		if !seen {
+			seen = row.Key == turnKey && row.Kind == "turn"
+			continue
+		}
+		if row.Kind != "user" {
+			continue
+		}
+		var it agent.Item
+		if json.Unmarshal(row.Data, &it) == nil && !it.Queued && !it.Unsent {
+			return it.Key
+		}
+	}
+	return ""
+}
+
+// branchBefore copies the conversation up to (not including) the user message
+// key into a new private thread. A rewind hands that message back as a draft;
+// a fork (at the response before it) only opens the copy, and may run while
+// the original keeps working: it never reads past an earlier, finished turn.
+func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.Thread, key string, fork bool) {
 	ctx := r.Context()
 	rows, err := s.store.ListItems(ctx, t.ID)
 	if err != nil {
@@ -52,7 +80,7 @@ func (s *Server) handleRewind(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, err, "read message")
 			return
 		}
-		if it.Key == in.Key {
+		if it.Key == key {
 			if it.Kind != "user" || it.Queued || it.Unsent {
 				writeErr(w, 400, "select a sent user message")
 				return
@@ -95,7 +123,7 @@ func (s *Server) handleRewind(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err != nil {
-			writeErr(w, 409, "Cannot rewind: "+err.Error())
+			writeErr(w, 409, map[bool]string{false: "Cannot rewind: ", true: "Cannot fork here: "}[fork]+err.Error())
 			return
 		}
 	}
@@ -103,6 +131,9 @@ func (s *Server) handleRewind(w http.ResponseWriter, r *http.Request) {
 		Provider: t.Provider, AccountID: t.AccountID, Model: t.Model, Effort: t.Effort, Mode: t.Mode, Speed: t.Speed,
 		Cwd: t.Cwd, WorkspaceID: t.WorkspaceID, NoMemory: t.NoMemory, ProviderSessionID: sid,
 		Source: "rewind", SourceRef: t.ID}
+	if fork {
+		n.Title, n.Source = "Fork of "+t.Title, "fork"
+	}
 	if t.Source == "ask" {
 		n.Source, n.SourceRef = t.Source, t.SourceRef
 	}
@@ -168,6 +199,16 @@ func (s *Server) handleRewind(w http.ResponseWriter, r *http.Request) {
 		if it.Kind == "user" {
 			n.LastPrompt = promptLine(it.Text, len(it.Images))
 		}
+	}
+	if fork {
+		if err := s.store.UpdateThread(ctx, n); err != nil {
+			s.fail(w, err, "fork")
+			return
+		}
+		complete = true
+		s.rt.publishThread(n)
+		writeJSON(w, http.StatusCreated, n)
+		return
 	}
 	if err := copyItem(target); err != nil {
 		s.fail(w, err, "copy attachment")
