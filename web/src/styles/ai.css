@@ -178,7 +178,14 @@
 .composer.disabled { opacity: .6; }
 .composer textarea { border: 0; box-shadow: none !important; background: transparent; resize: none; min-height: 0; padding: 12px 14px 4px; font-size: 15px; line-height: 1.5; max-height: 280px; }
 .composer.big textarea { min-height: 78px; font-size: 15.5px; }
-@media (max-width: 760px) { .composer textarea { font-size: 16px; } }
+@media (max-width: 760px) {
+  .composer textarea, .composer.big textarea { font-size: 16px; }
+  .keyboard-open .home-hero { display: none; }
+  .keyboard-open .home-inner { padding-top: 8px; padding-bottom: 12px; }
+  .keyboard-open .composer textarea { max-height: min(160px, calc(var(--app-h) * .35)); }
+  .keyboard-open .composer.big textarea { min-height: 56px; }
+  .keyboard-open .thread-bottom { padding-bottom: 6px; }
+}
 .composer-bar { display: flex; align-items: center; gap: 2px; padding: 4px 6px 6px; min-width: 0; }
 .composer-bar > .btn.ghost { color: var(--muted); }
 .composer-bar > .btn.ghost:hover { color: var(--text); }
