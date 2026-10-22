@@ -4,7 +4,7 @@ import type { ProviderId } from '../../lib/types'
 import { AgentPicker, ProviderToggle } from '../../components/AgentPicker'
 import { FolderButton } from '../../components/FolderPicker'
 import { Icon } from '../../components/icons'
-import { Field, Loading, SettingRow, Spinner } from '../../components/ui'
+import { Field, Loading, SettingRow, Spinner, noGrammarly } from '../../components/ui'
 import { Section, StatusDot, useSaveSettings } from './common'
 import { AccountsSection } from './Accounts'
 
@@ -47,7 +47,7 @@ export function AgentsTab() {
 
       <Section title="Extra instructions" sub="Added to the system prompt of every agent you start (both CLIs). Good for things like “Answer briefly. This is my home server; ask before restarting containers.”">
         <Field label="Instructions">
-          <textarea value={prompt} onChange={e => setPrompt(e.target.value)} rows={5} placeholder="Answer briefly…" />
+          <textarea {...noGrammarly} value={prompt} onChange={e => setPrompt(e.target.value)} rows={5} placeholder="Answer briefly…" />
         </Field>
         <div className="row mt-s"><button type="button" className="btn primary" disabled={prompt === (s.system_prompt || '')} onClick={() => save({ system_prompt: prompt }, 'Instructions saved')}>Save</button></div>
       </Section>

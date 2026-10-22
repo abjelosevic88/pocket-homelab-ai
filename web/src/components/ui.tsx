@@ -331,6 +331,10 @@ export function useContextMenu() {
   return { open, menu }
 }
 
+/** Spread on prompt fields: Grammarly's buttons and rewrites have no place in
+ *  instructions to an agent (it honours these opt-out attributes). */
+export const noGrammarly = { 'data-gramm': 'false', 'data-gramm_editor': 'false', 'data-enable-grammarly': 'false' } as const
+
 // ---------- misc ----------
 
 export async function copyText(text: string): Promise<boolean> {

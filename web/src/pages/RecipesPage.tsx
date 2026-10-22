@@ -9,7 +9,7 @@ import { FolderButton } from '../components/FolderPicker'
 import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
 import { useRunRecipe } from '../components/RecipeRunner'
-import { Confirm, Empty, errMsg, Field, Loading, MenuButton, Modal, Spinner, Switch, useAsync, useToast, type MenuItem, useContextMenu } from '../components/ui'
+import { Confirm, Empty, errMsg, Field, Loading, MenuButton, Modal, Spinner, Switch, useAsync, useToast, type MenuItem, useContextMenu, noGrammarly } from '../components/ui'
 
 type Draft = Omit<Recipe, 'id' | 'runs' | 'created_at' | 'updated_at' | 'sort_order'> & { id?: number; sort_order?: number }
 
@@ -114,7 +114,7 @@ function RecipeDialog({ draft, onClose, onSaved }: { draft: Draft; onClose: () =
           <Field label="Name" className="grow"><input autoFocus value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder="Server health check" /></Field>
         </div>
         <Field label="Prompt" help={<>Use <code>{'{{name}}'}</code> for something you fill in each time, e.g. “Why is <code>{'{{app}}'}</code> down?”.{vars.length > 0 && <> Asks for: <b>{vars.join(', ')}</b>.</>}</>}>
-          <textarea value={f.prompt} onChange={e => setF({ ...f, prompt: e.target.value })} rows={6} placeholder="Check disk space, memory, failed systemd units and unhealthy Docker containers. Summarise what needs attention." />
+          <textarea {...noGrammarly} value={f.prompt} onChange={e => setF({ ...f, prompt: e.target.value })} rows={6} placeholder="Check disk space, memory, failed systemd units and unhealthy Docker containers. Summarise what needs attention." />
         </Field>
         <Field label="Agent" group help="“My default” uses whatever is set in Settings → Agents when the recipe runs.">
           <AgentPicker allowDefault value={f} onChange={p => setF(x => ({ ...x, ...p }))} />
