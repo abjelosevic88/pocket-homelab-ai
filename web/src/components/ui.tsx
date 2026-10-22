@@ -76,7 +76,7 @@ export function useDismiss(ref: React.RefObject<HTMLElement | null>, onClose: ()
       const t = e.target as Element
       if (ref.current && !ref.current.contains(t) && !t.closest?.('[data-keep-open]')) cb.current()
     }
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); cb.current() } }
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape' && !(e.target as Element)?.closest?.('.select-pop')) { e.stopPropagation(); cb.current() } }
     const id = setTimeout(() => document.addEventListener('pointerdown', down, true), 0)
     document.addEventListener('keydown', key, true)
     return () => { clearTimeout(id); document.removeEventListener('pointerdown', down, true); document.removeEventListener('keydown', key, true) }

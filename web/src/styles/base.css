@@ -383,3 +383,16 @@ input.bare, textarea.bare { border-color: transparent; background: transparent; 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* Inventory-style searchable choices, including the small model pickers. */
+.select-caret { flex-shrink: 0; transition: transform .15s; }
+.select-trigger[aria-expanded="true"] .select-caret { transform: rotate(180deg); }
+.select-search { flex: 0 0 44px; }
+.select-search input { width: 100%; min-width: 0; }
+.select-list { min-height: 0; }
+.select-option .grow { min-width: 0; }
+@media (max-width: 720px) {
+  .select-trigger, .select-search input { font-size: 16px; }
+  .select-option { min-height: 40px; }
+  .select-option .opt-label { white-space: normal; overflow-wrap: anywhere; }
+}

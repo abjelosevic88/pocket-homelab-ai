@@ -50,6 +50,32 @@ try {
    const p = await c.newPage(), errors = []; p.on('pageerror', e => errors.push(e.message))
    async function overflow() { assert.equal(await p.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, `Overflow at ${width}: ${p.url()}`) }
    await p.goto(base + '/'); await p.getByRole('button', { name: 'Ask my apps', exact: true }).waitFor(); assert.equal(await p.getByRole('button', { name: 'Ask my apps', exact: true }).getAttribute('aria-pressed'), 'true')
+   // Every value picker, even a three-item model list, follows Inventory's
+   // searchable pattern. These choices stay local or hit workflow fixtures.
+   const modelPicker = p.getByRole('button', { name: 'App assistant model', exact: true })
+   await modelPicker.click()
+   let filter = p.getByRole('combobox', { name: 'Filter App assistant model', exact: true })
+   await filter.fill('not-a-model'); await p.getByRole('status').filter({ hasText: 'No matches' }).waitFor()
+   await filter.press('Escape'); assert.equal(await modelPicker.evaluate(e => document.activeElement === e), true)
+   await modelPicker.press('ArrowDown'); filter = p.getByRole('combobox', { name: 'Filter App assistant model', exact: true })
+   await filter.fill('oPu'); assert.equal(await p.getByRole('option').count(), 1)
+   if (width < 720) {
+    await p.evaluate(() => window.testViewport(375, 110)); await p.waitForTimeout(250)
+    const box = await p.locator('.select-pop').boundingBox(); assert(box && box.x >= 0 && box.x + box.width <= width && box.y >= 110 && box.y + box.height <= 486, JSON.stringify(box))
+    assert.equal(await filter.evaluate(e => getComputedStyle(e).fontSize), '16px')
+    await p.evaluate(() => window.testViewport(844)); await p.waitForTimeout(100)
+   }
+   await filter.press('Enter'); assert.match(await modelPicker.innerText(), /Opus/)
+   await modelPicker.click(); await p.getByRole('option', { name: 'Opus', exact: true }).waitFor()
+   assert.equal(await p.getByRole('option', { name: 'Opus', exact: true }).getAttribute('aria-selected'), 'true')
+   await p.getByRole('combobox').press('Tab'); assert.equal(await p.locator('.select-pop').count(), 0)
+   assert.equal(await p.locator('select').count(), 0)
+   await p.getByRole('button', { name: 'Work on the server', exact: true }).click()
+   for (const picker of await p.locator('.composer .select-trigger').all()) {
+    await picker.click(); await p.getByRole('combobox').fill('no-such-option'); await p.getByText('No matches', { exact: true }).waitFor(); await p.getByRole('combobox').press('Escape')
+    assert.equal(await picker.evaluate(e => document.activeElement === e), true)
+   }
+   await p.getByRole('button', { name: 'Ask my apps', exact: true }).click()
    await p.locator('.composer textarea').fill('H')
    if (width < 720) {
     await p.evaluate(() => window.testViewport(375, 110)); await p.waitForTimeout(200)
@@ -63,13 +89,23 @@ try {
     if (page === 'briefing') { await p.getByRole('link', { name: 'Open source' }).first().waitFor(); assert((await p.locator('.data-fields').count()) > 0) }
     if (page === 'memory') { await p.getByLabel('Name', { exact: true }).fill('My car'); await p.getByLabel('Preference', { exact: true }).fill('Use the Golf'); await p.getByRole('button', { name: 'Save preference', exact: true }).click(); await p.getByRole('button', { name: 'Forget', exact: true }).waitFor(); await p.getByRole('button', { name: 'Forget', exact: true }).click() }
     if (page === 'actions') { await p.locator('.app-call details > summary').first().click(); await p.getByText('Monthly spending', {exact:true}).first().waitFor() }
-    if (page === 'workflows') { await p.getByLabel('Name', { exact: true }).fill('Weekly spending'); await p.getByLabel('Instructions', { exact: true }).fill('Summarize spending'); await p.getByRole('button', { name: 'Create workflow', exact: true }).click(); await p.getByRole('button', { name: 'Run now', exact: true }).waitFor() }
+    if (page === 'workflows') {
+     const run = p.getByRole('button', { name: 'Run', exact: true })
+     await run.click(); const search = p.getByRole('combobox', { name: 'Filter Run', exact: true })
+     await search.fill('schedule'); await search.press('Enter'); await p.getByLabel('Schedule', { exact: false }).fill('daily 08:00')
+     await run.click(); await p.getByRole('combobox', { name: 'Filter Run', exact: true }).fill('new tasks'); await p.getByRole('option', { name: 'When new tasks appear', exact: true }).click()
+     await run.click(); await p.getByRole('combobox', { name: 'Filter Run', exact: true }).fill('press'); await p.getByRole('combobox').press('Enter')
+     const workflowModel = p.getByRole('button', { name: 'Workflow model', exact: true })
+     await workflowModel.click(); await p.getByRole('combobox').fill('hai'); await p.getByRole('combobox').press('Enter'); assert.match(await workflowModel.innerText(), /Haiku/)
+     await run.click(); if (screenshots && width === 390) { await p.waitForTimeout(200); await p.screenshot({ path: path.join(screenshots, `dropdown-${theme}.png`) }); } await p.getByRole('heading', { name: 'Workflows', exact: true }).click(); assert.equal(await p.locator('.select-pop').count(), 0)
+     assert.equal(await p.locator('select').count(), 0)
+     await p.getByLabel('Name' , { exact: true }).fill('Weekly spending'); await p.getByLabel('Instructions', { exact: true }).fill('Summarize spending'); await p.getByRole('button', { name: 'Create workflow', exact: true }).click(); await p.getByRole('button', { name: 'Run now', exact: true }).waitFor() }
     if (screenshots && width === 390) await p.screenshot({ path: path.join(screenshots, `${page}-${theme}.png`) })
    }
    await p.goto(base + '/t/fixture'); await p.locator('.batch-review').waitFor(); assert.equal(await p.locator('.md table').count(), 1); assert.equal(await p.evaluate(() => !!window.badMarkdown), false); assert.equal(await p.locator('a.file-chip').count(), 1)
    if(env.AI_TEST_DEBUG) { console.log(await p.evaluate(() => Object.fromEntries(['.app','.thread-page','.thread-bottom','.req-dock','.batch-review','.batch-review summary','.composer'].map(s => { const e=document.querySelector(s), r=e?.getBoundingClientRect();return [s,r?{top:r.top,bottom:r.bottom,scroll:e.scrollHeight,client:e.clientHeight}:null] })))); await p.screenshot({path:'/tmp/pocket-batch-debug.png'}) }
    await p.locator('.batch-review > summary').click(); await p.locator('.batch-review input[type=checkbox]').first().check(); await p.getByRole('button', { name: 'Allow 1 selected' }).click(); await p.waitForTimeout(150); assert.deepEqual(pending, ['ask-1']); await overflow()
-   assert.deepEqual(errors, []); summary.push({ width, theme, checks: 'home, keyboard, sources, memory, workflow, actions, markdown, attachment, selected approval, overflow' })
+   assert.deepEqual(errors, []); summary.push({ width, theme, checks: 'home, searchable dropdowns, keyboard, sources, memory, workflow, actions, markdown, attachment, selected approval, overflow' })
   } finally { await c.close() }
  }
  console.log(JSON.stringify(summary, null, 2))
