@@ -39,26 +39,36 @@ func (s *Server) linkRoutes(r chi.Router) {
 
 // linkUser authenticates an app acting for a person with threads:write.
 func (s *Server) linkUser(w http.ResponseWriter, r *http.Request) *store.User {
+	u, _ := s.linkCaller(w, r)
+	return u
+}
+
+// linkCaller is linkUser plus the app acting (its Core slug).
+func (s *Server) linkCaller(w http.ResponseWriter, r *http.Request) (*store.User, string) {
 	h := r.Header.Get("Authorization")
 	if !strings.HasPrefix(h, "Bearer pcx_") || !s.core.Configured() {
 		writeErr(w, http.StatusUnauthorized, "a Pocket Core app-link token is required")
-		return nil
+		return nil, ""
 	}
 	in, err := s.core.Introspect(r.Context(), strings.TrimPrefix(h, "Bearer "))
 	if err != nil || in == nil || !in.Active || !in.Delegated() || in.Audience != "ai" || !in.HasScope(ThreadsScope) || in.User == nil || in.User.Email == "" {
 		writeErr(w, http.StatusForbidden, "Pocket AI conversation link rejected")
-		return nil
+		return nil, ""
 	}
 	u, err := s.coreIdentityUser(r.Context(), in)
 	if err != nil {
 		s.fail(w, err, "resolve AI identity")
-		return nil
+		return nil, ""
 	}
 	if !u.MayRun() {
 		writeErr(w, http.StatusForbidden, "you may not run agents in Pocket AI yet; an admin has to allow it (Pocket AI → Settings → Users → “May run agents”)")
-		return nil
+		return nil, ""
 	}
-	return u
+	app := ""
+	if in.App != nil {
+		app = strings.ToLower(in.App.Slug)
+	}
+	return u, app
 }
 
 // readonlyModes is the mode of each provider that cannot change files.
@@ -615,4 +625,72 @@ func (s *Server) handleLinkPRs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// linkDraftOf loads a draft the calling app made for the person (another
+// app's conversations are not its business: 404).
+func (s *Server) linkDraftOf(w http.ResponseWriter, r *http.Request) (*store.User, *store.LinkDraft) {
+	u, app := s.linkCaller(w, r)
+	if u == nil {
+		return nil, nil
+	}
+	d, err := s.store.GetLinkDraft(r.Context(), u.ID, chi.URLParam(r, "draft"))
+	if err != nil || app == "" || d.Source != app {
+		writeErr(w, http.StatusNotFound, "no such conversation")
+		return nil, nil
+	}
+	return u, d
+}
+
+// dropDraftUploads removes the files of a draft that was never sent.
+func (s *Server) dropDraftUploads(ctx context.Context, d *store.LinkDraft) {
+	if d.ThreadID != nil {
+		return
+	}
+	for _, id := range d.UploadIDs {
+		if up, err := s.store.GetUpload(ctx, d.UserID, id); err == nil && up.ThreadID == nil {
+			s.removeUploadFile(up.Path)
+			_ = s.store.DeleteUpload(ctx, up.UserID, up.ID)
+		}
+	}
+}
+
+// handleLinkUnlink takes a conversation off the app's item (Projects:
+// "Remove from issue"); the conversation itself stays in Pocket AI.
+func (s *Server) handleLinkUnlink(w http.ResponseWriter, r *http.Request) {
+	u, d := s.linkDraftOf(w, r)
+	if d == nil {
+		return
+	}
+	s.dropDraftUploads(r.Context(), d)
+	if err := s.store.DeleteLinkDraft(r.Context(), u.ID, d.ID); err != nil {
+		s.fail(w, err, "unlink")
+		return
+	}
+	s.touch()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleLinkDelete deletes the conversation (stopping its agent) and the draft.
+func (s *Server) handleLinkDelete(w http.ResponseWriter, r *http.Request) {
+	u, d := s.linkDraftOf(w, r)
+	if d == nil {
+		return
+	}
+	ctx := r.Context()
+	if d.ThreadID != nil {
+		if t, err := s.store.GetThread(ctx, u.ID, *d.ThreadID); err == nil {
+			if err := s.deleteThread(ctx, t); err != nil {
+				s.fail(w, err, "delete conversation")
+				return
+			}
+		}
+	}
+	s.dropDraftUploads(ctx, d)
+	if err := s.store.DeleteLinkDraft(ctx, u.ID, d.ID); err != nil {
+		s.fail(w, err, "delete conversation")
+		return
+	}
+	s.touch()
+	w.WriteHeader(http.StatusNoContent)
 }

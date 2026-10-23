@@ -154,3 +154,10 @@ func (s *Store) GetThreadContext(ctx context.Context, threadID string) (*ThreadC
 	}
 	return &c, nil
 }
+
+// DeleteLinkDraft forgets a prepared conversation (the thread, if one was
+// started, stays unless the caller removes it).
+func (s *Store) DeleteLinkDraft(ctx context.Context, userID int64, id string) error {
+	_, err := s.DB.ExecContext(ctx, `DELETE FROM link_drafts WHERE id = ? AND user_id = ?`, id, userID)
+	return err
+}
