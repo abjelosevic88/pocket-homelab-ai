@@ -28,7 +28,7 @@ function greeting() {
 }
 
 export default function HomePage({ onMenu }: { onMenu?: () => void }) {
-  const { user, settings, providers, providersReady, accounts, workspaces, recipes, threads, upsertThread, running } = useApp()
+  const { status, user, settings, providers, providersReady, accounts, workspaces, recipes, threads, upsertThread, running } = useApp()
   const { toast } = useToast()
   const navigate = useNavigate()
   const ctx = useContextMenu()
@@ -37,7 +37,10 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
   const canRun = !!user && (user.role === 'admin' || user.can_run)
   const [choice, setChoice] = useState<Choice | null>(null)
   const inited = useRef(false)
-  const [mode, setMode] = useState<'apps' | 'server'>('apps')
+  const [picked, setMode] = useState<'apps' | 'server'>('apps')
+  // Ask my apps reads the person's Pocket apps through Pocket Core: without a Core it stays visible but greyed out
+  const coreOn = !!status?.core_configured
+  const mode = coreOn ? picked : 'server'
   const [askModel, setAskModel] = useState('sonnet')
   const [askAccount, setAskAccount] = useState<number | null>(null) // null = my default Claude account
   const askAccounts = accountOptions(accounts, 'claude')
@@ -128,9 +131,10 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
           )}
 
           <div className="home-mode" role="group" aria-label="Assistant mode">
-            <button type="button" aria-pressed={mode === 'apps'} onClick={() => setMode('apps')}><Icon name="sparkles" size={15} />Ask my apps</button>
+            <button type="button" aria-pressed={mode === 'apps'} aria-disabled={!coreOn || undefined} title={coreOn ? undefined : 'Needs Pocket Core'} onClick={() => coreOn && setMode('apps')}><Icon name="sparkles" size={15} />Ask my apps</button>
             <button type="button" aria-pressed={mode === 'server'} onClick={() => setMode('server')}><Icon name="terminal" size={15} />Work on the server</button>
           </div>
+          {!coreOn && <p className="core-hint">Ask my apps needs Pocket Core. Pocket Core connects your Pocket apps to each other and to your services: one sign-in for everyone, each person's own accounts, nothing to copy or paste. Set CORE_URL to connect this app. <a href="https://github.com/abjelosevic88/pocket-homelab-core" target="_blank" rel="noreferrer">Learn more</a></p>}
           {mode === 'apps' ? <>
             {connected === false && <div className="callout info ask-connect"><Icon name="sparkles" size={15} />
               <span className="grow">Ask reads your Pocket apps as you, so connect it once: sign in to Pocket Core in the panel and approve.</span>

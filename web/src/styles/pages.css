@@ -158,6 +158,10 @@
 .home-mode button { display:flex; align-items:center; justify-content:center; gap:7px; min-width:0; min-height:34px; padding:0 14px; border:1px solid transparent; border-radius:10px; background:transparent; color:var(--muted); font-size:13px; font-weight:500; cursor:pointer; transition:background .15s,color .15s; }
 .home-mode button[aria-pressed="true"] { background:var(--surface); color:var(--accent-ink); border-color:var(--border); box-shadow:0 1px 3px #00000008; }
 .home-mode button:hover { color:var(--text); }
+.home-mode button[aria-disabled="true"] { opacity:.45; cursor:not-allowed; }
+.home-mode button[aria-disabled="true"]:hover { color:var(--muted); }
+.core-hint { justify-self:center; max-width:560px; margin:0; font-size:12.5px; line-height:1.45; color:var(--muted); text-align:center; }
+.core-hint a { color:inherit; text-decoration:underline; }
 .home-mode .icon,.app-suggestions .icon,.home-shortcuts .icon { flex-shrink:0; }
 .app-suggestions { display:flex; justify-content:center; flex-wrap:wrap; gap:8px; margin:2px 0 0; }
 .app-suggestions button { display:flex; align-items:center; gap:8px; min-height:36px; padding:7px 12px; border:1px solid var(--border); border-radius:12px; background:transparent; color:var(--muted); font-size:12.5px; font-weight:400; text-align:left; cursor:pointer; transition:background .15s,color .15s,border-color .15s; }
