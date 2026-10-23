@@ -70,7 +70,7 @@ func TestLinkDraftAuth(t *testing.T) {
 	body := []byte(`{"cwd":"` + root + `","text":"look","source":"projects","ref":"AS-2"}`)
 	for _, token := range []string{"", personal.token, "pcx_wrong_scope", "pcx_wrong_audience", "pcx_not_delegated", "pcx_revoked"} {
 		c := &client{t: t, h: h, token: token}
-		for _, rq := range []struct{ m, p string }{{"POST", "/api/v1/link/drafts"}, {"GET", "/api/v1/link/agent-options"}, {"GET", "/api/v1/link/threads?source=projects&ref=AS-2"}} {
+		for _, rq := range []struct{ m, p string }{{"POST", "/api/v1/link/drafts"}, {"GET", "/api/v1/link/agent-options"}, {"GET", "/api/v1/link/threads?source=projects&ref=AS-2"}, {"GET", "/api/v1/link/dirs"}} {
 			code, b := c.do(rq.m, rq.p, "application/json", body)
 			if code != 401 && code != 403 {
 				t.Fatalf("%q bypassed %s: %d %s", token, rq.p, code, b)
@@ -198,4 +198,31 @@ func mustThread(t *testing.T, s *Server, uid int64, id string) *store.Thread {
 		t.Fatal(err)
 	}
 	return th
+}
+
+func TestLinkDirs(t *testing.T) {
+	s, h, root := testServer(t)
+	person(t, s, h, "link@example.test", "member", true)
+	linkCore(t, s, map[string]string{"pcx_valid": "link@example.test"})
+	for _, d := range []string{"repo/.git", "notes", ".hidden"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app := &client{t: t, h: h, token: "pcx_valid"}
+	var out dirListing
+	app.want("GET", "/api/v1/link/dirs", nil, 200, &out)
+	names := map[string]bool{}
+	for _, d := range out.Dirs {
+		names[d.Name] = d.Git
+	}
+	if out.Path != root || !names["repo"] {
+		t.Fatalf("home listing: %+v", out)
+	}
+	if _, ok := names[".hidden"]; ok {
+		t.Fatalf("hidden folder listed: %+v", out)
+	}
+	if code, b := app.call("GET", "/api/v1/link/dirs?path=/etc", nil); code != 400 {
+		t.Fatalf("outside roots listed: %d %s", code, b)
+	}
 }

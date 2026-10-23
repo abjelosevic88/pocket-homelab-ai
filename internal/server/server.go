@@ -199,6 +199,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/link/agent-options", s.handleLinkAgentOptions)
 		r.Post("/link/drafts", s.handleLinkCreateDraft)
 		r.Get("/link/threads", s.handleLinkThreads)
+		r.Get("/link/dirs", s.handleLinkDirs)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
