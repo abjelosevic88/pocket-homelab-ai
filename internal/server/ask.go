@@ -298,7 +298,7 @@ func (s *Server) preparePocketTools(ctx context.Context, t *store.Thread, sink *
 					scope += " " + source.App + " " + source.Title
 				}
 			}
-			result = scopedCatalog(list.Tools, scope)
+			result = withLinkedAppTools(scopedCatalog(list.Tools, scope), list.Tools, t)
 		case "tools/call":
 			result = s.callPocketTool(r.Context(), ctx, t, sink, tools, rpc.Params)
 

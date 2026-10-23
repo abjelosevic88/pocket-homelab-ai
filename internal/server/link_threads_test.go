@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -239,5 +240,49 @@ func TestLinkDirs(t *testing.T) {
 	}
 	if code, b := app.call("GET", "/api/v1/link/dirs?path=/etc", nil); code != 400 {
 		t.Fatalf("outside roots listed: %d %s", code, b)
+	}
+}
+
+func TestLinkedAppToolsSurviveShortPrompts(t *testing.T) {
+	all := []askTool{}
+	for i := 0; i < 40; i++ { // a large catalog, so the prompt's words pick the tools
+		all = append(all, askTool{Name: fmt.Sprintf("pocket_money_tool_%d", i), Description: "money"})
+	}
+	all = append(all, askTool{Name: "pocket_projects_comment", Description: "Comment on an issue"}, askTool{Name: "pocket_projects_link_pr", Description: "Link a pull request"})
+	names := func(v any) map[string]bool {
+		out := map[string]bool{}
+		for _, x := range v.(map[string]any)["tools"].([]askTool) {
+			out[x.Name] = true
+		}
+		return out
+	}
+	linked := names(withLinkedAppTools(scopedCatalog(all, "ye"), all, &store.Thread{Source: "link:projects"}))
+	if !linked["pocket_projects_comment"] || !linked["pocket_projects_link_pr"] {
+		t.Fatalf("link:projects thread lost its ticket tools: %v", linked)
+	}
+	plain := names(withLinkedAppTools(scopedCatalog(all, "ye"), all, &store.Thread{Source: "web"}))
+	if plain["pocket_projects_link_pr"] {
+		t.Fatalf("ordinary thread got app tools forced in: %v", plain)
+	}
+}
+
+func TestThreadPRsFromCreateCommands(t *testing.T) {
+	s, h, _ := testServer(t)
+	_, user := person(t, s, h, "link@example.test", "member", true)
+	th := &store.Thread{ID: "t-prs", UserID: user.ID, Provider: "claude", Source: "link:projects", SourceRef: "AS-4", Cwd: t.TempDir()}
+	if err := s.store.CreateThread(t.Context(), th); err != nil {
+		t.Fatal(err)
+	}
+	created := `{"tool":{"name":"Bash","input":{"command":"git commit -q -am \"fix\" && gh pr create --base development --fill"}},"output":"https://github.com/athenastudioAI/athena/pull/3980\n"}`
+	listed := `{"tool":{"name":"Bash","input":{"command":"gh pr list"}},"output":"https://github.com/athenastudioAI/athena/pull/3947 open"}`
+	forgejo := `{"tool":{"name":"Bash","input":{"command":"tea pr create --title x"}},"output":"https://git.bjelke.org/me/app/pulls/12"}`
+	for i, d := range []string{created, listed, forgejo} {
+		if _, err := s.store.UpsertItem(t.Context(), th.ID, fmt.Sprintf("k%d", i), "tool", []byte(d), ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := s.threadPRs(t.Context(), th.ID)
+	if len(got) != 2 || got[0] != "https://github.com/athenastudioAI/athena/pull/3980" || got[1] != "https://git.bjelke.org/me/app/pulls/12" {
+		t.Fatalf("prs: %v", got)
 	}
 }
