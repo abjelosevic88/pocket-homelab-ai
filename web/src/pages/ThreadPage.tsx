@@ -17,6 +17,7 @@ import { AskButton } from '../components/AskButton'
 import { BatchReview, ThreadEvidence } from '../components/AppEvidence'
 import { RequestCard } from '../components/RequestCard'
 import { Select } from '../components/Select'
+import { ThreadRefChip } from '../components/ThreadRefChip'
 import { Timeline } from '../components/Timeline'
 import { PrivacyBadge, ShareDialog } from '../components/ShareDialog'
 import { accessOf } from '../lib/share'
@@ -272,6 +273,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
           <div className="thread-sub">
             <PrivacyBadge thread={t} access={access} onShare={owner ? () => setSharing(true) : undefined} />
             <ProviderBadge provider={t.provider} size="xs" />
+            <ThreadRefChip threadId={t.id} source={t.source} />
             <span className="ellipsis mono" title={t.cwd}>{shortPath(t.cwd)}</span>
             {canRun && t.source !== 'ask' && t.cwd && <BranchButton cwd={t.cwd} className="btn ghost" refreshKey={`${id}:${t.status}`}
               lockedReason={running || t.status === 'waiting' || t.external || t.subagents?.length ? 'The agent is working in this folder — switch once it is done.' : undefined} />}

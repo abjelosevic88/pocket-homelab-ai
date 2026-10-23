@@ -195,6 +195,10 @@ func (s *Server) Router() http.Handler {
 		r.Post("/client-error", s.handleClientError)
 		r.Post("/inference", s.handleInference)
 		r.Get("/inference/models", s.handleInference)
+		// Conversations other Pocket apps prepare for a person: link_threads.go.
+		r.Get("/link/agent-options", s.handleLinkAgentOptions)
+		r.Post("/link/drafts", s.handleLinkCreateDraft)
+		r.Get("/link/threads", s.handleLinkThreads)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
@@ -216,6 +220,8 @@ func (s *Server) Router() http.Handler {
 			s.historyRoutes(r)
 			// More Claude Code / Codex logins: accounts.go.
 			s.accountRoutes(r)
+			// Drafts other Pocket apps prepared: link_threads.go.
+			s.linkRoutes(r)
 
 			r.Get("/users", s.handleListUsers)
 			r.Post("/users", s.handleCreateUser)
@@ -370,7 +376,8 @@ func (s *Server) registerWithCore(ctx context.Context) error {
 		Icon:        "/favicon.svg", Version: Version,
 		URL: s.cfg.CoreAppURL, PublicURL: s.cfg.BaseURL, HealthPath: "/healthz", EnvPrefix: "AI",
 		Publishes: []string{"ai.turn_finished", "ai.needs_input", "ai.schedule_attention"},
-		Offers:    []core.Offer{{Scope: core.InferenceScope, Name: "Generate text", Description: "Text-only generation with your Pocket AI account; no tools or conversation access"}},
+		Offers: []core.Offer{{Scope: core.InferenceScope, Name: "Generate text", Description: "Text-only generation with your Pocket AI account; no tools or conversation access"},
+			{Scope: ThreadsScope, Name: "Start coding conversations", Description: "Prepare a conversation with Claude Code or Codex in a folder on this server; you read the prompt and press send yourself"}},
 	}
 	if s.cfg.BaseURL != "" {
 		m.OIDC = &core.OIDCRequest{RedirectURIs: []string{s.cfg.BaseURL + "/api/v1/auth/oidc/callback"}}

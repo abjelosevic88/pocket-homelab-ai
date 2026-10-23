@@ -41,3 +41,17 @@ History: Claude Code sessions are read from `~/.claude/projects/*/*.jsonl`; Code
 A schedule creates a thread with the prompt plus an instruction to begin the final answer with `OK: …` or
 `ATTENTION: …`; the first line decides `last_status` (anything else counts as attention) and whether to notify.
 Specs: `every 30m`, `hourly`, `daily 08:00`, `weekdays 08:00`, `weekly mon,thu 08:00`, or five-field cron.
+
+## Conversations other apps prepare (Core link `threads:write`)
+
+Another Pocket app (Pocket Projects: "Investigate AS-2 in the code") acts for a person through a Pocket Core link with the `threads:write` scope (offered in the manifest, switched on by the admin in Core). It can only leave a **draft**: the person opens it, reads (and may edit) the prompt and presses send. The person must be allowed to run agents (admin or `can_run`).
+
+App side (Bearer `pcx_…`, audience `ai`, delegated, scope `threads:write`; `internal/server/link_threads.go`):
+
+- `GET /api/v1/link/agent-options` → `{providers:[{id,name,available,error,models:[{id,name,efforts}],efforts,modes:[{id,name,description}],readonly_mode,default_model,default_effort,default_mode,default_account_id}], accounts:[{id,provider,label,signed_in}], workspaces:[{name,path}], default_provider, home, roots}`. Account 0 is the server's own login; `readonly_mode` is `plan` (Claude) / `read-only` (Codex).
+- `POST /api/v1/link/drafts` `{provider?, account_id?, model?, effort?, mode?, cwd, title, text, system?, source, ref, ref_url?, ref_label?}` → 201 `{id, url}` (`url` = `BASE_URL/?draft=<id>`). `cwd` (absolute or `~/…`) must exist inside ROOTS; `system` ≤ 64 KB is hidden context.
+- `GET /api/v1/link/threads?source=&ref=` → `[{draft_id, thread_id, title, status, url, created_at, updated_at}]`, the person's own only, newest first; `status` is `draft` until sent, then the thread's (`idle|running|waiting|error`), `deleted` when the thread is gone.
+
+Person side (session): `GET /api/v1/drafts/{id}` (owner only), `POST /api/v1/drafts/{id}/start` (what the composer has; empty fields fall back to the draft; 409 `{thread_id}` once started) → thread with `source` `link:<app>`, `source_ref` = ref. `GET /api/v1/threads/{id}/context` → `{source, ref, ref_url, ref_label}` for the header chip.
+
+The draft's `system` is stored in `thread_context` and appended to the system prompt on every start and resume (Claude `--append-system-prompt`, Codex `developerInstructions`). The first start happens inside `createThread`, before the thread id is known to the handler, so the draft is handed over through an in-process map keyed by person/source/ref under a mutex.
