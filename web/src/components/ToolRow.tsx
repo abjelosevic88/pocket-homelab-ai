@@ -66,15 +66,6 @@ export const ToolRow = memo(function ToolRow({ tool }: { tool: ToolInfo }) {
   const rawTitle = command ? shellLabel(tool.input) : tool.title || path || tool.name
   const title = rawTitle.startsWith(tool.name + ' ') ? rawTitle.slice(tool.name.length + 1) : rawTitle
   const shownName = kind === 'bash' ? 'Shell' : label
-  const restInput = (() => {
-    if (kind === 'bash' && command) {
-      const o = { ...(tool.input as Record<string, unknown>) }
-      delete o.command; delete o.cmd; delete o.description
-      return Object.keys(o).length ? str(o) : ''
-    }
-    if ((kind === 'edit' || kind === 'write') && tool.diff) return ''
-    return str(tool.input)
-  })()
   return (
     <div className={`tool ${status} ${open ? 'open' : ''}`}>
       <button type="button" className="tool-head" onClick={() => setOpen(o => !o)} aria-expanded={open}>
@@ -88,16 +79,37 @@ export const ToolRow = memo(function ToolRow({ tool }: { tool: ToolInfo }) {
         </span>
         <Icon name="chevron-down" size={14} className="tool-caret" />
       </button>
-      {open && (
-        <div className="tool-body">
-          {friendly && <div className="muted xsmall tool-raw-name">{tool.name}</div>}
-          {command && <div className="tool-sec"><pre className="tool-pre cmd">$ {command}</pre></div>}
-          {tool.diff && <div className="tool-sec"><div className="tool-sec-h"><span>{path || 'Changes'}</span></div><Diff text={tool.diff} /></div>}
-          {restInput && <Clip text={restInput} label="Input" />}
-          <Clip text={tool.output} label={status === 'error' ? 'Error' : 'Output'} />
-          {!tool.output && status === 'running' && <div className="muted xsmall">Running…</div>}
-        </div>
-      )}
+      {open && <ToolBody tool={tool} />}
     </div>
   )
 })
+
+/** What a call did: its command (or file and diff, or input) and its output. */
+export function ToolBody({ tool, className = 'tool-body' }: { tool: ToolInfo; className?: string }) {
+  const kind = tool.kind || 'other'
+  const label = toolLabel(tool)
+  const friendly = label !== tool.name
+  const status = tool.status || 'done'
+  const command = kind === 'bash' ? field(tool.input, 'command', 'cmd') : ''
+  const path = field(tool.input, 'file_path', 'path', 'notebook_path')
+  const restInput = (() => {
+    if (kind === 'bash' && command) {
+      const o = { ...(tool.input as Record<string, unknown>) }
+      delete o.command; delete o.cmd; delete o.description
+      return Object.keys(o).length ? str(o) : ''
+    }
+    if ((kind === 'edit' || kind === 'write') && tool.diff) return ''
+    return str(tool.input)
+  })()
+  return (
+    <div className={className}>
+      {friendly && <div className="muted xsmall tool-raw-name">{tool.name}</div>}
+      {command && <div className="tool-sec"><pre className="tool-pre cmd">$ {command}</pre></div>}
+      {!command && !tool.diff && path && <div className="tool-sec"><div className="tool-sec-h"><span>{tool.name} · {path}</span></div></div>}
+      {tool.diff && <div className="tool-sec"><div className="tool-sec-h"><span>{path || 'Changes'}</span></div><Diff text={tool.diff} /></div>}
+      {restInput && <Clip text={restInput} label="Input" />}
+      <Clip text={tool.output} label={status === 'error' ? 'Error' : 'Output'} />
+      {!tool.output && status === 'running' && <div className="muted xsmall">Running…</div>}
+    </div>
+  )
+}

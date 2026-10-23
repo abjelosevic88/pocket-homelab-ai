@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { Item, ToolInfo } from '../lib/types'
 import { Icon } from './icons'
-import { ToolRow } from './ToolRow'
+import { ToolBody } from './ToolRow'
 import { Spinner } from './ui'
 
 const RUN_ICON: Record<string, string> = { bash: 'terminal', edit: 'file-edit', write: 'file-edit', read: 'file', search: 'search', web: 'globe', task: 'bot', mcp: 'layers', other: 'wrench' }
@@ -43,8 +43,9 @@ export function ToolActivity({ items }: { items: Item[] }) {
         <span className="tool-name">{runSummary(tools)}</span>
         <Icon name="chevron-down" size={14} className="tool-caret" />
       </button>
+      {/* one layer: the commands and their output, straight away */}
       {open && <div className="tool-run-body">
-        {items.map(item => <div key={item.key} id={items.length > 1 ? `item-${item.key}` : undefined}><ToolRow tool={item.tool!} /></div>)}
+        {items.map(item => <div key={item.key} id={items.length > 1 ? `item-${item.key}` : undefined} className="tool-run-call"><ToolBody tool={item.tool!} className="tool-run-detail" /></div>)}
       </div>}
     </div>
   )
