@@ -104,3 +104,6 @@
 .home.embed-draft .composer textarea { flex: 1; max-height: none; }
 .embed-starting { display: grid; place-items: center; height: 100%; }
 html.pai-embedded pocket-ask-launcher { display: none !important; }
+/* Embedded: thin scrollbars that show only while the panel is hovered */
+.app.embedded { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.app.embedded:hover { scrollbar-color: color-mix(in srgb, var(--text) 22%, transparent) transparent; }
