@@ -3,6 +3,7 @@ package agent
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -114,13 +115,15 @@ type rpcReply struct {
 	Err    error
 }
 
-func startRPC(bin, cwd string, env []string) (*rpc, error) {
+func startRPC(bin, cwd string, env []string, remote ...*Remote) (*rpc, error) {
 	if bin == "" {
 		bin = "codex"
 	}
-	cmd := exec.Command(bin, "app-server")
-	cmd.Dir = cwd
-	cmd.Env = append(os.Environ(), env...)
+	var r *Remote
+	if len(remote) > 0 {
+		r = remote[0]
+	}
+	cmd := Command(r, cwd, env, bin, "app-server")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	c := &rpc{cmd: cmd, calls: map[int64]chan rpcReply{}, done: make(chan struct{}), errb: &tail{n: 8 << 10}}
 	c.qcond = sync.NewCond(&c.qmu)
@@ -291,7 +294,7 @@ var Version = "dev"
 
 // StartCodex starts `codex app-server` and opens (or resumes, or forks) a thread.
 func StartCodex(ctx context.Context, o Options, sink Sink) (Session, error) {
-	c, err := startRPC(o.Bin, o.Cwd, o.Env)
+	c, err := startRPC(o.Bin, o.Cwd, o.Env, o.Remote)
 	if err != nil {
 		return nil, err
 	}
@@ -397,7 +400,16 @@ func (s *codexSession) Send(in Input) error {
 	}
 	input = append(input, map[string]any{"type": "text", "text": text})
 	for _, im := range in.Images {
-		input = append(input, map[string]any{"type": "localImage", "path": im.Path})
+		if s.opts.Remote == nil {
+			input = append(input, map[string]any{"type": "localImage", "path": im.Path})
+			continue
+		}
+		// the file is here, the agent is not: send the picture itself
+		data, err := os.ReadFile(im.Path)
+		if err != nil {
+			return fmt.Errorf("read image: %w", err)
+		}
+		input = append(input, map[string]any{"type": "image", "url": "data:" + im.Mime + ";base64," + base64.StdEncoding.EncodeToString(data)})
 	}
 	params := map[string]any{"threadId": s.threadID, "input": input}
 	s.mu.Lock()

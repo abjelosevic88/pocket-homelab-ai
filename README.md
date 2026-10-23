@@ -40,6 +40,10 @@ Personal app assistance: [Briefing, workflows, memory, sources and document uplo
   in its own folder, sharing your settings and skills), pick the account per thread next to the model, and
   switch mid-thread when one hits its limit; the conversation is moved over and carries on. Limits show per
   account.
+- **Other machines**, like Paseo's hosts: add a server in Settings → Agents → Servers (any machine this server
+  can `ssh` into without a password, a tailnet name works) and pick it next to the folder when you start a
+  thread. The CLI runs there with that machine's own login; folders and git branches are browsed over ssh, and
+  the conversation lives here as usual. Nothing to install there but Claude Code and/or Codex.
 - Every thread is a real CLI session: it resumes after a restart, and **On this server** lists the sessions you
   started in a terminal (or in another tool) so you can open and continue them here.
 

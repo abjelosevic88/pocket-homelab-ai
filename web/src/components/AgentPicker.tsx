@@ -88,11 +88,15 @@ export function ProviderToggle({ value, onChange, allowDefault = false }: { valu
 }
 
 /** Model, effort and mode for a chosen provider — a form block or a compact chip row. */
-export function AgentPicker({ value, onChange, allowDefault = false, compact = false, showProvider = true }: { value: AgentValue; onChange: (patch: Partial<AgentValue>) => void; allowDefault?: boolean; compact?: boolean; showProvider?: boolean }) {
+export function AgentPicker({ value, onChange, allowDefault = false, compact = false, showProvider = true, noAccount = false }: {
+  value: AgentValue; onChange: (patch: Partial<AgentValue>) => void; allowDefault?: boolean; compact?: boolean; showProvider?: boolean
+  /** runs on another machine, with that machine's own login */
+  noAccount?: boolean
+}) {
   const { providers, settings, accounts } = useApp()
   const pid = (value.provider || settings?.default_provider || 'claude') as ProviderId
   const p = providers.find(x => x.id === pid)
-  const accts = allowDefault ? [] : accountOptions(accounts, pid)
+  const accts = allowDefault || noAccount ? [] : accountOptions(accounts, pid)
   const models = modelOptions(p, allowDefault)
   const efforts = effortOptions(p, value.model, allowDefault)
   const modes = modeOptions(p, allowDefault)

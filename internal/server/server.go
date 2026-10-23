@@ -223,6 +223,8 @@ func (s *Server) Router() http.Handler {
 			s.historyRoutes(r)
 			// More Claude Code / Codex logins: accounts.go.
 			s.accountRoutes(r)
+			// Other machines agents run on over ssh: hosts.go.
+			s.hostRoutes(r)
 			// Drafts other Pocket apps prepared: link_threads.go.
 			s.linkRoutes(r)
 

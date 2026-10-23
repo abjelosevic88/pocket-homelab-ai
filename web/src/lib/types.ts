@@ -29,6 +29,28 @@ export type NotifyKind = 'apprise' | 'ntfy' | 'webhook'
 export interface AgentDefaults { model: string; effort: string; mode: string; speed?: string; account_id?: number }
 
 /** A Claude Code / Codex login on the server. id 0 = the server's own login. */
+/** Another machine agents run on, reached over ssh from the server. */
+export interface Host {
+  id: number
+  name: string
+  /** ssh destination: a Host from ~/.ssh/config or user@host */
+  target: string
+  port: number
+  claude_bin: string
+  codex_bin: string
+  info: {
+    ok: boolean
+    error?: string
+    home?: string
+    os?: string
+    hostname?: string
+    versions?: Partial<Record<ProviderId, string>>
+    missing?: Partial<Record<ProviderId, string>>
+    checked_at?: string
+  }
+  created_at: string
+}
+
 export interface Account {
   id: number
   provider: ProviderId
@@ -132,6 +154,8 @@ export interface Thread {
   provider: ProviderId
   /** The login it runs on (0 = the server's own). */
   account_id: number
+  /** The machine it runs on (0 = this server, else a Host). */
+  host_id: number
   model: string
   effort: string
   mode: string

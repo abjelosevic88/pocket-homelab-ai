@@ -265,6 +265,7 @@
 .thread-title { font-size: 15.5px; font-weight: 650; cursor: text; display: flex; align-items: center; gap: 6px; }
 .pin-ico { color: var(--accent); }
 .title-input { height: 30px; font-size: 15px; font-weight: 600; }
+.thread-sub .host-chip { display: inline-flex; align-items: center; gap: 4px; flex: none; height: 20px; padding: 0 7px; border-radius: 6px; background: var(--surface-3); color: var(--text-2); font-weight: 600; }
 .thread-sub { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--muted); min-width: 0; }
 .thread-sub .mono { font-size: 11.5px; }
 .thread-head-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }

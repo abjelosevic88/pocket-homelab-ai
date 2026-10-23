@@ -67,6 +67,7 @@ type Thread struct {
 	Title             string `json:"title"`
 	Provider          string `json:"provider"`
 	AccountID         int64  `json:"account_id"` // 0 = the server's own login
+	HostID            int64  `json:"host_id"`    // 0 = this server, else the machine it runs on over ssh
 	Model             string `json:"model"`
 	Effort            string `json:"effort"`
 	Mode              string `json:"mode"`

@@ -185,7 +185,9 @@ type Options struct {
 	Fork         bool   // continue ResumeID under a new id
 	SystemPrompt string
 	Env          []string
-	Log          *slog.Logger
+	// Remote: run the CLI on another machine over ssh (nil = this server).
+	Remote *Remote
+	Log    *slog.Logger
 }
 
 // Session is a live CLI process attached to one thread.

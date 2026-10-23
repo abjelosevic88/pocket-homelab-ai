@@ -115,9 +115,7 @@ func StartClaude(ctx context.Context, o Options, sink Sink) (Session, error) {
 		}
 		args = append(args, flag, o.SystemPrompt)
 	}
-	cmd := exec.Command(bin, args...)
-	cmd.Dir = o.Cwd
-	cmd.Env = append(os.Environ(), o.Env...)
+	cmd := Command(o.Remote, o.Cwd, o.Env, bin, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	s := &claudeSession{opts: o, sink: sink, cmd: cmd, done: make(chan struct{}), errb: &tail{n: 8 << 10},
 		pending: map[string]claudePending{}, denied: map[string]bool{}, tools: map[string]*Tool{},

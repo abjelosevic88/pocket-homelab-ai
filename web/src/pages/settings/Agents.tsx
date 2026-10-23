@@ -7,6 +7,7 @@ import { Icon } from '../../components/icons'
 import { Field, Loading, SettingRow, Spinner, noGrammarly } from '../../components/ui'
 import { Section, StatusDot, useSaveSettings } from './common'
 import { AccountsSection } from './Accounts'
+import { HostsSection } from './Hosts'
 
 export function AgentsTab() {
   const { settings, providers, reloadProviders } = useApp()
@@ -42,6 +43,7 @@ export function AgentsTab() {
         )
       })}
       <AccountsSection />
+      <HostsSection />
 
       <div className="row"><button type="button" className="btn" disabled={checking} onClick={async () => { setChecking(true); await reloadProviders().finally(() => setChecking(false)) }}>{checking ? <Spinner /> : <Icon name="refresh" size={14} />}Check the CLIs again</button></div>
 

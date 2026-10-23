@@ -27,7 +27,7 @@ const externalQuiet = 2 * time.Minute // no new lines for this long: the other s
 // watch is called for each open SSE stream of a thread; the returned func
 // is called when it closes. The first watcher starts the follower.
 func (rt *engine) watch(t *store.Thread) func() {
-	if t.ProviderSessionID == "" {
+	if t.ProviderSessionID == "" || t.HostID != 0 {
 		return func() {}
 	}
 	rt.mu.Lock()
@@ -372,7 +372,7 @@ func (rt *engine) setPreview(ctx context.Context, threadID, text string) {
 // endOffset moves a Claude thread's log position to the end of its file
 // (after Pocket AI's own process wrote to it, or right after an import).
 func (rt *engine) endOffset(t *store.Thread) {
-	if t.Provider != "claude" || t.ProviderSessionID == "" {
+	if t.Provider != "claude" || t.ProviderSessionID == "" || t.HostID != 0 {
 		return
 	}
 	dir, _ := rt.s.accountHome(rt.ctx, t.Provider, t.AccountID)
