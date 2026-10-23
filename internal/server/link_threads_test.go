@@ -286,3 +286,77 @@ func TestThreadPRsFromCreateCommands(t *testing.T) {
 		t.Fatalf("prs: %v", got)
 	}
 }
+
+// An app's files (an issue's screenshots and documents) go with the first
+// message: pictures as pictures, documents as text; unreadable ones are left
+// out and reported; the person can drop some before sending.
+func TestLinkDraftFiles(t *testing.T) {
+	s, h, root := testServer(t)
+	owner, user := person(t, s, h, "link@example.test", "member", true)
+	linkCore(t, s, map[string]string{"pcx_valid": "link@example.test"})
+	fakeClaude(t, s, root)
+	app := &client{t: t, h: h, token: "pcx_valid"}
+	repo := filepath.Join(root, "repo")
+	if err := os.MkdirAll(repo, 0700); err != nil {
+		t.Fatal(err)
+	}
+	png := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82")
+	var made struct {
+		ID    string
+		Files []struct {
+			Name  string
+			OK    bool
+			Error string
+		}
+	}
+	app.want("POST", "/api/v1/link/drafts", map[string]any{"cwd": repo, "text": "Fix AS-6", "source": "projects", "ref": "AS-6",
+		"files": []map[string]any{
+			{"name": "CleanShot 15.04.43@2x.png", "data": png},
+			{"name": "steps.md", "data": []byte("1. Create a rule in Teams\n2. It lands on a workflow")},
+			{"name": "tool.exe", "data": []byte("MZ\x90\x00binary")},
+		}}, 201, &made)
+	if len(made.Files) != 3 || !made.Files[0].OK || !made.Files[1].OK || made.Files[2].OK || made.Files[2].Error == "" {
+		t.Fatalf("files: %+v", made.Files)
+	}
+	var d struct {
+		Uploads []struct{ ID, Name, Mime, URL string }
+	}
+	owner.want("GET", "/api/v1/drafts/"+made.ID, nil, 200, &d)
+	if len(d.Uploads) != 2 || d.Uploads[0].Mime != "image/png" || d.Uploads[1].Name != "steps.md" {
+		t.Fatalf("draft uploads: %+v", d.Uploads)
+	}
+	owner.want("GET", d.Uploads[0].URL, nil, 200, nil)
+
+	// all of them by default
+	var th struct{ ID string }
+	owner.want("POST", "/api/v1/drafts/"+made.ID+"/start", map[string]any{}, 201, &th)
+	items, _ := s.store.ListItems(t.Context(), th.ID)
+	var first agent.Item
+	for _, it := range items {
+		if it.Kind == "user" {
+			_ = json.Unmarshal(it.Data, &first)
+			break
+		}
+	}
+	if len(first.Images) != 1 || len(first.Files) != 1 || first.Files[0].Name != "steps.md" {
+		t.Fatalf("first message: %+v", first)
+	}
+	_ = user
+
+	// the person removed the document before sending
+	app.want("POST", "/api/v1/link/drafts", map[string]any{"cwd": repo, "text": "Fix AS-7", "source": "projects", "ref": "AS-7",
+		"files": []map[string]any{{"name": "a.png", "data": png}, {"name": "b.md", "data": []byte("notes")}}}, 201, &made)
+	owner.want("GET", "/api/v1/drafts/"+made.ID, nil, 200, &d)
+	owner.want("POST", "/api/v1/drafts/"+made.ID+"/start", map[string]any{"draft_uploads": []string{d.Uploads[0].ID}}, 201, &th)
+	items, _ = s.store.ListItems(t.Context(), th.ID)
+	for _, it := range items {
+		if it.Kind == "user" {
+			first = agent.Item{}
+			_ = json.Unmarshal(it.Data, &first)
+			break
+		}
+	}
+	if len(first.Images) != 1 || len(first.Files) != 0 {
+		t.Fatalf("after removing one: %+v", first)
+	}
+}

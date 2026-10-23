@@ -27,18 +27,23 @@ type LinkDraft struct {
 	ThreadID  *string `json:"thread_id"`
 	CreatedAt string  `json:"created_at"`
 	UsedAt    *string `json:"used_at"`
+	// UploadIDs: files the app attached; they go with the first message.
+	UploadIDs []string `json:"upload_ids"`
 }
 
-const draftCols = `id, user_id, provider, account_id, model, effort, mode, cwd, title, text, system, source, ref, ref_url, ref_label, thread_id, created_at, used_at`
+const draftCols = `id, user_id, provider, account_id, model, effort, mode, cwd, title, text, system, source, ref, ref_url, ref_label, thread_id, created_at, used_at, upload_ids`
 
 func scanDraft(row interface{ Scan(...any) error }) (*LinkDraft, error) {
 	var d LinkDraft
 	var acct sql.NullInt64
 	var tid, used sql.NullString
+	var uploads string
 	if err := row.Scan(&d.ID, &d.UserID, &d.Provider, &acct, &d.Model, &d.Effort, &d.Mode, &d.Cwd, &d.Title, &d.Text, &d.System,
-		&d.Source, &d.Ref, &d.RefURL, &d.RefLabel, &tid, &d.CreatedAt, &used); err != nil {
+		&d.Source, &d.Ref, &d.RefURL, &d.RefLabel, &tid, &d.CreatedAt, &used, &uploads); err != nil {
 		return nil, notFound(err)
 	}
+	d.UploadIDs = []string{}
+	_ = jsonUnmarshal(uploads, &d.UploadIDs)
 	if acct.Valid {
 		d.AccountID = &acct.Int64
 	}
@@ -54,9 +59,9 @@ func scanDraft(row interface{ Scan(...any) error }) (*LinkDraft, error) {
 // CreateLinkDraft stores a prepared conversation.
 func (s *Store) CreateLinkDraft(ctx context.Context, d *LinkDraft) error {
 	d.CreatedAt = Now()
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO link_drafts (id, user_id, provider, account_id, model, effort, mode, cwd, title, text, system, source, ref, ref_url, ref_label, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, d.ID, d.UserID, d.Provider, d.AccountID, d.Model, d.Effort, d.Mode, d.Cwd, d.Title, d.Text, d.System,
-		d.Source, d.Ref, d.RefURL, d.RefLabel, d.CreatedAt)
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO link_drafts (id, user_id, provider, account_id, model, effort, mode, cwd, title, text, system, source, ref, ref_url, ref_label, created_at, upload_ids)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, d.ID, d.UserID, d.Provider, d.AccountID, d.Model, d.Effort, d.Mode, d.Cwd, d.Title, d.Text, d.System,
+		d.Source, d.Ref, d.RefURL, d.RefLabel, d.CreatedAt, jsonMarshal(d.UploadIDs))
 	return err
 }
 

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -167,9 +168,19 @@ func (s *Server) handleLinkCreateDraft(w http.ResponseWriter, r *http.Request) {
 		Ref       string `json:"ref"`
 		RefURL    string `json:"ref_url"`
 		RefLabel  string `json:"ref_label"`
+		// Files: attachments for the first message (the issue's screenshots,
+		// documents). Pictures are shown to the agent; documents go as text.
+		Files []struct {
+			Name string `json:"name"`
+			Data []byte `json:"data"` // base64 in JSON
+		} `json:"files"`
 	}
-	if err := decode(r, &in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json")
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 12*s.cfg.UploadMax)).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json (or the files are too large together)")
+		return
+	}
+	if len(in.Files) > maxDraftFiles {
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("attach at most %d files", maxDraftFiles))
 		return
 	}
 	d, err := s.validDraft(ctx, u, &store.LinkDraft{Provider: strings.TrimSpace(in.Provider), AccountID: in.AccountID, Model: strings.TrimSpace(in.Model),
@@ -181,12 +192,29 @@ func (s *Server) handleLinkCreateDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.ID, d.UserID = uuid.NewString(), u.ID
+	// a file the agent can't read is left out (and reported), not the whole draft
+	type fileResult struct {
+		Name  string `json:"name"`
+		OK    bool   `json:"ok"`
+		Error string `json:"error,omitempty"`
+	}
+	files := []fileResult{}
+	d.UploadIDs = []string{}
+	for _, f := range in.Files {
+		up, err := s.saveUpload(ctx, u.ID, f.Name, f.Data)
+		if err != nil {
+			files = append(files, fileResult{Name: f.Name, Error: err.Error()})
+			continue
+		}
+		d.UploadIDs = append(d.UploadIDs, up.ID)
+		files = append(files, fileResult{Name: f.Name, OK: true})
+	}
 	if err := s.store.CreateLinkDraft(ctx, d); err != nil {
 		s.fail(w, err, "save draft")
 		return
 	}
 	s.touch()
-	writeJSON(w, http.StatusCreated, map[string]string{"id": d.ID, "url": s.draftURL(d.ID)})
+	writeJSON(w, http.StatusCreated, map[string]any{"id": d.ID, "url": s.draftURL(d.ID), "files": files})
 }
 
 // validDraft checks what an app asked for; the person can still change all
@@ -287,13 +315,25 @@ func (s *Server) handleLinkThreads(w http.ResponseWriter, r *http.Request) {
 
 // ---------- the person's side ----------
 
+// maxDraftFiles leaves room in the 10-file message limit for one more of the person's own.
+const maxDraftFiles = 8
+
 func (s *Server) handleGetDraft(w http.ResponseWriter, r *http.Request) {
 	d, err := s.store.GetLinkDraft(r.Context(), me(r), chi.URLParam(r, "id"))
 	if err != nil {
 		s.fail(w, err, "draft")
 		return
 	}
-	writeJSON(w, http.StatusOK, d)
+	uploads := []uploadOut{}
+	for _, id := range d.UploadIDs {
+		if up, err := s.store.GetUpload(r.Context(), d.UserID, id); err == nil {
+			uploads = append(uploads, uploadOut{Upload: up, URL: "/api/v1/uploads/" + id})
+		}
+	}
+	writeJSON(w, http.StatusOK, struct {
+		*store.LinkDraft
+		Uploads []uploadOut `json:"uploads"`
+	}{d, uploads})
 }
 
 // linkStarts holds a draft while its thread starts: the first process start
@@ -318,10 +358,29 @@ func (s *Server) handleStartDraft(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "draft")
 		return
 	}
-	var in newThread
+	var in struct {
+		newThread
+		// DraftUploads: the draft's files still attached (the person may
+		// remove some); absent = all of them.
+		DraftUploads *[]string `json:"draft_uploads"`
+	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
+	}
+	keep := d.UploadIDs
+	if in.DraftUploads != nil {
+		keep = []string{}
+		for _, id := range *in.DraftUploads {
+			if contains(d.UploadIDs, id) {
+				keep = append(keep, id)
+			}
+		}
+	}
+	for _, id := range keep {
+		if !contains(in.UploadIDs, id) {
+			in.UploadIDs = append(in.UploadIDs, id)
+		}
 	}
 	ok, err := s.store.ClaimLinkDraft(ctx, u.ID, d.ID)
 	if err != nil {
@@ -355,7 +414,7 @@ func (s *Server) handleStartDraft(w http.ResponseWriter, r *http.Request) {
 	linkStartMu.Lock()
 	key := s.linkStartKey(u.ID, source, d.Ref)
 	linkStarts.Store(key, d)
-	t, err := s.createThread(ctx, u, in, source, d.Ref)
+	t, err := s.createThread(ctx, u, in.newThread, source, d.Ref)
 	linkStarts.Delete(key)
 	linkStartMu.Unlock()
 
