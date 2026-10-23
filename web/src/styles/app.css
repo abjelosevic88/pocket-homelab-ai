@@ -103,3 +103,4 @@
 .home.embed-draft .composer { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .home.embed-draft .composer textarea { flex: 1; max-height: none; }
 .embed-starting { display: grid; place-items: center; height: 100%; }
+html.pai-embedded pocket-ask-launcher { display: none !important; }

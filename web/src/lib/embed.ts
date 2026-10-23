@@ -11,6 +11,8 @@ function detect(): boolean {
 }
 
 export const embedded = detect()
+// the framing app has its own Ask: hide Core's floating launcher in here
+if (embedded) document.documentElement.classList.add('pai-embedded')
 
 /** Tells the framing page where the frame is (thread id once one is open). */
 export function tellParent(path: string) {
