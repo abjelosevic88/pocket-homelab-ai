@@ -34,6 +34,28 @@ function hostCwds(): Record<string, string> {
 interface LinkDraft {
   id: string; provider: ProviderId | ''; account_id: number | null; model: string; effort: string; mode: string; cwd: string
   title: string; text: string; system: string; source: string; ref: string; ref_url: string; ref_label: string; thread_id: string | null
+  /** files the app attached (the issue's screenshots, documents): they go with the first message */
+  uploads?: DraftFile[]
+}
+interface DraftFile { id: string; name: string; mime: string; size: number; url: string }
+
+/** The files a prepared conversation brings along, each removable before sending. */
+function DraftFiles({ files, source, onRemove }: { files: DraftFile[]; source: string; onRemove: (id: string) => void }) {
+  if (!files.length) return null
+  return (
+    <div className="draft-files" aria-label="Attached files">
+      <span className="muted xsmall draft-files-h"><Icon name="paperclip" size={12} />{files.length === 1 ? 'This file goes' : `These ${files.length} files go`} with your message{source ? ` (from ${source})` : ''}</span>
+      <div className="draft-files-list">
+        {files.map(f => (
+          <span key={f.id} className="draft-file" title={f.name}>
+            {f.mime.startsWith('image/') ? <img src={f.url} alt="" /> : <Icon name="file" size={14} />}
+            <span className="ellipsis">{f.name}</span>
+            <button type="button" className="draft-file-x" aria-label={`Don't send ${f.name}`} title="Don’t send this one" onClick={() => onRemove(f.id)}><Icon name="x" size={12} /></button>
+          </span>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 function greeting() {
@@ -54,6 +76,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
   const [params, setParams] = useSearchParams()
   const draftId = params.get('draft')
   const [draft, setDraft] = useState<LinkDraft | null>(null)
+  const [draftFiles, setDraftFiles] = useState<DraftFile[]>([])
   const draftApplied = useRef('')
   const serverComposer = useRef<ComposerHandle>(null)
   const [picked, setMode] = useState<'apps' | 'server'>('apps')
@@ -137,6 +160,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
       if (d.thread_id) { navigate(`/t/${d.thread_id}`, { replace: true }); return }
       // the composer reads its slot when its draftKey switches to this draft (an edit in progress survives a reload)
       if (!sessionStorage.getItem('pai-draft-link-' + d.id)) sessionStorage.setItem('pai-draft-link-' + d.id, d.text)
+      setDraftFiles(d.uploads || [])
       setDraft(d)
     }).catch(e => { if (live) { toast(errMsg(e), 'err'); setParams({}, { replace: true }) } })
     return () => { live = false }
@@ -176,6 +200,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
         account_id: !hostId && accounts.some(a => a.provider === choice.provider && a.id === choice.account_id && a.signed_in) ? choice.account_id : undefined,
         cwd: choice.cwd || undefined, workspace_id: hostId ? undefined : ws?.id, host_id: hostId || undefined, text, upload_ids: uploadIds,
         worktree: wtSpec,
+        draft_uploads: draft ? draftFiles.map(f => f.id) : undefined,
       })
       upsertThread(t)
       navigate(`/t/${t.id}`, { replace: !!draft && embedded })
@@ -204,9 +229,12 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
   if (embedded && draftId) return (
     <div className="home embed-draft">
       {!draft || !choice || (params.get('send') === '1' && autoSent.current !== 'failed') ? <div className="embed-starting"><Loading label={params.get('send') === '1' ? 'Starting the conversation…' : 'Loading…'} /></div> : (
+        <>
+        <DraftFiles files={draftFiles} source={draft.ref} onRemove={id => setDraftFiles(f => f.filter(x => x.id !== id))} />
         <Composer ref={serverComposer} big autoFocus draftKey={`link-${draft.id}`} onSend={send}
           placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} about ${draft.ref || 'this'}…`}
           footer={<AgentPicker compact showProvider={false} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} />} />
+        </>
       )}
     </div>
   )
@@ -284,6 +312,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
                   <button type="button" className="btn ghost sm" onClick={dropDraft}>Discard</button>
                 </div>
               )}
+              {draft && <DraftFiles files={draftFiles} source={draft.ref} onRemove={id => setDraftFiles(f => f.filter(x => x.id !== id))} />}
               <Composer ref={serverComposer} big autoFocus draftKey={draft ? `link-${draft.id}` : 'new'} onSend={send}
                 placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} anything${hostId ? ` on ${hosts.find(h => h.id === hostId)?.name}` : ''}${choice.cwd && !wtSpec ? ` in ${shortPath(choice.cwd)}` : ''}${wtWhere}… paste a screenshot, type / for recipes`}
                 footer={<AgentPicker compact showProvider={false} noAccount={!!hostId} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} />} />

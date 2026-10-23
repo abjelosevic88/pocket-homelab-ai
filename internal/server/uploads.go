@@ -55,11 +55,6 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	uid := me(r)
-	dir := filepath.Join(s.cfg.DataDir, "uploads", fmt.Sprint(uid))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		s.fail(w, err, "upload dir")
-		return
-	}
 	out := []uploadOut{}
 	for _, fh := range files {
 		if fh.Size > s.cfg.UploadMax {
@@ -73,63 +68,81 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		}
 		data, err := io.ReadAll(io.LimitReader(f, s.cfg.UploadMax+1))
 		f.Close()
-		if err != nil || int64(len(data)) > s.cfg.UploadMax {
-			writeErr(w, 413, "File is too large")
-			return
-		}
-		contentType := http.DetectContentType(data)
-		ext, ok := imageExt[contentType]
-		extracted := ""
-		if !ok {
-			ext = strings.ToLower(filepath.Ext(fh.Filename))
-			if ext == ".pdf" {
-				if !bytes.HasPrefix(data, []byte("%PDF-")) {
-					writeErr(w, 415, "This is not a PDF")
-					return
-				}
-				extracted, err = pdfText(r.Context(), data)
-				contentType = "application/pdf"
-			} else {
-				extracted, err = documenttext.Text(fh.Filename, data)
-				contentType = "application/octet-stream"
-			}
-			if err != nil {
-				writeErr(w, 415, err.Error())
-				return
-			}
-			if strings.TrimSpace(extracted) == "" {
-				writeErr(w, 422, "No readable text found. For scanned documents, attach page images or run OCR in Documents first.")
-				return
-			}
-		}
-
-		id := uuid.NewString()
-		path := filepath.Join(dir, id+ext)
-		dst, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
 		if err != nil {
 			s.fail(w, err, "upload")
 			return
 		}
-		size, err := io.Copy(dst, bytes.NewReader(data))
-		dst.Close()
+		u, err := s.saveUpload(r.Context(), uid, fh.Filename, data)
 		if err != nil {
-			os.Remove(path)
+			var ue uploadErr
+			if errors.As(err, &ue) {
+				writeErr(w, ue.status, ue.msg)
+				return
+			}
 			s.fail(w, err, "upload")
 			return
 		}
-		name := filepath.Base(fh.Filename)
-		if name == "" || name == "." || name == "blob" || name == "image.png" {
-			name = "image" + ext
-		}
-		u := &store.Upload{ID: id, UserID: uid, Name: name, Mime: contentType, Size: size, Path: path, ExtractedText: extracted}
-		if err := s.store.CreateUpload(r.Context(), u); err != nil {
-			os.Remove(path)
-			s.fail(w, err, "upload")
-			return
-		}
-		out = append(out, uploadOut{Upload: u, URL: "/api/v1/uploads/" + id})
+		out = append(out, uploadOut{Upload: u, URL: "/api/v1/uploads/" + u.ID})
 	}
 	writeJSON(w, http.StatusCreated, out)
+}
+
+// uploadErr is a file the person (or app) has to change.
+type uploadErr struct {
+	status int
+	msg    string
+}
+
+func (e uploadErr) Error() string { return e.msg }
+
+// saveUpload stores a file for a person: pictures as they are, PDFs and
+// documents with their text extracted (that text is what the agent reads).
+func (s *Server) saveUpload(ctx context.Context, uid int64, filename string, data []byte) (*store.Upload, error) {
+	if int64(len(data)) > s.cfg.UploadMax {
+		return nil, uploadErr{413, fmt.Sprintf("%s is larger than %d MB", filename, s.cfg.UploadMax>>20)}
+	}
+	dir := filepath.Join(s.cfg.DataDir, "uploads", fmt.Sprint(uid))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	contentType := http.DetectContentType(data)
+	ext, ok := imageExt[contentType]
+	extracted := ""
+	if !ok {
+		var err error
+		ext = strings.ToLower(filepath.Ext(filename))
+		if ext == ".pdf" {
+			if !bytes.HasPrefix(data, []byte("%PDF-")) {
+				return nil, uploadErr{415, filename + " is not a PDF"}
+			}
+			extracted, err = pdfText(ctx, data)
+			contentType = "application/pdf"
+		} else {
+			extracted, err = documenttext.Text(filename, data)
+			contentType = "application/octet-stream"
+		}
+		if err != nil {
+			return nil, uploadErr{415, err.Error()}
+		}
+		if strings.TrimSpace(extracted) == "" {
+			return nil, uploadErr{422, "No readable text found in " + filename + ". For scanned documents, attach page images or run OCR in Documents first."}
+		}
+	}
+	id := uuid.NewString()
+	path := filepath.Join(dir, id+ext)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return nil, err
+	}
+	name := filepath.Base(filename)
+	if name == "" || name == "." || name == "blob" || name == "image.png" {
+		name = "image" + ext
+	}
+	u := &store.Upload{ID: id, UserID: uid, Name: name, Mime: contentType, Size: int64(len(data)), Path: path, ExtractedText: extracted}
+	if err := s.store.CreateUpload(ctx, u); err != nil {
+		os.Remove(path)
+		return nil, err
+	}
+	return u, nil
 }
 
 func (s *Server) handleGetUpload(w http.ResponseWriter, r *http.Request) {

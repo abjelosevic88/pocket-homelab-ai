@@ -361,3 +361,14 @@
 .srv-h .link-btn { display: inline-flex; align-items: center; gap: 4px; font: inherit; letter-spacing: inherit; text-transform: inherit; }
 .wt-other { align-items: center; cursor: default; }
 @media (max-width: 760px) { .wt-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* files a prepared conversation brings along (HomePage DraftFiles) */
+.draft-files { display: grid; gap: 6px; margin: 0 0 8px; }
+.draft-files-h { display: inline-flex; align-items: center; gap: 5px; }
+.draft-files-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.draft-file { display: inline-flex; align-items: center; gap: 6px; max-width: 260px; height: 34px; padding: 0 4px 0 4px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); font-size: 12.5px; }
+.draft-file img { width: 26px; height: 26px; object-fit: cover; border-radius: 6px; flex: none; }
+.draft-file > .icon { margin-left: 4px; color: var(--muted); flex: none; }
+.draft-file-x { display: grid; place-items: center; width: 22px; height: 22px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; flex: none; }
+.draft-file-x:hover { background: var(--surface-2); color: var(--text); }
+.embed-draft .draft-files { padding: 0 2px; }
