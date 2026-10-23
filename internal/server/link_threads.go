@@ -413,3 +413,18 @@ func (s *Server) handleThreadContext(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, c)
 }
+
+// handleLinkDirs lists folders for a linked app's folder field (the same
+// roots and checks as the folder picker; hidden folders only when asked).
+func (s *Server) handleLinkDirs(w http.ResponseWriter, r *http.Request) {
+	u := s.linkUser(w, r)
+	if u == nil {
+		return
+	}
+	out, err := s.listDirs(r.URL.Query().Get("path"), queryBool(r, "hidden"))
+	if err != nil {
+		s.fail(w, err, "dirs")
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}

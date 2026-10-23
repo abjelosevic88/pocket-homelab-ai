@@ -79,27 +79,42 @@ func (s *Server) handleDirs(w http.ResponseWriter, r *http.Request) {
 	if !s.requireRun(w, r) {
 		return
 	}
-	p := r.URL.Query().Get("path")
+	out, err := s.listDirs(r.URL.Query().Get("path"), queryBool(r, "hidden"))
+	if err != nil {
+		s.fail(w, err, "dirs")
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+type dirEntry struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+	Git  bool   `json:"git"`
+}
+
+type dirListing struct {
+	Path   string     `json:"path"`
+	Parent string     `json:"parent"`
+	Dirs   []dirEntry `json:"dirs"`
+	Roots  []string   `json:"roots"`
+	Home   string     `json:"home"`
+}
+
+// listDirs lists the sub-folders of p (home when empty) inside the roots.
+func (s *Server) listDirs(p string, hidden bool) (*dirListing, error) {
 	if p == "" {
 		p = s.cfg.Home
 	}
 	clean, err := s.checkDir(p)
 	if err != nil {
-		s.fail(w, err, "dirs")
-		return
+		return nil, err
 	}
 	ents, err := os.ReadDir(clean)
 	if err != nil {
-		s.fail(w, err, "read dir")
-		return
+		return nil, err
 	}
-	type dir struct {
-		Name string `json:"name"`
-		Path string `json:"path"`
-		Git  bool   `json:"git"`
-	}
-	dirs := []dir{}
-	hidden := queryBool(r, "hidden")
+	dirs := []dirEntry{}
 	for _, e := range ents {
 		name := e.Name()
 		if !hidden && strings.HasPrefix(name, ".") {
@@ -116,14 +131,14 @@ func (s *Server) handleDirs(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		_, gerr := os.Stat(filepath.Join(full, ".git"))
-		dirs = append(dirs, dir{Name: name, Path: full, Git: gerr == nil})
+		dirs = append(dirs, dirEntry{Name: name, Path: full, Git: gerr == nil})
 	}
 	sort.Slice(dirs, func(i, j int) bool { return strings.ToLower(dirs[i].Name) < strings.ToLower(dirs[j].Name) })
 	parent := filepath.Dir(clean)
 	if _, err := s.checkDir(parent); err != nil || parent == clean {
 		parent = ""
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"path": clean, "parent": parent, "dirs": dirs, "roots": s.cfg.Roots, "home": s.cfg.Home})
+	return &dirListing{Path: clean, Parent: parent, Dirs: dirs, Roots: s.cfg.Roots, Home: s.cfg.Home}, nil
 }
 
 // ---------- workspaces ----------
