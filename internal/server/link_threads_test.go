@@ -70,7 +70,7 @@ func TestLinkDraftAuth(t *testing.T) {
 	body := []byte(`{"cwd":"` + root + `","text":"look","source":"projects","ref":"AS-2"}`)
 	for _, token := range []string{"", personal.token, "pcx_wrong_scope", "pcx_wrong_audience", "pcx_not_delegated", "pcx_revoked"} {
 		c := &client{t: t, h: h, token: token}
-		for _, rq := range []struct{ m, p string }{{"POST", "/api/v1/link/drafts"}, {"GET", "/api/v1/link/agent-options"}, {"GET", "/api/v1/link/threads?source=projects&ref=AS-2"}, {"GET", "/api/v1/link/dirs"}} {
+		for _, rq := range []struct{ m, p string }{{"POST", "/api/v1/link/drafts"}, {"GET", "/api/v1/link/agent-options"}, {"GET", "/api/v1/link/threads?source=projects&ref=AS-2"}, {"GET", "/api/v1/link/dirs"}, {"GET", "/api/v1/link/active?source=projects"}} {
 			code, b := c.do(rq.m, rq.p, "application/json", body)
 			if code != 401 && code != 403 {
 				t.Fatalf("%q bypassed %s: %d %s", token, rq.p, code, b)
@@ -189,6 +189,21 @@ func TestLinkDraftLifecycle(t *testing.T) {
 	}
 	owner.want("GET", "/api/v1/threads/"+th.ID+"/context", nil, 200, nil)
 	other.want("GET", "/api/v1/threads/"+th.ID+"/context", nil, 404, nil)
+
+	// link/active: the started conversation by ref, only while it works or waits
+	var active []struct {
+		Ref, Status string
+		ThreadID    string `json:"thread_id"`
+	}
+	app.want("GET", "/api/v1/link/active?source=projects", nil, 200, &active)
+	busy := list[0].Status == "running" || list[0].Status == "waiting"
+	if busy && (len(active) != 1 || active[0].Ref != "AS-2" || active[0].ThreadID != th.ID) || !busy && len(active) != 0 {
+		t.Fatalf("active (thread %s): %+v", list[0].Status, active)
+	}
+	app.want("GET", "/api/v1/link/active?source=other", nil, 200, &active)
+	if len(active) != 0 {
+		t.Fatalf("other source: %+v", active)
+	}
 }
 
 func mustThread(t *testing.T, s *Server, uid int64, id string) *store.Thread {

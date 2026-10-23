@@ -83,6 +83,24 @@ func (s *Store) LinkDrafts(ctx context.Context, userID int64, source, ref string
 	return out, rows.Err()
 }
 
+// StartedLinkDrafts are the person's latest sent drafts from one app (any ref).
+func (s *Store) StartedLinkDrafts(ctx context.Context, userID int64, source string) ([]*LinkDraft, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+draftCols+` FROM link_drafts WHERE user_id = ? AND source = ? AND thread_id IS NOT NULL ORDER BY created_at DESC LIMIT 200`, userID, source)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*LinkDraft{}
+	for rows.Next() {
+		d, err := scanDraft(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
 // ClaimLinkDraft marks a draft as being sent; false when it already was.
 func (s *Store) ClaimLinkDraft(ctx context.Context, userID int64, id string) (bool, error) {
 	res, err := s.DB.ExecContext(ctx, `UPDATE link_drafts SET used_at = ? WHERE id = ? AND user_id = ? AND used_at IS NULL`, Now(), id, userID)
