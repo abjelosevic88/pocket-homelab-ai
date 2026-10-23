@@ -53,6 +53,9 @@ type Server struct {
 
 	rt *engine
 
+	wtOnce sync.Once
+	wtHold *wtHolds // messages waiting for a worktree's setup: worktrees.go
+
 	provMu   sync.Mutex
 	provList []agent.Provider
 	provAt   time.Time
@@ -111,6 +114,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	}
 	_ = s.store.PurgeSessions(ctx)
 	cut := s.store.ResetRunning(ctx)
+	_ = s.store.FailRunningSetups(ctx) // their output is in the thread; "Run setup again" is in the panel
 	s.changed.Store(time.Now().UnixNano())
 	if err := s.loadSecretKey(); err != nil {
 		return err
@@ -225,6 +229,8 @@ func (s *Server) Router() http.Handler {
 			s.accountRoutes(r)
 			// Other machines agents run on over ssh: hosts.go.
 			s.hostRoutes(r)
+			// Git worktrees for threads: worktrees.go (+ worktree_git.go).
+			s.worktreeRoutes(r)
 			// Drafts other Pocket apps prepared: link_threads.go.
 			s.linkRoutes(r)
 

@@ -377,6 +377,11 @@ func (rt *engine) ensure(t *store.Thread) (*run, error) {
 }
 
 func (rt *engine) startRun(t *store.Thread) (*run, error) {
+	if t.WorktreeID != 0 {
+		if wt, err := rt.s.store.GetWorktreeAny(rt.ctx, t.WorktreeID); err == nil && wt.Status != "active" {
+			return nil, badRequest("this thread's worktree (" + wt.Branch + ") is archived; restore it from the worktree panel to continue here")
+		}
+	}
 	h, err := rt.s.host(rt.ctx, t.HostID)
 	if err != nil {
 		return nil, err

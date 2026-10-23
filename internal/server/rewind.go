@@ -134,7 +134,7 @@ func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.T
 	}
 	n := &store.Thread{ID: uuid.NewString(), UserID: t.UserID, Title: "Rewind · " + t.Title,
 		Provider: t.Provider, AccountID: t.AccountID, Model: t.Model, Effort: t.Effort, Mode: t.Mode, Speed: t.Speed,
-		Cwd: t.Cwd, WorkspaceID: t.WorkspaceID, NoMemory: t.NoMemory, ProviderSessionID: sid,
+		Cwd: t.Cwd, WorkspaceID: t.WorkspaceID, WorktreeID: t.WorktreeID, NoMemory: t.NoMemory, ProviderSessionID: sid,
 		Source: "rewind", SourceRef: t.ID}
 	if fork {
 		n.Title, n.Source = "Fork of "+t.Title, "fork"

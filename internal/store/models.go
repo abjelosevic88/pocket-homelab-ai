@@ -66,8 +66,9 @@ type Thread struct {
 	UserID            int64  `json:"owner_id"`
 	Title             string `json:"title"`
 	Provider          string `json:"provider"`
-	AccountID         int64  `json:"account_id"` // 0 = the server's own login
-	HostID            int64  `json:"host_id"`    // 0 = this server, else the machine it runs on over ssh
+	AccountID         int64  `json:"account_id"`  // 0 = the server's own login
+	HostID            int64  `json:"host_id"`     // 0 = this server, else the machine it runs on over ssh
+	WorktreeID        int64  `json:"worktree_id"` // 0 = works in Cwd as it is, else its own git worktree
 	Model             string `json:"model"`
 	Effort            string `json:"effort"`
 	Mode              string `json:"mode"`

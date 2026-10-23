@@ -156,6 +156,8 @@ export interface Thread {
   account_id: number
   /** The machine it runs on (0 = this server, else a Host). */
   host_id: number
+  /** Its own git worktree (0 = none). */
+  worktree_id: number
   model: string
   effort: string
   mode: string
@@ -406,3 +408,64 @@ export interface RunningItem {
 }
 
 export interface Subagent { id: string; description: string; activity?: string; type?: string; started_at: string; tool_uses?: number }
+
+/** A git worktree Pocket AI made for a task: its own folder and branch. */
+export interface Worktree {
+  id: number
+  owner_id: number
+  host_id: number
+  host_name?: string
+  repo: string
+  path: string
+  branch: string
+  base: string
+  base_sha: string
+  title: string
+  status: 'active' | 'archived'
+  setup: '' | 'running' | 'ok' | 'failed'
+  archive_ref: string
+  merged_at: string
+  pr_url: string
+  created_at: string
+  archived_at: string
+  threads: { id: string; title: string; status: string; provider: ProviderId; updated_at: string; live: boolean }[]
+  state?: WorktreeState
+}
+
+export interface WorktreeState {
+  gone: boolean
+  no_base: boolean
+  head: string
+  branch: string
+  ahead: number
+  behind: number
+  dirty: number
+  merged: boolean
+  pr_state?: string
+  upstream: string
+  unpushed: number
+  merging: boolean
+  rebasing: boolean
+  conflicts: string[]
+  commits: { sha: string; time: number; subject: string }[]
+  error?: string
+  size_kb?: number
+}
+
+export interface WorktreeSetupConfig { setup: string[]; teardown: string[]; copy: string[]; base?: string }
+
+export interface WorktreeRepoInfo {
+  repo: string
+  top: string
+  branch: string
+  main_branch: string
+  default: string
+  base: string
+  branches: string[]
+  dir: string
+  is_worktree: boolean
+  config: { file: string; file_config: WorktreeSetupConfig; saved: WorktreeSetupConfig | null; effective: WorktreeSetupConfig; default_copy: string[] }
+}
+
+/** How a new thread gets its worktree. */
+export interface WorktreeSpec { mode: 'new' | 'branch' | 'pr' | 'existing'; base?: string; branch?: string; pr?: number; id?: number; name?: string }

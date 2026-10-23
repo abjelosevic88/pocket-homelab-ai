@@ -40,6 +40,15 @@ Personal app assistance: [Briefing, workflows, memory, sources and document uplo
   in its own folder, sharing your settings and skills), pick the account per thread next to the model, and
   switch mid-thread when one hits its limit; the conversation is moved over and carries on. Limits show per
   account.
+- **Worktrees**: switch on *Worktree* next to the folder and the agent works in its own git worktree — its own
+  folder and branch (named from the prompt), so several agents can change one repo at once. Start from any
+  branch, check out an existing branch or a pull request, or continue in an existing worktree. Setup per repo
+  (commands, `.env` files to copy, teardown) lives in Pocket AI; a `paseo.json` / `.pocket-ai.json` in the repo
+  works too. The thread's worktree panel shows commits and changes and can commit, update from base, merge
+  (fast-forward, merge commit or squash — computed with `git merge-tree`, never touching your main checkout's
+  uncommitted work), push and open a pull request, or ask the agent to commit or resolve conflicts. Archiving
+  saves uncommitted work first and Restore brings it back; the Worktrees page cleans up merged ones and adopts
+  or removes worktrees made by hand or by Paseo. Works on other machines too.
 - **Other machines**, like Paseo's hosts: add a server in Settings → Agents → Servers (any machine this server
   can `ssh` into without a password, a tailnet name works) and pick it next to the folder when you start a
   thread. The CLI runs there with that machine's own login; folders and git branches are browsed over ssh, and
