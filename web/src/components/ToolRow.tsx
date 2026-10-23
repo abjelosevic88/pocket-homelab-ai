@@ -1,7 +1,7 @@
 // One tool call: a one-line summary that opens to its input and output.
 import { memo, useState } from 'react'
 import type { ToolInfo, ToolKind } from '../lib/types'
-import { toolLabel } from '../lib/tool-activity'
+import { shellLabel, toolLabel } from '../lib/tool-activity'
 import { Icon } from './icons'
 import { copyText, Spinner } from './ui'
 
@@ -63,7 +63,7 @@ export const ToolRow = memo(function ToolRow({ tool }: { tool: ToolInfo }) {
   const command = kind === 'bash' ? field(tool.input, 'command', 'cmd') : ''
   const path = field(tool.input, 'file_path', 'path', 'notebook_path')
   // "Write demo.go" under the name "Write" reads twice: drop the repeated word
-  const rawTitle = command || tool.title || path || tool.name
+  const rawTitle = command ? shellLabel(tool.input) : tool.title || path || tool.name
   const title = rawTitle.startsWith(tool.name + ' ') ? rawTitle.slice(tool.name.length + 1) : rawTitle
   const shownName = kind === 'bash' ? 'Shell' : label
   const restInput = (() => {

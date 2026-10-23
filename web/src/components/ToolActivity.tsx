@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Item, ToolInfo } from '../lib/types'
 import { Icon } from './icons'
 import { ToolRow } from './ToolRow'
+import { shellLabel } from '../lib/tool-activity'
 import { Spinner } from './ui'
 
 const RUN_ICON: Record<string, string> = { bash: 'terminal', edit: 'file-edit', write: 'file-edit', read: 'file', search: 'search', web: 'globe', task: 'bot', mcp: 'layers', other: 'wrench' }
@@ -38,7 +39,7 @@ export function ToolActivity({ items }: { items: Item[] }) {
   const kinds = new Set(tools.map(t => (t.kind === 'write' ? 'edit' : t.kind)))
   const icon = kinds.size === 1 ? RUN_ICON[[...kinds][0]] || 'wrench' : 'layers'
   const last = running || tools[tools.length - 1]
-  const lastText = last.kind === 'bash' ? String((last.input as Record<string, unknown> | undefined)?.command || last.title || '') : (last.title || last.name)
+  const lastText = last.kind === 'bash' ? shellLabel(last.input) : (last.title || last.name)
   return (
     <div className={`tool-run grouped ${open ? 'open' : ''}`}>
       <button type="button" className="tool-head tool-run-head" onClick={() => setOpen(o => !o)} aria-expanded={open}>

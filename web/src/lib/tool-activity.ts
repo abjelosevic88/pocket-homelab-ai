@@ -35,3 +35,27 @@ export function groupToolActivity(items: Item[]): ActivityEntry[] {
   }
   return out
 }
+
+const SHELL_SKIP = new Set(['sudo', 'set', 'env', 'export', 'cd', 'echo', 'time', 'nohup', 'then', 'do', 'done', 'fi', 'else', 'if', 'for', 'while', 'true', 'false', '!', '{', '}', '(', ')'])
+
+/** A short line for a shell call: the agent's own description of it, else
+ *  the programs it runs ("uname · modinfo · which"), never the whole command. */
+export function shellLabel(input: unknown): string {
+  const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
+  const desc = typeof o.description === 'string' ? o.description.trim() : ''
+  if (desc) return desc
+  const cmd = String(o.command ?? o.cmd ?? '').replace(/\\\n/g, ' ')
+  const progs: string[] = []
+  for (const seg of cmd.split(/;|&&|\|\||\||\n|\$\(|`/)) {
+    const words = seg.trim().replace(/^\(+/, '').split(/\s+/).filter(Boolean)
+    for (const w of words) {
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) continue // VAR=value before the program
+      if (SHELL_SKIP.has(w) || w.startsWith('-')) { if (w === 'sudo' || w === 'env' || w === 'time' || w === 'nohup' || w === 'then' || w === 'do' || w === 'else' || w === '!') continue; break }
+      const name = w.split('/').pop()!.replace(/[^A-Za-z0-9._+-]/g, '')
+      if (name && !progs.includes(name)) progs.push(name)
+      break
+    }
+    if (progs.length >= 4) break
+  }
+  return progs.length ? progs.slice(0, 3).join(' · ') + (progs.length > 3 ? ' …' : '') : 'Command'
+}
