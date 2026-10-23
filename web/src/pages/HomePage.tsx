@@ -152,13 +152,12 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
     }
   }
 
-  // Embedded in the app that prepared it: send at once, the frame shows only the conversation
+  // Embedded with &send=1 (the other app's "Send right away"): send the prepared prompt once
   const autoSent = useRef('')
-  const [autoFailed, setAutoFailed] = useState(false)
   useEffect(() => {
-    if (!embedded || !draft || !choice || draftApplied.current !== draft.id || choice.cwd !== draft.cwd || autoSent.current === draft.id) return
+    if (!embedded || params.get('send') !== '1' || !draft || !choice || draftApplied.current !== draft.id || choice.cwd !== draft.cwd || autoSent.current === draft.id) return
     autoSent.current = draft.id
-    send(draft.text, []).then(ok => { if (ok) sessionStorage.removeItem('pai-draft-link-' + draft.id); else setAutoFailed(true) })
+    send(draft.text, []).then(ok => { if (ok) sessionStorage.removeItem('pai-draft-link-' + draft.id); else { autoSent.current = 'failed'; setParams(p => { p.delete('send'); return p }, { replace: true }) } })
   }, [draft, choice]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const pickProvider = (pid: ProviderId | '') => {
@@ -166,7 +165,17 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
     setChoice(c => c && pid ? { ...c, provider: pid, ...defaultsFor(p, settings) } : c)
   }
 
-  if (embedded && draftId && !autoFailed) return <div className="home embed-starting"><Loading label="Starting the conversation…" /></div>
+  // Embedded in the app that prepared it: folder, agent and context are chosen there,
+  // so only the prompt (filled in, ready to add to and send) and the composer's own chips
+  if (embedded && draftId) return (
+    <div className="home embed-draft">
+      {!draft || !choice || (params.get('send') === '1' && autoSent.current !== 'failed') ? <div className="embed-starting"><Loading label={params.get('send') === '1' ? 'Starting the conversation…' : 'Loading…'} /></div> : (
+        <Composer ref={serverComposer} big autoFocus draftKey={`link-${draft.id}`} onSend={send}
+          placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} about ${draft.ref || 'this'}…`}
+          footer={<AgentPicker compact showProvider={false} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} />} />
+      )}
+    </div>
+  )
 
   return (
     <div className="home">

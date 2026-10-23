@@ -99,4 +99,7 @@
 /* Embedded in another Pocket app: just the conversation */
 .app.embedded .home-hero, .app.embedded .home-sec, .app.embedded .home-shortcuts { display: none; }
 .app.embedded .home-inner { padding-top: 12px; }
-.home.embed-starting { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; height: 100%; }
+.home.embed-draft { display: flex; flex-direction: column; justify-content: flex-end; height: 100%; padding: 12px; overflow: hidden; }
+.home.embed-draft .composer { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.home.embed-draft .composer textarea { flex: 1; max-height: none; }
+.embed-starting { display: grid; place-items: center; height: 100%; }
