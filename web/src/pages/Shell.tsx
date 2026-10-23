@@ -9,6 +9,7 @@ import { ShortcutsSheet } from '../components/ShortcutsSheet'
 import { Sidebar } from '../components/Sidebar'
 import { TabBar, useTabs } from '../components/TabBar'
 import { useBusyFavicon } from '../lib/favicon'
+import { embedded, tellParent } from '../lib/embed'
 import { modalOpen, useIsMobile, useMediaQuery } from '../components/ui'
 import HomePage from './HomePage'
 import ThreadPage from './ThreadPage'
@@ -31,18 +32,19 @@ function ShellInner() {
   const loc = useLocation()
   const mobile = useIsMobile()
   const narrow = useMediaQuery('(max-width: 980px)')
-  const drawer = mobile || narrow
+  const drawer = !embedded && (mobile || narrow)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [palette, setPalette] = useState(false)
   const [shortcuts, setShortcuts] = useState(false)
   const runRecipe = useRunRecipe()
-  const tabsOn = settings?.thread_tabs !== false && !mobile
+  const tabsOn = settings?.thread_tabs !== false && !mobile && !embedded
   const tabs = useTabs(tabsOn)
   const mine = (threads || []).filter(t => !t.owner_id || t.owner_id === user?.id)
   useBusyFavicon(
     running.some(r => r.status === 'running') || mine.some(t => t.status === 'running'),
     running.some(r => r.status === 'waiting') || mine.some(t => t.status === 'waiting' || t.pending > 0))
   useEffect(() => setDrawerOpen(false), [drawer, loc.pathname])
+  useEffect(() => tellParent(loc.pathname), [loc.pathname])
   useEffect(() => { if ((loc.state as { shortcuts?: boolean } | null)?.shortcuts) setShortcuts(true) }, [loc.state])
 
   useEffect(() => {
@@ -75,10 +77,10 @@ function ShellInner() {
   const onMenu = drawer ? openMenu : undefined
 
   return (
-    <div className={`app ${drawer ? 'drawer-mode' : ''}`}>
-      <div className={`sidebar-wrap ${drawerOpen ? 'open' : ''}`}>
+    <div className={`app ${drawer ? 'drawer-mode' : ''} ${embedded ? 'embedded' : ''}`}>
+      {!embedded && <div className={`sidebar-wrap ${drawerOpen ? 'open' : ''}`}>
         <Sidebar onNavigate={() => setDrawerOpen(false)} onPalette={() => { setDrawerOpen(false); setPalette(true) }} />
-      </div>
+      </div>}
       {drawer && drawerOpen && <div className="drawer-backdrop" onClick={() => setDrawerOpen(false)} />}
       <main className="main">
         {tabsOn && <TabBar {...tabs} />}

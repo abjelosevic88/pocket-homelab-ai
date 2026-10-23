@@ -95,3 +95,7 @@
 .sb-home:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 2px; }
 /* version pill, as in every Pocket app */
 .sb-version { flex: none; padding: 1px 5px; border-radius: 6px; background: var(--surface-2); color: var(--muted); font-size: 10px; font-weight: 600; line-height: 15px; font-variant-numeric: tabular-nums; cursor: default; user-select: all; }
+
+/* Embedded in another Pocket app: just the conversation */
+.app.embedded .home-hero, .app.embedded .home-sec, .app.embedded .home-shortcuts { display: none; }
+.app.embedded .home-inner { padding-top: 12px; }
