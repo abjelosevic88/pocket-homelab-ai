@@ -293,7 +293,8 @@
 /* ---------- worktrees (components/Worktree.tsx, pages/WorktreesPage.tsx) ---------- */
 .wt-toggle.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
 .wt-toggle .ellipsis { max-width: 170px; }
-.wt-pop { padding: 4px 2px; }
+.wt-pop { padding: 14px 16px 16px; gap: 12px; }
+.wt-pop > div:first-child p { line-height: 1.45; }
 .wt-pop-setup { display: flex; align-items: flex-start; gap: 6px; padding: 8px 10px; border-radius: 8px; background: var(--surface-2); }
 .wt-pop-setup code { font-size: 11px; }
 .wt-pop-open { display: grid; gap: 2px; }
