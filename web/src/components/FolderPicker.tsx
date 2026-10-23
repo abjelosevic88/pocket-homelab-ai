@@ -16,12 +16,14 @@ export function FolderPicker({ value, host = 0, onPick, onClose }: { value: stri
   const [list, setList] = useState<DirListing | null>(null)
   const [err, setErr] = useState('')
   const [typed, setTyped] = useState(value || '')
+  // another machine: home and the working folders found there (kept while browsing)
+  const [places, setPlaces] = useState<string[]>([])
 
   useEffect(() => {
     let live = true
     setErr('')
     api.get<DirListing>(`${V1}/fs/dirs${qs({ path, host: host || undefined })}`)
-      .then(d => { if (live) { setList(d); setTyped(d.path) } })
+      .then(d => { if (live) { setList(d); setTyped(d.path); if (host && d.home) setPlaces([d.home, ...(d.places || [])]) } })
       .catch(e => { if (live) { setErr(errMsg(e)); if (!list) setList({ path, parent: '', dirs: [], roots: [] }) } })
     return () => { live = false }
   }, [path]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -34,6 +36,15 @@ export function FolderPicker({ value, host = 0, onPick, onClose }: { value: stri
       <button type="button" className="btn primary" disabled={!list?.path || !!err} onClick={() => { onPick(list!.path); onClose() }}><span className="hide-narrow">Use this folder</span><span className="show-narrow">Use</span></button>
     </>}>
       <div className="stack">
+        {places.length > 1 && (
+          <div className="chips">
+            {places.map((p, i) => (
+              <button key={p} type="button" className={`chip ${p === list?.path ? 'active' : ''}`} title={p} onClick={() => setPath(p)}>
+                <Icon name={i === 0 ? 'home' : 'folder'} size={13} />{i === 0 ? 'Home' : p}
+              </button>
+            ))}
+          </div>
+        )}
         {workspaces.length > 0 && (
           <div className="chips">
             {workspaces.map(w => (
@@ -70,7 +81,8 @@ export function FolderPicker({ value, host = 0, onPick, onClose }: { value: stri
             ))}
           </div>
         )}
-        {list && list.roots?.length > 0 && <p className="muted xsmall" style={{ margin: 0 }}>Agents may start inside: {list.roots.map(shortPath).join(', ')}</p>}
+        {host ? <p className="muted xsmall" style={{ margin: 0 }}>Any folder the ssh account can open on {where}.</p>
+          : list && list.roots?.length > 0 && <p className="muted xsmall" style={{ margin: 0 }}>Agents may start inside: {list.roots.map(shortPath).join(', ')}</p>}
       </div>
     </Modal>
   )

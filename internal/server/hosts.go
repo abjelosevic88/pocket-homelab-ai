@@ -316,13 +316,22 @@ func (s *Server) checkHostUse(ctx context.Context, u *store.User, id int64) (*st
 // ---------- folders on a host ----------
 
 // remoteDirs lists the sub-folders of a folder ($1, empty = home) and says
-// where it really is. Lines: path, home, then "d name" / "g name" (git).
+// where it really is. Lines: path, home, "p=" places (top-level working
+// folders the account owns or may write, like /work or /srv/app), then
+// "d=name" / "g=name" (git).
 const remoteDirs = `cd -- "$HOME" 2>/dev/null && home=$(pwd -P) || home=$HOME
 p=$1
 case "$p" in "") p=$HOME;; "~") p=$HOME;; "~/"*) p="$HOME/${p#\~/}";; esac
 cd -- "$p" 2>/dev/null || { echo "err=the folder $p does not exist there"; exit 0; }
 echo "path=$(pwd -P)"
 echo "home=$home"
+n=0
+for d in /* /srv/* /opt/* /mnt/* /media/* /data/* /var/www/* /Volumes/*; do
+  [ "$n" -lt 12 ] || break
+  [ -d "$d" ] && [ ! -L "$d" ] || continue
+  case "$d" in /proc|/sys|/dev|/run|/tmp|/nix|/boot|/root|/lost+found|/home|/Users|/etc|/usr|/bin|/sbin|/lib|/lib32|/lib64|/libx32|/var|/private|/System|/Library|/Applications|/cores) continue;; esac
+  if [ -O "$d" ] || { [ -w "$d" ] && [ ! -k "$d" ]; }; then echo "p=$d"; n=$((n+1)); fi
+done
 [ "$2" = 1 ] && set -- * .* || set -- *
 for d in "$@"; do
   case "$d" in .|..) continue;; esac
@@ -331,8 +340,8 @@ for d in "$@"; do
 done
 `
 
-// listRemoteDirs is listDirs for a host. Agents may start anywhere in the
-// remote account's home (like ROOTS=~ here).
+// listRemoteDirs is listDirs for a host. Agents may start in any folder the
+// ssh account can open there: that account's permissions are the boundary.
 func (s *Server) listRemoteDirs(ctx context.Context, h *store.Host, p string, hidden bool) (*dirListing, error) {
 	hiddenArg := "0"
 	if hidden {
@@ -355,6 +364,8 @@ func (s *Server) listRemoteDirs(ctx context.Context, h *store.Host, p string, hi
 			l.Path = v
 		case "home":
 			l.Home = v
+		case "p":
+			l.Places = append(l.Places, v)
 		case "d", "g":
 			l.Dirs = append(l.Dirs, dirEntry{Name: v, Path: path.Join(l.Path, v), Git: k == "g"})
 		}
@@ -362,19 +373,15 @@ func (s *Server) listRemoteDirs(ctx context.Context, h *store.Host, p string, hi
 	if l.Path == "" {
 		return nil, badRequest(h.Name + " did not answer like a shell would")
 	}
-	if !within(l.Path, l.Home) {
-		return nil, badRequest(l.Path + " is outside the home folder on " + h.Name + " (" + l.Home + ")")
-	}
 	sort.Slice(l.Dirs, func(i, j int) bool { return strings.ToLower(l.Dirs[i].Name) < strings.ToLower(l.Dirs[j].Name) })
-	l.Roots = []string{l.Home}
-	if parent := path.Dir(l.Path); parent != l.Path && within(parent, l.Home) {
+	l.Roots = []string{"/"}
+	if parent := path.Dir(l.Path); parent != l.Path {
 		l.Parent = parent
 	}
 	return l, nil
 }
 
-// checkRemoteDir makes sure a folder exists on the host, inside its home;
-// empty = the home folder.
+// checkRemoteDir makes sure a folder exists on the host; empty = the home folder.
 func (s *Server) checkRemoteDir(ctx context.Context, h *store.Host, p string) (string, error) {
 	l, err := s.listRemoteDirs(ctx, h, p, false)
 	if err != nil {
