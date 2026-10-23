@@ -43,7 +43,7 @@ func linkCore(t *testing.T, s *Server, emails map[string]string) {
 			app = "notes"
 		}
 		json.NewEncoder(w).Encode(map[string]any{"active": input.Token != "pcx_revoked", "kind": kind, "scope": scope, "audience": audience,
-			"app": map[string]any{"id": 3, "slug": app, "name": app},
+			"app":  map[string]any{"id": 3, "slug": app, "name": app},
 			"user": map[string]any{"id": 7, "sub": "sub-" + email, "email": email, "name": email}})
 	}))
 	t.Cleanup(upstream.Close)

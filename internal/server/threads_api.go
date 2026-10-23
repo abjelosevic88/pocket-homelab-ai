@@ -125,20 +125,20 @@ func (s *Server) handleListThreads(w http.ResponseWriter, r *http.Request) {
 }
 
 type newThread struct {
-	Provider    string   `json:"provider"`
-	AccountID   *int64   `json:"account_id"` // nil = the person's default for the provider
-	HostID      int64    `json:"host_id"`    // 0 = this server, else a machine from Settings → Servers
+	Provider  string `json:"provider"`
+	AccountID *int64 `json:"account_id"` // nil = the person's default for the provider
+	HostID    int64  `json:"host_id"`    // 0 = this server, else a machine from Settings → Servers
 	// Worktree: work in an isolated git worktree (a new one, or one of the person's).
-	Worktree *newWorktree `json:"worktree"`
-	Model       string   `json:"model"`
-	Effort      string   `json:"effort"`
-	Mode        string   `json:"mode"`
-	Speed       *string  `json:"speed"`
-	Cwd         string   `json:"cwd"`
-	WorkspaceID *int64   `json:"workspace_id"`
-	Title       string   `json:"title"`
-	Text        string   `json:"text"`
-	UploadIDs   []string `json:"upload_ids"`
+	Worktree    *newWorktree `json:"worktree"`
+	Model       string       `json:"model"`
+	Effort      string       `json:"effort"`
+	Mode        string       `json:"mode"`
+	Speed       *string      `json:"speed"`
+	Cwd         string       `json:"cwd"`
+	WorkspaceID *int64       `json:"workspace_id"`
+	Title       string       `json:"title"`
+	Text        string       `json:"text"`
+	UploadIDs   []string     `json:"upload_ids"`
 }
 
 // createThread validates, stores and starts a thread with its first message.
