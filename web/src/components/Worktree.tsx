@@ -84,16 +84,25 @@ export function ChangesView({ worktree, refreshKey }: { worktree: Worktree; refr
 
 // ---------- starting a thread in a worktree ----------
 
-/** The "Worktree" switch next to the folder on the start page. */
-export function WorktreeChooser({ cwd, host, value, onChange }: { cwd: string; host: number; value: WorktreeSpec | null; onChange: (v: WorktreeSpec | null) => void }) {
+/** The "Worktree" switch next to the folder on the start page. A click turns it
+ * on (a new branch from the repo's base) and opens the options; every change
+ * there applies at once — there is no separate "use" step to miss. onRepo
+ * says whether the folder is in a git repository (no worktree otherwise). */
+export function WorktreeChooser({ cwd, host, value, onChange, onRepo }: {
+  cwd: string; host: number; value: WorktreeSpec | null; onChange: (v: WorktreeSpec | null) => void
+  onRepo?: (info: WorktreeRepoInfo | null | 'no') => void
+}) {
   const [info, setInfo] = useState<WorktreeRepoInfo | null>(null)
   const [anchor, setAnchor] = useState<Anchor | null>(null)
   useEffect(() => {
     setInfo(null)
+    onRepo?.(null)
     if (!cwd) return
     let live = true
-    api.get<WorktreeRepoInfo>(`${V1}/worktrees/config${qs({ path: cwd, host: host || undefined })}`).then(d => { if (live) setInfo(d) })
-      .catch(() => { if (live && value && value.mode !== 'existing') onChange(null) }) // not a repository: no worktree
+    api.get<WorktreeRepoInfo>(`${V1}/worktrees/config${qs({ path: cwd, host: host || undefined })}`)
+      .then(d => { if (live) { setInfo(d); onRepo?.(d) } })
+      // only a definite "not a repository" counts; anything else is left to the server to say
+      .catch(e => { if (live && e instanceof ApiError && e.status === 400) onRepo?.('no') })
     return () => { live = false }
   }, [cwd, host]) // eslint-disable-line react-hooks/exhaustive-deps
   if (!info) return null
@@ -102,9 +111,12 @@ export function WorktreeChooser({ cwd, host, value, onChange }: { cwd: string; h
   return (
     <>
       <button type="button" className={`btn sm wt-toggle ${on ? 'on' : ''}`} aria-pressed={on} aria-haspopup="dialog"
-        title={on ? 'Runs in its own git worktree' : 'Work in an isolated git worktree (its own folder and branch)'}
-        onClick={e => setAnchor(anchor ? null : rectOf(e.currentTarget))}>
-        <Icon name="fork" size={13} /><span className="ellipsis">{label}</span>
+        title={on ? 'Runs in its own git worktree — click for options or to turn it off' : 'Work in an isolated git worktree (its own folder and branch)'}
+        onClick={e => {
+          if (!value) onChange({ mode: 'new', base: info.base })
+          setAnchor(anchor ? null : rectOf(e.currentTarget))
+        }}>
+        <Icon name="fork" size={13} />{on && <span className="wt-toggle-on">Worktree:</span>}<span className="ellipsis">{label}</span>
       </button>
       {anchor && <WorktreeSpecPopover anchor={anchor} info={info} host={host} value={value} onChange={onChange} onClose={() => setAnchor(null)} />}
     </>
@@ -113,11 +125,11 @@ export function WorktreeChooser({ cwd, host, value, onChange }: { cwd: string; h
 
 function WorktreeSpecPopover({ anchor, info, host, value, onChange, onClose }: { anchor: Anchor; info: WorktreeRepoInfo; host: number; value: WorktreeSpec | null; onChange: (v: WorktreeSpec | null) => void; onClose: () => void }) {
   const { worktrees } = useApp()
-  const [mode, setMode] = useState<WorktreeSpec['mode'] | 'off'>(value?.mode || 'new')
-  const [base, setBase] = useState(value?.base || info.base)
-  const [branch, setBranch] = useState(value?.branch || '')
-  const [pr, setPr] = useState(value?.pr ? String(value.pr) : '')
-  const [name, setName] = useState(value?.name || '')
+  const [mode, setModeRaw] = useState<WorktreeSpec['mode'] | 'off'>(value ? (value.mode === 'existing' ? 'new' : value.mode) : 'off')
+  const [base, setBaseRaw] = useState(value?.base || info.base)
+  const [branch, setBranchRaw] = useState(value?.mode === 'branch' ? value.branch || '' : '')
+  const [pr, setPrRaw] = useState(value?.pr ? String(value.pr) : '')
+  const [name, setNameRaw] = useState(value?.name || '')
   const [settings, setSettings] = useState(false)
   const locals = info.branches.filter(b => !b.startsWith('origin/'))
   const baseOpts = useMemo(() => info.branches.map(b => ({ value: b, label: b })), [info.branches])
@@ -127,13 +139,20 @@ function WorktreeSpecPopover({ anchor, info, host, value, onChange, onClose }: {
   }, [info.branches]) // eslint-disable-line react-hooks/exhaustive-deps
   const open = worktrees.filter(w => w.status === 'active' && w.repo === info.repo && w.host_id === host)
   const cfg = info.config.effective
-  const apply = () => {
-    if (mode === 'off') onChange(null)
-    else if (mode === 'branch') onChange(branch ? { mode, branch } : null)
-    else if (mode === 'pr') onChange(Number(pr) > 0 ? { mode, pr: Number(pr) } : null)
-    else onChange({ mode: 'new', base, name: name.trim() || undefined })
-    onClose()
+  // every change applies at once; an unfinished branch/PR choice keeps the last valid one
+  const apply = (n: { mode?: typeof mode; base?: string; branch?: string; pr?: string; name?: string }) => {
+    const m = n.mode ?? mode, b = n.base ?? base, br = n.branch ?? branch, p = n.pr ?? pr, nm = n.name ?? name
+    if (m === 'off') onChange(null)
+    else if (m === 'new') onChange({ mode: 'new', base: b, name: nm.trim() || undefined })
+    else if (m === 'branch' && br) onChange({ mode: 'branch', branch: br })
+    else if (m === 'pr' && Number(p) > 0) onChange({ mode: 'pr', pr: Number(p) })
   }
+  const setMode = (v: typeof mode) => { setModeRaw(v); apply({ mode: v }) }
+  const setBase = (v: string) => { setBaseRaw(v); apply({ base: v }) }
+  const setBranch = (v: string) => { setBranchRaw(v); apply({ branch: v }) }
+  const setPr = (v: string) => { setPrRaw(v); apply({ pr: v }) }
+  const setName = (v: string) => { setNameRaw(v); apply({ name: v }) }
+  const pending = (mode === 'branch' && !branch) || (mode === 'pr' && !(Number(pr) > 0))
   if (settings) return <WorktreeSettingsDialog info={info} host={host} onClose={() => setSettings(false)} />
   return (
     <Popover anchor={anchor} onClose={onClose} width={380} label="Worktree" prefer="below">
@@ -175,9 +194,13 @@ function WorktreeSpecPopover({ anchor, info, host, value, onChange, onClose }: {
             ))}
           </div>
         )}
-        <div className="row" style={{ justifyContent: 'flex-end' }}>
-          <button type="button" className="btn sm" onClick={onClose}>Cancel</button>
-          <button type="button" className="btn primary sm" disabled={(mode === 'branch' && !branch) || (mode === 'pr' && !(Number(pr) > 0))} onClick={apply}>Use</button>
+        <div className="wt-pop-foot">
+          <span className={`grow xsmall ${pending ? 'warn-text' : value ? 'ok-text' : 'muted'}`}>
+            {pending ? (mode === 'branch' ? 'Pick a branch to use it' : 'Enter the PR number to use it')
+              : !value ? 'Off — the agent works in the folder itself'
+              : value.mode === 'existing' ? `In ${value.branch}` : 'On — the next thread gets its own worktree'}
+          </span>
+          <button type="button" className="btn primary sm" onClick={onClose}>Done</button>
         </div>
       </div>
     </Popover>

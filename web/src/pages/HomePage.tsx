@@ -5,7 +5,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api, ApiError, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { shortPath } from '../lib/format'
-import type { ProviderId, Thread, WorktreeSpec } from '../lib/types'
+import type { ProviderId, Thread, WorktreeRepoInfo, WorktreeSpec } from '../lib/types'
 import { RunningList } from '../components/RunningList'
 import { accountOptions, AgentPicker, type AgentValue, defaultsFor, ProviderToggle } from '../components/AgentPicker'
 import { Composer, type ComposerHandle } from '../components/Composer'
@@ -110,6 +110,10 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
   }, [choice, draftId])
   // a saved machine that was removed: back to this server
   const hostId = choice?.host_id && hosts.some(h => h.id === choice.host_id) ? choice.host_id : 0
+  // the start page's repository (for the worktree switch): null = still looking, 'no' = not a git repo
+  const [repo, setRepo] = useState<WorktreeRepoInfo | null | 'no'>(null)
+  const wtSpec = !draft && choice?.worktree && (repo !== 'no' || choice.worktree.mode === 'existing') ? choice.worktree : undefined
+  const wtWhere = !wtSpec ? '' : wtSpec.mode === 'existing' ? ` in worktree ${wtSpec.branch}` : wtSpec.mode === 'branch' ? ` in a worktree on ${wtSpec.branch}` : wtSpec.mode === 'pr' ? ` in a worktree of PR #${wtSpec.pr}` : ` in a new worktree from ${wtSpec.base || (repo && repo !== 'no' ? repo.base : 'the default branch')}`
   const pickHost = (id: number) => setChoice(c => c && { ...c, host_id: id, worktree: c.worktree?.mode === 'new' ? { mode: 'new' } : null, cwd: hostCwds()[String(id)] ?? (id ? '' : settings?.default_cwd || '') })
   // ?worktree=<id>: a new thread in one of my worktrees ("New thread here")
   const wtParam = Number(params.get('worktree')) || 0
@@ -163,6 +167,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
 
   const send = async (text: string, uploadIds: string[]) => {
     if (!choice) return false
+    if (wtSpec && repo === null && wtSpec.mode !== 'existing') { toast('Still checking the folder for the worktree — try again in a second', 'err'); return false }
     const ws = workspaces.find(w => w.path === choice.cwd)
     try {
       const t = await api.post<Thread>(draft ? `${V1}/drafts/${draft.id}/start` : `${V1}/threads`, {
@@ -170,7 +175,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
         speed: choice.speed ?? undefined,
         account_id: !hostId && accounts.some(a => a.provider === choice.provider && a.id === choice.account_id && a.signed_in) ? choice.account_id : undefined,
         cwd: choice.cwd || undefined, workspace_id: hostId ? undefined : ws?.id, host_id: hostId || undefined, text, upload_ids: uploadIds,
-        worktree: !draft && choice.worktree ? choice.worktree : undefined,
+        worktree: wtSpec,
       })
       upsertThread(t)
       navigate(`/t/${t.id}`, { replace: !!draft && embedded })
@@ -265,7 +270,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
                 <ProviderToggle value={choice.provider} onChange={pickProvider} />
                 <div className="home-where">
                   {!draft && <HostPicker value={hostId} onChange={pickHost} />}
-                  {!draft && <WorktreeChooser cwd={choice.cwd} host={hostId} value={choice.worktree || null} onChange={wt => setChoice(c => c && { ...c, worktree: wt })} />}
+                  {!draft && <WorktreeChooser cwd={choice.cwd} host={hostId} value={choice.worktree || null} onChange={wt => setChoice(c => c && { ...c, worktree: wt })} onRepo={setRepo} />}
                   {choice.worktree?.mode !== 'existing' && <BranchButton cwd={choice.cwd} host={hostId} />}
                   <FolderButton value={choice.cwd} host={hostId} onChange={cwd => setChoice(c => c && { ...c, cwd, worktree: c.worktree?.mode === 'existing' ? null : c.worktree })} className="btn sm" />
                 </div>
@@ -280,7 +285,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
                 </div>
               )}
               <Composer ref={serverComposer} big autoFocus draftKey={draft ? `link-${draft.id}` : 'new'} onSend={send}
-                placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} anything${hostId ? ` on ${hosts.find(h => h.id === hostId)?.name}` : ''}${choice.cwd ? ` in ${shortPath(choice.cwd)}` : ''}… paste a screenshot, type / for recipes`}
+                placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} anything${hostId ? ` on ${hosts.find(h => h.id === hostId)?.name}` : ''}${choice.cwd && !wtSpec ? ` in ${shortPath(choice.cwd)}` : ''}${wtWhere}… paste a screenshot, type / for recipes`}
                 footer={<AgentPicker compact showProvider={false} noAccount={!!hostId} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} />} />
               {providers.length > 0 && !providers.some(p => p.available) && (
                 <div className="callout danger mt-s"><Icon name="alert" size={15} /><span>Neither Claude Code nor Codex is available on the server. {providers.map(p => p.error).filter(Boolean).join(' ')}</span></div>
