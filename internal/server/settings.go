@@ -63,6 +63,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		NotifyInput     *bool                `json:"notify_input"`
 		NotifyFailed    *bool                `json:"notify_failed"`
 		NotifyOnlyAway  *bool                `json:"notify_only_away"`
+		EnterSendNow    *bool                `json:"enter_send_now"`
 		EnterSends      *bool                `json:"enter_sends"`
 		ShowThinking    *bool                `json:"show_thinking"`
 		UsageWidget     *bool                `json:"usage_widget"`
@@ -166,7 +167,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		in  *bool
 		out *bool
 	}{{in.NotifyFinished, &st.NotifyFinished}, {in.NotifyInput, &st.NotifyInput}, {in.NotifyFailed, &st.NotifyFailed},
-		{in.NotifyOnlyAway, &st.NotifyOnlyAway}, {in.EnterSends, &st.EnterSends}, {in.ShowThinking, &st.ShowThinking},
+		{in.NotifyOnlyAway, &st.NotifyOnlyAway}, {in.EnterSends, &st.EnterSends}, {in.EnterSendNow, &st.EnterSendNow}, {in.ShowThinking, &st.ShowThinking},
 		{in.UsageWidget, &st.UsageWidget}, {in.ThreadTabs, &st.ThreadTabs}} {
 		if b.in != nil {
 			*b.out = *b.in

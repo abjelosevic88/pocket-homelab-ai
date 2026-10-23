@@ -141,10 +141,9 @@ App defaults also include a personal **Effort level for apps**, with levels disc
 
 ### Edit and rewind messages
 
-Each sent user message has **Edit message** and **Rewind here** actions. Editing
-opens the message for revision; **Save & send** starts a new continuation with the
-edited prompt. Rewind opens a new continuation before that message and restores
-it, with its attachments, as an editable draft. The original conversation stays
+Each sent user message has **Edit message** and **Rewind here** actions. Both open
+a continuation before that message and restore its text and attachments directly
+in the bottom composer. Modify the draft and send when ready. The original conversation stays
 in history. Files and Pocket app changes already made are not undone.
 
 Only the owner can rewind, after the agent and its queue have stopped. The new
@@ -153,3 +152,15 @@ preference, and Pocket Ask restrictions. Claude continues from an independent
 copy of the earlier session history; Codex uses its native turn-boundary fork.
 An unsupported Codex version or a history mismatch returns an error instead of
 continuing with later messages still in context.
+
+
+Queued messages have **Edit in composer**: the message leaves the queue and its
+text and attachments return to the composer. Any existing draft is kept below it.
+Queueing a message does not show a toast.
+
+On a computer, **Enter** queues while the agent is working; **Cmd/Ctrl+Enter**
+sends immediately by interrupting the current turn and putting the new message
+ahead of older queued messages. **Settings → General → Composer → Send behavior**
+swaps those actions and sets the send button's behavior. **Shift+Enter** adds a
+new line; turning off **Enter sends** makes plain Enter add a new line too.
+Phones keep Enter for new lines and use the send button.

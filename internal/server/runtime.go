@@ -513,22 +513,57 @@ func (rt *engine) enforceMax() {
 
 // send hands a message to the thread's agent, or queues it while a turn runs.
 // The user item is written by the caller.
-func (rt *engine) send(t *store.Thread, key string, in agent.Input) (bool, error) {
+func (rt *engine) send(t *store.Thread, key string, in agent.Input, sendNow ...bool) (bool, error) {
 	r, err := rt.ensure(t)
 	if err != nil {
 		return false, err
 	}
+	// Match the global -> run lock order used by the idle reaper.
+	rt.mu.Lock()
 	r.mu.Lock()
-	if r.running || len(r.queue) > 0 {
-		r.queue = append(r.queue, queued{key: key, in: in})
+	waiting := r.running || len(r.queue) > 0
+	// Update the item before exposing it to next(): a quick interruption must
+	// not be followed by a late write that marks an already-sent item queued.
+	if st, err := rt.s.store.GetItem(rt.ctx, t.ID, key); err == nil {
+		var it agent.Item
+		if json.Unmarshal(st.Data, &it) == nil && it.Queued != waiting {
+			it.Queued = waiting
+			data, _ := json.Marshal(it)
+			if saved, err := rt.s.store.UpsertItem(rt.ctx, t.ID, key, it.Kind, data, itemBody(it)); err == nil {
+				for ch := range rt.watchers[t.ID] {
+					deliver(ch, sseEvent{Name: "item", Data: itemJSON(saved)})
+				}
+			}
+		}
+	}
+	if waiting {
+		now := len(sendNow) > 0 && sendNow[0]
+		q := queued{key: key, in: in}
+		if now {
+			r.queue = append([]queued{q}, r.queue...)
+		} else {
+			r.queue = append(r.queue, q)
+		}
+		running := r.running
 		r.mu.Unlock()
+		rt.mu.Unlock()
 		rt.publishThread(t)
+		if now {
+			if !running {
+				rt.next(r)
+			} else if err := r.sess.Interrupt(); err != nil {
+				// The message has been accepted. Keep it queued and surface the
+				// interruption failure instead of inviting a duplicate retry.
+				rt.saveItem(t.ID, agent.Item{Key: "interrupt-" + key, Kind: "notice", Level: "warn", Text: "Could not interrupt the current turn; your message is queued to go next. " + err.Error()})
+			}
+		}
 		return true, nil
 	}
 	r.running = true
 	r.lastUsed = time.Now()
 	r.lastText = ""
 	r.mu.Unlock()
+	rt.mu.Unlock()
 	in = rt.withMemory(r, in, rt.setTurnSender(t.ID, key, t.UserID))
 	if err := r.sess.Send(in); err != nil {
 		r.mu.Lock()

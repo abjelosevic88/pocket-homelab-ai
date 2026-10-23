@@ -6,7 +6,7 @@ import type { Item } from '../lib/types'
 import { Icon } from './icons'
 import { errMsg, useToast } from './ui'
 
-export function QueueStrip({ threadId, queued, agent, onClearAll }: { threadId: string; queued: Item[]; agent: string; onClearAll?: () => void }) {
+export function QueueStrip({ threadId, queued, agent, onClearAll, onEdit, currentUserId, ownerId }: { threadId: string; queued: Item[]; agent: string; onClearAll?: () => void; onEdit?: (it: Item) => Promise<void>; currentUserId?: number; ownerId?: number }) {
   const { toast } = useToast()
   const [busy, setBusy] = useState('')
   if (!queued.length) return null
@@ -17,6 +17,10 @@ export function QueueStrip({ threadId, queued, agent, onClearAll }: { threadId: 
       else await api.del(`${V1}/threads/${threadId}/queue/${encodeURIComponent(it.key)}`)
     } catch (e) { toast(errMsg(e), 'err') } finally { setBusy('') }
   }
+  const edit = async (it: Item) => {
+    setBusy(it.key)
+    try { await onEdit?.(it) } catch (e) { toast(errMsg(e), 'err') } finally { setBusy('') }
+  }
   return (
     <div className="queue-strip" aria-label="Queued messages">
       <div className="queue-h"><Icon name="clock" size={12} /><span className="grow">{queued.length === 1 ? '1 message waits' : `${queued.length} messages wait`} — {queued.length === 1 ? 'it goes' : 'they go'} out when {agent} is done</span>
@@ -25,6 +29,7 @@ export function QueueStrip({ threadId, queued, agent, onClearAll }: { threadId: 
         <div key={it.key} className="queue-row">
           <span className="queue-n tnum">{i + 1}</span>
           <span className="queue-text">{it.images?.length ? `🖼 ${it.images.length} · ` : ''}{it.text || '(image)'}</span>
+          {onEdit && (it.by_id || ownerId) === currentUserId && <button type="button" className="btn ghost icon-only xs" disabled={!!busy} onClick={() => { void edit(it) }} aria-label="Edit queued message" title="Edit in composer"><Icon name="edit" size={13} /></button>}
           <button type="button" className="btn sm" disabled={!!busy} onClick={() => act(it, true)} title="Stop what the agent is doing and send this now">Send now</button>
           <button type="button" className="btn ghost icon-only xs" disabled={!!busy} onClick={() => act(it, false)} aria-label="Remove from the queue" title="Remove from the queue"><Icon name="x" size={13} /></button>
         </div>

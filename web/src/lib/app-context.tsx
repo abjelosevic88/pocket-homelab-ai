@@ -48,7 +48,7 @@ export const DEFAULT_SETTINGS: Settings = {
   title: 'Pocket AI', app_model: '', app_effort: '', default_provider: 'claude', default_cwd: '',
   claude: { model: '', effort: '', mode: '' }, codex: { model: '', effort: '', mode: '' },
   notify_kind: 'apprise', notify_url: '', notify_finished: true, notify_input: true, notify_failed: true, notify_only_away: true,
-  enter_sends: true, show_thinking: false, usage_widget: true, usage_pinned: [], thread_tabs: true, system_prompt: '',
+  enter_sends: true, enter_send_now: false, show_thinking: false, usage_widget: true, usage_pinned: [], thread_tabs: true, system_prompt: '',
 }
 
 /** GET /settings may answer the bare object or `{settings, …}`; fill defaults either way. */
