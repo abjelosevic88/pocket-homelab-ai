@@ -155,7 +155,9 @@ export function Timeline({ items, showThinking, streamingKey, onFork, threadId, 
   if (initial.current === null) initial.current = new Set(items.map(i => i.key))
   // A turn footer straight after another is the same turn read twice (Pocket
   // AI's own footer and the one from the CLI's log): keep the first.
-  const shown = items.filter((it, i) => !(it.kind === 'turn' && items[i - 1]?.kind === 'turn'))
+  // Items that would render nothing (Opus' thinking blocks arrive empty) are
+  // left out: they would split a run of tool calls and leave empty gaps.
+  const shown = items.filter((it, i) => !(it.kind === 'turn' && items[i - 1]?.kind === 'turn') && !invisible(it, streamingKey))
   // What each turn said, for its footer's copy button: every reply since the
   // previous footer, whole.
   const said = new Map<string, string>()
@@ -186,6 +188,14 @@ export function Timeline({ items, showThinking, streamingKey, onFork, threadId, 
       )})}
     </div>
   )
+}
+
+/** An item that shows nothing (empty thinking or reply that is not streaming). */
+function invisible(it: Item, streamingKey?: string): boolean {
+  if (it.key === streamingKey) return false
+  if (it.kind === 'thinking') return !it.text?.trim()
+  if (it.kind === 'assistant') return !it.text?.trim() && !it.images?.length
+  return false
 }
 
 /** A shared thread's owner: messages without a sender are theirs. */
