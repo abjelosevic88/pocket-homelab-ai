@@ -36,6 +36,28 @@ queued turn from `turn/completed`).
 History: Claude Code sessions are read from `~/.claude/projects/*/*.jsonl`; Codex threads come from
 `thread/list` and `thread/read`.
 
+## Other machines (hosts)
+
+A thread can run on another machine (`threads.host_id`, table `hosts`; 0 = this server). Pocket AI starts the
+same command there over ssh — `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new … <target> --
+<command>` with this server's keys and `~/.ssh/config` — and both stdio protocols go through unchanged. The
+remote command is a POSIX `sh` script sent as base64 (`exec /bin/sh -c 'eval "$(echo … | base64 -d)"'`), so the
+remote login shell (bash, zsh, fish) never parses the prompt or flags; the script sources `/etc/profile` and
+`~/.profile` quietly, puts the usual install folders on `PATH`, `cd`s into the thread's folder and `exec`s the CLI.
+When the ssh link closes the CLI sees EOF and exits.
+
+- The remote's own login is used (no account switching); its rate-limit windows are ignored here.
+- Pictures: Claude gets them inline as always; Codex gets `{"type":"image","url":"data:…"}` instead of
+  `localImage` (the file is here).
+- Folders (`/fs/dirs?host=`) and git (`/fs/git?host=`, `/fs/git/switch {host}`) run small scripts over ssh;
+  git info is one round trip. Agents may start anywhere inside the remote home.
+- Not available for remote threads: Pocket app tools (their MCP endpoint is on this server's loopback),
+  following the session from other tools, "On this server", log images, rewind/edit and fork at an earlier
+  turn (all read the CLI's session file, which is over there). Forking the latest turn works (`--fork-session`).
+- `POST /hosts/{id}/check` runs a probe: home, OS, hostname, `claude --version` + `claude auth status`,
+  `codex --version` + `codex login status`. `GET /hosts/key` shows this server's public key for
+  `authorized_keys`. Hosts are admin-managed; anyone who may run agents can use them.
+
 ## Schedules
 
 A schedule creates a thread with the prompt plus an instruction to begin the final answer with `OK: …` or

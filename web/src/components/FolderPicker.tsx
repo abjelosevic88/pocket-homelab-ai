@@ -1,4 +1,5 @@
-// Pick the folder an agent starts in: workspaces first, or browse the server.
+// Pick the folder an agent starts in: workspaces first, or browse the server
+// (or, with host, another machine over ssh).
 import { useEffect, useState } from 'react'
 import { api, qs, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
@@ -7,8 +8,10 @@ import type { DirListing } from '../lib/types'
 import { Icon } from './icons'
 import { errMsg, Loading, Modal } from './ui'
 
-export function FolderPicker({ value, onPick, onClose }: { value: string; onPick: (path: string) => void; onClose: () => void }) {
-  const { workspaces } = useApp()
+export function FolderPicker({ value, host = 0, onPick, onClose }: { value: string; host?: number; onPick: (path: string) => void; onClose: () => void }) {
+  const { workspaces: all, hosts } = useApp()
+  const workspaces = host ? [] : all // folders on this server
+  const where = host ? hosts.find(h => h.id === host)?.name : ''
   const [path, setPath] = useState(value || '')
   const [list, setList] = useState<DirListing | null>(null)
   const [err, setErr] = useState('')
@@ -17,7 +20,7 @@ export function FolderPicker({ value, onPick, onClose }: { value: string; onPick
   useEffect(() => {
     let live = true
     setErr('')
-    api.get<DirListing>(`${V1}/fs/dirs${qs({ path })}`)
+    api.get<DirListing>(`${V1}/fs/dirs${qs({ path, host: host || undefined })}`)
       .then(d => { if (live) { setList(d); setTyped(d.path) } })
       .catch(e => { if (live) { setErr(errMsg(e)); if (!list) setList({ path, parent: '', dirs: [], roots: [] }) } })
     return () => { live = false }
@@ -25,7 +28,7 @@ export function FolderPicker({ value, onPick, onClose }: { value: string; onPick
 
   const crumbs = (list?.path || '').split('/').filter(Boolean)
   return (
-    <Modal title="Working folder" onClose={onClose} size="lg" className="folder-modal" footer={<>
+    <Modal title={where ? `Working folder on ${where}` : 'Working folder'} onClose={onClose} size="lg" className="folder-modal" footer={<>
       <span className="muted small grow ellipsis" title={list?.path}>{shortPath(list?.path)}</span>
       <button type="button" className="btn" onClick={onClose}>Cancel</button>
       <button type="button" className="btn primary" disabled={!list?.path || !!err} onClick={() => { onPick(list!.path); onClose() }}><span className="hide-narrow">Use this folder</span><span className="show-narrow">Use</span></button>
@@ -74,14 +77,14 @@ export function FolderPicker({ value, onPick, onClose }: { value: string; onPick
 }
 
 /** The compact "in ~/Conversations" button that opens the picker. */
-export function FolderButton({ value, onChange, className = 'btn ghost sm' }: { value: string; onChange: (p: string) => void; className?: string }) {
+export function FolderButton({ value, host = 0, onChange, className = 'btn ghost sm' }: { value: string; host?: number; onChange: (p: string) => void; className?: string }) {
   const [open, setOpen] = useState(false)
   return (
     <>
       <button type="button" className={`${className} folder-btn`} title={value || 'Working folder'} onClick={() => setOpen(true)}>
-        <Icon name="folder" size={14} /><span className="ellipsis">{value ? baseName(value) : 'Folder'}</span>
+        <Icon name="folder" size={14} /><span className="ellipsis">{value ? baseName(value) : host ? 'Home' : 'Folder'}</span>
       </button>
-      {open && <FolderPicker value={value} onPick={onChange} onClose={() => setOpen(false)} />}
+      {open && <FolderPicker value={value} host={host} onPick={onChange} onClose={() => setOpen(false)} />}
     </>
   )
 }

@@ -127,6 +127,7 @@ func (s *Server) handleListThreads(w http.ResponseWriter, r *http.Request) {
 type newThread struct {
 	Provider    string   `json:"provider"`
 	AccountID   *int64   `json:"account_id"` // nil = the person's default for the provider
+	HostID      int64    `json:"host_id"`    // 0 = this server, else a machine from Settings → Servers
 	Model       string   `json:"model"`
 	Effort      string   `json:"effort"`
 	Mode        string   `json:"mode"`
@@ -147,8 +148,17 @@ func (s *Server) createThread(ctx context.Context, u *store.User, in newThread, 
 	if in.Provider != "claude" && in.Provider != "codex" {
 		return nil, badRequest("provider must be claude or codex")
 	}
+	host, err := s.checkHostUse(ctx, u, in.HostID)
+	if err != nil {
+		return nil, err
+	}
 	prov, ok := s.agentProvider(ctx, in.Provider)
-	if !ok {
+	if host != nil {
+		// models and modes come from the CLI here; whether it runs is the host's business
+		if why := host.Info.Missing[in.Provider]; why != "" && host.Info.OK {
+			return nil, badRequest(host.Name + ": " + why)
+		}
+	} else if !ok {
 		return nil, badRequest(firstNonEmpty(prov.Error, in.Provider+" is not available on this server"))
 	}
 	if strings.TrimSpace(in.Text) == "" && len(in.UploadIDs) == 0 {
@@ -168,6 +178,9 @@ func (s *Server) createThread(ctx context.Context, u *store.User, in newThread, 
 	if in.AccountID != nil {
 		t.AccountID = *in.AccountID
 	}
+	if host != nil {
+		t.HostID, t.AccountID, in.AccountID = host.ID, 0, nil // the machine's own login
+	}
 	if err := s.checkAccount(ctx, u, t.Provider, t.AccountID); err != nil {
 		if in.AccountID != nil {
 			return nil, err
@@ -184,7 +197,14 @@ func (s *Server) createThread(ctx context.Context, u *store.User, in newThread, 
 		}
 		t.Speed = "" // a saved speed the account cannot use right now: run at standard speed
 	}
-	if in.WorkspaceID != nil && *in.WorkspaceID > 0 {
+	if host != nil {
+		// folders are the other machine's; workspaces are folders here
+		clean, err := s.checkRemoteDir(ctx, host, in.Cwd)
+		if err != nil {
+			return nil, err
+		}
+		t.Cwd = clean
+	} else if in.WorkspaceID != nil && *in.WorkspaceID > 0 {
 		ws, err := s.store.GetWorkspace(ctx, u.ID, *in.WorkspaceID)
 		if err != nil {
 			return nil, badRequest("that workspace does not exist")
@@ -194,14 +214,16 @@ func (s *Server) createThread(ctx context.Context, u *store.User, in newThread, 
 			in.Cwd = ws.Path
 		}
 	}
-	cwd := firstNonEmpty(in.Cwd, st.DefaultCwd, s.cfg.Home)
-	clean, err := s.checkDir(cwd)
-	if err != nil {
-		return nil, err
-	}
-	t.Cwd = clean
-	if t.WorkspaceID == nil {
-		t.WorkspaceID = s.store.WorkspaceForPath(ctx, u.ID, clean)
+	if host == nil {
+		cwd := firstNonEmpty(in.Cwd, st.DefaultCwd, s.cfg.Home)
+		clean, err := s.checkDir(cwd)
+		if err != nil {
+			return nil, err
+		}
+		t.Cwd = clean
+		if t.WorkspaceID == nil {
+			t.WorkspaceID = s.store.WorkspaceForPath(ctx, u.ID, clean)
+		}
 	}
 	if t.Title == "" {
 		t.Title = titleFrom(in.Text)
@@ -385,6 +407,10 @@ func (s *Server) handlePatchThread(w http.ResponseWriter, r *http.Request) {
 	switched := ""
 	if in.Account != nil && *in.Account != t.AccountID {
 		if !s.requireRun(w, r) {
+			return
+		}
+		if t.HostID != 0 {
+			writeErr(w, 400, "this conversation runs on another server, with that machine's own login")
 			return
 		}
 		if err := s.checkAccount(r.Context(), userFrom(r.Context()), t.Provider, *in.Account); err != nil {
@@ -684,7 +710,7 @@ func (s *Server) handleFork(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	n := &store.Thread{ID: uuid.NewString(), UserID: t.UserID, Title: "Fork of " + t.Title, Provider: t.Provider, AccountID: t.AccountID, Model: t.Model,
+	n := &store.Thread{ID: uuid.NewString(), UserID: t.UserID, Title: "Fork of " + t.Title, Provider: t.Provider, AccountID: t.AccountID, HostID: t.HostID, Model: t.Model,
 		Effort: t.Effort, Mode: t.Mode, Speed: t.Speed, Cwd: t.Cwd, WorkspaceID: t.WorkspaceID, Source: "fork", SourceRef: "fork:" + t.ProviderSessionID}
 	if err := s.store.CreateThread(ctx, n); err != nil {
 		s.fail(w, err, "fork")

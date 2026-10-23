@@ -37,20 +37,21 @@ function RowTimer({ since }: { since?: string }) {
 }
 
 export function ThreadRow({ t, active, onOpen, onContextMenu }: { t: Thread; active: boolean; onOpen: () => void; onContextMenu?: (e: React.MouseEvent) => void }) {
-  const { running, user } = useApp()
+  const { running, user, hosts } = useApp()
+  const host = t.host_id ? hosts.find(h => h.id === t.host_id)?.name || 'Removed server' : ''
   // working in Pocket AI, or in Paseo / a terminal on the same session
   const run = running.find(r => r.thread_id === t.id || (!!t.provider_session_id && r.session_id === t.provider_session_id))
   const waiting = t.status === 'waiting' || t.pending > 0 || run?.status === 'waiting'
   const working = waiting || t.status === 'running' || !!run
   return (
-    <button type="button" className={`th-row ${active ? 'active' : ''} ${t.unread ? 'unread' : ''} ${working ? 'is-working' : ''}`} onClick={onOpen} onContextMenu={onContextMenu} title={t.cwd}>
+    <button type="button" className={`th-row ${active ? 'active' : ''} ${t.unread ? 'unread' : ''} ${working ? 'is-working' : ''}`} onClick={onOpen} onContextMenu={onContextMenu} title={host ? `${host}: ${t.cwd}` : t.cwd}>
       <span className="th-main">
         <span className="th-title ellipsis">{threadTitle(t)}</span>
         <span className="th-meta">
           <ProviderBadge provider={t.provider} size="xs" />
           {t.source === 'schedule' && <Icon name="clock" size={11} />}
           <PrivacyChip sharedWith={t.shares?.map(s => s.name)} iconOnly />
-          <span className="ellipsis">{t.owner_name && user && t.owner_id !== user.id ? `${t.owner_name} · ${baseName(t.cwd)}` : baseName(t.cwd)}</span>
+          <span className="ellipsis">{t.owner_name && user && t.owner_id !== user.id ? `${t.owner_name} · ` : ''}{host ? `${host}: ` : ''}{baseName(t.cwd)}</span>
         </span>
       </span>
       <span className="th-side">

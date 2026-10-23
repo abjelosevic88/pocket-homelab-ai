@@ -66,6 +66,11 @@ func nextSentPrompt(rows []*store.Item, turnKey string) string {
 // the original keeps working: it never reads past an earlier, finished turn.
 func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.Thread, key string, fork bool) {
 	ctx := r.Context()
+	if t.HostID != 0 {
+		// the copy is cut from the CLI's session file, which is on the other machine
+		writeErr(w, 400, "conversations on another server can only be forked at the latest response (for now)")
+		return
+	}
 	rows, err := s.store.ListItems(ctx, t.ID)
 	if err != nil {
 		s.fail(w, err, "read history")

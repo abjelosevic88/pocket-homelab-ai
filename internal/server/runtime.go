@@ -56,6 +56,7 @@ type run struct {
 	userID   int64
 	provider string
 	account  int64 // the login it runs on (0 = the server's own)
+	host     int64 // the machine it runs on (0 = this server)
 	sess     agent.Session
 	cancel   context.CancelFunc
 
@@ -376,18 +377,20 @@ func (rt *engine) ensure(t *store.Thread) (*run, error) {
 }
 
 func (rt *engine) startRun(t *store.Thread) (*run, error) {
+	h, err := rt.s.host(rt.ctx, t.HostID)
+	if err != nil {
+		return nil, err
+	}
+	if h != nil {
+		return rt.startRemote(t, h)
+	}
 	if fi, err := os.Stat(t.Cwd); err != nil || !fi.IsDir() {
 		return nil, badRequest("the folder " + t.Cwd + " does not exist any more")
 	}
 	ctx, cancel := context.WithCancel(rt.ctx)
 	r := &run{threadID: t.ID, userID: t.UserID, provider: t.Provider, account: t.AccountID, cancel: cancel, pending: map[string]bool{},
 		live: map[string]*agent.Item{}, dirty: map[string]bool{}, lastUsed: time.Now()}
-	o := agent.Options{Cwd: t.Cwd, Model: t.Model, Effort: t.Effort, Mode: t.Mode, Speed: t.Speed, ResumeID: t.ProviderSessionID,
-		SystemPrompt: rt.systemPrompt(ctx, t.UserID), Env: []string{"POCKET_AI=1"}, Log: rt.s.log}
-	o.SystemPrompt += rt.s.threadContextPrompt(ctx, t) // what the app that prepared it added: link_threads.go
-	if o.ResumeID == "" && strings.HasPrefix(t.SourceRef, "fork:") {
-		o.ResumeID, o.Fork = strings.TrimPrefix(t.SourceRef, "fork:"), true
-	}
+	o := rt.baseOptions(ctx, t)
 	// The account's folder, with the session in it (it may have been
 	// started on another login).
 	o.Env = append(o.Env, rt.s.accountEnv(ctx, t.Provider, t.AccountID)...)
@@ -411,7 +414,6 @@ func (rt *engine) startRun(t *store.Thread) (*run, error) {
 	} else {
 		o.SystemPrompt += "\nFor questions about Pocket app data, the user can enable the Ask connection in an application. Do not search credentials or databases to substitute for that connection."
 	}
-	var err error
 	switch t.Provider {
 	case "claude":
 		o.Bin = rt.s.cfg.ClaudeBin
@@ -427,6 +429,51 @@ func (rt *engine) startRun(t *store.Thread) (*run, error) {
 		return nil, err
 	}
 	rt.s.log.Info("agent started", "thread", t.ID, "provider", t.Provider, "account", t.AccountID, "model", t.Model, "mode", t.Mode, "resume", o.ResumeID != "", "cwd", t.Cwd)
+	return r, nil
+}
+
+// baseOptions: what every start of a thread gets, wherever it runs.
+func (rt *engine) baseOptions(ctx context.Context, t *store.Thread) agent.Options {
+	o := agent.Options{Cwd: t.Cwd, Model: t.Model, Effort: t.Effort, Mode: t.Mode, Speed: t.Speed, ResumeID: t.ProviderSessionID,
+		SystemPrompt: rt.systemPrompt(ctx, t.UserID), Env: []string{"POCKET_AI=1"}, Log: rt.s.log}
+	o.SystemPrompt += rt.s.threadContextPrompt(ctx, t) // what the app that prepared it added: link_threads.go
+	if o.ResumeID == "" && strings.HasPrefix(t.SourceRef, "fork:") {
+		o.ResumeID, o.Fork = strings.TrimPrefix(t.SourceRef, "fork:"), true
+	}
+	return o
+}
+
+// startRemote starts the CLI on another machine over ssh (hosts.go). The
+// remote's own login is used; Pocket app tools stay here (their endpoint is
+// on this server's loopback), and the session file lives over there.
+func (rt *engine) startRemote(t *store.Thread, h *store.Host) (*run, error) {
+	if why := h.Info.Missing[t.Provider]; why != "" && h.Info.OK {
+		return nil, badRequest(h.Name + ": " + why + " — install it there and press Check in Settings → Agents → Servers")
+	}
+	ctx, cancel := context.WithCancel(rt.ctx)
+	r := &run{threadID: t.ID, userID: t.UserID, provider: t.Provider, host: h.ID, cancel: cancel, pending: map[string]bool{},
+		live: map[string]*agent.Item{}, dirty: map[string]bool{}, lastUsed: time.Now()}
+	o := rt.baseOptions(ctx, t)
+	o.Remote = remoteOf(h)
+	o.Bin = hostBin(h, t.Provider)
+	o.SystemPrompt = strings.Replace(o.SystemPrompt, "the coding-agent CLIs on this server", "the coding-agent CLIs on the person's machines", 1) +
+		"\nThis conversation runs on the machine \"" + h.Name + "\" (" + firstNonEmpty(h.Info.Hostname, h.Target) + "), reached over ssh from the Pocket AI server. " +
+		"Pocket app tools are not available here; for Pocket app data, the person can use a conversation on the Pocket AI server."
+	sink := &runSink{rt: rt, r: r}
+	var err error
+	switch t.Provider {
+	case "claude":
+		r.sess, err = agent.StartClaude(ctx, o, sink)
+	case "codex":
+		r.sess, err = agent.StartCodex(ctx, o, sink)
+	default:
+		err = badRequest("unknown provider " + t.Provider)
+	}
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	rt.s.log.Info("agent started", "thread", t.ID, "provider", t.Provider, "host", h.Name, "model", t.Model, "mode", t.Mode, "resume", o.ResumeID != "", "cwd", t.Cwd)
 	return r, nil
 }
 
@@ -915,6 +962,9 @@ type provLimits struct {
 // Limits merges what a running CLI reports (it only reports the windows of
 // the model in use) into the full picture by window id.
 func (k *runSink) Limits(provider string, w []agent.Window) {
+	if k.r.host != 0 {
+		return // another machine's login: its windows are not this server's
+	}
 	k.rt.setLimits(limitsKey(provider, k.r.account), w, nil, false, "")
 }
 
@@ -1010,6 +1060,31 @@ func (rt *engine) publishAccounts() {
 		for ch := range subs {
 			deliver(ch, sseEvent{Name: "accounts", Data: map[string]any{}})
 		}
+	}
+}
+
+func (rt *engine) publishHosts() {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	for _, subs := range rt.userSubs {
+		for ch := range subs {
+			deliver(ch, sseEvent{Name: "hosts", Data: map[string]any{}})
+		}
+	}
+}
+
+// stopHost stops every process running on a host (it is being removed).
+func (rt *engine) stopHost(id int64) {
+	rt.mu.Lock()
+	var ids []string
+	for tid, r := range rt.runs {
+		if r.host == id {
+			ids = append(ids, tid)
+		}
+	}
+	rt.mu.Unlock()
+	for _, tid := range ids {
+		rt.stop(tid)
 	}
 }
 

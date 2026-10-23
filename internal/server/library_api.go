@@ -79,7 +79,17 @@ func (s *Server) handleDirs(w http.ResponseWriter, r *http.Request) {
 	if !s.requireRun(w, r) {
 		return
 	}
-	out, err := s.listDirs(r.URL.Query().Get("path"), queryBool(r, "hidden"))
+	h, err := s.checkHostUse(r.Context(), userFrom(r.Context()), queryInt64(r, "host"))
+	if err != nil {
+		s.fail(w, err, "dirs")
+		return
+	}
+	var out *dirListing
+	if h != nil {
+		out, err = s.listRemoteDirs(r.Context(), h, r.URL.Query().Get("path"), queryBool(r, "hidden"))
+	} else {
+		out, err = s.listDirs(r.URL.Query().Get("path"), queryBool(r, "hidden"))
+	}
 	if err != nil {
 		s.fail(w, err, "dirs")
 		return

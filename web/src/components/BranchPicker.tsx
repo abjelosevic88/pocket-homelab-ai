@@ -8,8 +8,10 @@ import { errMsg, Popover, rectOf, Spinner, useToast, type Anchor } from './ui'
 
 const VALID_NAME = /^(?!-)(?!.*\.\.)(?!.*\/\/)(?!.*@\{)[^\s~^:?*[\\]+(?<!\/|\.lock|\.)$/
 
-export function BranchButton({ cwd, className = 'btn sm', lockedReason, refreshKey, onSwitched }: {
+export function BranchButton({ cwd, host, className = 'btn sm', lockedReason, refreshKey, onSwitched }: {
   cwd: string; className?: string
+  /** the machine the folder is on (0 / undefined = this server) */
+  host?: number
   /** set while switching would pull the floor out from under a running agent */
   lockedReason?: string
   /** bump to re-read (e.g. after a turn: the agent may have switched itself) */
@@ -22,9 +24,9 @@ export function BranchButton({ cwd, className = 'btn sm', lockedReason, refreshK
   useEffect(() => {
     if (!cwd) { setInfo(null); return }
     let live = true
-    api.get<GitInfo>(`${V1}/fs/git${qs({ path: cwd })}`).then(d => { if (live) setInfo(d) }).catch(() => { if (live) setInfo(null) })
+    api.get<GitInfo>(`${V1}/fs/git${qs({ path: cwd, host: host || undefined })}`).then(d => { if (live) setInfo(d) }).catch(() => { if (live) setInfo(null) })
     return () => { live = false }
-  }, [cwd, refreshKey])
+  }, [cwd, host, refreshKey])
 
   if (!info?.repo) return null
   const label = info.detached ? info.head || 'detached' : info.branch || 'no commits'
@@ -36,14 +38,14 @@ export function BranchButton({ cwd, className = 'btn sm', lockedReason, refreshK
         <Icon name="git-branch" size={13} /><span className="ellipsis">{label}</span>
         {info.dirty > 0 && <span className="branch-dirty" aria-label="uncommitted changes" />}
       </button>
-      {anchor && <BranchPopover anchor={anchor} cwd={cwd} info={info} lockedReason={lockedReason} onClose={() => setAnchor(null)}
+      {anchor && <BranchPopover anchor={anchor} cwd={cwd} host={host} info={info} lockedReason={lockedReason} onClose={() => setAnchor(null)}
         onInfo={next => { setInfo(next); if (next.branch !== info.branch || next.head !== info.head) onSwitched?.(next) }} />}
     </>
   )
 }
 
-function BranchPopover({ anchor, cwd, info: initial, lockedReason, onClose, onInfo }: {
-  anchor: Anchor; cwd: string; info: GitInfo; lockedReason?: string; onClose: () => void; onInfo: (i: GitInfo) => void
+function BranchPopover({ anchor, cwd, host, info: initial, lockedReason, onClose, onInfo }: {
+  anchor: Anchor; cwd: string; host?: number; info: GitInfo; lockedReason?: string; onClose: () => void; onInfo: (i: GitInfo) => void
 }) {
   const { toast } = useToast()
   const [info, setInfo] = useState(initial)
@@ -54,7 +56,7 @@ function BranchPopover({ anchor, cwd, info: initial, lockedReason, onClose, onIn
 
   // re-read on open: the list in the button may be minutes old
   useEffect(() => {
-    api.get<GitInfo>(`${V1}/fs/git${qs({ path: cwd })}`).then(d => { setInfo(d); onInfo(d) }).catch(() => {})
+    api.get<GitInfo>(`${V1}/fs/git${qs({ path: cwd, host: host || undefined })}`).then(d => { setInfo(d); onInfo(d) }).catch(() => {})
     input.current?.focus()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -69,7 +71,7 @@ function BranchPopover({ anchor, cwd, info: initial, lockedReason, onClose, onIn
     if (lockedReason || busy) return
     setBusy(body.branch); setErr('')
     try {
-      const next = await api.post<GitInfo>(`${V1}/fs/git/switch`, { path: cwd, ...body })
+      const next = await api.post<GitInfo>(`${V1}/fs/git/switch`, { path: cwd, host: host || 0, ...body })
       setInfo(next); onInfo(next); onClose()
       toast(body.create ? `Created and switched to ${next.branch}` : `Switched to ${next.branch}`)
     } catch (e) { setErr(errMsg(e)) }

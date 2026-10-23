@@ -10,6 +10,7 @@ import { RunBar, useForkNewTab } from '../components/RunBar'
 import { QueueStrip } from '../components/QueueStrip'
 import { AgentPicker } from '../components/AgentPicker'
 import { BranchButton } from '../components/BranchPicker'
+import { useHostName } from '../components/HostPicker'
 import { ContextMeter, ProviderBadge } from '../components/bits'
 import { Composer, type ComposerHandle } from '../components/Composer'
 import { Icon } from '../components/icons'
@@ -59,6 +60,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   // the list's copy is fresher while the detail loads
   const listCopy = threads?.find(t => t.id === id) || null
   const t = thread || listCopy
+  const hostName = useHostName(t?.host_id)
 
   const load = useCallback(async () => {
     try {
@@ -261,8 +263,9 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
             <PrivacyBadge thread={t} access={access} onShare={owner ? () => setSharing(true) : undefined} />
             <ProviderBadge provider={t.provider} size="xs" />
             <ThreadRefChip threadId={t.id} source={t.source} />
+            {hostName && <span className="host-chip" title={`Runs on ${hostName} over ssh`}><Icon name="server" size={12} />{hostName}</span>}
             <span className="ellipsis mono" title={t.cwd}>{shortPath(t.cwd)}</span>
-            {canRun && t.source !== 'ask' && t.cwd && <BranchButton cwd={t.cwd} className="btn ghost" refreshKey={`${id}:${t.status}`}
+            {canRun && t.source !== 'ask' && t.cwd && <BranchButton cwd={t.cwd} host={t.host_id} className="btn ghost" refreshKey={`${id}:${t.status}`}
               lockedReason={running || t.status === 'waiting' || t.external || t.subagents?.length ? 'The agent is working in this folder — switch once it is done.' : undefined} />}
             {t.usage?.cost_usd > 0 && <span className="tnum" title="Cost so far">{fmtCost(t.usage.cost_usd)}</span>}
             <ContextMeter used={t.usage?.context_tokens || 0} window={t.usage?.context_window || 0} />
@@ -283,8 +286,8 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
               {t.source === 'import' && items.length > 0 && <div className="notice info"><Icon name="history" size={14} /><span>Imported from the server’s {providerName(t.provider)} history — sending a message continues that session.</span></div>}
               <Timeline key={id} threadId={t.provider === 'claude' ? id : undefined} items={visible} onResend={canSend ? resend : undefined} onDropUnsent={canSend ? dropUnsent : undefined} showThinking={!!settings?.show_thinking} streamingKey={streamingKey}
                 onFork={owner && t.source !== 'ask' && t.provider_session_id && canRun ? forkNewTab : undefined}
-                onEdit={owner && canRun ? it => { void rewind(it) } : undefined}
-                onRewind={owner && canRun ? it => { void rewind(it) } : undefined} rewindDisabled={rewindDisabled}
+                onEdit={owner && canRun && !t.host_id ? it => { void rewind(it) } : undefined}
+                onRewind={owner && canRun && !t.host_id ? it => { void rewind(it) } : undefined} rewindDisabled={rewindDisabled}
                 owner={sharedOwner} />
               <ThreadEvidence id={id} revision={visible.filter(i => i.kind === 'turn').length} />
               {t.status === 'error' && t.error && <div className="notice error"><Icon name="alert" size={14} /><span>{t.error}</span></div>}
@@ -322,7 +325,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
               footer={<>
                 {t.source === 'ask' && owner && <span className="muted small">Pocket Ask · each change needs your approval · <a href={t.source_ref} target="_blank" rel="noopener noreferrer">Source item ↗</a></span>}
                 {!owner && <span className="muted small">{t.source === 'ask' ? `Shared Ask chat from ${t.owner_name || 'someone'} — your questions use your own apps` : `Chatting in ${t.owner_name || 'someone'}’s chat — the agent runs on their login and settings`}</span>}
-                {owner && p && t.source !== 'ask' && <span className="thread-pickers"><AgentPicker compact showProvider={false} value={{ provider: t.provider, model: t.model, effort: t.effort, mode: t.mode, speed: t.speed || '', account_id: t.account_id || 0 }}
+                {owner && p && t.source !== 'ask' && <span className="thread-pickers"><AgentPicker compact showProvider={false} noAccount={!!t.host_id} value={{ provider: t.provider, model: t.model, effort: t.effort, mode: t.mode, speed: t.speed || '', account_id: t.account_id || 0 }}
                   onChange={ch => patch(ch as Partial<Thread>)} /></span>}
               </>} />
           ) : (
