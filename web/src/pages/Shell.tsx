@@ -44,7 +44,11 @@ function ShellInner() {
     running.some(r => r.status === 'running') || mine.some(t => t.status === 'running'),
     running.some(r => r.status === 'waiting') || mine.some(t => t.status === 'waiting' || t.pending > 0))
   useEffect(() => setDrawerOpen(false), [drawer, loc.pathname])
-  useEffect(() => tellParent(loc.pathname), [loc.pathname])
+  // embedded: the framing app hears the open thread's state as it changes
+  const openId = loc.pathname.match(/^\/t\/([^/]+)/)?.[1]
+  const open = openId ? (threads || []).find(t => t.id === openId) : undefined
+  const openState = !open ? '' : open.status === 'waiting' || open.pending > 0 ? 'waiting' : open.status
+  useEffect(() => tellParent(loc.pathname, openState), [loc.pathname, openState])
   useEffect(() => { if ((loc.state as { shortcuts?: boolean } | null)?.shortcuts) setShortcuts(true) }, [loc.state])
 
   useEffect(() => {
