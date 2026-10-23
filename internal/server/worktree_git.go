@@ -155,17 +155,22 @@ echo "path=$(cd -- "$p" && pwd -P)"
 
 // wtCopy copies files that are not in git (".env" and the like) from the
 // main checkout into the new worktree: $1 main, $2 worktree, $3… patterns
-// (git pathspec globs, relative to the repo).
+// (git pathspec globs, relative to the repo). Only plain files up to 5 MB,
+// at most 200: never folders — a pattern like **/.env would otherwise drag in
+// whole ignored folders (node_modules, Claude Code's .claude/worktrees with
+// other checkouts in it) that merely might contain one.
 const wtCopy = gitEnv + `src=$1; dst=$2; shift 2
 cd -- "$src" || exit 3
-for pat in "$@"; do
-  git ls-files --others --exclude-standard --ignored --directory -- ":(glob)$pat" 2>/dev/null
-  git ls-files --others --exclude-standard -- ":(glob)$pat" 2>/dev/null
-done | sort -u | while IFS= read -r f; do
-  f=${f%/}
-  [ -e "$f" ] || continue
+list() {
+  git ls-files --others --exclude-standard "$@" -- "$pat" ':(exclude,glob)**/node_modules/**' ':(exclude,glob).claude/worktrees/**' \
+    ':(exclude,glob)**/.git/**' ':(exclude,glob).pocket-ai/**' 2>/dev/null
+}
+for p in "$@"; do pat=":(glob)$p"; list --ignored; list; done | sort -u | head -n 200 | while IFS= read -r f; do
+  case "$f" in ""|*/) continue;; esac
+  [ -f "$f" ] && [ ! -L "$f" ] || continue
+  [ "$(wc -c < "$f")" -le 5242880 ] || { echo "skipped=$f"; continue; }
   [ -e "$dst/$f" ] && continue
-  mkdir -p -- "$dst/$(dirname -- "$f")" && cp -Rp -- "$f" "$dst/$f" && echo "copied=$f"
+  mkdir -p -- "$dst/$(dirname -- "$f")" && cp -p -- "$f" "$dst/$f" && echo "copied=$f"
 done
 `
 
