@@ -1,12 +1,11 @@
 import { Select } from '../components/Select'
 // Start a thread: pick the agent and folder, type (or paste a screenshot), go. Recipes one tap away.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api, ApiError, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { shortPath } from '../lib/format'
 import type { ProviderId, Thread, WorktreeRepoInfo, WorktreeSpec } from '../lib/types'
-import { RunningList } from '../components/RunningList'
 import { accountOptions, AgentPicker, type AgentValue, defaultsFor, ProviderToggle } from '../components/AgentPicker'
 import { Composer, type ComposerHandle } from '../components/Composer'
 import { BranchButton } from '../components/BranchPicker'
@@ -15,11 +14,8 @@ import { HostPicker } from '../components/HostPicker'
 import { WorktreeChooser } from '../components/Worktree'
 import { Icon } from '../components/icons'
 import { AskButton } from '../components/AskButton'
-import { useRunRecipe } from '../components/RecipeRunner'
-import { ThreadRow } from '../components/Sidebar'
-import { errMsg, Loading, useContextMenu, useToast } from '../components/ui'
+import { errMsg, Loading, useToast } from '../components/ui'
 import { embedded } from '../lib/embed'
-import { useThreadMenu } from '../components/ThreadMenu'
 
 const LAST = 'pai-new-thread'
 const HOST_CWD = 'pai-host-cwd' // last folder per machine: {"<host id>": "/home/…"}
@@ -64,12 +60,9 @@ function greeting() {
 }
 
 export default function HomePage({ onMenu }: { onMenu?: () => void }) {
-  const { status, user, settings, providers, providersReady, accounts, hosts, worktrees, workspaces, recipes, threads, upsertThread, running } = useApp()
+  const { status, user, settings, providers, providersReady, accounts, hosts, worktrees, workspaces, threads, upsertThread, running } = useApp()
   const { toast } = useToast()
   const navigate = useNavigate()
-  const ctx = useContextMenu()
-  const tm = useThreadMenu()
-  const runRecipe = useRunRecipe()
   const canRun = !!user && (user.role === 'admin' || user.can_run)
   const [choice, setChoice] = useState<Choice | null>(null)
   const inited = useRef(false)
@@ -185,8 +178,6 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
   }, [draft, settings, providers, providersReady]) // eslint-disable-line react-hooks/exhaustive-deps
   const dropDraft = () => { if (draft) sessionStorage.removeItem('pai-draft-link-' + draft.id); setParams({}, { replace: true }) }
 
-  const pinned = useMemo(() => recipes.filter(r => r.pinned).sort((a, b) => a.sort_order - b.sort_order || b.runs - a.runs).slice(0, 8), [recipes])
-  const recent = (threads || []).slice(0, 6)
   const needYou = (threads || []).filter(t => t.status === 'waiting' || t.pending > 0)
 
   const send = async (text: string, uploadIds: string[]) => {
@@ -322,38 +313,6 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
             </>
           )}
 
-          <RunningList />
-
-          {canRun && mode === 'server' && (
-            <section className="home-sec">
-              <div className="home-sec-h"><h2>Recipes</h2><button type="button" className="link-btn small" onClick={() => navigate('/recipes')}>{pinned.length ? 'All recipes' : 'Add some'}</button></div>
-              {pinned.length === 0 ? (
-                <button type="button" className="recipe-empty" onClick={() => navigate('/recipes')}>
-                  <Icon name="zap" size={18} /><span><b>One-tap prompts</b><br /><span className="muted small">“Check the server”, “Why is &lt;app&gt; down?”, “Disk space report” — save them once, run them from here.</span></span>
-                </button>
-              ) : (
-                <div className="recipe-grid">
-                  {pinned.map(r => (
-                    <button key={r.id} type="button" className="recipe-card" onClick={() => runRecipe(r)} title={r.prompt}>
-                      <span className="recipe-ico">{r.icon || '✦'}</span>
-                      <span className="recipe-name">{r.name}</span>
-                      <span className="recipe-sub">{r.prompt}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </section>
-          )}
-
-          {recent.length > 0 && (
-            <section className="home-sec">
-              <div className="home-sec-h"><h2>Recent</h2></div>
-              <div className="home-recent">
-                {recent.map(t => <ThreadRow key={t.id} t={t} active={false} onOpen={() => navigate(`/t/${t.id}`)} onContextMenu={e => ctx.open(e, () => tm.items(t))} />)}
-                {ctx.menu}{tm.dialogs}
-              </div>
-            </section>
-          )}
         </div>
       </div>
     </div>
