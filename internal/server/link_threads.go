@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -239,13 +240,15 @@ func (s *Server) validDraft(ctx context.Context, u *store.User, d *store.LinkDra
 }
 
 type linkThread struct {
-	DraftID   string  `json:"draft_id"`
-	ThreadID  *string `json:"thread_id"`
-	Title     string  `json:"title"`
-	Status    string  `json:"status"` // draft | idle | running | waiting | error | deleted
-	URL       string  `json:"url"`
-	CreatedAt string  `json:"created_at"`
-	UpdatedAt string  `json:"updated_at"`
+	DraftID  string  `json:"draft_id"`
+	ThreadID *string `json:"thread_id"`
+	Title    string  `json:"title"`
+	Status   string  `json:"status"` // draft | idle | running | waiting | error | deleted
+	URL      string  `json:"url"`
+	// PullRequests the agent opened in this conversation (from its own commands' output)
+	PullRequests []string `json:"pull_requests"`
+	CreatedAt    string   `json:"created_at"`
+	UpdatedAt    string   `json:"updated_at"`
 }
 
 // handleLinkThreads lists the person's conversations about one item.
@@ -263,7 +266,7 @@ func (s *Server) handleLinkThreads(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []linkThread{}
 	for _, d := range drafts {
-		lt := linkThread{DraftID: d.ID, Title: d.Title, Status: "draft", URL: s.draftURL(d.ID), CreatedAt: d.CreatedAt, UpdatedAt: d.CreatedAt}
+		lt := linkThread{DraftID: d.ID, Title: d.Title, Status: "draft", URL: s.draftURL(d.ID), CreatedAt: d.CreatedAt, UpdatedAt: d.CreatedAt, PullRequests: []string{}}
 		if d.ThreadID != nil {
 			lt.ThreadID = d.ThreadID
 			if t, err := s.store.GetThread(ctx, u.ID, *d.ThreadID); err == nil {
@@ -272,6 +275,7 @@ func (s *Server) handleLinkThreads(w http.ResponseWriter, r *http.Request) {
 				if t.Pending > 0 {
 					lt.Status = "waiting"
 				}
+				lt.PullRequests = s.threadPRs(ctx, t.ID)
 			} else {
 				lt.Status, lt.URL = "deleted", ""
 			}
@@ -461,6 +465,94 @@ func (s *Server) handleLinkActive(w http.ResponseWriter, r *http.Request) {
 		}
 		if st == "running" || st == "waiting" {
 			out = append(out, active{Ref: d.Ref, Status: st, ThreadID: t.ID, URL: s.threadURL(t.ID)})
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// withLinkedAppTools keeps the tools of the app a conversation came from
+// (pocket_projects_* for link:projects) in the list whatever the latest
+// prompt says: the scoped catalog picks tools by the prompt's words, and a
+// short reply like "yes" would otherwise hide the ticket tools mid-task.
+func withLinkedAppTools(scoped any, all []askTool, t *store.Thread) any {
+	app, ok := strings.CutPrefix(t.Source, "link:")
+	m, isMap := scoped.(map[string]any)
+	if !ok || app == "" || !isMap {
+		return scoped
+	}
+	list, _ := m["tools"].([]askTool)
+	have := map[string]bool{}
+	for _, x := range list {
+		have[x.Name] = true
+	}
+	prefix := "pocket_" + app + "_"
+	for _, x := range all {
+		if strings.HasPrefix(x.Name, prefix) && !have[x.Name] {
+			list = append(list, x)
+		}
+	}
+	m["tools"] = list
+	return m
+}
+
+// prURL matches GitHub (/pull/N) and Forgejo/Gitea (/pulls/N) pull request addresses.
+var prURL = regexp.MustCompile(`https?://[\w.-]+(?::\d+)?/[\w.-]+/[\w.-]+/pulls?/\d+`)
+
+// prCreate recognises commands and tools that open a pull request, so PRs the
+// agent merely listed or read are not taken for its own.
+var prCreate = regexp.MustCompile(`(?i)\b(gh|tea|hub)\s+(pr|pull-request|pulls)\s+create\b|create_pull_request|/pulls\b[^\n]*-X\s*POST|-X\s*POST[^\n]*/pulls\b`)
+
+// threadPRs lists the pull requests opened by commands in a thread, oldest first.
+func (s *Server) threadPRs(ctx context.Context, threadID string) []string {
+	out := []string{}
+	rows, err := s.store.DB.QueryContext(ctx, `SELECT data FROM items WHERE thread_id = ? AND kind = 'tool' AND data LIKE '%pull%' ORDER BY id`, threadID)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	seen := map[string]bool{}
+	for rows.Next() {
+		var data string
+		if rows.Scan(&data) != nil || !prCreate.MatchString(data) {
+			continue
+		}
+		for _, u := range prURL.FindAllString(data, -1) {
+			if !seen[u] {
+				seen[u] = true
+				out = append(out, u)
+			}
+		}
+	}
+	return out
+}
+
+// handleLinkPRs lists the pull requests the person's recent conversations from
+// one app opened, by ref, so the app can attach them without asking the agent.
+func (s *Server) handleLinkPRs(w http.ResponseWriter, r *http.Request) {
+	u := s.linkUser(w, r)
+	if u == nil {
+		return
+	}
+	ctx := r.Context()
+	drafts, err := s.store.StartedLinkDrafts(ctx, u.ID, strings.ToLower(r.URL.Query().Get("source")))
+	if err != nil {
+		s.fail(w, err, "drafts")
+		return
+	}
+	type pr struct {
+		Ref      string `json:"ref"`
+		URL      string `json:"url"`
+		ThreadID string `json:"thread_id"`
+	}
+	out := []pr{}
+	cutoff := time.Now().AddDate(0, 0, -30).UTC().Format(time.RFC3339)
+	for _, d := range drafts {
+		t, err := s.store.GetThread(ctx, u.ID, *d.ThreadID)
+		if err != nil || firstNonEmpty(t.ActivityAt, t.UpdatedAt) < cutoff {
+			continue
+		}
+		for _, url := range s.threadPRs(ctx, t.ID) {
+			out = append(out, pr{Ref: d.Ref, URL: url, ThreadID: t.ID})
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
