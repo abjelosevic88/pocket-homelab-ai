@@ -205,8 +205,11 @@
 .data-list li { margin-bottom:8px; }
 .data-raw { white-space:pre-wrap; max-height:260px; overflow:auto; font-size:12px; }
 .app-call { margin:8px 0; }
-.app-call summary,.thread-evidence > summary,.batch-review > summary { cursor:pointer; padding:10px 0; min-height:44px; }
-.thread-evidence { margin:14px 0; font-size:13px; }
+.app-call summary,.batch-review > summary { cursor:pointer; padding:10px 0; min-height:44px; }
+.thread-evidence > summary { cursor:pointer; padding:2px 0; font-size:12px; list-style-position:inside; }
+.thread-evidence > summary:focus { outline:none; }
+.thread-evidence > summary:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:4px; }
+.thread-evidence { margin:4px 0; font-size:13px; }
 .thread-evidence > summary { color:var(--muted); }
 .action-preview { max-height:340px; overflow:auto; }
 .batch-review { padding:10px; border:1px solid var(--border); border-radius:12px; max-height:50dvh; overflow:auto; }

@@ -37,8 +37,11 @@ export function CallCard({ call: summary }: { call: AppCall }) {
  const undoable = call.tool === 'pocket_notes_update' && call.status === 'done' && !!note?.etag && JSON.stringify(call.before) !== '{}'
  return <article className="app-call"><div className="row wrap"><b>{friendly(call.tool)}</b><span className="badge">{call.status}</span><span className="muted small">{(call.duration_ms / 1000).toFixed(1)}s · {new Date(call.created_at).toLocaleString()}</span>{call.thread_id && <Link to={`/t/${call.thread_id}`}>Conversation ↗</Link>}</div><details open={open} onToggle={e => setOpen(e.currentTarget.open)}><summary>{call.is_write ? 'Change and result' : 'Source, query and returned data'}</summary><DataView value={call.input} /><DataView value={unwrap(call.result)} /></details>{call.status === 'unknown' && <p>Completion was not confirmed. Check the source app before retrying.</p>}{undoable && <button className="btn sm" disabled={busy} onClick={undo}>Review undo</button>}{call.is_write && !undoable && <p className="muted xsmall">{call.status === 'undone' ? 'This change was undone.' : 'Automatic undo is unavailable for this action.'}</p>}</article>
 }
+// The Pocket app calls of a conversation (what it read or changed in your
+// apps). Shown only when there are some: coding threads have none.
 export function ThreadEvidence({ id, revision }: { id: string; revision: number }) {
  const [open, setOpen] = useState(false), [calls, setCalls] = useState<AppCall[]>([]), [error, setError] = useState('')
- useEffect(() => { if (!open) return; let alive = true; api.get<AppCall[]>(`${V1}/app-calls?thread=${id}`).then(v => { if (alive) { setCalls(v); setError('') } }).catch(e => { if (alive) setError(errMsg(e)) }); return () => { alive = false } }, [id, open, revision])
- return <details className="thread-evidence" open={open} onToggle={e => setOpen(e.currentTarget.open)}><summary>Sources & app activity</summary>{error && <p role="alert">{error}</p>}{calls.length ? calls.map(c => <CallCard key={c.id} call={c} />) : <p className="muted">No app calls recorded yet. Sources are recorded for new calls from this version onward.</p>}</details>
+ useEffect(() => { let alive = true; api.get<AppCall[]>(`${V1}/app-calls?thread=${id}`).then(v => { if (alive) { setCalls(v || []); setError('') } }).catch(e => { if (alive) setError(errMsg(e)) }); return () => { alive = false } }, [id, revision])
+ if (!calls.length) return null
+ return <details className="thread-evidence" open={open} onToggle={e => setOpen(e.currentTarget.open)}><summary>Sources & app activity <span className="faint">{calls.length}</span></summary>{error && <p role="alert">{error}</p>}{calls.map(c => <CallCard key={c.id} call={c} />)}</details>
 }
