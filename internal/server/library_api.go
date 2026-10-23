@@ -109,6 +109,8 @@ type dirListing struct {
 	Dirs   []dirEntry `json:"dirs"`
 	Roots  []string   `json:"roots"`
 	Home   string     `json:"home"`
+	// Places: working folders outside home on another machine (/work, /srv/app).
+	Places []string `json:"places,omitempty"`
 }
 
 // listDirs lists the sub-folders of p (home when empty) inside the roots.

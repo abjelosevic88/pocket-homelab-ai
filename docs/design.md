@@ -50,7 +50,9 @@ When the ssh link closes the CLI sees EOF and exits.
 - Pictures: Claude gets them inline as always; Codex gets `{"type":"image","url":"data:…"}` instead of
   `localImage` (the file is here).
 - Folders (`/fs/dirs?host=`) and git (`/fs/git?host=`, `/fs/git/switch {host}`) run small scripts over ssh;
-  git info is one round trip. Agents may start anywhere inside the remote home.
+  git info is one round trip. Agents may start in any folder the ssh account can open (its permissions are the
+  boundary); the listing also offers "places" — top-level folders the account owns or may write, such as
+  `/work`, `/srv/<x>`, `/opt/<x>`, `/mnt/<x>` — as one-tap chips next to Home.
 - Not available for remote threads: Pocket app tools (their MCP endpoint is on this server's loopback),
   following the session from other tools, "On this server", log images, rewind/edit and fork at an earlier
   turn (all read the CLI's session file, which is over there). Forking the latest turn works (`--fork-session`).
