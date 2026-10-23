@@ -1,8 +1,8 @@
 import { Select } from '../components/Select'
 // Start a thread: pick the agent and folder, type (or paste a screenshot), go. Recipes one tap away.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { api, V1 } from '../lib/api'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { api, ApiError, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { shortPath } from '../lib/format'
 import type { ProviderId, Thread } from '../lib/types'
@@ -22,6 +22,12 @@ const LAST = 'pai-new-thread'
 
 type Choice = AgentValue & { cwd: string }
 
+/** A conversation another Pocket app prepared (?draft=<id>): the person reads it and presses send. */
+interface LinkDraft {
+  id: string; provider: ProviderId | ''; account_id: number | null; model: string; effort: string; mode: string; cwd: string
+  title: string; text: string; system: string; source: string; ref: string; ref_url: string; ref_label: string; thread_id: string | null
+}
+
 function greeting() {
   const h = new Date().getHours()
   return h < 5 ? 'Up late?' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'
@@ -37,6 +43,11 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
   const canRun = !!user && (user.role === 'admin' || user.can_run)
   const [choice, setChoice] = useState<Choice | null>(null)
   const inited = useRef(false)
+  const [params, setParams] = useSearchParams()
+  const draftId = params.get('draft')
+  const [draft, setDraft] = useState<LinkDraft | null>(null)
+  const draftApplied = useRef('')
+  const serverComposer = useRef<ComposerHandle>(null)
   const [picked, setMode] = useState<'apps' | 'server'>('apps')
   // Ask my apps reads the person's Pocket apps through Pocket Core: without a Core it stays visible but greyed out
   const coreOn = !!status?.core_configured
@@ -80,7 +91,45 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
       cwd: saved.cwd || settings.default_cwd || '',
     })
   }, [settings, providers, providersReady])
-  useEffect(() => { if (choice) localStorage.setItem(LAST, JSON.stringify(choice)) }, [choice])
+  // a prepared conversation never becomes the person's "last choice"
+  useEffect(() => { if (choice && !draftId) localStorage.setItem(LAST, JSON.stringify(choice)) }, [choice, draftId])
+
+  // ?draft=<id>: load what the other app prepared (already sent → open that thread)
+  useEffect(() => {
+    setDraft(null)
+    draftApplied.current = ''
+    if (!draftId) return
+    let live = true
+    api.get<LinkDraft>(`${V1}/drafts/${encodeURIComponent(draftId)}`).then(d => {
+      if (!live) return
+      if (d.thread_id) navigate(`/t/${d.thread_id}`, { replace: true })
+      else setDraft(d)
+    }).catch(e => { if (live) { toast(errMsg(e), 'err'); setParams({}, { replace: true }) } })
+    return () => { live = false }
+  }, [draftId]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!draft || !settings || !providersReady || draftApplied.current === draft.id) return
+    draftApplied.current = draft.id
+    const pid = (draft.provider && providers.some(p => p.id === draft.provider) ? draft.provider : (choice?.provider || settings.default_provider)) as ProviderId
+    const p = providers.find(x => x.id === pid)
+    const d = defaultsFor(p, settings)
+    setMode('server')
+    setChoice({
+      provider: pid,
+      model: draft.model && p?.models?.some(m => m.id === draft.model) ? draft.model : d.model,
+      effort: draft.effort || d.effort,
+      mode: draft.mode && p?.modes?.some(m => m.id === draft.mode) ? draft.mode : d.mode,
+      speed: d.speed,
+      account_id: draft.account_id ?? d.account_id,
+      cwd: draft.cwd,
+    })
+  }, [draft, settings, providers, providersReady]) // eslint-disable-line react-hooks/exhaustive-deps
+  // the prompt goes into the composer once (an edit in progress survives a reload)
+  useEffect(() => {
+    if (!draft || !choice || !serverComposer.current) return
+    if (!sessionStorage.getItem('pai-draft-link-' + draft.id)) serverComposer.current.setText(draft.text)
+  }, [draft, !!choice]) // eslint-disable-line react-hooks/exhaustive-deps
+  const dropDraft = () => { if (draft) sessionStorage.removeItem('pai-draft-link-' + draft.id); setParams({}, { replace: true }) }
 
   const pinned = useMemo(() => recipes.filter(r => r.pinned).sort((a, b) => a.sort_order - b.sort_order || b.runs - a.runs).slice(0, 8), [recipes])
   const recent = (threads || []).slice(0, 6)
@@ -90,7 +139,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
     if (!choice) return false
     const ws = workspaces.find(w => w.path === choice.cwd)
     try {
-      const t = await api.post<Thread>(`${V1}/threads`, {
+      const t = await api.post<Thread>(draft ? `${V1}/drafts/${draft.id}/start` : `${V1}/threads`, {
         provider: choice.provider, model: choice.model || undefined, effort: choice.effort || undefined, mode: choice.mode || undefined,
         speed: choice.speed ?? undefined,
         account_id: accounts.some(a => a.provider === choice.provider && a.id === choice.account_id && a.signed_in) ? choice.account_id : undefined,
@@ -99,7 +148,10 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
       upsertThread(t)
       navigate(`/t/${t.id}`)
       return true
-    } catch (e) { toast(errMsg(e), 'err'); return false }
+    } catch (e) {
+      if (draft && e instanceof ApiError && e.status === 409 && e.data.thread_id) { navigate(`/t/${e.data.thread_id}`); return true }
+      toast(errMsg(e), 'err'); return false
+    }
   }
 
   const pickProvider = (pid: ProviderId | '') => {
@@ -169,7 +221,16 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
                   <FolderButton value={choice.cwd} onChange={cwd => setChoice(c => c && { ...c, cwd })} className="btn sm" />
                 </div>
               </div>
-              <Composer big autoFocus draftKey="new" onSend={send}
+              {draft && (
+                <div className="callout info">
+                  <Icon name="link" size={15} />
+                  <span className="grow">From Pocket {draft.source.charAt(0).toUpperCase() + draft.source.slice(1)}
+                    {draft.ref && <> · {draft.ref_url ? <a href={draft.ref_url} target="_blank" rel="noreferrer">{draft.ref_label || draft.ref}</a> : (draft.ref_label || draft.ref)}</>}
+                    {' '}— review the prompt and press send.{draft.system ? ' Its team instructions and memory go along as hidden context.' : ''}</span>
+                  <button type="button" className="btn ghost sm" onClick={dropDraft}>Discard</button>
+                </div>
+              )}
+              <Composer ref={serverComposer} big autoFocus draftKey={draft ? `link-${draft.id}` : 'new'} onSend={send}
                 placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} anything${choice.cwd ? ` in ${shortPath(choice.cwd)}` : ''}… paste a screenshot, type / for recipes`}
                 footer={<AgentPicker compact showProvider={false} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} />} />
               {providers.length > 0 && !providers.some(p => p.available) && (

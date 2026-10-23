@@ -1,0 +1,415 @@
+package server
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"regexp"
+	"strings"
+	"sync"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/agent"
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
+)
+
+// Conversations other Pocket apps prepare (Pocket Projects: "Investigate
+// AS-2 in the code"). The app acts as the person through a Pocket Core link
+// with the threads:write scope, but it can only leave a draft: the person
+// opens it on the start page, reads (and may edit) the prompt and presses
+// send. Hidden context the app adds (team instructions, team memory) is
+// stored with the thread and appended to the system prompt on every start
+// and resume.
+
+// ThreadsScope is the Core link scope for preparing conversations.
+const ThreadsScope = "threads:write"
+
+// linkRoutes are the session-authenticated draft endpoints.
+func (s *Server) linkRoutes(r chi.Router) {
+	r.Get("/drafts/{id}", s.handleGetDraft)
+	r.Post("/drafts/{id}/start", s.handleStartDraft)
+	r.Get("/threads/{id}/context", s.handleThreadContext)
+}
+
+// linkUser authenticates an app acting for a person with threads:write.
+func (s *Server) linkUser(w http.ResponseWriter, r *http.Request) *store.User {
+	h := r.Header.Get("Authorization")
+	if !strings.HasPrefix(h, "Bearer pcx_") || !s.core.Configured() {
+		writeErr(w, http.StatusUnauthorized, "a Pocket Core app-link token is required")
+		return nil
+	}
+	in, err := s.core.Introspect(r.Context(), strings.TrimPrefix(h, "Bearer "))
+	if err != nil || in == nil || !in.Active || !in.Delegated() || in.Audience != "ai" || !in.HasScope(ThreadsScope) || in.User == nil || in.User.Email == "" {
+		writeErr(w, http.StatusForbidden, "Pocket AI conversation link rejected")
+		return nil
+	}
+	u, err := s.coreIdentityUser(r.Context(), in)
+	if err != nil {
+		s.fail(w, err, "resolve AI identity")
+		return nil
+	}
+	if !u.MayRun() {
+		writeErr(w, http.StatusForbidden, "you may not run agents in Pocket AI yet; an admin has to allow it (Pocket AI → Settings → Users → “May run agents”)")
+		return nil
+	}
+	return u
+}
+
+// readonlyModes is the mode of each provider that cannot change files.
+var readonlyModes = map[string]string{"claude": "plan", "codex": "read-only"}
+
+type linkModel struct {
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	Efforts []string `json:"efforts"`
+}
+
+type linkProvider struct {
+	ID            string       `json:"id"`
+	Name          string       `json:"name"`
+	Available     bool         `json:"available"`
+	Error         string       `json:"error"`
+	Models        []linkModel  `json:"models"`
+	Efforts       []string     `json:"efforts"`
+	Modes         []agent.Mode `json:"modes"`
+	ReadonlyMode  string       `json:"readonly_mode"`
+	DefaultModel  string       `json:"default_model"`
+	DefaultEffort string       `json:"default_effort"`
+	DefaultMode   string       `json:"default_mode"`
+	DefaultAcct   int64        `json:"default_account_id"`
+}
+
+type linkAccount struct {
+	ID       int64  `json:"id"`
+	Provider string `json:"provider"`
+	Label    string `json:"label"`
+	SignedIn bool   `json:"signed_in"`
+}
+
+type linkWorkspace struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
+// handleLinkAgentOptions lists what the app may pick as defaults: the
+// person's providers, models, efforts, modes, logins and workspaces.
+func (s *Server) handleLinkAgentOptions(w http.ResponseWriter, r *http.Request) {
+	u := s.linkUser(w, r)
+	if u == nil {
+		return
+	}
+	ctx := r.Context()
+	st, _ := s.store.GetSettings(ctx, u.ID)
+	out := struct {
+		Providers       []linkProvider  `json:"providers"`
+		Accounts        []linkAccount   `json:"accounts"`
+		Workspaces      []linkWorkspace `json:"workspaces"`
+		DefaultProvider string          `json:"default_provider"`
+		Home            string          `json:"home"`
+		Roots           []string        `json:"roots"`
+	}{Providers: []linkProvider{}, Accounts: []linkAccount{}, Workspaces: []linkWorkspace{}, DefaultProvider: st.DefaultProvider, Home: s.cfg.Home, Roots: s.cfg.Roots}
+	for _, p := range s.providers(ctx, false) {
+		def := st.Claude
+		if p.ID == "codex" {
+			def = st.Codex
+		}
+		lp := linkProvider{ID: p.ID, Name: p.Name, Available: p.Available, Error: p.Error, Models: []linkModel{}, Efforts: p.Efforts, Modes: p.Modes,
+			ReadonlyMode: readonlyModes[p.ID], DefaultModel: firstNonEmpty(def.Model, p.DefaultModel), DefaultEffort: firstNonEmpty(def.Effort, p.DefaultEffort),
+			DefaultMode: firstNonEmpty(def.Mode, p.DefaultMode), DefaultAcct: def.Account}
+		for _, m := range p.Models {
+			efforts := m.Efforts
+			if efforts == nil {
+				efforts = []string{}
+			}
+			lp.Models = append(lp.Models, linkModel{ID: m.ID, Name: m.Name, Efforts: efforts})
+		}
+		out.Providers = append(out.Providers, lp)
+	}
+	for _, a := range s.accountsFor(ctx, u, false, false) {
+		out.Accounts = append(out.Accounts, linkAccount{ID: a.ID, Provider: a.Provider, Label: a.Label, SignedIn: a.SignedIn})
+	}
+	if list, err := s.store.ListWorkspaces(ctx, u.ID); err == nil {
+		for _, ws := range list {
+			out.Workspaces = append(out.Workspaces, linkWorkspace{Name: ws.Name, Path: ws.Path})
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+var linkSourceRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
+
+// draftURL is where the person opens a draft (the start page).
+func (s *Server) draftURL(id string) string { return s.cfg.BaseURL + "/?draft=" + id }
+
+// handleLinkCreateDraft stores a conversation for the person to send.
+func (s *Server) handleLinkCreateDraft(w http.ResponseWriter, r *http.Request) {
+	u := s.linkUser(w, r)
+	if u == nil {
+		return
+	}
+	ctx := r.Context()
+	var in struct {
+		Provider  string `json:"provider"`
+		AccountID *int64 `json:"account_id"`
+		Model     string `json:"model"`
+		Effort    string `json:"effort"`
+		Mode      string `json:"mode"`
+		Cwd       string `json:"cwd"`
+		Title     string `json:"title"`
+		Text      string `json:"text"`
+		System    string `json:"system"`
+		Source    string `json:"source"`
+		Ref       string `json:"ref"`
+		RefURL    string `json:"ref_url"`
+		RefLabel  string `json:"ref_label"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	d, err := s.validDraft(ctx, u, &store.LinkDraft{Provider: strings.TrimSpace(in.Provider), AccountID: in.AccountID, Model: strings.TrimSpace(in.Model),
+		Effort: strings.TrimSpace(in.Effort), Mode: strings.TrimSpace(in.Mode), Cwd: strings.TrimSpace(in.Cwd), Title: oneLine(in.Title, 120), Text: in.Text,
+		System: strings.TrimSpace(in.System), Source: strings.ToLower(strings.TrimSpace(in.Source)), Ref: oneLine(in.Ref, 80), RefURL: strings.TrimSpace(in.RefURL),
+		RefLabel: oneLine(in.RefLabel, 140)})
+	if err != nil {
+		s.fail(w, err, "draft")
+		return
+	}
+	d.ID, d.UserID = uuid.NewString(), u.ID
+	if err := s.store.CreateLinkDraft(ctx, d); err != nil {
+		s.fail(w, err, "save draft")
+		return
+	}
+	s.touch()
+	writeJSON(w, http.StatusCreated, map[string]string{"id": d.ID, "url": s.draftURL(d.ID)})
+}
+
+// validDraft checks what an app asked for; the person can still change all
+// of it before sending.
+func (s *Server) validDraft(ctx context.Context, u *store.User, d *store.LinkDraft) (*store.LinkDraft, error) {
+	if strings.TrimSpace(d.Text) == "" {
+		return nil, badRequest("write the prompt (text) to start with")
+	}
+	if len(d.Text) > 300000 {
+		return nil, badRequest("the prompt is longer than 300,000 bytes")
+	}
+	if len(d.System) > 64<<10 {
+		return nil, badRequest("the hidden context (system) is longer than 64 KB")
+	}
+	if d.Source == "" {
+		d.Source = "app"
+	}
+	if !linkSourceRe.MatchString(d.Source) {
+		return nil, badRequest("source must be a short lowercase app name, e.g. projects")
+	}
+	if d.RefURL != "" {
+		if pu, err := url.Parse(d.RefURL); err != nil || (pu.Scheme != "https" && pu.Scheme != "http") || pu.Host == "" {
+			return nil, badRequest("ref_url must be an http(s) address")
+		}
+	}
+	if d.Provider != "" && d.Provider != "claude" && d.Provider != "codex" {
+		return nil, badRequest("provider must be claude or codex")
+	}
+	prov := d.Provider
+	if prov == "" {
+		st, _ := s.store.GetSettings(ctx, u.ID)
+		prov = firstNonEmpty(st.DefaultProvider, "claude")
+	}
+	if d.Mode != "" && !validMode(prov, d.Mode) {
+		return nil, badRequest("unknown mode " + d.Mode + " for " + prov)
+	}
+	if d.AccountID != nil {
+		if err := s.checkAccount(ctx, u, prov, *d.AccountID); err != nil {
+			return nil, err
+		}
+	}
+	if d.Cwd == "" {
+		return nil, badRequest("choose the folder the agent works in (cwd)")
+	}
+	clean, err := s.checkDir(d.Cwd)
+	if err != nil {
+		return nil, err
+	}
+	d.Cwd = clean
+	return d, nil
+}
+
+type linkThread struct {
+	DraftID   string  `json:"draft_id"`
+	ThreadID  *string `json:"thread_id"`
+	Title     string  `json:"title"`
+	Status    string  `json:"status"` // draft | idle | running | waiting | error | deleted
+	URL       string  `json:"url"`
+	CreatedAt string  `json:"created_at"`
+	UpdatedAt string  `json:"updated_at"`
+}
+
+// handleLinkThreads lists the person's conversations about one item.
+func (s *Server) handleLinkThreads(w http.ResponseWriter, r *http.Request) {
+	u := s.linkUser(w, r)
+	if u == nil {
+		return
+	}
+	ctx := r.Context()
+	q := r.URL.Query()
+	drafts, err := s.store.LinkDrafts(ctx, u.ID, strings.ToLower(q.Get("source")), q.Get("ref"))
+	if err != nil {
+		s.fail(w, err, "drafts")
+		return
+	}
+	out := []linkThread{}
+	for _, d := range drafts {
+		lt := linkThread{DraftID: d.ID, Title: d.Title, Status: "draft", URL: s.draftURL(d.ID), CreatedAt: d.CreatedAt, UpdatedAt: d.CreatedAt}
+		if d.ThreadID != nil {
+			lt.ThreadID = d.ThreadID
+			if t, err := s.store.GetThread(ctx, u.ID, *d.ThreadID); err == nil {
+				t = s.rt.decorate(t)
+				lt.Title, lt.Status, lt.URL, lt.UpdatedAt = firstNonEmpty(t.Title, d.Title), t.Status, s.threadURL(t.ID), firstNonEmpty(t.ActivityAt, t.UpdatedAt)
+				if t.Pending > 0 {
+					lt.Status = "waiting"
+				}
+			} else {
+				lt.Status, lt.URL = "deleted", ""
+			}
+		}
+		out = append(out, lt)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// ---------- the person's side ----------
+
+func (s *Server) handleGetDraft(w http.ResponseWriter, r *http.Request) {
+	d, err := s.store.GetLinkDraft(r.Context(), me(r), chi.URLParam(r, "id"))
+	if err != nil {
+		s.fail(w, err, "draft")
+		return
+	}
+	writeJSON(w, http.StatusOK, d)
+}
+
+// linkStarts holds a draft while its thread starts: the first process start
+// happens inside createThread, before the thread's id is known here.
+var (
+	linkStartMu sync.Mutex
+	linkStarts  sync.Map // "<server>|<user>|<source>|<ref>" → *store.LinkDraft
+)
+
+func (s *Server) linkStartKey(uid int64, source, ref string) string {
+	return fmt.Sprintf("%p|%d|%s|%s", s, uid, source, ref)
+}
+
+func (s *Server) handleStartDraft(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRun(w, r) {
+		return
+	}
+	ctx := r.Context()
+	u := userFrom(ctx)
+	d, err := s.store.GetLinkDraft(ctx, u.ID, chi.URLParam(r, "id"))
+	if err != nil {
+		s.fail(w, err, "draft")
+		return
+	}
+	var in newThread
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	ok, err := s.store.ClaimLinkDraft(ctx, u.ID, d.ID)
+	if err != nil {
+		s.fail(w, err, "draft")
+		return
+	}
+	if !ok {
+		d, _ = s.store.GetLinkDraft(ctx, u.ID, d.ID)
+		tid := ""
+		if d != nil && d.ThreadID != nil {
+			tid = *d.ThreadID
+		}
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "this conversation was already started", "thread_id": tid})
+		return
+	}
+	// What the composer has wins; empty fields fall back to the draft.
+	in.Provider = firstNonEmpty(in.Provider, d.Provider)
+	in.Model = firstNonEmpty(in.Model, d.Model)
+	in.Effort = firstNonEmpty(in.Effort, d.Effort)
+	in.Mode = firstNonEmpty(in.Mode, d.Mode)
+	in.Cwd = firstNonEmpty(in.Cwd, d.Cwd)
+	if in.AccountID == nil {
+		in.AccountID = d.AccountID
+	}
+	if strings.TrimSpace(in.Text) == "" && len(in.UploadIDs) == 0 {
+		in.Text = d.Text
+	}
+	in.Title = d.Title
+	source := "link:" + d.Source
+
+	linkStartMu.Lock()
+	key := s.linkStartKey(u.ID, source, d.Ref)
+	linkStarts.Store(key, d)
+	t, err := s.createThread(ctx, u, in, source, d.Ref)
+	linkStarts.Delete(key)
+	linkStartMu.Unlock()
+
+	if t == nil {
+		_ = s.store.FinishLinkDraft(ctx, d.ID, "")
+		s.fail(w, err, "start conversation")
+		return
+	}
+	_ = s.store.SaveThreadContext(ctx, draftContext(t.ID, d))
+	_ = s.store.FinishLinkDraft(ctx, d.ID, t.ID)
+	if err != nil {
+		// The thread exists; the agent did not start. Show it with the error.
+		s.rt.saveItem(t.ID, agent.Item{Key: "err-" + uuid.NewString()[:8], Kind: "notice", Level: "error", Text: err.Error()})
+		t = s.rt.setStatus(t.ID, "error", err.Error())
+	}
+	s.touch()
+	writeJSON(w, http.StatusCreated, t)
+}
+
+func draftContext(threadID string, d *store.LinkDraft) *store.ThreadContext {
+	return &store.ThreadContext{ThreadID: threadID, System: d.System, Source: d.Source, Ref: d.Ref, RefURL: d.RefURL, RefLabel: d.RefLabel}
+}
+
+// threadContextPrompt is the hidden context appended to a thread's system
+// prompt ("" for threads no app prepared).
+func (s *Server) threadContextPrompt(ctx context.Context, t *store.Thread) string {
+	c, err := s.store.GetThreadContext(ctx, t.ID)
+	if errors.Is(err, store.ErrNotFound) && strings.HasPrefix(t.Source, "link:") {
+		if v, ok := linkStarts.Load(s.linkStartKey(t.UserID, t.Source, t.SourceRef)); ok {
+			c = draftContext(t.ID, v.(*store.LinkDraft))
+			_ = s.store.SaveThreadContext(ctx, c)
+			err = nil
+		}
+	}
+	if err != nil || strings.TrimSpace(c.System) == "" {
+		return ""
+	}
+	from := firstNonEmpty(c.RefLabel, c.Ref)
+	return "\n\nContext from Pocket " + titleCase(c.Source) + " for this conversation (" + from + "):\n" + c.System
+}
+
+func titleCase(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// handleThreadContext tells the thread page where a thread came from.
+func (s *Server) handleThreadContext(w http.ResponseWriter, r *http.Request) {
+	t := s.threadAs(w, r, accessView)
+	if t == nil {
+		return
+	}
+	c, err := s.store.GetThreadContext(r.Context(), t.ID)
+	if err != nil {
+		s.fail(w, err, "thread context")
+		return
+	}
+	writeJSON(w, http.StatusOK, c)
+}

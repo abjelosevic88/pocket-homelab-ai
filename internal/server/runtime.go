@@ -384,6 +384,7 @@ func (rt *engine) startRun(t *store.Thread) (*run, error) {
 		live: map[string]*agent.Item{}, dirty: map[string]bool{}, lastUsed: time.Now()}
 	o := agent.Options{Cwd: t.Cwd, Model: t.Model, Effort: t.Effort, Mode: t.Mode, Speed: t.Speed, ResumeID: t.ProviderSessionID,
 		SystemPrompt: rt.systemPrompt(ctx, t.UserID), Env: []string{"POCKET_AI=1"}, Log: rt.s.log}
+	o.SystemPrompt += rt.s.threadContextPrompt(ctx, t) // what the app that prepared it added: link_threads.go
 	if o.ResumeID == "" && strings.HasPrefix(t.SourceRef, "fork:") {
 		o.ResumeID, o.Fork = strings.TrimPrefix(t.SourceRef, "fork:"), true
 	}
