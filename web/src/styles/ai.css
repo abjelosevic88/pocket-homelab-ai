@@ -551,5 +551,8 @@ button.privacy-badge:disabled { cursor: default; }
 .tool-body { border-top: 0; margin: 2px 0 8px 6px; padding: 4px 0 4px 15px; border-left: 2px solid var(--border); }
 .thinking-body { margin: 2px 0 8px 6px; padding: 4px 0 4px 15px; font-style: normal; color: var(--muted); }
 .tool-run { display: flex; flex-direction: column; gap: 0; }
+.tool-run-body { margin: 0 0 4px 6px; padding-left: 13px; border-left: 2px solid var(--border); }
+.tool-run.grouped .tool-head { height: 26px; }
+.tool-run.open > .tool-run-head .tool-caret { opacity: 1; transform: rotate(180deg); }
 /* consecutive tool / thinking rows sit together instead of 10px apart */
 .tl-item:has(> .tool-run, > .tool, > .thinking) + .tl-item:has(> .tool-run, > .tool, > .thinking) { margin-top: -10px; }
