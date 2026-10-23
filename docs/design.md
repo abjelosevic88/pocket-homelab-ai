@@ -60,6 +60,41 @@ When the ssh link closes the CLI sees EOF and exits.
   `codex --version` + `codex login status`. `GET /hosts/key` shows this server's public key for
   `authorized_keys`. Hosts are admin-managed; anyone who may run agents can use them.
 
+## Worktrees
+
+`worktrees` rows (owner, host, main checkout `repo`, `path`, `branch`, `base`, `base_sha`, status
+active|archived, `setup` ''|running|ok|failed, `archive_ref`, `pr_url`) and `threads.worktree_id`; several threads
+can share one. Git work is POSIX sh scripts in `internal/server/worktree_git.go`, run with `sh -c` here and over
+ssh on hosts — the same code both ways, covered by `TestWorktreeLifecycle` against a real repository.
+
+- **Where / names:** `~/.pocket-ai/worktrees/<repo>-<sha1(repo)[:6]>/<name>` (`WORKTREES_DIR` overrides locally).
+  The name is the folder *and* the branch, from the prompt (`slugify`, ≤5 words) or typed; taken → `-2`, `-3`.
+  Modes: new branch from a base (local branch, else `origin/<base>`), existing branch (remote-only → tracking
+  branch), PR (`git fetch origin +pull/N/head:pr-N`, base from `gh pr view` when gh exists), existing worktree.
+  A branch already checked out somewhere is refused with its folder (no silent `-1` fork like Paseo).
+- **Setup:** effective config = repo file (`.pocket-ai.json`, else `paseo.json`: `worktree.setup|teardown|copy|base`,
+  string or list) overridden per field by `repo_settings` (per host + repo, edited in the UI). Copy = untracked /
+  ignored files matching `.env`, `.env.*`, `**/.env*`, `paseo.json`, `.pocket-ai.json` + configured patterns.
+  Commands run `set -e` in the worktree with `POCKET_*` and Paseo's `PASEO_*` env (`ROOT_PATH`,
+  `WORKTREE_PATH`, `BRANCH_NAME`, `WORKTREE_PORT`), streamed into the thread as a tool row. The thread's
+  messages are held (`wtHolds`) until copy + setup finish; on failure they wait for "Run again" or "Continue".
+  A restart marks running setups failed.
+- **Status:** ahead/behind base, dirty count, upstream/unpushed, merge/rebase in progress, conflicts, commits.
+  Merged = HEAD is in base, or every commit has a patch-equivalent in base (`git cherry`), or the PR is MERGED.
+- **Merge into base:** refuses with uncommitted files; fast-forward when possible, else `git merge-tree
+  --write-tree` + `commit-tree` (merge or squash). Where base is checked out it lands with `merge --ff-only`
+  (git refuses rather than overwrite local changes), else `update-ref` with the old value. Conflicts → 409 with
+  the files; the panel offers "Ask the agent to resolve". Options: push base, archive + delete branch.
+- **Update from base:** `git merge`/`rebase` in the worktree, conflicts left for the agent, `abort` undoes.
+- **Push / PR:** `git push -u` to the base's remote (origin); `gh pr create` when gh exists, else the forge's
+  compare URL (GitHub, Gitea/Forgejo, GitLab).
+- **Archive:** busy agents block it; idle ones stop; teardown runs (failure logged, not blocking); everything
+  not ignored is committed with a temporary index into `refs/pocket-ai/archive/<id>`; `worktree remove --force`.
+  Restore re-adds the worktree (branch, or recreated from the archive) and puts the uncommitted work back
+  uncommitted, then setup runs again. Delete for good drops the ref (+ branch).
+- **Other worktrees** (`git worktree list` of the person's repos that Pocket AI did not make, e.g. Paseo's):
+  adopt (row with base from settings) or remove with the same backup under `refs/pocket-ai/removed/…`.
+
 ## Schedules
 
 A schedule creates a thread with the prompt plus an instruction to begin the final answer with `OK: …` or

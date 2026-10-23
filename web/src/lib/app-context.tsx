@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { api, V1 } from './api'
 import { openSSE } from './sse'
-import type { Account, AuthStatus, Host, Limits, Provider, Recipe, Settings, SettingsResponse, Thread, User, Workspace, RunningItem } from './types'
+import type { Account, AuthStatus, Host, Worktree, Limits, Provider, Recipe, Settings, SettingsResponse, Thread, User, Workspace, RunningItem } from './types'
 
 export type ThemeMode = 'system' | 'light' | 'dark'
 
@@ -17,6 +17,9 @@ interface AppState {
   /** Other machines agents can run on over ssh (Settings → Agents → Servers). */
   hosts: Host[]
   reloadHosts: () => Promise<void>
+  /** The person's git worktrees (without their live git state). */
+  worktrees: Worktree[]
+  reloadWorktrees: () => Promise<void>
   /** GET /providers answered (or failed) at least once. */
   providersReady: boolean
   threads: Thread[] | null
@@ -79,6 +82,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [providersReady, setProvidersReady] = useState(false)
   const [accounts, setAccounts] = useState<Account[]>([])
   const [hosts, setHosts] = useState<Host[]>([])
+  const [worktrees, setWorktrees] = useState<Worktree[]>([])
   const [threads, setThreads] = useState<Thread[] | null>(null)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [recipes, setRecipes] = useState<Recipe[]>([])
@@ -115,6 +119,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const reloadWorkspaces = useCallback(async () => { setWorkspaces((await api.get<Workspace[]>(`${V1}/workspaces`).catch(() => [])) || []) }, [])
   const reloadRecipes = useCallback(async () => { setRecipes((await api.get<Recipe[]>(`${V1}/recipes`).catch(() => [])) || []) }, [])
   const reloadAccounts = useCallback(async () => { setAccounts((await api.get<Account[]>(`${V1}/accounts`).catch(() => [])) || []) }, [])
+  const reloadWorktrees = useCallback(async () => { setWorktrees((await api.get<Worktree[]>(`${V1}/worktrees`).catch(() => [])) || []) }, [])
   const reloadHosts = useCallback(async () => { setHosts((await api.get<Host[]>(`${V1}/hosts`).catch(() => [])) || []) }, [])
   const reloadProviders = useCallback(async () => { setProviders((await api.get<Provider[]>(`${V1}/providers`).catch(() => [])) || []); setProvidersReady(true) }, [])
 
@@ -136,10 +141,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         reloadProviders(),
         reloadAccounts(),
         reloadHosts(),
+        reloadWorktrees(),
       ])
       setSr(s)
     }
-  }, [reloadThreads, reloadWorkspaces, reloadRecipes, reloadProviders, reloadAccounts, reloadHosts])
+  }, [reloadThreads, reloadWorkspaces, reloadRecipes, reloadProviders, reloadAccounts, reloadHosts, reloadWorktrees])
 
   useEffect(() => {
     refresh().catch(() => setStatus({ needs_setup: false, auth_mode: 'local', authenticated: false, user: null, version: '', title: 'Pocket AI' }))
@@ -195,11 +201,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       limits: d => setLimits((d || {}) as Limits),
       accounts: () => { reloadAccounts().catch(() => {}) },
       hosts: () => { reloadHosts().catch(() => {}) },
+      worktrees: () => { reloadWorktrees().catch(() => {}) },
       running: () => reloadRunning(),
       ping: () => {},
     }, { onOpen: () => { setLive(true); reloadThreads().catch(() => {}); reloadRunning() }, onDown: () => setLive(false) })
     return () => { close(); setLive(false) }
-  }, [user, upsertThread, reloadThreads, reloadRunning, reloadAccounts, reloadHosts])
+  }, [user, upsertThread, reloadThreads, reloadRunning, reloadAccounts, reloadHosts, reloadWorktrees])
 
   // App badge (installed PWA) = threads that need you.
   useEffect(() => {
@@ -221,9 +228,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const value = useMemo<AppState>(() => ({
-    status, user, sr, settings, providers, providersReady, accounts, reloadAccounts, hosts, reloadHosts, threads, workspaces, recipes, limits, running, viewing, setViewing, live, themeMode, theme, setThemeMode, refresh,
+    status, user, sr, settings, providers, providersReady, accounts, reloadAccounts, hosts, reloadHosts, worktrees, reloadWorktrees, threads, workspaces, recipes, limits, running, viewing, setViewing, live, themeMode, theme, setThemeMode, refresh,
     reloadThreads, reloadWorkspaces, reloadRecipes, reloadProviders, upsertThread, dropThread, saveSettings, setUser,
-  }), [status, user, sr, settings, providers, providersReady, accounts, reloadAccounts, hosts, reloadHosts, threads, workspaces, recipes, limits, running, viewing, setViewing, live, themeMode, theme, setThemeMode, refresh, reloadThreads, reloadWorkspaces, reloadRecipes, reloadProviders, upsertThread, dropThread, saveSettings])
+  }), [status, user, sr, settings, providers, providersReady, accounts, reloadAccounts, hosts, reloadHosts, worktrees, reloadWorktrees, threads, workspaces, recipes, limits, running, viewing, setViewing, live, themeMode, theme, setThemeMode, refresh, reloadThreads, reloadWorkspaces, reloadRecipes, reloadProviders, upsertThread, dropThread, saveSettings])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

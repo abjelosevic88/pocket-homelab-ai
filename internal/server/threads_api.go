@@ -128,6 +128,8 @@ type newThread struct {
 	Provider    string   `json:"provider"`
 	AccountID   *int64   `json:"account_id"` // nil = the person's default for the provider
 	HostID      int64    `json:"host_id"`    // 0 = this server, else a machine from Settings → Servers
+	// Worktree: work in an isolated git worktree (a new one, or one of the person's).
+	Worktree *newWorktree `json:"worktree"`
 	Model       string   `json:"model"`
 	Effort      string   `json:"effort"`
 	Mode        string   `json:"mode"`
@@ -228,8 +230,20 @@ func (s *Server) createThread(ctx context.Context, u *store.User, in newThread, 
 	if t.Title == "" {
 		t.Title = titleFrom(in.Text)
 	}
+	var wt *store.Worktree
+	if in.Worktree != nil {
+		if wt, err = s.threadWorktree(ctx, u, host, t, *in.Worktree, in.Text); err != nil {
+			return nil, err
+		}
+	}
 	if err := s.store.CreateThread(ctx, t); err != nil {
 		return nil, err
+	}
+	if wt != nil && in.Worktree.Mode != "existing" {
+		// a new worktree: the first message waits until .env & co. are copied
+		// and the setup ran (it shows in the thread)
+		s.holds().hold(t.ID)
+		go s.runSetup(wt, t.ID, true)
 	}
 	if _, err := s.postMessage(ctx, u, t, in.Text, in.UploadIDs); err != nil {
 		return t, err
@@ -344,6 +358,12 @@ func (s *Server) postMessage(ctx context.Context, u *store.User, t *store.Thread
 		it.Queued = r.running || len(r.queue) > 0
 		r.mu.Unlock()
 	}
+	// the worktree is still being set up: send it when that is done
+	key := it.Key
+	held := s.holds().add(t.ID, func() { s.sendHeld(t.ID, key, in) })
+	if held {
+		it.Queued = true
+	}
 	s.rt.saveItem(t.ID, it)
 	t.ActivityAt = store.Now()
 	if t.Title == "" {
@@ -351,6 +371,10 @@ func (s *Server) postMessage(ctx context.Context, u *store.User, t *store.Thread
 	}
 	t.LastPrompt, t.PromptAt = promptLine(text, len(in.Images)), store.Now()
 	_ = s.store.UpdateThread(ctx, t)
+	if held {
+		s.rt.publishThread(t)
+		return true, nil
+	}
 	queued, err := s.rt.send(t, it.Key, in, sendNow...)
 	if err != nil {
 		return false, err
@@ -710,7 +734,7 @@ func (s *Server) handleFork(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	n := &store.Thread{ID: uuid.NewString(), UserID: t.UserID, Title: "Fork of " + t.Title, Provider: t.Provider, AccountID: t.AccountID, HostID: t.HostID, Model: t.Model,
+	n := &store.Thread{ID: uuid.NewString(), UserID: t.UserID, Title: "Fork of " + t.Title, Provider: t.Provider, AccountID: t.AccountID, HostID: t.HostID, WorktreeID: t.WorktreeID, Model: t.Model,
 		Effort: t.Effort, Mode: t.Mode, Speed: t.Speed, Cwd: t.Cwd, WorkspaceID: t.WorkspaceID, Source: "fork", SourceRef: "fork:" + t.ProviderSessionID}
 	if err := s.store.CreateThread(ctx, n); err != nil {
 		s.fail(w, err, "fork")

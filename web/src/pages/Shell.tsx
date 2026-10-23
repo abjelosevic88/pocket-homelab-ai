@@ -19,6 +19,7 @@ import HistoryPage from './HistoryPage'
 import SharedPage from './SharedPage'
 import TodayPage from './TodayPage'
 import UsagePage from './UsagePage'
+import WorktreesPage from './WorktreesPage'
 import { BriefingPage, MemoryPage, ActionsPage, WorkflowsPage } from './AssistantPages'
 
 function typing(e: KeyboardEvent) {
@@ -102,6 +103,7 @@ function ShellInner() {
             <Route path="/actions" element={<ActionsPage onMenu={onMenu} />} />
             <Route path="/workflows" element={<WorkflowsPage onMenu={onMenu} />} />
             <Route path="/usage" element={<UsagePage onMenu={onMenu} />} />
+            <Route path="/worktrees" element={<WorktreesPage onMenu={onMenu} />} />
             <Route path="*" element={<HomePage onMenu={onMenu} />} />
           </Routes>
         </ErrorBoundary>

@@ -5,13 +5,14 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api, ApiError, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { shortPath } from '../lib/format'
-import type { ProviderId, Thread } from '../lib/types'
+import type { ProviderId, Thread, WorktreeSpec } from '../lib/types'
 import { RunningList } from '../components/RunningList'
 import { accountOptions, AgentPicker, type AgentValue, defaultsFor, ProviderToggle } from '../components/AgentPicker'
 import { Composer, type ComposerHandle } from '../components/Composer'
 import { BranchButton } from '../components/BranchPicker'
 import { FolderButton } from '../components/FolderPicker'
 import { HostPicker } from '../components/HostPicker'
+import { WorktreeChooser } from '../components/Worktree'
 import { Icon } from '../components/icons'
 import { AskButton } from '../components/AskButton'
 import { useRunRecipe } from '../components/RecipeRunner'
@@ -23,7 +24,7 @@ import { useThreadMenu } from '../components/ThreadMenu'
 const LAST = 'pai-new-thread'
 const HOST_CWD = 'pai-host-cwd' // last folder per machine: {"<host id>": "/home/…"}
 
-type Choice = AgentValue & { cwd: string; host_id?: number }
+type Choice = AgentValue & { cwd: string; host_id?: number; worktree?: WorktreeSpec | null }
 
 function hostCwds(): Record<string, string> {
   try { return JSON.parse(localStorage.getItem(HOST_CWD) || '{}') || {} } catch { return {} }
@@ -41,7 +42,7 @@ function greeting() {
 }
 
 export default function HomePage({ onMenu }: { onMenu?: () => void }) {
-  const { status, user, settings, providers, providersReady, accounts, hosts, workspaces, recipes, threads, upsertThread, running } = useApp()
+  const { status, user, settings, providers, providersReady, accounts, hosts, worktrees, workspaces, recipes, threads, upsertThread, running } = useApp()
   const { toast } = useToast()
   const navigate = useNavigate()
   const ctx = useContextMenu()
@@ -97,17 +98,29 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
       speed: same && saved.speed !== undefined && (saved.speed === '' || p?.speeds?.some(s => s.id === saved.speed && s.available)) ? saved.speed : d.speed,
       cwd: saved.cwd || settings.default_cwd || '',
       host_id: saved.host_id || 0,
+      worktree: saved.worktree?.mode === 'new' ? { mode: 'new' } : null,
     })
   }, [settings, providers, providersReady])
   // a prepared conversation never becomes the person's "last choice"
   useEffect(() => {
     if (!choice || draftId) return
-    localStorage.setItem(LAST, JSON.stringify(choice))
+    // a worktree choice is kept as "on" only: bases and branches belong to one repo
+    localStorage.setItem(LAST, JSON.stringify({ ...choice, worktree: choice.worktree ? { mode: 'new' } : null }))
     localStorage.setItem(HOST_CWD, JSON.stringify({ ...hostCwds(), [String(choice.host_id || 0)]: choice.cwd }))
   }, [choice, draftId])
   // a saved machine that was removed: back to this server
   const hostId = choice?.host_id && hosts.some(h => h.id === choice.host_id) ? choice.host_id : 0
-  const pickHost = (id: number) => setChoice(c => c && { ...c, host_id: id, cwd: hostCwds()[String(id)] ?? (id ? '' : settings?.default_cwd || '') })
+  const pickHost = (id: number) => setChoice(c => c && { ...c, host_id: id, worktree: c.worktree?.mode === 'new' ? { mode: 'new' } : null, cwd: hostCwds()[String(id)] ?? (id ? '' : settings?.default_cwd || '') })
+  // ?worktree=<id>: a new thread in one of my worktrees ("New thread here")
+  const wtParam = Number(params.get('worktree')) || 0
+  useEffect(() => {
+    if (!wtParam || !choice) return
+    const w = worktrees.find(x => x.id === wtParam && x.status === 'active')
+    if (!w) return
+    setMode('server')
+    setChoice(c => c && { ...c, host_id: w.host_id, cwd: w.path, worktree: { mode: 'existing', id: w.id, branch: w.branch } })
+    setParams(p => { p.delete('worktree'); return p }, { replace: true })
+  }, [wtParam, !!choice, worktrees]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ?draft=<id>: load what the other app prepared (already sent → open that thread)
   useEffect(() => {
@@ -157,6 +170,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
         speed: choice.speed ?? undefined,
         account_id: !hostId && accounts.some(a => a.provider === choice.provider && a.id === choice.account_id && a.signed_in) ? choice.account_id : undefined,
         cwd: choice.cwd || undefined, workspace_id: hostId ? undefined : ws?.id, host_id: hostId || undefined, text, upload_ids: uploadIds,
+        worktree: !draft && choice.worktree ? choice.worktree : undefined,
       })
       upsertThread(t)
       navigate(`/t/${t.id}`, { replace: !!draft && embedded })
@@ -251,8 +265,9 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
                 <ProviderToggle value={choice.provider} onChange={pickProvider} />
                 <div className="home-where">
                   {!draft && <HostPicker value={hostId} onChange={pickHost} />}
-                  <BranchButton cwd={choice.cwd} host={hostId} />
-                  <FolderButton value={choice.cwd} host={hostId} onChange={cwd => setChoice(c => c && { ...c, cwd })} className="btn sm" />
+                  {!draft && <WorktreeChooser cwd={choice.cwd} host={hostId} value={choice.worktree || null} onChange={wt => setChoice(c => c && { ...c, worktree: wt })} />}
+                  {choice.worktree?.mode !== 'existing' && <BranchButton cwd={choice.cwd} host={hostId} />}
+                  <FolderButton value={choice.cwd} host={hostId} onChange={cwd => setChoice(c => c && { ...c, cwd, worktree: c.worktree?.mode === 'existing' ? null : c.worktree })} className="btn sm" />
                 </div>
               </div>
               {draft && (

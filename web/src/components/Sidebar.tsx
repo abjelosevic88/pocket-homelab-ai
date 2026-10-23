@@ -63,7 +63,7 @@ export function ThreadRow({ t, active, onOpen, onContextMenu }: { t: Thread; act
 }
 
 export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onPalette: () => void }) {
-  const { threads, workspaces, user, settings, live, status } = useApp()
+  const { threads, workspaces, worktrees, user, settings, live, status } = useApp()
   const navigate = useNavigate()
   const loc = useLocation()
   const [q, setQ] = useState('')
@@ -103,6 +103,7 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
     return out
   }, [shown, showArchive])
   const sharedN = (threads || []).filter(t => !mine(t) || !!t.shares?.length).length
+  const activeWt = worktrees.filter(w => w.status === 'active').length
   const needYou = (base || []).filter(t => t.status === 'waiting' || t.pending > 0).length
 
   const searchAll = async () => {
@@ -139,6 +140,7 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
         {nav('/recipes', 'zap', 'Recipes')}
         {nav('/schedules', 'clock', 'Schedules')}
         {(user?.role === 'admin' || user?.can_run) && nav('/history', 'history', 'On this server')}
+        {(user?.role === 'admin' || user?.can_run) && nav('/worktrees', 'fork', 'Worktrees', activeWt > 0 ? <span className="badge">{activeWt}</span> : undefined)}
         {nav('/shared', 'users', 'Shared', sharedN > 0 ? <span className="badge">{sharedN}</span> : undefined)}
         {nav('/usage', 'chart', 'Usage')}
       </nav>
