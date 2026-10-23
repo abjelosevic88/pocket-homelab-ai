@@ -18,7 +18,7 @@ interface Attachment {
   abort?: () => void
 }
 
-export interface ComposerHandle { focus: () => void; setText: (t: string) => void; addFiles: (f: File[]) => void }
+export interface ComposerHandle { focus: () => void; setText: (t: string) => void; addFiles: (f: File[]) => void; restoreDraft: (text: string, uploads: Upload[]) => void }
 
 const MAX_EDGE = 2000
 const MAX_BYTES = 20 * 1024 * 1024
@@ -58,7 +58,7 @@ function draftAttachments(key?: string): Attachment[] {
 type SpeechCtor = new () => { lang: string; continuous: boolean; interimResults: boolean; start: () => void; stop: () => void; onresult: ((e: { resultIndex: number; results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> }) => void) | null; onend: (() => void) | null; onerror: ((e: { error: string }) => void) | null }
 
 export const Composer = React.forwardRef<ComposerHandle, {
-  onSend: (text: string, uploadIds: string[]) => Promise<boolean>
+  onSend: (text: string, uploadIds: string[], sendNow?: boolean) => Promise<boolean>
   placeholder?: string
   autoFocus?: boolean
   running?: boolean
@@ -122,6 +122,12 @@ export const Composer = React.forwardRef<ComposerHandle, {
     focus: () => ta.current?.focus(),
     setText: (t: string) => { setText(t); setTimeout(() => { ta.current?.focus(); ta.current?.setSelectionRange(t.length, t.length) }, 0) },
     addFiles,
+    restoreDraft: (restoredText, uploads) => {
+      // Keep any draft already being written below the restored message.
+      setText(current => restoredText + (current ? '\n\n' + current : ''))
+      setAtts(current => [...uploads.filter(u => !current.some(a => a.upload?.id === u.id)).map(upload => ({ lid: 'a' + ++lidSeq, name: upload.name, preview: upload.url, image: upload.mime.startsWith('image/'), progress: 1, upload })), ...current])
+      setTimeout(() => ta.current?.focus(), 0)
+    },
   }), [addFiles])
 
   const remove = (a: Attachment) => {
@@ -158,12 +164,13 @@ export const Composer = React.forwardRef<ComposerHandle, {
   const ready = atts.filter(a => a.upload)
   const canSend = !disabled && !sending && !uploading && (text.trim() !== '' || ready.length > 0)
 
-  const send = async () => {
+  const defaultNow = !!settings?.enter_send_now
+  const send = async (sendNow = defaultNow) => {
     if (!canSend) return
     stopDictation()
     setSending(true)
     try {
-      const ok = await onSend(text.trim(), ready.map(a => a.upload!.id))
+      const ok = await onSend(text.trim(), ready.map(a => a.upload!.id), sendNow)
       if (ok) {
         setText('')
         atts.forEach(a => URL.revokeObjectURL(a.preview))
@@ -179,6 +186,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
   const pickRecipe = (r: Recipe) => { setText(r.prompt); setTimeout(() => ta.current?.focus(), 0) }
 
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.nativeEvent.isComposing) return
     if (slashList.length) {
       if (e.key === 'ArrowDown') { e.preventDefault(); setSlashHi(h => (h + 1) % slashList.length); return }
       if (e.key === 'ArrowUp') { e.preventDefault(); setSlashHi(h => (h - 1 + slashList.length) % slashList.length); return }
@@ -186,8 +194,8 @@ export const Composer = React.forwardRef<ComposerHandle, {
       if (e.key === 'Escape') { e.preventDefault(); setText(''); return }
     }
     if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
-    if (e.metaKey || e.ctrlKey) { e.preventDefault(); send(); return }
     if (e.shiftKey || e.altKey) return
+    if (e.metaKey || e.ctrlKey) { e.preventDefault(); void send(!defaultNow); return }
     if ((settings?.enter_sends ?? true) && !isTouch()) { e.preventDefault(); send() }
   }
 
@@ -245,7 +253,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
         {running && onStop && !text.trim() && atts.length === 0 ? (
           <button type="button" className="stop-round" aria-label="Stop" title="Stop (⌘.)" onClick={onStop}><span /></button>
         ) : (
-          <button type="button" className="btn primary icon-only send-btn" aria-label={running ? 'Queue message' : 'Send'} title={running ? 'Queue — sent when the agent is done' : 'Send'} disabled={!canSend} onClick={send}>
+          <button type="button" className="btn primary icon-only send-btn" aria-label={running ? defaultNow ? 'Send now' : 'Queue message' : 'Send'} title={running ? defaultNow ? 'Send now — interrupts the current turn' : 'Queue — sent when the agent is done' : 'Send'} disabled={!canSend} onClick={() => { void send() }}>
             {sending ? <Spinner size={14} /> : <Icon name="arrow-up" size={17} strokeWidth={2.2} />}
           </button>
         )}

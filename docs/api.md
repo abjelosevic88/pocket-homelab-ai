@@ -124,8 +124,10 @@ only their own calls.
 | GET | `/threads/{id}` | | `{thread: Thread, items: Item[]}` |
 | PATCH | `/threads/{id}` | any of `{title, pinned, archived, model, effort, mode}` | `Thread` |
 | DELETE | `/threads/{id}` | | 204 (stops the agent, deletes the timeline; the CLI's own session file stays) |
-| POST | `/threads/{id}/messages` | `{text, upload_ids?: string[]}` | `{queued: bool, thread: Thread}` — queued when a turn is running; it is sent when that turn ends |
+| POST | `/threads/{id}/messages` | `{text, upload_ids?: string[], send_now?: bool}` | `{queued: bool, thread: Thread}` — normally waits for the current turn; `send_now` prioritizes this message and interrupts the current turn, preserving older queued messages |
 | DELETE | `/threads/{id}/queue` | | 204 — drop queued messages |
+| POST | `/threads/{id}/queue/{key}/edit` | | `{text, uploads: Upload[]}` — takes your own queued message out for editing; 409 if it has already started sending |
+| POST | `/threads/{id}/queue/{key}/now` | | 204 — sends this queued message next, interrupting the current turn |
 | POST | `/threads/{id}/interrupt` | | 204 — stop the current turn |
 | POST | `/threads/{id}/requests/{requestId}` | `{decision: "allow"\|"allow_session"\|"deny", message?: string, answers?: {[questionId]: string[]}}` | 204 |
 | POST | `/threads/{id}/read` | | 204 — clears `unread` |
@@ -287,9 +289,11 @@ Admins and members with `can_run` only (these are the server user's files).
   "codex": {"model": "", "effort": "high", "mode": "on-request"},
   "notify_kind": "apprise", "notify_url": "", "notify_finished": true, "notify_input": true, "notify_failed": true,
   "notify_only_away": true,
-  "enter_sends": true, "show_thinking": false, "system_prompt": ""
+  "enter_sends": true, "enter_send_now": false, "show_thinking": false, "system_prompt": ""
 }
 ```
+
+`enter_send_now`: personal composer default. False: Enter/send button queues while busy, Cmd/Ctrl+Enter sends immediately. True: swaps those actions. `enter_sends: false` keeps plain Enter as a new line. The client sends `send_now` explicitly; API callers retain queue-by-default behavior.
 
 `notify_only_away`: skip the push when the person has the thread open in a browser.
 `system_prompt` is appended to every agent's system prompt (both CLIs).

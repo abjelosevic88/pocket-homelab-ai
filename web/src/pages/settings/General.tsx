@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useApp } from '../../lib/app-context'
 import { Icon } from '../../components/icons'
 import { Loading, Segmented, SettingRow, Switch } from '../../components/ui'
+import { Select } from '../../components/Select'
 import { Section, useSaveSettings } from './common'
 
 export function GeneralTab() {
@@ -34,8 +35,14 @@ export function GeneralTab() {
       </Section>
 
       <Section title="Composer">
-        <SettingRow title="Enter sends" help="On a computer: Enter sends, Shift+Enter makes a new line. Off: ⌘/Ctrl+Enter sends. Phones always use the send button.">
+        <SettingRow title="Enter sends" help="On a computer: Enter sends, Shift+Enter makes a new line. Off: Enter makes a new line; ⌘/Ctrl+Enter uses the alternate send action. Phones always use the send button.">
           <Switch label="Enter sends" checked={s.enter_sends !== false} onChange={v => save({ enter_sends: v })} />
+        </SettingRow>
+        <SettingRow title="Send behavior" help={`While working, ${s.enter_sends === false ? 'the send button' : 'Enter and the send button'} ${s.enter_send_now ? 'send immediately; ⌘/Ctrl+Enter queues' : 'queue; ⌘/Ctrl+Enter sends immediately'}. Sending immediately interrupts the current turn.`}>
+          <Select label="Send behavior" value={s.enter_send_now ? 'now' : 'queue'} onChange={v => save({ enter_send_now: v === 'now' })} options={[
+            { value: 'queue', label: 'Queue message', description: '⌘/Ctrl+Enter sends immediately'  },
+            { value: 'now', label: 'Send immediately', description: '⌘/Ctrl+Enter queues'  },
+          ]} />
         </SettingRow>
       </Section>
 

@@ -26,6 +26,7 @@ func (s *Server) threadRoutes(r chi.Router) {
 	r.Delete("/threads/{id}/queue", s.handleClearQueue)
 	r.Delete("/threads/{id}/queue/{key}", s.handleDropQueued)
 	r.Post("/threads/{id}/queue/{key}/now", s.handleSendNow)
+	r.Post("/threads/{id}/queue/{key}/edit", s.handleEditQueued)
 	r.Post("/threads/{id}/interrupt", s.handleInterrupt)
 	r.Post("/threads/{id}/requests/{rid}", s.handleRespond)
 	r.Post("/threads/{id}/read", s.handleMarkRead)
@@ -281,7 +282,7 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 }
 
 // postMessage writes the user item and hands it to the agent (or the queue).
-func (s *Server) postMessage(ctx context.Context, u *store.User, t *store.Thread, text string, uploadIDs []string) (bool, error) {
+func (s *Server) postMessage(ctx context.Context, u *store.User, t *store.Thread, text string, uploadIDs []string, sendNow ...bool) (bool, error) {
 	if len(uploadIDs) > 10 {
 		return false, badRequest("Attach at most 10 files per message")
 	}
@@ -328,13 +329,9 @@ func (s *Server) postMessage(ctx context.Context, u *store.User, t *store.Thread
 	}
 	t.LastPrompt, t.PromptAt = promptLine(text, len(in.Images)), store.Now()
 	_ = s.store.UpdateThread(ctx, t)
-	queued, err := s.rt.send(t, it.Key, in)
+	queued, err := s.rt.send(t, it.Key, in, sendNow...)
 	if err != nil {
 		return false, err
-	}
-	if queued && !it.Queued {
-		it.Queued = true
-		s.rt.saveItem(t.ID, it)
 	}
 	return queued, nil
 }
@@ -515,6 +512,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Text      string   `json:"text"`
 		UploadIDs []string `json:"upload_ids"`
+		SendNow   bool     `json:"send_now"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
@@ -534,7 +532,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	if t.Status == "error" {
 		t.Status, t.Error = "idle", ""
 	}
-	queued, err := s.postMessage(r.Context(), userFrom(r.Context()), t, in.Text, in.UploadIDs)
+	queued, err := s.postMessage(r.Context(), userFrom(r.Context()), t, in.Text, in.UploadIDs, in.SendNow)
 	if err != nil {
 		s.rt.saveItem(t.ID, agent.Item{Key: "err-" + uuid.NewString()[:8], Kind: "notice", Level: "error", Text: err.Error()})
 		s.rt.setStatus(t.ID, "error", err.Error())

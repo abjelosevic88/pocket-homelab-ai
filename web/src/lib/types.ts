@@ -61,6 +61,7 @@ export interface Settings {
   notify_failed: boolean
   notify_only_away: boolean
   enter_sends: boolean
+  enter_send_now: boolean
   show_thinking: boolean
   usage_widget: boolean
   thread_tabs: boolean

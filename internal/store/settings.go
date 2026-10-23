@@ -42,6 +42,7 @@ type Settings struct {
 	NotifyOnlyAway bool   `json:"notify_only_away"`
 
 	EnterSends   bool `json:"enter_sends"`
+	EnterSendNow bool `json:"enter_send_now"`
 	ShowThinking bool `json:"show_thinking"`
 
 	// The plan-limit panel in the sidebar, and which limits it shows
@@ -132,6 +133,8 @@ func (s *Store) GetSettings(ctx context.Context, userID int64) (Settings, error)
 			st.NotifyFailed = v != "0"
 		case "notify_only_away":
 			st.NotifyOnlyAway = v != "0"
+		case "enter_send_now":
+			st.EnterSendNow = v == "1"
 		case "enter_sends":
 			st.EnterSends = v != "0"
 		case "show_thinking":
@@ -165,7 +168,7 @@ func (s *Store) SaveSettings(ctx context.Context, userID int64, st Settings) err
 		"system_prompt": st.SystemPrompt,
 		"notify_kind":   st.NotifyKind, "notify_url": st.NotifyURL, "notify_finished": b2s(st.NotifyFinished),
 		"notify_input": b2s(st.NotifyInput), "notify_failed": b2s(st.NotifyFailed), "notify_only_away": b2s(st.NotifyOnlyAway),
-		"enter_sends": b2s(st.EnterSends), "show_thinking": b2s(st.ShowThinking),
+		"enter_send_now": b2s(st.EnterSendNow), "enter_sends": b2s(st.EnterSends), "show_thinking": b2s(st.ShowThinking),
 		"usage_widget": b2s(st.UsageWidget), "thread_tabs": b2s(st.ThreadTabs), "usage_pinned": strings.Join(st.UsagePinned, ","),
 	})
 }

@@ -5,6 +5,7 @@ import { useEffect } from 'react'
 
 const SRC = '/favicon.svg'
 const SIZE = 64
+const TURN_MS = 1800
 
 let base: HTMLImageElement | null = null
 function baseIcon(): Promise<HTMLImageElement> {
@@ -53,23 +54,38 @@ export function useBusyFavicon(running: boolean, waiting: boolean) {
   useEffect(() => {
     if (!running && !waiting) { setIcon(SRC, 'image/svg+xml'); return }
     let stop = false
-    let timer = 0
+    let animation = 0
+    let restart = () => {}
+    const motion = window.matchMedia('(prefers-reduced-motion: reduce)')
     const canvas = document.createElement('canvas')
     canvas.width = canvas.height = SIZE
     const ctx = canvas.getContext('2d')
     if (!ctx) return
     baseIcon().then(img => {
       if (stop) return
-      let angle = -Math.PI / 2
-      const draw = () => {
+      const draw = (now: number) => {
+        // Derive the phase from time, not a fixed step per callback. The wrap
+        // is a full turn, so there is no jump at the end of the loop.
+        const angle = -Math.PI / 2 + (motion.matches ? 0 : (now % TURN_MS) / TURN_MS * Math.PI * 2)
         frame(ctx, img, running, waiting, angle)
         setIcon(canvas.toDataURL('image/png'), 'image/png')
-        angle += Math.PI / 6
+        if (running && !motion.matches) animation = requestAnimationFrame(draw)
       }
-      draw()
-      // background tabs throttle timers to ~1/s: the ring still moves, just slower
-      if (running) timer = window.setInterval(draw, 90)
+      restart = () => {
+        cancelAnimationFrame(animation)
+        draw(performance.now())
+      }
+      restart()
     })
-    return () => { stop = true; clearInterval(timer); setIcon(SRC, 'image/svg+xml') }
+    // A hidden tab keeps its busy ring; the browser resumes smooth rendering
+    // when visible again instead of advancing it in throttled timer jumps.
+    const onMotionChange = () => restart()
+    motion.addEventListener('change', onMotionChange)
+    return () => {
+      stop = true
+      cancelAnimationFrame(animation)
+      motion.removeEventListener('change', onMotionChange)
+      setIcon(SRC, 'image/svg+xml')
+    }
   }, [running, waiting])
 }
