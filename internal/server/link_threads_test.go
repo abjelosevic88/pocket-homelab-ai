@@ -38,7 +38,12 @@ func linkCore(t *testing.T, s *Server, emails map[string]string) {
 		if email == "" {
 			email = emails["pcx_valid"]
 		}
+		app := "projects"
+		if input.Token == "pcx_other_app" {
+			app = "notes"
+		}
 		json.NewEncoder(w).Encode(map[string]any{"active": input.Token != "pcx_revoked", "kind": kind, "scope": scope, "audience": audience,
+			"app": map[string]any{"id": 3, "slug": app, "name": app},
 			"user": map[string]any{"id": 7, "sub": "sub-" + email, "email": email, "name": email}})
 	}))
 	t.Cleanup(upstream.Close)
@@ -359,4 +364,64 @@ func TestLinkDraftFiles(t *testing.T) {
 	if len(first.Images) != 1 || len(first.Files) != 0 {
 		t.Fatalf("after removing one: %+v", first)
 	}
+}
+
+// The app that prepared a conversation can take it off its item (it stays in
+// Pocket AI) or delete it; other apps cannot touch it.
+func TestLinkUnlinkAndDelete(t *testing.T) {
+	s, h, root := testServer(t)
+	owner, user := person(t, s, h, "link@example.test", "member", true)
+	linkCore(t, s, map[string]string{"pcx_valid": "link@example.test", "pcx_other_app": "link@example.test"})
+	fakeClaude(t, s, root)
+	app := &client{t: t, h: h, token: "pcx_valid"}
+	other := &client{t: t, h: h, token: "pcx_other_app"}
+	repo := filepath.Join(root, "repo")
+	_ = os.MkdirAll(repo, 0700)
+	draft := func(ref string, files ...map[string]any) string {
+		var made struct{ ID string }
+		body := map[string]any{"cwd": repo, "text": "Fix " + ref, "source": "projects", "ref": ref}
+		if len(files) > 0 {
+			body["files"] = files
+		}
+		app.want("POST", "/api/v1/link/drafts", body, 201, &made)
+		return made.ID
+	}
+	list := func(ref string) []linkThread {
+		var l []linkThread
+		app.want("GET", "/api/v1/link/threads?source=projects&ref="+ref, nil, 200, &l)
+		return l
+	}
+
+	// unlink: gone from the issue, the conversation stays
+	d1 := draft("AS-1")
+	var th struct{ ID string }
+	owner.want("POST", "/api/v1/drafts/"+d1+"/start", map[string]any{}, 201, &th)
+	other.want("POST", "/api/v1/link/threads/"+d1+"/unlink", nil, 404, nil)
+	other.want("DELETE", "/api/v1/link/threads/"+d1, nil, 404, nil)
+	app.want("POST", "/api/v1/link/threads/"+d1+"/unlink", nil, 204, nil)
+	if l := list("AS-1"); len(l) != 0 {
+		t.Fatalf("still listed: %+v", l)
+	}
+	mustThread(t, s, user.ID, th.ID)
+
+	// delete: the conversation goes too
+	d2 := draft("AS-2")
+	owner.want("POST", "/api/v1/drafts/"+d2+"/start", map[string]any{}, 201, &th)
+	app.want("DELETE", "/api/v1/link/threads/"+d2, nil, 204, nil)
+	if _, err := s.store.GetThread(t.Context(), user.ID, th.ID); err == nil {
+		t.Fatal("thread not deleted")
+	}
+	if l := list("AS-2"); len(l) != 0 {
+		t.Fatalf("still listed: %+v", l)
+	}
+
+	// an unsent draft's files go with it
+	d3 := draft("AS-3", map[string]any{"name": "notes.md", "data": []byte("steps")})
+	var d struct{ Uploads []struct{ ID string } }
+	owner.want("GET", "/api/v1/drafts/"+d3, nil, 200, &d)
+	app.want("DELETE", "/api/v1/link/threads/"+d3, nil, 204, nil)
+	if _, err := s.store.GetUpload(t.Context(), user.ID, d.Uploads[0].ID); err == nil {
+		t.Fatal("draft upload left behind")
+	}
+	app.want("DELETE", "/api/v1/link/threads/"+d3, nil, 404, nil)
 }

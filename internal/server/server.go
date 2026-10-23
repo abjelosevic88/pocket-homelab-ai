@@ -203,6 +203,8 @@ func (s *Server) Router() http.Handler {
 		r.Get("/link/agent-options", s.handleLinkAgentOptions)
 		r.Post("/link/drafts", s.handleLinkCreateDraft)
 		r.Get("/link/threads", s.handleLinkThreads)
+		r.Post("/link/threads/{draft}/unlink", s.handleLinkUnlink)
+		r.Delete("/link/threads/{draft}", s.handleLinkDelete)
 		r.Get("/link/dirs", s.handleLinkDirs)
 		r.Get("/link/active", s.handleLinkActive)
 		r.Get("/link/prs", s.handleLinkPRs)

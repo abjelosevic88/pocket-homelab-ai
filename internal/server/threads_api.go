@@ -531,15 +531,24 @@ func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {
 	if t == nil {
 		return
 	}
-	s.rt.stop(t.ID)
-	ups := s.store.UploadsOfThread(r.Context(), t.ID)
-	if err := s.store.DeleteThread(r.Context(), t.UserID, t.ID); err != nil {
+	if err := s.deleteThread(r.Context(), t); err != nil {
 		s.fail(w, err, "delete thread")
 		return
 	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteThread stops the thread's agent and removes it with its uploads;
+// everyone who had it open hears it is gone.
+func (s *Server) deleteThread(ctx context.Context, t *store.Thread) error {
+	s.rt.stop(t.ID)
+	ups := s.store.UploadsOfThread(ctx, t.ID)
+	if err := s.store.DeleteThread(ctx, t.UserID, t.ID); err != nil {
+		return err
+	}
 	for _, u := range ups {
 		s.removeUploadFile(u.Path)
-		_ = s.store.DeleteUpload(r.Context(), u.UserID, u.ID)
+		_ = s.store.DeleteUpload(ctx, u.UserID, u.ID)
 	}
 	gone := sseEvent{Name: "thread_removed", Data: map[string]string{"id": t.ID}}
 	s.rt.toUser(t.UserID, gone)
@@ -548,7 +557,7 @@ func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {
 		s.rt.dropViewer(t.ID, uid)
 	}
 	s.rt.loadShares()
-	w.WriteHeader(http.StatusNoContent)
+	return nil
 }
 
 func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
