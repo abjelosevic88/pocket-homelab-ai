@@ -14,10 +14,11 @@ export const embedded = detect()
 // the framing app has its own Ask: hide Core's floating launcher in here
 if (embedded) document.documentElement.classList.add('pai-embedded')
 
-/** Tells the framing page where the frame is (thread id once one is open). */
-export function tellParent(path: string) {
+/** Tells the framing page where the frame is (thread id once one is open) and
+ *  how that thread is doing (running / waiting / idle / error), on every change. */
+export function tellParent(path: string, status = '') {
   if (!embedded) return
   const m = path.match(/^\/t\/([^/]+)/)
-  // frame-ancestors (Caddy) limits who can frame us; ids carry no content
-  window.parent.postMessage({ type: 'pocket-ai', path, thread_id: m ? m[1] : null }, '*')
+  // frame-ancestors (Caddy) limits who can frame us; ids and states carry no content
+  window.parent.postMessage({ type: 'pocket-ai', path, thread_id: m ? m[1] : null, status }, '*')
 }
