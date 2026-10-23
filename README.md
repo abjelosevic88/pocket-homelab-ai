@@ -1,8 +1,15 @@
 <p align="center"><img src="web/public/favicon.svg" width="72" alt=""></p>
-
-Personal app assistance: [Briefing, workflows, memory, sources and document uploads](docs/assistant.md).
 <h1 align="center">Pocket AI</h1>
 <p align="center">Claude Code and Codex on your own server, from any browser or phone: ask it to check your apps and your box, watch what it does, approve what it wants to run, paste a screenshot into the prompt — and let saved checks run on a schedule and tell you when something needs attention.<br>One Go binary, one SQLite file. It drives the CLIs already installed and logged in on the server.</p>
+<p align="center">
+  <a href="https://github.com/abjelosevic88/pocket-homelab-ai/actions"><img src="https://github.com/abjelosevic88/pocket-homelab-ai/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/abjelosevic88/pocket-homelab-ai/releases"><img src="https://img.shields.io/badge/binaries-linux%20%7C%20macOS-blue" alt="binaries"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"></a>
+</p>
+
+---
+
+Personal app assistance: [Briefing, workflows, memory, sources and document uploads](docs/assistant.md).
 
 <p align="center"><img src="docs/screenshots/thread.png" width="900" alt="Claude Code reading a compose file and a log, then fixing the port, with the diff expanded"></p>
 
