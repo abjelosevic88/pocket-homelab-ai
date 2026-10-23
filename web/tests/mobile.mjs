@@ -34,6 +34,8 @@ try {
    await c.route(base + '/**', async route => {
     const url = new URL(route.request().url()), p = url.pathname, method = route.request().method()
     const json = v => route.fulfill({ json: v })
+    // The phone suite runs as on a box with Pocket Core (Ask my apps is greyed out without one)
+    if (p === '/api/v1/auth/status') { const r = await route.fetch(); return json({ ...(await r.json()), core_configured: true }) }
     if (p === '/api/v1/ask/threads' && method === 'POST') { askPrompts.push(route.request().postDataJSON().text); return json({id:'fixture'}) }
     if (p === '/api/v1/assistant/status') return json({ connected: true })
     if (p === '/api/v1/briefing' || p === '/api/v1/app-search') return json({ date: '2026-10-22', timezone: 'Europe/Sarajevo', coverage: 'Fixture overview', sections: records })
