@@ -200,6 +200,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/link/drafts", s.handleLinkCreateDraft)
 		r.Get("/link/threads", s.handleLinkThreads)
 		r.Get("/link/dirs", s.handleLinkDirs)
+		r.Get("/link/active", s.handleLinkActive)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)

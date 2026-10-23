@@ -428,3 +428,40 @@ func (s *Server) handleLinkDirs(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, out)
 }
+
+// handleLinkActive lists the person's conversations from one app that are
+// working or waiting right now, by ref, so lists can mark those items.
+func (s *Server) handleLinkActive(w http.ResponseWriter, r *http.Request) {
+	u := s.linkUser(w, r)
+	if u == nil {
+		return
+	}
+	ctx := r.Context()
+	drafts, err := s.store.StartedLinkDrafts(ctx, u.ID, strings.ToLower(r.URL.Query().Get("source")))
+	if err != nil {
+		s.fail(w, err, "drafts")
+		return
+	}
+	type active struct {
+		Ref      string `json:"ref"`
+		Status   string `json:"status"`
+		ThreadID string `json:"thread_id"`
+		URL      string `json:"url"`
+	}
+	out := []active{}
+	for _, d := range drafts {
+		t, err := s.store.GetThread(ctx, u.ID, *d.ThreadID)
+		if err != nil {
+			continue
+		}
+		t = s.rt.decorate(t)
+		st := t.Status
+		if t.Pending > 0 {
+			st = "waiting"
+		}
+		if st == "running" || st == "waiting" {
+			out = append(out, active{Ref: d.Ref, Status: st, ThreadID: t.ID, URL: s.threadURL(t.ID)})
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
