@@ -15,7 +15,8 @@ import { Icon } from '../components/icons'
 import { AskButton } from '../components/AskButton'
 import { useRunRecipe } from '../components/RecipeRunner'
 import { ThreadRow } from '../components/Sidebar'
-import { errMsg, useContextMenu, useToast } from '../components/ui'
+import { errMsg, Loading, useContextMenu, useToast } from '../components/ui'
+import { embedded } from '../lib/embed'
 import { useThreadMenu } from '../components/ThreadMenu'
 
 const LAST = 'pai-new-thread'
@@ -102,8 +103,10 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
     let live = true
     api.get<LinkDraft>(`${V1}/drafts/${encodeURIComponent(draftId)}`).then(d => {
       if (!live) return
-      if (d.thread_id) navigate(`/t/${d.thread_id}`, { replace: true })
-      else setDraft(d)
+      if (d.thread_id) { navigate(`/t/${d.thread_id}`, { replace: true }); return }
+      // the composer reads its slot when its draftKey switches to this draft (an edit in progress survives a reload)
+      if (!sessionStorage.getItem('pai-draft-link-' + d.id)) sessionStorage.setItem('pai-draft-link-' + d.id, d.text)
+      setDraft(d)
     }).catch(e => { if (live) { toast(errMsg(e), 'err'); setParams({}, { replace: true }) } })
     return () => { live = false }
   }, [draftId]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -124,11 +127,6 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
       cwd: draft.cwd,
     })
   }, [draft, settings, providers, providersReady]) // eslint-disable-line react-hooks/exhaustive-deps
-  // the prompt goes into the composer once (an edit in progress survives a reload)
-  useEffect(() => {
-    if (!draft || !choice || !serverComposer.current) return
-    if (!sessionStorage.getItem('pai-draft-link-' + draft.id)) serverComposer.current.setText(draft.text)
-  }, [draft, !!choice]) // eslint-disable-line react-hooks/exhaustive-deps
   const dropDraft = () => { if (draft) sessionStorage.removeItem('pai-draft-link-' + draft.id); setParams({}, { replace: true }) }
 
   const pinned = useMemo(() => recipes.filter(r => r.pinned).sort((a, b) => a.sort_order - b.sort_order || b.runs - a.runs).slice(0, 8), [recipes])
@@ -146,7 +144,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
         cwd: choice.cwd || undefined, workspace_id: ws?.id, text, upload_ids: uploadIds,
       })
       upsertThread(t)
-      navigate(`/t/${t.id}`)
+      navigate(`/t/${t.id}`, { replace: !!draft && embedded })
       return true
     } catch (e) {
       if (draft && e instanceof ApiError && e.status === 409 && e.data.thread_id) { navigate(`/t/${e.data.thread_id}`); return true }
@@ -154,10 +152,21 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
     }
   }
 
+  // Embedded in the app that prepared it: send at once, the frame shows only the conversation
+  const autoSent = useRef('')
+  const [autoFailed, setAutoFailed] = useState(false)
+  useEffect(() => {
+    if (!embedded || !draft || !choice || draftApplied.current !== draft.id || choice.cwd !== draft.cwd || autoSent.current === draft.id) return
+    autoSent.current = draft.id
+    send(draft.text, []).then(ok => { if (ok) sessionStorage.removeItem('pai-draft-link-' + draft.id); else setAutoFailed(true) })
+  }, [draft, choice]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const pickProvider = (pid: ProviderId | '') => {
     const p = providers.find(x => x.id === pid)
     setChoice(c => c && pid ? { ...c, provider: pid, ...defaultsFor(p, settings) } : c)
   }
+
+  if (embedded && draftId && !autoFailed) return <div className="home embed-starting"><Loading label="Starting the conversation…" /></div>
 
   return (
     <div className="home">

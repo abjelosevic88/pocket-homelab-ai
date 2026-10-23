@@ -99,3 +99,4 @@
 /* Embedded in another Pocket app: just the conversation */
 .app.embedded .home-hero, .app.embedded .home-sec, .app.embedded .home-shortcuts { display: none; }
 .app.embedded .home-inner { padding-top: 12px; }
+.home.embed-starting { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; height: 100%; }

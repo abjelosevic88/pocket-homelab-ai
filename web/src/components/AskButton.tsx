@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Icon } from './icons'
+import { embedded } from '../lib/embed'
 
 /** Keep Ask in the header on pages with a composer, clear of typing controls. */
 export function AskButton() {
@@ -10,7 +11,7 @@ export function AskButton() {
     ready()
     return () => window.removeEventListener('pocket-ask-available', ready)
   }, [])
-  if (!available) return null
+  if (!available || embedded) return null // the framing app has its own Ask
   return <button type="button" className="btn ghost ask-header-btn" data-pocket-ask-trigger
     aria-label="Ask AI about this page" title="Ask AI about this page" aria-haspopup="dialog"
     onClick={() => window.dispatchEvent(new CustomEvent('pocket-ask'))}>
