@@ -45,11 +45,18 @@ func TestWorktreeLifecycle(t *testing.T) {
 	_ = os.MkdirAll(filepath.Join(repo, "web"), 0o755)
 	gitT(t, repo, "init", "-q", "-b", "main")
 	_ = os.WriteFile(filepath.Join(repo, "a.txt"), []byte("one\n"), 0o644)
-	_ = os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.env.*\nnode_modules/\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n.env.*\nnode_modules/\n.claude/\n"), 0o644)
 	_ = os.WriteFile(filepath.Join(repo, "web", "b.txt"), []byte("b\n"), 0o644)
 	gitT(t, repo, "add", "-A")
 	gitT(t, repo, "commit", "-q", "-m", "init")
 	_ = os.WriteFile(filepath.Join(repo, ".env"), []byte("SECRET=1\n"), 0o644)
+	// ignored folders that hold a .env must never be copied whole (or at all)
+	for _, d := range []string{"node_modules/pkg", ".claude/worktrees/other"} {
+		_ = os.MkdirAll(filepath.Join(repo, d), 0o755)
+		_ = os.WriteFile(filepath.Join(repo, d, ".env"), []byte("NO=1\n"), 0o644)
+		_ = os.WriteFile(filepath.Join(repo, d, "big.bin"), []byte("x"), 0o644)
+	}
+	gitT(t, filepath.Join(repo, ".claude/worktrees/other"), "init", "-q") // a nested checkout, like Claude Code's worktrees
 	_ = os.WriteFile(filepath.Join(repo, "web", ".env.local"), []byte("X=2\n"), 0o644)
 
 	info, err := inspectRepo(context.Background(), nil, filepath.Join(repo, "web"))
@@ -72,9 +79,14 @@ func TestWorktreeLifecycle(t *testing.T) {
 	if m2 := runSh(t, wtAdd, repo, filepath.Join(root, "wts", "repo"), "other", "main", "branch", "fix-a"); m2["inuse"] != wt {
 		t.Fatalf("branch in use: %v", m2)
 	}
-	m = runSh(t, wtCopy, repo, wt, ".env", "**/.env.*", "missing.txt")
-	if !strings.Contains(m["copied"], ".env") || !strings.Contains(m["copied"], "web/.env.local") {
-		t.Fatalf("copy: %v", m)
+	m = runSh(t, wtCopy, append([]string{repo, wt}, defaultCopy...)...)
+	if m["copied"] != ".env\nweb/.env.local" {
+		t.Fatalf("copy: %q", m["copied"])
+	}
+	for _, d := range []string{"node_modules", ".claude"} {
+		if _, err := os.Stat(filepath.Join(wt, d)); !os.IsNotExist(err) {
+			t.Fatalf("%s was copied into the worktree", d)
+		}
 	}
 	if again, _, _ := shOn(context.Background(), nil, time.Minute, wtInspect, wt); kv(again)["main"] != repo {
 		t.Fatalf("inspect from the worktree: %s", again)
