@@ -4,7 +4,7 @@ import { Icon } from './icons'
 import { ToolBody } from './ToolRow'
 import { Spinner } from './ui'
 
-const RUN_ICON: Record<string, string> = { bash: 'terminal', edit: 'file-edit', write: 'file-edit', read: 'file', search: 'search', web: 'globe', task: 'bot', mcp: 'layers', other: 'wrench' }
+const RUN_ICON: Record<string, string> = { bash: 'terminal', edit: 'file-edit', write: 'file-edit', read: 'file', search: 'search', web: 'globe', task: 'bot', skill: 'sparkles', mcp: 'layers', other: 'wrench' }
 
 /** "Ran 3 commands, read 2 files" for a run of tool calls. */
 export function runSummary(tools: ToolInfo[]): string {
@@ -21,6 +21,8 @@ export function runSummary(tools: ToolInfo[]): string {
   if (n.search) parts.push(n.search === 1 ? 'searched' : `searched ${n.search} times`)
   if (n.web) parts.push(pl(n.web, 'web lookup', 'web lookups'))
   if (n.task) parts.push(pl(n.task, 'sub-agent', 'sub-agents'))
+  const skills = [...new Set(tools.filter(t => t.kind === 'skill').map(t => t.title.replace(/^Skill: /, '')).filter(Boolean))]
+  if (skills.length) parts.push(skills.length === 1 ? `used the ${skills[0]} skill` : `used ${skills.length} skills`)
   const rest = (n.mcp || 0) + (n.other || 0)
   if (rest) parts.push(pl(rest, 'tool call', 'tool calls'))
   const s = parts.join(', ')

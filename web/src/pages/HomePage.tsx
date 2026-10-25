@@ -222,7 +222,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
       {!draft || !choice || (params.get('send') === '1' && autoSent.current !== 'failed') ? <div className="embed-starting"><Loading label={params.get('send') === '1' ? 'Starting the conversation…' : 'Loading…'} /></div> : (
         <>
         <DraftFiles files={draftFiles} source={draft.ref} onRemove={id => setDraftFiles(f => f.filter(x => x.id !== id))} />
-        <Composer ref={serverComposer} big autoFocus draftKey={`link-${draft.id}`} onSend={send}
+        <Composer ref={serverComposer} big autoFocus draftKey={`link-${draft.id}`} onSend={send} skills={choice?.provider ? { provider: choice.provider, cwd: choice.cwd, account_id: choice.account_id, host_id: hostId } : undefined}
           placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} about ${draft.ref || 'this'}…`}
           footer={<AgentPicker compact showProvider={false} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} />} />
         </>
@@ -304,7 +304,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
                 </div>
               )}
               {draft && <DraftFiles files={draftFiles} source={draft.ref} onRemove={id => setDraftFiles(f => f.filter(x => x.id !== id))} />}
-              <Composer ref={serverComposer} big autoFocus draftKey={draft ? `link-${draft.id}` : 'new'} onSend={send}
+              <Composer ref={serverComposer} big autoFocus draftKey={draft ? `link-${draft.id}` : 'new'} onSend={send} skills={choice?.provider ? { provider: choice.provider, cwd: choice.cwd, account_id: choice.account_id, host_id: hostId } : undefined}
                 placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} anything${hostId ? ` on ${hosts.find(h => h.id === hostId)?.name}` : ''}${choice.cwd && !wtSpec ? ` in ${shortPath(choice.cwd)}` : ''}${wtWhere}… paste a screenshot, type / for recipes`}
                 footer={<AgentPicker compact showProvider={false} noAccount={!!hostId} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} />} />
               {providers.length > 0 && !providers.some(p => p.available) && (
