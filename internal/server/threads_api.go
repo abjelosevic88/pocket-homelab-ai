@@ -426,13 +426,19 @@ func (s *Server) handlePatchThread(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	if t.Source == "ask" && (in.Mode != nil || in.Speed != nil || in.Account != nil) {
+	if t.Source == "ask" && (in.Mode != nil || in.Speed != nil) {
 		writeErr(w, 400, "Ask uses fixed permissions")
+		return
+	}
+	if t.Source == "ask" && in.Model != nil && *in.Model != "sonnet" && *in.Model != "opus" && *in.Model != "haiku" {
+		writeErr(w, 400, "Choose Sonnet, Opus or Haiku")
 		return
 	}
 	switched := ""
 	if in.Account != nil && *in.Account != t.AccountID {
-		if !s.requireRun(w, r) {
+		// Ask works on your own apps, so it needs no permission to run agents
+		// on the server; which logins you may use is still checked below.
+		if t.Source != "ask" && !s.requireRun(w, r) {
 			return
 		}
 		if t.HostID != 0 {

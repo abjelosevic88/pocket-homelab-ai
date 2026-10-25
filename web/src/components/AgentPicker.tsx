@@ -117,19 +117,28 @@ export function ProviderToggle({ value, onChange, allowDefault = false }: { valu
 }
 
 /** Model, effort and mode for a chosen provider — a form block or a compact chip row. */
-export function AgentPicker({ value, onChange, allowDefault = false, compact = false, showProvider = true, noAccount = false }: {
+/** Ask my apps chats run on these Claude models, with fixed permissions. */
+const ASK_MODELS: Option<string>[] = [
+  { value: 'haiku', label: 'Haiku', description: 'Fastest' },
+  { value: 'sonnet', label: 'Sonnet', description: 'Balanced' },
+  { value: 'opus', label: 'Opus', description: 'Most capable' },
+]
+
+export function AgentPicker({ value, onChange, allowDefault = false, compact = false, showProvider = true, noAccount = false, ask = false }: {
   value: AgentValue; onChange: (patch: Partial<AgentValue>) => void; allowDefault?: boolean; compact?: boolean; showProvider?: boolean
   /** runs on another machine, with that machine's own login */
   noAccount?: boolean
+  /** an Ask my apps chat: account, model and effort only */
+  ask?: boolean
 }) {
   const { providers, settings, accounts } = useApp()
   const pid = (value.provider || settings?.default_provider || 'claude') as ProviderId
   const p = providers.find(x => x.id === pid)
   const accts = allowDefault || noAccount ? [] : accountOptions(accounts, pid, value.account_id || 0)
-  const models = modelOptions(p, allowDefault)
+  const models = ask ? ASK_MODELS : modelOptions(p, allowDefault)
   const efforts = effortOptions(p, value.model, allowDefault)
-  const modes = modeOptions(p, allowDefault)
-  const speeds = speedOptions(p, value.model, allowDefault)
+  const modes = ask ? [] : modeOptions(p, allowDefault)
+  const speeds = ask ? [] : speedOptions(p, value.model, allowDefault)
   const size = compact ? 'sm' : ''
   const cls = compact ? 'inline ghost' : ''
   const pickers = (
