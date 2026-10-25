@@ -704,9 +704,10 @@ func (c *Client) LinkOn(ctx context.Context, email, target string, scopes ...str
 }
 
 // ServiceCred is a person's way into a third-party service, from Core: the
-// service's address and the person's own credential (Source "personal"), or
-// the box-wide one when the app acts for an admin (Source "box"). Key is the
-// first secret field (the API key / token); Fields has them all by catalog key.
+// service's address and the person's own credential (Source "personal") —
+// never the box-wide one, admins included (they set theirs under Settings →
+// My logins). Key is the first secret field (the API key / token); Fields has
+// them all by catalog key.
 type ServiceCred struct {
 	Type      string            `json:"type"`
 	Name      string            `json:"name"`
