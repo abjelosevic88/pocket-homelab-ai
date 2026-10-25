@@ -199,7 +199,10 @@ export interface SharePerson { id: number; name: string; email: string; can_run:
 
 export interface ItemImage { id: string; name: string; url: string }
 
-export type ToolKind = 'bash' | 'edit' | 'write' | 'read' | 'search' | 'web' | 'task' | 'mcp' | 'other'
+export type ToolKind = 'bash' | 'edit' | 'write' | 'read' | 'search' | 'web' | 'task' | 'mcp' | 'skill' | 'other'
+
+/** A skill or custom command the CLI loads in a folder (GET /skills). */
+export interface Skill { name: string; description: string; argument_hint?: string; scope?: string; invoke: string }
 
 export interface ToolInfo {
   name: string

@@ -6,7 +6,7 @@ import { Icon } from './icons'
 import { copyText, Spinner } from './ui'
 
 const KIND_ICON: Record<ToolKind, string> = {
-  bash: 'terminal', edit: 'file-edit', write: 'file-edit', read: 'file', search: 'search', web: 'globe', task: 'bot', mcp: 'layers', other: 'wrench',
+  bash: 'terminal', edit: 'file-edit', write: 'file-edit', read: 'file', search: 'search', web: 'globe', task: 'bot', mcp: 'layers', skill: 'sparkles', other: 'wrench',
 }
 
 const LIMIT = 4000

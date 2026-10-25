@@ -624,6 +624,9 @@ func claudeTool(name string, input json.RawMessage) *Tool {
 	case "WebFetch":
 		t.Kind = "web"
 		t.Title = "Fetch " + sv("url")
+	case "Skill":
+		t.Kind = "skill"
+		t.Title = "Skill: " + sv("skill")
 	case "Task", "Agent":
 		t.Kind = "task"
 		t.Title = "Agent: " + oneLine(firstNonEmpty(sv("description"), sv("prompt")), 120)

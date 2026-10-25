@@ -1,9 +1,9 @@
-// The prompt box: text, images (paste / drop / camera / photo library), dictation, recipe slash menu.
+// The prompt box: text, images (paste / drop / camera / photo library), dictation, slash menu (recipes + the CLI's skills).
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api, uploadWithProgress, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { isTouch } from '../lib/format'
-import type { Recipe, Upload } from '../lib/types'
+import type { ProviderId, Recipe, Skill, Upload } from '../lib/types'
 import { Icon } from './icons'
 import { Spinner, useToast, noGrammarly } from './ui'
 
@@ -47,6 +47,31 @@ async function shrink(file: File): Promise<File> {
 
 let lidSeq = 0
 
+/** Where a message would run: decides which skills the CLI offers. */
+export interface SkillScope { provider: ProviderId; cwd?: string; account_id?: number; host_id?: number }
+
+const skillCache = new Map<string, { at: number; skills: Skill[] }>()
+
+/** The skills for a scope, fetched once the slash menu opens (cached a minute). */
+function useSkills(scope: SkillScope | undefined, wanted: boolean): Skill[] {
+  const key = scope ? `${scope.provider}|${scope.cwd || ''}|${scope.account_id || 0}|${scope.host_id || 0}` : ''
+  const [skills, setSkills] = useState<Skill[]>(() => skillCache.get(key)?.skills || [])
+  useEffect(() => {
+    if (!scope || !wanted) return
+    const hit = skillCache.get(key)
+    if (hit) setSkills(hit.skills)
+    if (hit && Date.now() - hit.at < 60_000) return
+    let live = true
+    const q = new URLSearchParams({ provider: scope.provider, cwd: scope.cwd || '', account: String(scope.account_id || 0), host: String(scope.host_id || 0) })
+    api.get<{ skills: Skill[] }>(`${V1}/skills?${q}`).then(r => {
+      skillCache.set(key, { at: Date.now(), skills: r.skills || [] })
+      if (live) setSkills(r.skills || [])
+    }).catch(() => {})
+    return () => { live = false }
+  }, [key, wanted]) // eslint-disable-line react-hooks/exhaustive-deps
+  return scope ? skills : []
+}
+
 function draftAttachments(key?: string): Attachment[] {
   if (!key) return []
   try {
@@ -67,7 +92,9 @@ export const Composer = React.forwardRef<ComposerHandle, {
   footer?: React.ReactNode
   draftKey?: string
   big?: boolean
-}>(function Composer({ onSend, placeholder = 'Ask anything…', autoFocus, running, onStop, disabled, footer, draftKey, big }, ref) {
+  /** Offer this agent's skills in the slash menu. */
+  skills?: SkillScope
+}>(function Composer({ onSend, placeholder = 'Ask anything…', autoFocus, running, onStop, disabled, footer, draftKey, big, skills: skillScope }, ref) {
   const { settings, recipes } = useApp()
   const { toast } = useToast()
   const [text, setText] = useState(() => (draftKey && sessionStorage.getItem('pai-draft-' + draftKey)) || '')
@@ -179,18 +206,29 @@ export const Composer = React.forwardRef<ComposerHandle, {
     } finally { setSending(false) }
   }
 
-  // "/" at the start: recipes by name
-  const slash = text.startsWith('/') && !text.includes('\n') ? text.slice(1).toLowerCase() : null
-  const slashList: Recipe[] = slash === null ? [] : recipes.filter(r => r.name.toLowerCase().includes(slash)).slice(0, 6)
+  // "/" at the start: recipes and skills by name ("$" too for Codex, its own skill syntax)
+  const trigger = text[0] === '/' || (text[0] === '$' && skillScope?.provider === 'codex')
+  const slash = trigger && !/\s/.test(text) ? text.slice(1).toLowerCase() : null
+  const allSkills = useSkills(skillScope, slash !== null)
+  const recipeList: Recipe[] = slash === null || text[0] === '$' ? [] : recipes.filter(r => r.name.toLowerCase().includes(slash)).slice(0, 6)
+  const skillList: Skill[] = slash === null ? [] : allSkills
+    .filter(k => k.name.toLowerCase().includes(slash) || (slash.length > 2 && k.description.toLowerCase().includes(slash)))
+    .sort((a, b) => Number(!a.name.toLowerCase().startsWith(slash)) - Number(!b.name.toLowerCase().startsWith(slash)))
+    .slice(0, 8)
+  type SlashPick = { recipe: Recipe } | { skill: Skill }
+  const slashList: SlashPick[] = [...recipeList.map(recipe => ({ recipe })), ...skillList.map(skill => ({ skill }))]
   useEffect(() => setSlashHi(0), [slash])
-  const pickRecipe = (r: Recipe) => { setText(r.prompt); setTimeout(() => ta.current?.focus(), 0) }
+  const pick = (p: SlashPick) => {
+    setText('recipe' in p ? p.recipe.prompt : p.skill.invoke + ' ')
+    setTimeout(() => ta.current?.focus(), 0)
+  }
 
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return
     if (slashList.length) {
       if (e.key === 'ArrowDown') { e.preventDefault(); setSlashHi(h => (h + 1) % slashList.length); return }
       if (e.key === 'ArrowUp') { e.preventDefault(); setSlashHi(h => (h - 1 + slashList.length) % slashList.length); return }
-      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickRecipe(slashList[slashHi]); return }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pick(slashList[slashHi]); return }
       if (e.key === 'Escape') { e.preventDefault(); setText(''); return }
     }
     if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
@@ -221,14 +259,24 @@ export const Composer = React.forwardRef<ComposerHandle, {
   return (
     <div className={`composer ${big ? 'big' : ''} ${disabled ? 'disabled' : ''}`}>
       {slashList.length > 0 && (
-        <div className="slash-menu" role="listbox" aria-label="Recipes">
-          <div className="slash-h">Recipes</div>
-          {slashList.map((r, i) => (
-            <button key={r.id} type="button" role="option" aria-selected={i === slashHi} className={`slash-row ${i === slashHi ? 'hi' : ''}`} onMouseEnter={() => setSlashHi(i)} onMouseDown={e => e.preventDefault()} onClick={() => pickRecipe(r)}>
-              <span className="slash-ico">{r.icon || '✦'}</span>
-              <span className="grow"><span className="slash-name">{r.name}</span><span className="slash-sub">{r.prompt.slice(0, 90)}</span></span>
-            </button>
-          ))}
+        <div className="slash-menu" role="listbox" aria-label="Recipes and skills">
+          {slashList.map((p, i) => {
+            const first = i === 0 || ('recipe' in p) !== ('recipe' in slashList[i - 1])
+            return (
+              <React.Fragment key={'recipe' in p ? 'r' + p.recipe.id : 's' + p.skill.name}>
+                {first && <div className="slash-h">{'recipe' in p ? 'Recipes' : 'Skills'}</div>}
+                <button type="button" role="option" aria-selected={i === slashHi} className={`slash-row ${i === slashHi ? 'hi' : ''}`} onMouseEnter={() => setSlashHi(i)} onMouseDown={e => e.preventDefault()} onClick={() => pick(p)}>
+                  {'recipe' in p ? <>
+                    <span className="slash-ico">{p.recipe.icon || '✦'}</span>
+                    <span className="grow"><span className="slash-name">{p.recipe.name}</span><span className="slash-sub">{p.recipe.prompt.slice(0, 90)}</span></span>
+                  </> : <>
+                    <span className="slash-ico"><Icon name="sparkles" size={14} /></span>
+                    <span className="grow"><span className="slash-name">{p.skill.invoke}{p.skill.argument_hint ? <span className="slash-hint"> {p.skill.argument_hint}</span> : null}</span><span className="slash-sub">{p.skill.description.slice(0, 110)}</span></span>
+                  </>}
+                </button>
+              </React.Fragment>
+            )
+          })}
         </div>
       )}
       {atts.length > 0 && (
