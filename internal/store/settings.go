@@ -27,6 +27,7 @@ type Settings struct {
 
 	AppEffort       string        `json:"app_effort"`       // empty uses medium when supported
 	AppModel        string        `json:"app_model"`        // empty follows Claude defaults
+	AppAccount      int64         `json:"app_account_id"`   // Claude login for apps; -1 follows Claude defaults
 	DefaultProvider string        `json:"default_provider"` // claude | codex
 	DefaultCwd      string        `json:"default_cwd"`
 	Claude          AgentDefaults `json:"claude"`
@@ -57,7 +58,7 @@ type Settings struct {
 
 func defaults() Settings {
 	return Settings{
-		Title: DefaultTitle, DefaultProvider: "claude",
+		Title: DefaultTitle, DefaultProvider: "claude", AppAccount: -1,
 		Claude:     AgentDefaults{Model: "default", Effort: "high", Mode: "default"},
 		Codex:      AgentDefaults{Model: "", Effort: "high", Mode: "on-request"},
 		NotifyKind: "apprise", NotifyFinished: true, NotifyInput: true, NotifyFailed: true, NotifyOnlyAway: true,
@@ -93,6 +94,10 @@ func (s *Store) GetSettings(ctx context.Context, userID int64) (Settings, error)
 			st.AppEffort = v
 		case "app_model":
 			st.AppModel = v
+		case "app_account":
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+				st.AppAccount = n
+			}
 		case "default_provider":
 			st.DefaultProvider = v
 		case "default_cwd":
@@ -160,7 +165,7 @@ func b2s(b bool) string {
 // SaveSettings stores a person's preferences (not the notify token).
 func (s *Store) SaveSettings(ctx context.Context, userID int64, st Settings) error {
 	return s.putUserSettings(ctx, userID, map[string]string{
-		"app_effort": st.AppEffort, "app_model": st.AppModel, "default_provider": st.DefaultProvider, "default_cwd": st.DefaultCwd,
+		"app_effort": st.AppEffort, "app_model": st.AppModel, "app_account": strconv.FormatInt(st.AppAccount, 10), "default_provider": st.DefaultProvider, "default_cwd": st.DefaultCwd,
 		"claude.model": st.Claude.Model, "claude.effort": st.Claude.Effort, "claude.mode": st.Claude.Mode,
 		"codex.model": st.Codex.Model, "codex.effort": st.Codex.Effort, "codex.mode": st.Codex.Mode,
 		"claude.speed": st.Claude.Speed, "codex.speed": st.Codex.Speed,
