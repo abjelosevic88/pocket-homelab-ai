@@ -269,7 +269,9 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
             <ThreadRefChip threadId={t.id} source={t.source} />
             {!!t.worktree_id && <WorktreeChip id={t.worktree_id} threadId={t.id} onAsk={owner && canRun ? text => { void send(text, []) } : undefined} />}
             {hostName && <span className="host-chip" title={`Runs on ${hostName} over ssh`}><Icon name="server" size={12} />{hostName}</span>}
-            <span className="ellipsis mono" title={t.cwd}>{shortPath(t.cwd)}</span>
+            {t.source === 'ask' ? <span className="ask-chip" title="Works on your Pocket apps; each change waits for your approval"><Icon name="sparkles" size={12} />Ask my apps
+              {askSource(t.source_ref) && <a className="ask-source" href={t.source_ref} target="_blank" rel="noopener noreferrer" title="Open the item this chat started from">Source ↗</a>}</span>
+              : <span className="ellipsis mono" title={t.cwd}>{shortPath(t.cwd)}</span>}
             {canRun && t.source !== 'ask' && t.cwd && !t.worktree_id && <BranchButton cwd={t.cwd} host={t.host_id} className="btn ghost" refreshKey={`${id}:${t.status}`}
               lockedReason={running || t.status === 'waiting' || t.external || t.subagents?.length ? 'The agent is working in this folder — switch once it is done.' : undefined} />}
             {t.usage?.cost_usd > 0 && <span className="tnum" title="Cost so far">{fmtCost(t.usage.cost_usd)}</span>}
@@ -329,7 +331,8 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
             <Composer key={id} ref={composer} draftKey={id} autoFocus onSend={send} skills={t.source === 'ask' ? undefined : { provider: t.provider, cwd: t.cwd, account_id: t.account_id, host_id: t.host_id }} running={running} onStop={t.external && !t.live ? undefined : interrupt} disabled={!!t.external && !t.live}
               placeholder={t.external && !t.live ? 'It is running in another app right now — you can reply here once it has finished' : running ? 'Add a message — it is sent when the agent is done…' : pending.length ? 'Or type an answer…' : `Reply to ${providerName(t.provider)}…`}
               footer={<>
-                {t.source === 'ask' && owner && <span className="muted small">Ask my apps · changes need your approval{askSource(t.source_ref) && <> · <a href={t.source_ref} target="_blank" rel="noopener noreferrer">Source item ↗</a></>}</span>}
+                {t.source === 'ask' && owner && <span className="thread-pickers"><AgentPicker compact ask showProvider={false} value={{ provider: 'claude', model: t.model, effort: t.effort, mode: t.mode, account_id: t.account_id || 0 }}
+                  onChange={ch => patch(ch as Partial<Thread>)} /></span>}
                 {!owner && <span className="muted small">{t.source === 'ask' ? `Shared Ask chat from ${t.owner_name || 'someone'} — your questions use your own apps` : `Chatting in ${t.owner_name || 'someone'}’s chat — the agent runs on their login and settings`}</span>}
                 {owner && p && t.source !== 'ask' && <span className="thread-pickers"><AgentPicker compact showProvider={false} noAccount={!!t.host_id} value={{ provider: t.provider, model: t.model, effort: t.effort, mode: t.mode, speed: t.speed || '', account_id: t.account_id || 0 }}
                   onChange={ch => patch(ch as Partial<Thread>)} /></span>}

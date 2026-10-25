@@ -19,6 +19,7 @@ import (
 type pocketModeSession struct{ agent.Session }
 
 func (*pocketModeSession) SetMode(string) error { return nil }
+func (*pocketModeSession) Close() error         { return nil }
 
 func TestAskApprovalIsEnforcedByServer(t *testing.T) {
 	for _, source := range []string{"ask", "app"} {
@@ -60,7 +61,7 @@ func testPocketApproval(t *testing.T, source string) {
 	s.core = core.New(upstream.URL, core.Options{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	r := &run{sess: &pocketModeSession{}, threadID: th.ID, userID: u.ID, pending: map[string]bool{}, live: map[string]*agent.Item{}, dirty: map[string]bool{}, lastUsed: time.Now()}
+	r := &run{sess: &pocketModeSession{}, threadID: th.ID, userID: u.ID, pending: map[string]bool{}, live: map[string]*agent.Item{}, dirty: map[string]bool{}, lastUsed: time.Now(), cancel: func() {}}
 	s.rt.mu.Lock()
 	s.rt.runs[th.ID] = r
 	s.rt.mu.Unlock()
@@ -149,6 +150,9 @@ func testPocketApproval(t *testing.T, source string) {
 	}
 	if source == "ask" {
 		a.want("PATCH", "/api/v1/threads/"+th.ID, map[string]string{"mode": "bypassPermissions"}, 400, nil)
+		// model and effort can change, to the Ask models only
+		a.want("PATCH", "/api/v1/threads/"+th.ID, map[string]string{"model": "claude-opus-5-5"}, 400, nil)
+		a.want("PATCH", "/api/v1/threads/"+th.ID, map[string]string{"model": "opus", "effort": "high"}, 200, nil)
 		a.want("POST", "/api/v1/threads/"+th.ID+"/fork", map[string]any{}, 400, nil)
 	}
 	a.want("POST", "/api/v1/ask/connect", map[string]string{"token": "pcma_other"}, 403, nil)

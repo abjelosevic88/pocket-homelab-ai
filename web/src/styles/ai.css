@@ -583,3 +583,6 @@ button.privacy-badge:disabled { cursor: default; }
   .tool-body, .thinking-body, .tool-run-body { margin-left: 4px; padding-left: 11px; }
   .thinking-body { font-size: 14px; }
 }
+.ask-chip { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.ask-source { color: var(--muted); white-space: nowrap; margin-left: 4px; }
+.ask-source:hover { color: var(--accent); }
