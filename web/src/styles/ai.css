@@ -23,7 +23,7 @@
 .tstat.running .spinner { width: 12px; height: 12px; }
 .tstat.waiting { color: var(--warning); animation: pulse 1.6s ease-in-out infinite; }
 .tstat.error { color: var(--danger); }
-.tstat.unread span { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.tstat.unread span { width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px var(--success-soft); }
 @keyframes pulse { 50% { opacity: .45; } }
 
 .ctx-meter { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
