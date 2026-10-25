@@ -586,3 +586,31 @@ button.privacy-badge:disabled { cursor: default; }
 .ask-chip { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .ask-source { color: var(--muted); white-space: nowrap; margin-left: 4px; }
 .ask-source:hover { color: var(--accent); }
+
+/* Display options (Settings → General, kept per device in lib/display.ts):
+   text size scales every size here, spacing and width set the rest. Phones
+   start at reading size (17px, like iOS). */
+:root { --ts: 1; --fs-chat: 14.5px; --fs-code: 12.5px; --fs-table: 13px; --fs-tool: 12px; --fs-think: 13px; --fs-foot: 12px; --tool-h: 28px; --tl-gap: 10px; --chat-lh: 1.62; }
+@media (max-width: 760px) {
+  :root { --fs-chat: 17px; --fs-code: 14px; --fs-table: 14.5px; --fs-tool: 14px; --fs-think: 15px; --fs-foot: 13px; --tool-h: 24px; --chat-lh: 1.5; }
+}
+:root[data-text="s"] { --ts: .9; }
+:root[data-text="l"] { --ts: 1.12; }
+:root[data-text="xl"] { --ts: 1.25; }
+:root[data-spacing="compact"] { --tool-h: 20px; --tl-gap: 6px; --chat-lh: 1.45; }
+:root[data-spacing="roomy"] { --tool-h: 32px; --tl-gap: 16px; --chat-lh: 1.75; }
+:root[data-width="narrow"] { --chat-w: 680px; }
+:root[data-width="wide"] { --chat-w: 1080px; }
+:root[data-width="full"] { --chat-w: 100%; }
+.timeline { gap: var(--tl-gap); }
+.msg.assistant { font-size: calc(var(--fs-chat) * var(--ts)); line-height: var(--chat-lh); }
+.user-text { font-size: calc(var(--fs-chat) * var(--ts)); line-height: calc(var(--chat-lh) - .05); }
+.md code, .md pre { font-size: calc(var(--fs-code) * var(--ts)); }
+.md h1 { font-size: calc(var(--fs-chat) * 1.3 * var(--ts)); }
+.md h2 { font-size: calc(var(--fs-chat) * 1.17 * var(--ts)); }
+.md h3 { font-size: calc(var(--fs-chat) * 1.07 * var(--ts)); }
+.md h4 { font-size: calc(var(--fs-chat) * var(--ts)); }
+.md table { font-size: calc(var(--fs-table) * var(--ts)); }
+.tool-head, .thinking-h, .tool-run.grouped .tool-head { font-size: calc(var(--fs-tool) * var(--ts)); height: calc(var(--tool-h) * var(--ts)); }
+.thinking-body { font-size: calc(var(--fs-think) * var(--ts)); }
+.turn-foot, .turn-foot .run-time { font-size: calc(var(--fs-foot) * var(--ts)); }
