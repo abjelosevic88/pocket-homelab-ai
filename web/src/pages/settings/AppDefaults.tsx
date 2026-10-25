@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useApp } from '../../lib/app-context'
 import { api, V1 } from '../../lib/api'
 import { Select } from '../../components/Select'
+import { accountNote } from '../../components/AgentPicker'
 import { Loading } from '../../components/ui'
 import { Section, useSaveSettings } from './common'
 
@@ -60,7 +61,7 @@ export function AppDefaultsTab() {
     { value: '-1', label: `Follow chat default · ${acctName(settings.claude.account_id || 0)}` },
     ...claudeAccounts.map(a => ({
       value: String(a.id), label: a.label, keywords: a.email,
-      description: a.signed_in ? [a.plan, a.email].filter(Boolean).join(' · ') : (a.error || 'Not signed in — Settings → Agents'),
+      description: accountNote(a),
     })),
     ...(appAccount >= 0 && !claudeAccounts.some(a => a.id === appAccount) ? [{ value: String(appAccount), label: 'Unavailable account' }] : []),
   ]

@@ -63,6 +63,9 @@ export interface Account {
   plan?: string
   error?: string
   checked_at?: string
+  org?: string
+  /** Another login on the server is signed in to this same account. */
+  same_as?: string
 }
 
 /** A sign-in started from Settings (Claude: paste the code; Codex: type the code on the page). */
@@ -370,8 +373,17 @@ export interface LimitWindow { id?: string; name: string; used: number; resets_a
 export interface ResetCredit { title: string; granted_at?: string; expires_at?: string }
 /** Codex's free "reset my limits" credits; each one expires. */
 export interface Resets { available: number; credits?: ResetCredit[] }
-export interface ProviderLimits { provider?: ProviderId; account_id?: number; label?: string; windows: LimitWindow[]; updated_at: string; note?: string; error?: string; resets?: Resets }
-/** Keyed "claude" / "codex" for the server's own login, "claude:3" for account 3. */
+export interface ProviderLimits {
+  provider?: ProviderId; account_id?: number; label?: string; windows: LimitWindow[]; updated_at: string; note?: string; error?: string; resets?: Resets
+  /** Who the login is signed in as (email only for your own logins, or admins). */
+  email?: string; org?: string; plan?: string
+  /** The server's own login is (or is signed in to the same account as) this one. */
+  server_login?: boolean
+  /** Limits keys of other logins on the same account, folded into this one. */
+  aliases?: string[]
+}
+/** Keyed "claude" / "codex" for the server's own login, "claude:3" for account 3;
+ * logins signed in to the same account arrive once, under the named one. */
 export type Limits = Record<string, ProviderLimits | undefined>
 
 export interface UsageReport {

@@ -1,5 +1,6 @@
 // Provider / model / effort / mode pickers, fed by GET /providers.
 import { useApp } from '../lib/app-context'
+import { planName } from '../lib/format'
 import type { Account, Provider, ProviderId, Settings } from '../lib/types'
 import { type Option, Select } from './Select'
 import { Segmented } from './ui'
@@ -22,13 +23,20 @@ export function defaultsFor(p: Provider | undefined, s: Settings | null): Omit<A
   }
 }
 
+/** One line about a login for pickers: plan, email, and whether another
+ * login is the same account (they share limits). */
+export function accountNote(a: Account) {
+  if (!a.signed_in) return a.error || 'Not signed in — Settings → Agents'
+  return [a.plan && planName(a.plan), a.email, a.same_as && `same account as ${a.same_as}`].filter(Boolean).join(' · ')
+}
+
 /** Logins to pick from; empty when the provider has only the server's own. */
 export function accountOptions(accounts: Account[], pid: ProviderId): Option<number>[] {
   const list = accounts.filter(a => a.provider === pid)
   if (list.length < 2) return []
   return list.map(a => ({
     value: a.id, label: a.label, keywords: a.email,
-    description: a.signed_in ? [a.plan, a.email].filter(Boolean).join(' · ') : (a.error || 'Not signed in — Settings → Agents'),
+    description: accountNote(a),
     disabled: !a.signed_in,
   }))
 }

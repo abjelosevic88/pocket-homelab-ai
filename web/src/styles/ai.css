@@ -130,7 +130,11 @@
 
 /* usage */
 .limit-box { display: grid; gap: 12px; padding: 14px; border-radius: 12px; background: var(--surface-2); }
-.limit-prov { display: flex; align-items: center; gap: 8px; }
+.limit-prov { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.limit-prov .badge, .limit-prov .nowrap { flex-shrink: 0; white-space: nowrap; }
+.limit-who { display: grid; gap: 2px; min-width: 0; }
+.limit-acct { display: flex; align-items: center; gap: 6px; min-width: 0; padding-left: 18px; }
+.limit-acct .badge { flex-shrink: 0; }
 .limit { display: grid; gap: 5px; }
 .limit-h { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; flex-wrap: wrap; }
 .limit-bar { height: 8px; border-radius: 4px; background: var(--surface-3); overflow: hidden; }
