@@ -3,10 +3,13 @@ package agent
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -102,4 +105,183 @@ func firstTimestamp(path string) string {
 		}
 	}
 	return ""
+}
+
+// SubagentInfo is one sub-agent of a Claude Code session, working or finished.
+type SubagentInfo struct {
+	ID          string `json:"id"`
+	Description string `json:"description"`
+	Type        string `json:"type,omitempty"`
+	Model       string `json:"model,omitempty"`
+	// Status: running | done | stopped (it went quiet without finishing).
+	Status    string `json:"status"`
+	StartedAt string `json:"started_at,omitempty"`
+	EndedAt   string `json:"ended_at,omitempty"`
+	ToolUses  int    `json:"tool_uses,omitempty"`
+	// Tokens is how full its context was at its last reply.
+	Tokens   int64  `json:"tokens,omitempty"`
+	Activity string `json:"activity,omitempty"` // its latest tool call
+	Result   string `json:"result,omitempty"`   // the start of its final answer
+}
+
+var subagentID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+// SubagentPath is the transcript of sub-agent id of a session.
+func SubagentPath(sessionPath, id string) (string, error) {
+	if !subagentID.MatchString(id) {
+		return "", errors.New("bad sub-agent id")
+	}
+	p := filepath.Join(strings.TrimSuffix(sessionPath, ".jsonl"), "subagents", "agent-"+id+".jsonl")
+	if _, err := os.Stat(p); err != nil {
+		return "", err
+	}
+	return p, nil
+}
+
+// ListSubagents lists every sub-agent a session started, oldest first.
+func ListSubagents(sessionPath string) []SubagentInfo {
+	dir := filepath.Join(strings.TrimSuffix(sessionPath, ".jsonl"), "subagents")
+	metas, _ := filepath.Glob(filepath.Join(dir, "agent-*.meta.json"))
+	out := []SubagentInfo{}
+	for _, mp := range metas {
+		if info, ok := subagentInfo(mp); ok {
+			out = append(out, info)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt < out[j].StartedAt })
+	return out
+}
+
+type subagentCached struct {
+	size int64
+	mod  time.Time
+	info SubagentInfo
+}
+
+// Transcripts only grow, so one read per change of size is enough.
+var subagentCache = struct {
+	sync.Mutex
+	m map[string]subagentCached
+}{m: map[string]subagentCached{}}
+
+func subagentInfo(metaPath string) (SubagentInfo, bool) {
+	jp := strings.TrimSuffix(metaPath, ".meta.json") + ".jsonl"
+	st, err := os.Stat(jp)
+	if err != nil {
+		return SubagentInfo{}, false
+	}
+	var meta struct {
+		AgentType   string `json:"agentType"`
+		Description string `json:"description"`
+		Model       string `json:"model"`
+		Finished    bool   `json:"finished"`
+	}
+	if b, err := os.ReadFile(metaPath); err != nil || json.Unmarshal(b, &meta) != nil {
+		return SubagentInfo{}, false
+	}
+	subagentCache.Lock()
+	c, ok := subagentCache.m[jp]
+	subagentCache.Unlock()
+	if !ok || c.size != st.Size() || !c.mod.Equal(st.ModTime()) {
+		c = subagentCached{size: st.Size(), mod: st.ModTime(), info: scanSubagent(jp)}
+		subagentCache.Lock()
+		subagentCache.m[jp] = c
+		subagentCache.Unlock()
+	}
+	info := c.info
+	info.ID = strings.TrimPrefix(filepath.Base(strings.TrimSuffix(jp, ".jsonl")), "agent-")
+	info.Description = firstNonEmpty(meta.Description, meta.AgentType, "Sub-agent")
+	info.Type = meta.AgentType
+	if info.Model == "" && meta.Model != "inherit" {
+		info.Model = meta.Model
+	}
+	switch {
+	case meta.Finished || info.Status == "done":
+		info.Status = "done"
+	case time.Since(st.ModTime()) > 10*time.Minute:
+		info.Status = "stopped"
+	default:
+		info.Status = "running"
+	}
+	if info.Status != "done" {
+		info.Result = ""
+	}
+	return info, true
+}
+
+// scanSubagent reads a whole sub-agent transcript: model, tool calls, how
+// full its context got, whether it finished and what it answered.
+func scanSubagent(path string) (info SubagentInfo) {
+	fh, err := os.Open(path)
+	if err != nil {
+		return info
+	}
+	defer fh.Close()
+	sc := bufio.NewScanner(fh)
+	sc.Buffer(make([]byte, 0, 1<<20), 64<<20)
+	done := false
+	for sc.Scan() {
+		var m struct {
+			Type      string `json:"type"`
+			Timestamp string `json:"timestamp"`
+			Message   struct {
+				Model      string          `json:"model"`
+				Content    json.RawMessage `json:"content"`
+				StopReason string          `json:"stop_reason"`
+				Usage      *struct {
+					Input       int64 `json:"input_tokens"`
+					CacheRead   int64 `json:"cache_read_input_tokens"`
+					CacheCreate int64 `json:"cache_creation_input_tokens"`
+					Output      int64 `json:"output_tokens"`
+				} `json:"usage"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(sc.Bytes(), &m) != nil {
+			continue
+		}
+		if m.Timestamp != "" {
+			if info.StartedAt == "" {
+				info.StartedAt = m.Timestamp
+			}
+			info.EndedAt = m.Timestamp
+		}
+		switch m.Type {
+		case "assistant":
+			if m.Message.Model != "" && !strings.HasPrefix(m.Message.Model, "<") {
+				info.Model = m.Message.Model
+			}
+			if u := m.Message.Usage; u != nil {
+				info.Tokens = u.Input + u.CacheRead + u.CacheCreate + u.Output
+			}
+			var blocks []struct {
+				Type  string          `json:"type"`
+				Name  string          `json:"name"`
+				Text  string          `json:"text"`
+				Input json.RawMessage `json:"input"`
+			}
+			_ = json.Unmarshal(m.Message.Content, &blocks)
+			handback := false
+			for _, b := range blocks {
+				switch b.Type {
+				case "tool_use":
+					info.ToolUses++
+					info.Activity = oneLine(claudeTool(b.Name, b.Input).Title, 120)
+					handback = handback || b.Name == "SubagentHandback"
+				case "text":
+					if strings.TrimSpace(b.Text) != "" {
+						info.Result = oneLine(b.Text, 240)
+					}
+				}
+			}
+			done = handback || m.Message.StopReason == "end_turn" || m.Message.StopReason == "stop_sequence"
+		case "user":
+			if strings.Contains(string(m.Message.Content), "tool_result") {
+				done = false // a tool result came back: it goes on
+			}
+		}
+	}
+	if done {
+		info.Status = "done"
+	}
+	return info
 }

@@ -199,6 +199,9 @@ func FindClaude(claudeHome, sessionID string) (string, error) {
 // session feeds the lines as they are appended).
 type ClaudeLog struct {
 	Cwd string
+	// Sidechain: the file is a sub-agent's own transcript, where every line
+	// is a sidechain line (in a session file those are skipped).
+	Sidechain bool
 
 	promptKey string    // the message that started the current turn
 	promptAt  time.Time // and when
@@ -241,7 +244,7 @@ func (l *ClaudeLog) Feed(line []byte) []LogOp {
 		} `json:"message"`
 		ToolUseResult json.RawMessage `json:"toolUseResult"`
 	}
-	if json.Unmarshal(line, &m) != nil || m.IsSidechain {
+	if json.Unmarshal(line, &m) != nil || (m.IsSidechain && !l.Sidechain) {
 		return nil
 	}
 	if l.Cwd == "" && m.Cwd != "" {
@@ -342,6 +345,16 @@ func (r *ToolResult) Apply(t *Tool) {
 // ReadClaude turns a Claude Code session file into timeline items; size is
 // how many bytes were read (where following the file continues).
 func ReadClaude(path string) (items []Item, cwd string, size int64, err error) {
+	return readClaude(path, false)
+}
+
+// ReadClaudeSubagent turns a sub-agent transcript into timeline items.
+func ReadClaudeSubagent(path string) ([]Item, error) {
+	items, _, _, err := readClaude(path, true)
+	return items, err
+}
+
+func readClaude(path string, sidechain bool) (items []Item, cwd string, size int64, err error) {
 	fh, err := os.Open(path)
 	if err != nil {
 		return nil, "", 0, err
@@ -349,7 +362,7 @@ func ReadClaude(path string) (items []Item, cwd string, size int64, err error) {
 	defer fh.Close()
 	r := bufio.NewReaderSize(fh, 1<<20)
 	index := map[string]int{} // item key (tool_use id for tools) → position in items
-	var log ClaudeLog
+	log := ClaudeLog{Sidechain: sidechain}
 	for {
 		line, rerr := r.ReadBytes('\n')
 		if len(line) > 0 && line[len(line)-1] == '\n' {
