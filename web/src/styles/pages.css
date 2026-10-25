@@ -222,6 +222,8 @@
 .req-h .badge { max-width:100%; overflow-wrap:anywhere; white-space:normal; }
 .req-dock { max-height:calc(var(--app-h, 100dvh) * .45); overflow:auto; }
 .thread-bottom { max-height:calc(var(--app-h, 100dvh) - var(--topbar-h) - 8px); overflow-y:auto; }
+/* The scroll guard would clip the menus that open above the composer (skills, attach). */
+.thread-bottom:has(.slash-menu, .attach-menu) { overflow:visible; }
 
 /* A briefing should lead with today's information, not diagnostics or CTAs. */
 .briefing-heading { display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap; }
