@@ -34,6 +34,8 @@ func (s *Server) threadRoutes(r chi.Router) {
 	r.Post("/threads/{id}/rewind", s.handleRewind)
 	r.Get("/threads/{id}/export.md", s.handleExport)
 	r.Get("/threads/{id}/log-image", s.handleLogImage)
+	r.Get("/threads/{id}/subagents", s.handleSubagents)
+	r.Get("/threads/{id}/subagents/{sid}", s.handleSubagent)
 	s.shareRoutes(r)
 	r.Get("/running", s.handleRunning)
 	r.Get("/search", s.handleSearch)

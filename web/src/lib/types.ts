@@ -427,6 +427,15 @@ export interface RunningItem {
 }
 
 export interface Subagent { id: string; description: string; activity?: string; type?: string; started_at: string; tool_uses?: number }
+/** A sub-agent of a Claude Code session, working or finished (GET /threads/{id}/subagents). */
+export interface SubagentInfo {
+  id: string; description: string; type?: string; model?: string
+  status: 'running' | 'done' | 'stopped'
+  started_at?: string; ended_at?: string; tool_uses?: number
+  /** how full its context was at its last reply */
+  tokens?: number
+  activity?: string; result?: string
+}
 
 /** A git worktree Pocket AI made for a task: its own folder and branch. */
 export interface Worktree {

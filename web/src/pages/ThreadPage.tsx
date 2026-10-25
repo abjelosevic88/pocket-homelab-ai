@@ -6,6 +6,7 @@ import { useApp } from '../lib/app-context'
 import { fmtCost, providerName, shortPath, threadTitle } from '../lib/format'
 import { openSSE } from '../lib/sse'
 import type { Item, Thread, ThreadDetail, Upload } from '../lib/types'
+import { SubagentsChip } from '../components/Subagents'
 import { RunBar, useForkNewTab } from '../components/RunBar'
 import { QueueStrip } from '../components/QueueStrip'
 import { AgentPicker } from '../components/AgentPicker'
@@ -303,7 +304,8 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
       <div className="thread-bottom">
         {newBelow && !atBottom && <button type="button" className="new-below" onClick={() => { toBottom(true); setNewBelow(false) }}><Icon name="arrow-down" size={13} />New messages</button>}
         <div className="thread-bottom-inner">
-          {(running || t.status === 'waiting' || !!t.subagents?.length) && items && <RunBar t={t} items={items} />}
+          {(running || t.status === 'waiting' || !!t.subagents?.length) && items ? <RunBar t={t} items={items} />
+            : t.provider === 'claude' && t.provider_session_id && <div className="sub-dock"><SubagentsChip t={t} /></div>}
           <QueueStrip threadId={id} queued={queuedItems} agent={t.provider === 'codex' ? 'Codex' : 'Claude'} onClearAll={canSend ? clearQueue : undefined} onEdit={canSend ? async it => {
             const draft = await api.post<{ text: string; uploads: Upload[] }>(`${V1}/threads/${id}/queue/${encodeURIComponent(it.key)}/edit`)
             composer.current?.restoreDraft(draft.text, draft.uploads)
