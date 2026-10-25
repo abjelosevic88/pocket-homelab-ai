@@ -352,3 +352,40 @@ func TestSessionScanRuns(t *testing.T) {
 		t.Fatalf("incremental: %d (old copy %d)", len(cx2.runs), len(cx.runs))
 	}
 }
+
+// After background sub-agents finish, Claude Code starts a turn by itself:
+// no message from us, then a reply and a result. It is a turn like any other.
+const fakeClaudeSelfStart = `#!/bin/sh
+read init
+read msg
+printf '%s\n' '{"type":"system","subtype":"init","session_id":"sess-2","cwd":"/tmp"}'
+printf '%s\n' '{"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"Started the sub-agents."}]},"parent_tool_use_id":null}'
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"duration_ms":900,"total_cost_usd":0.01,"usage":{"input_tokens":1,"output_tokens":1}}'
+printf '%s\n' '{"type":"system","subtype":"task_notification","task_id":"t1","status":"completed"}'
+printf '%s\n' '{"type":"stream_event","event":{"type":"message_start","message":{"id":"m2"}},"parent_tool_use_id":null}'
+printf '%s\n' '{"type":"assistant","message":{"id":"m2","content":[{"type":"text","text":"All done."}]},"parent_tool_use_id":null}'
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"duration_ms":4000,"total_cost_usd":0.03,"usage":{"input_tokens":2,"output_tokens":2}}'
+read more
+`
+
+func TestClaudeSelfStartedTurn(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "claude")
+	if err := os.WriteFile(bin, []byte(fakeClaudeSelfStart), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := newRec()
+	s, err := StartClaude(context.Background(), Options{Bin: bin, Cwd: dir, Mode: "default"}, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Send(Input{Text: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	r.wait(t, func() bool { return len(r.turns) == 2 })
+	_ = s.Close()
+	<-r.exited
+	if tt := r.turns[1]; tt.DurationMS != 4000 || tt.CostUSD < 0.0199 || tt.CostUSD > 0.0201 { // cost is this turn's share of the running total
+		t.Fatalf("self-started turn: %+v", r.turns[1])
+	}
+}

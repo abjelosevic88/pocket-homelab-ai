@@ -384,11 +384,13 @@ func (s *claudeSession) handle(m map[string]json.RawMessage) {
 		if p := m["parent_tool_use_id"]; len(p) > 0 && string(p) != "null" {
 			return // a sub-agent's stream; its final messages are folded into the Task tool
 		}
+		s.selfStarted()
 		s.handleStream(m["event"])
 	case "assistant":
 		if p := m["parent_tool_use_id"]; len(p) > 0 && string(p) != "null" {
 			return
 		}
+		s.selfStarted()
 		s.handleAssistant(m["message"])
 	case "user":
 		if p := m["parent_tool_use_id"]; len(p) > 0 && string(p) != "null" {
@@ -404,6 +406,21 @@ func (s *claudeSession) handle(m map[string]json.RawMessage) {
 	case "control_response":
 		// answers to our initialize / interrupt
 	}
+}
+
+// selfStarted opens a turn the agent began without a message from us: when
+// background sub-agents finish, Claude Code carries on by itself. Without it
+// that turn's result is dropped (no footer, no "working" state).
+func (s *claudeSession) selfStarted() {
+	s.mu.Lock()
+	if s.running {
+		s.mu.Unlock()
+		return
+	}
+	s.running = true
+	s.turnFrom = time.Now()
+	s.mu.Unlock()
+	s.sink.TurnStarted()
 }
 
 func (s *claudeSession) nextKey(prefix string) string {

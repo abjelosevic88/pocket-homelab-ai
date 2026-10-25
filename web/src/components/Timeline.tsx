@@ -124,8 +124,8 @@ export const ItemView = memo(function ItemView({ item, showThinking, threadId, o
   }
 })
 
-// How long the turn took (and what it cost), under the agent's reply. The
-// last one also carries the fork button.
+// Under every reply, like Paseo: what it cost, copy, fork from here, and how
+// long the agent worked.
 function TurnFoot({ t, onFork, text }: { t: TurnInfo; onFork?: () => void; text?: string }) {
   const [copied, setCopied] = useState(false)
   const copy = async () => {
@@ -143,7 +143,7 @@ function TurnFoot({ t, onFork, text }: { t: TurnInfo; onFork?: () => void; text?
       {bits.length > 0 && <span className="tnum turn-bits">{bits.join(' · ')}</span>}
       {text && <button type="button" className="btn ghost icon-only xs" onClick={() => { void copy() }} title={copied ? 'Copied' : 'Copy response'} aria-label="Copy response"><Icon name={copied ? 'check' : 'copy'} size={14} /></button>}
       {onFork && <button type="button" className="btn ghost icon-only xs" onClick={onFork} title="Fork from here into a new tab" aria-label="Fork from here into a new tab"><Icon name="fork" size={14} /></button>}
-      <span className="run-time tnum" title="How long the agent worked on this"><Icon name="clock" size={12} />{fmtDuration(t.duration_ms)}</span>
+      <span className="run-time tnum" title="How long the agent worked on this">Worked for {fmtDuration(t.duration_ms)}</span>
     </div>
   )
 }
