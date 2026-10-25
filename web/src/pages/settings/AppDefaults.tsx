@@ -75,7 +75,7 @@ export function AppDefaultsTab() {
               setSaving(true)
               try { await save({ app_account_id: Number(id) }, 'App account saved') } finally { setSaving(false) }
             }} />
-            <span className="help">The Claude subscription that answers requests from connected apps, separate from the one your chats use.</span>
+            <span className="help">The Claude subscription connected apps use: text generation, and conversations they start (e.g. Projects) unless the app picks a login itself. Separate from the one your chats use.</span>
           </div>
           <div className="field">
             <span className="label">Default model for apps</span>

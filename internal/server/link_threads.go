@@ -132,6 +132,9 @@ func (s *Server) handleLinkAgentOptions(w http.ResponseWriter, r *http.Request) 
 		lp := linkProvider{ID: p.ID, Name: p.Name, Available: p.Available, Error: p.Error, Models: []linkModel{}, Efforts: p.Efforts, Modes: p.Modes,
 			ReadonlyMode: readonlyModes[p.ID], DefaultModel: firstNonEmpty(def.Model, p.DefaultModel), DefaultEffort: firstNonEmpty(def.Effort, p.DefaultEffort),
 			DefaultMode: firstNonEmpty(def.Mode, p.DefaultMode), DefaultAcct: def.Account}
+		if id, ok := s.appAccount(ctx, u, st); ok && p.ID == "claude" {
+			lp.DefaultAcct = id
+		}
 		for _, m := range p.Models {
 			efforts := m.Efforts
 			if efforts == nil {
@@ -150,6 +153,15 @@ func (s *Server) handleLinkAgentOptions(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// appAccount is the Claude login chosen for connected apps, when one is set
+// and the person may still use it.
+func (s *Server) appAccount(ctx context.Context, u *store.User, st store.Settings) (int64, bool) {
+	if st.AppAccount < 0 || s.checkAccount(ctx, u, "claude", st.AppAccount) != nil {
+		return 0, false
+	}
+	return st.AppAccount, true
 }
 
 var linkSourceRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
@@ -333,6 +345,14 @@ func (s *Server) handleGetDraft(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.fail(w, err, "draft")
 		return
+	}
+	// A draft without a login runs on the account chosen for connected apps
+	// (looked up now, so a later change in App defaults still applies).
+	if d.AccountID == nil {
+		st, _ := s.store.GetSettings(r.Context(), d.UserID)
+		if id, ok := s.appAccount(r.Context(), userFrom(r.Context()), st); ok && firstNonEmpty(d.Provider, st.DefaultProvider, "claude") == "claude" {
+			d.AccountID = &id
+		}
 	}
 	uploads := []uploadOut{}
 	for _, id := range d.UploadIDs {
