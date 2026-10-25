@@ -17,7 +17,7 @@ interface ModelCatalog {
 }
 
 export function AppDefaultsTab() {
-  const { settings } = useApp()
+  const { settings, accounts } = useApp()
   const save = useSaveSettings()
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null)
   const [loading, setLoading] = useState(true)
@@ -32,7 +32,7 @@ export function AppDefaultsTab() {
       .catch(e => { if (active) setError((e as Error).message) })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [settings?.claude.account_id, settings?.claude.model, revision])
+  }, [settings?.claude.account_id, settings?.app_account_id, settings?.claude.model, revision])
   if (!settings) return <Loading />
   const value = settings.app_model || ''
   const models = catalog?.models || []
@@ -53,11 +53,30 @@ export function AppDefaultsTab() {
     ...efforts.map(level => ({ value: level, label: effortNames[level] || level })),
     ...(effort && !efforts.includes(effort) ? [{ value: effort, label: `${effortNames[effort] || effort} (${catalog ? 'unavailable for this model' : 'saved'})` }] : []),
   ]
+  const claudeAccounts = accounts.filter(a => a.provider === 'claude')
+  const acctName = (id: number) => { const a = claudeAccounts.find(x => x.id === id); return a ? a.label : 'Unavailable account' }
+  const appAccount = settings.app_account_id ?? -1
+  const accountOptions = [
+    { value: '-1', label: `Follow chat default · ${acctName(settings.claude.account_id || 0)}` },
+    ...claudeAccounts.map(a => ({
+      value: String(a.id), label: a.label, keywords: a.email,
+      description: a.signed_in ? [a.plan, a.email].filter(Boolean).join(' · ') : (a.error || 'Not signed in — Settings → Agents'),
+    })),
+    ...(appAccount >= 0 && !claudeAccounts.some(a => a.id === appAccount) ? [{ value: String(appAccount), label: 'Unavailable account' }] : []),
+  ]
   const current = value ? models.find(m => m.id === value)?.name || value : catalog?.claude_default_name
   return (
     <div className="stack loose">
       <Section title="Connected apps" sub="Your default for text generation in Travel, Money, Day, and Bookshelf.">
         <div className="stack">
+          <div className="field">
+            <span className="label">Account for apps</span>
+            <Select label="Account for apps" value={String(appAccount)} options={accountOptions} disabled={saving} onChange={async id => {
+              setSaving(true)
+              try { await save({ app_account_id: Number(id) }, 'App account saved') } finally { setSaving(false) }
+            }} />
+            <span className="help">The Claude subscription that answers requests from connected apps, separate from the one your chats use.</span>
+          </div>
           <div className="field">
             <span className="label">Default model for apps</span>
             <Select label="Default model for apps" value={value} options={options} disabled={loading || saving} onChange={async model => {
@@ -85,7 +104,7 @@ export function AppDefaultsTab() {
           {missing && <p className="muted small" role="status">Your saved model is no longer offered by this account. Choose another model or follow the Claude default.</p>}
           {error && <div className="row wrap"><span className="muted small" role="status">{error}</span><button type="button" className="btn sm" onClick={() => setRevision(v => v + 1)}>Retry models</button></div>}
           {!loading && !error && current && <p className="muted small" role="status">Current app default: <strong>{current}</strong>.</p>}
-          <p className="muted small">Uses your Claude account selected under <Link to="/settings/agents">Agents</Link>. “Follow Claude default” follows the model there; when no specific model is selected, connected apps use Sonnet.</p>
+          <p className="muted small">Accounts are added under <Link to="/settings/agents">Agents</Link>. “Follow Claude default” follows the model there; when no specific model is selected, connected apps use Sonnet.</p>
         </div>
       </Section>
       <Section title="Your model preferences" sub="These settings belong to your account.">

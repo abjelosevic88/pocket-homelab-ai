@@ -51,6 +51,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		Title           *string              `json:"title"`
 		AppEffort       *string              `json:"app_effort"`
 		AppModel        *string              `json:"app_model"`
+		AppAccount      *int64               `json:"app_account_id"`
 		DefaultProvider *string              `json:"default_provider"`
 		DefaultCwd      *string              `json:"default_cwd"`
 		Claude          *store.AgentDefaults `json:"claude"`
@@ -117,9 +118,26 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		st.AppEffort = *in.AppEffort
 	}
-	if (in.AppModel != nil && st.AppModel != "") || ((in.AppModel != nil || in.AppEffort != nil) && st.AppEffort != "") {
+	if in.AppAccount != nil {
+		if *in.AppAccount < -1 {
+			writeErr(w, 400, "that account is not available")
+			return
+		}
+		if *in.AppAccount >= 0 {
+			if err := s.checkAccount(ctx, u, "claude", *in.AppAccount); err != nil {
+				writeErr(w, 400, err.Error())
+				return
+			}
+		}
+		st.AppAccount = *in.AppAccount
+	}
+	// Switching only the account must work even when that login cannot list
+	// models yet (e.g. not signed in); a model it does not offer falls back
+	// to following the Claude default.
+	accountOnly := in.AppAccount != nil && in.AppModel == nil && in.AppEffort == nil
+	if (in.AppModel != nil && st.AppModel != "") || ((in.AppModel != nil || in.AppEffort != nil) && st.AppEffort != "") || (accountOnly && (st.AppModel != "" || st.AppEffort != "")) {
 		models, err := s.personalInferenceModels(ctx, u, st)
-		if err != nil {
+		if err != nil && !accountOnly {
 			writeErr(w, 503, "Could not load models from your Claude account; try again shortly")
 			return
 		}
@@ -130,11 +148,22 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		if selected == nil {
+		if selected == nil && accountOnly && err == nil && st.AppModel != "" {
+			st.AppModel = ""
+			for i := range models {
+				if models[i].ID == appDefaultModel(st) {
+					selected = &models[i]
+					break
+				}
+			}
+		}
+		if selected == nil && !accountOnly {
 			writeErr(w, 400, "Choose a model offered by your connected Claude account")
 			return
 		}
-		if st.AppEffort != "" && !supportsEffort(selected.efforts, st.AppEffort) {
+		// selected is nil only for an account switch whose catalog could not
+		// load: keep the saved choices, app requests report the problem.
+		if selected != nil && st.AppEffort != "" && !supportsEffort(selected.efforts, st.AppEffort) {
 			if in.AppEffort != nil && *in.AppEffort != "" {
 				writeErr(w, 400, "This model does not support that effort level")
 				return

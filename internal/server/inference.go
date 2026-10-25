@@ -193,12 +193,16 @@ func appDefaultModel(st store.Settings) string {
 }
 
 func (s *Server) inferenceHome(ctx context.Context, u *store.User, st store.Settings) (string, error) {
-	if err := s.checkAccount(ctx, u, "claude", st.Claude.Account); err != nil {
+	id := st.Claude.Account
+	if st.AppAccount >= 0 {
+		id = st.AppAccount
+	}
+	if err := s.checkAccount(ctx, u, "claude", id); err != nil {
 		return "", err
 	}
 	home := s.defaultHome("claude")
-	if st.Claude.Account != 0 {
-		a, err := s.store.GetAccount(ctx, st.Claude.Account)
+	if id != 0 {
+		a, err := s.store.GetAccount(ctx, id)
 		if err != nil || !mayUseAccount(u, a) || a.Provider != "claude" {
 			return "", errors.New("Claude account unavailable")
 		}

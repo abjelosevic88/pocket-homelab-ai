@@ -72,6 +72,8 @@ export interface Settings {
   title: string
   app_effort: string
   app_model: string
+  /** Claude login for connected apps; -1 follows the Claude chat default. */
+  app_account_id: number
   default_provider: ProviderId
   default_cwd: string
   claude: AgentDefaults
