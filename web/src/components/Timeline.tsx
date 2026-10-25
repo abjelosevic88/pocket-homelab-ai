@@ -157,7 +157,7 @@ export function Timeline({ items, showThinking, streamingKey, onFork, threadId, 
   // AI's own footer and the one from the CLI's log): keep the first.
   // Items that would render nothing (Opus' thinking blocks arrive empty) are
   // left out: they would split a run of tool calls and leave empty gaps.
-  const shown = items.filter((it, i) => !(it.kind === 'turn' && items[i - 1]?.kind === 'turn') && !invisible(it, streamingKey))
+  const shown = items.filter((it, i) => !(it.kind === 'turn' && items[i - 1]?.kind === 'turn') && !invisible(it, streamingKey) && !repeated(items, i))
   // What each turn said, for its footer's copy button: every reply since the
   // previous footer, whole.
   const said = new Map<string, string>()
@@ -188,6 +188,17 @@ export function Timeline({ items, showThinking, streamingKey, onFork, threadId, 
       )})}
     </div>
   )
+}
+
+/** A reply read a second time from the CLI's log after its own footer (Pocket
+ * AI restarted before noting it had read it): the same text, nothing between
+ * but the footer. */
+function repeated(items: Item[], i: number): boolean {
+  const it = items[i]
+  if (it.kind !== 'assistant' || !it.text?.trim()) return false
+  let j = i - 1
+  while (j >= 0 && items[j].kind === 'turn') j--
+  return j < i - 1 && j >= 0 && items[j].kind === 'assistant' && items[j].text?.trim() === it.text.trim()
 }
 
 /** An item that shows nothing (empty thinking or reply that is not streaming). */

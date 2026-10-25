@@ -371,14 +371,34 @@ func (rt *engine) setPreview(ctx context.Context, threadID, text string) {
 
 // endOffset moves a Claude thread's log position to the end of its file
 // (after Pocket AI's own process wrote to it, or right after an import).
+// Not on rt.ctx: it also runs while Pocket AI shuts down, and a missed write
+// makes the next start read the last reply again as a new one.
 func (rt *engine) endOffset(t *store.Thread) {
 	if t.Provider != "claude" || t.ProviderSessionID == "" || t.HostID != 0 {
 		return
 	}
-	dir, _ := rt.s.accountHome(rt.ctx, t.Provider, t.AccountID)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	dir, _ := rt.s.accountHome(ctx, t.Provider, t.AccountID)
 	if path, err := agent.FindClaude(dir, t.ProviderSessionID); err == nil {
 		if size := agent.FileSize(path); size >= 0 {
-			rt.saveOffset(rt.ctx, t.ID, size)
+			rt.saveOffset(ctx, t.ID, size)
+		}
+	}
+}
+
+// EndOffsets moves the log position of every thread Pocket AI drives to the
+// end of its file, before a restart.
+func (s *Server) EndOffsets() {
+	s.rt.mu.Lock()
+	ids := make([]string, 0, len(s.rt.runs))
+	for id := range s.rt.runs {
+		ids = append(ids, id)
+	}
+	s.rt.mu.Unlock()
+	for _, id := range ids {
+		if t, err := s.store.GetThreadAny(context.Background(), id); err == nil {
+			s.rt.endOffset(t)
 		}
 	}
 }

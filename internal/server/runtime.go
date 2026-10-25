@@ -1473,6 +1473,7 @@ func (k *runSink) TurnDone(ti agent.TurnInfo) {
 	if err != nil {
 		return
 	}
+	rt.endOffset(t) // the turn is on the timeline: never read its lines again
 	t.Usage.InputTokens += ti.InputTokens
 	t.Usage.OutputTokens += ti.OutputTokens
 	t.Usage.CachedTokens += ti.CachedTokens
