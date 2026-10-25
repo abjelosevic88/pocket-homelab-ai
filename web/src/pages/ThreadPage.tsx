@@ -329,7 +329,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
             <Composer key={id} ref={composer} draftKey={id} autoFocus onSend={send} skills={t.source === 'ask' ? undefined : { provider: t.provider, cwd: t.cwd, account_id: t.account_id, host_id: t.host_id }} running={running} onStop={t.external && !t.live ? undefined : interrupt} disabled={!!t.external && !t.live}
               placeholder={t.external && !t.live ? 'It is running in another app right now — you can reply here once it has finished' : running ? 'Add a message — it is sent when the agent is done…' : pending.length ? 'Or type an answer…' : `Reply to ${providerName(t.provider)}…`}
               footer={<>
-                {t.source === 'ask' && owner && <span className="muted small">Pocket Ask · each change needs your approval · <a href={t.source_ref} target="_blank" rel="noopener noreferrer">Source item ↗</a></span>}
+                {t.source === 'ask' && owner && <span className="muted small">Ask my apps · changes need your approval{askSource(t.source_ref) && <> · <a href={t.source_ref} target="_blank" rel="noopener noreferrer">Source item ↗</a></>}</span>}
                 {!owner && <span className="muted small">{t.source === 'ask' ? `Shared Ask chat from ${t.owner_name || 'someone'} — your questions use your own apps` : `Chatting in ${t.owner_name || 'someone'}’s chat — the agent runs on their login and settings`}</span>}
                 {owner && p && t.source !== 'ask' && <span className="thread-pickers"><AgentPicker compact showProvider={false} noAccount={!!t.host_id} value={{ provider: t.provider, model: t.model, effort: t.effort, mode: t.mode, speed: t.speed || '', account_id: t.account_id || 0 }}
                   onChange={ch => patch(ch as Partial<Thread>)} /></span>}
@@ -345,4 +345,10 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
       {confirmDelete && <Confirm title="Delete this thread?" message="The conversation disappears from Pocket AI. The CLI’s own session file on the server stays." onCancel={() => setConfirmDelete(false)} onConfirm={remove} />}
     </div>
   )
+}
+
+/** The page an Ask chat was started from, when that is another app: a chat
+ * started on Pocket AI's own home screen has no item to go back to. */
+function askSource(ref?: string) {
+  try { return !!ref && new URL(ref).origin !== location.origin } catch { return false }
 }
