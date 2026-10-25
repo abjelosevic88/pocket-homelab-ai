@@ -78,7 +78,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
   const mode = coreOn ? picked : 'server'
   const [askModel, setAskModel] = useState('sonnet')
   const [askAccount, setAskAccount] = useState<number | null>(null) // null = my default Claude account
-  const askAccounts = accountOptions(accounts, 'claude')
+  const askAccounts = accountOptions(accounts, 'claude', askAccount ?? settings?.claude?.account_id ?? 0)
   const [noMemory, setNoMemory] = useState(false)
   const [connected, setConnected] = useState<boolean | null>(null)
   const appComposer = useRef<ComposerHandle>(null)

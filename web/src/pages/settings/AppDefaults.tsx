@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { useApp } from '../../lib/app-context'
 import { api, V1 } from '../../lib/api'
 import { Select } from '../../components/Select'
-import { accountNote } from '../../components/AgentPicker'
+import { accountName, accountNote } from '../../components/AgentPicker'
 import { Loading } from '../../components/ui'
 import { Section, useSaveSettings } from './common'
 
@@ -55,7 +55,7 @@ export function AppDefaultsTab() {
     ...(effort && !efforts.includes(effort) ? [{ value: effort, label: `${effortNames[effort] || effort} (${catalog ? 'unavailable for this model' : 'saved'})` }] : []),
   ]
   const claudeAccounts = accounts.filter(a => a.provider === 'claude')
-  const acctName = (id: number) => { const a = claudeAccounts.find(x => x.id === id); return a ? a.label : 'Unavailable account' }
+  const acctName = (id: number) => { const a = claudeAccounts.find(x => x.id === id); return a ? accountName(a, claudeAccounts) : 'Unavailable account' }
   const appAccount = settings.app_account_id ?? -1
   const accountOptions = [
     { value: '-1', label: `Follow chat default · ${acctName(settings.claude.account_id || 0)}` },
