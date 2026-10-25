@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -70,6 +71,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		UsageWidget     *bool                `json:"usage_widget"`
 		ThreadTabs      *bool                `json:"thread_tabs"`
 		UsagePinned     *[]string            `json:"usage_pinned"`
+		Shortcuts       *map[string]string   `json:"shortcuts"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
@@ -186,6 +188,14 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		for _, k := range *in.UsagePinned {
 			if k = strings.TrimSpace(k); k != "" && !strings.Contains(k, ",") && len(k) < 100 && len(st.UsagePinned) < 30 {
 				st.UsagePinned = append(st.UsagePinned, k)
+			}
+		}
+	}
+	if in.Shortcuts != nil {
+		st.Shortcuts = map[string]string{}
+		for id, keys := range *in.Shortcuts {
+			if shortcutID.MatchString(id) && len(keys) <= 40 && len(st.Shortcuts) < 40 {
+				st.Shortcuts[id] = strings.ToLower(strings.TrimSpace(keys))
 			}
 		}
 	}
@@ -307,3 +317,6 @@ func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", `attachment; filename="pocket-ai-`+time.Now().Format("20060102")+`.db"`)
 	http.ServeFile(w, r, tmp)
 }
+
+// shortcutID is a keyboard shortcut action id ("reopen_tab").
+var shortcutID = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)

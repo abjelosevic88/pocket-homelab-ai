@@ -123,3 +123,7 @@
 .host-group .acct-row:first-child { border-top: 0; }
 .host-key code { word-break: break-all; }
 .acct-actions { display: flex; justify-content: flex-end; margin-top: -4px; }
+
+.sc-record { min-width: 96px; justify-content: center; font-variant-numeric: tabular-nums; }
+.sc-record.recording { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.scroll-anchor { scroll-margin-top: 16px; }
