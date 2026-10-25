@@ -247,6 +247,11 @@
 .drop-overlay { position: fixed; inset: 0; z-index: 280; background: color-mix(in srgb, var(--accent) 14%, rgba(10, 10, 16, .3)); display: grid; place-items: center; pointer-events: none; animation: fade-in .1s ease; }
 .drop-overlay > div { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 28px 40px; border-radius: 20px; background: var(--raised); box-shadow: var(--shadow-lg); border: 2px dashed var(--accent); color: var(--accent-ink); }
 
+.attach-menu { position: absolute; left: 4px; bottom: calc(100% + 8px); z-index: 30; min-width: 220px; padding: 6px; background: var(--raised); border: 1px solid var(--border); border-radius: 22px; box-shadow: var(--shadow-lg); animation: pop-in .14s var(--ease); transform-origin: bottom left; }
+.attach-row { display: flex; align-items: center; gap: 14px; width: 100%; padding: 7px 14px 7px 7px; border: 0; border-radius: 16px; background: none; font: inherit; font-size: 16.5px; color: var(--text); text-align: left; cursor: pointer; }
+.attach-row:active, .attach-row:hover { background: var(--hover); }
+.attach-ico { width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; background: var(--hover); color: var(--text); flex: none; }
+.composer-bar > .attach-btn.on { color: var(--text); background: var(--hover); }
 .slash-menu { position: absolute; left: 8px; right: 8px; bottom: calc(100% + 6px); z-index: 30; background: var(--raised); border-radius: 12px; box-shadow: var(--shadow-lg); padding: 4px; max-height: 300px; overflow-y: auto; }
 .slash-h { font-size: 11px; font-weight: 650; color: var(--faint); text-transform: uppercase; letter-spacing: .05em; padding: 6px 10px 4px; }
 .slash-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 10px; border: 0; border-radius: 8px; background: none; text-align: left; cursor: pointer; font: inherit; color: inherit; }

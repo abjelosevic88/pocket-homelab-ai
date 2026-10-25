@@ -5,7 +5,7 @@ import { useApp } from '../lib/app-context'
 import { isTouch } from '../lib/format'
 import type { ProviderId, Recipe, Skill, Upload } from '../lib/types'
 import { Icon } from './icons'
-import { Spinner, useToast, noGrammarly } from './ui'
+import { Spinner, useDismiss, useToast, noGrammarly } from './ui'
 
 interface Attachment {
   lid: string
@@ -22,6 +22,7 @@ export interface ComposerHandle { focus: () => void; setText: (t: string) => voi
 
 const MAX_EDGE = 2000
 const MAX_BYTES = 20 * 1024 * 1024
+const DOC_TYPES = '.pdf,.docx,.xlsx,.pptx,.odt,.ods,.odp,.txt,.md,.csv,.tsv,.json,.xml'
 
 /** Big photos are scaled down in the browser before upload: faster on mobile data, and
  *  the CLIs refuse very large images anyway. Screenshots under the limit pass as they are. */
@@ -105,6 +106,12 @@ export const Composer = React.forwardRef<ComposerHandle, {
   const [slashHi, setSlashHi] = useState(0)
   const ta = useRef<HTMLTextAreaElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+  const photoInput = useRef<HTMLInputElement>(null)
+  const cameraInput = useRef<HTMLInputElement>(null)
+  const docInput = useRef<HTMLInputElement>(null)
+  const attachMenu = useRef<HTMLDivElement>(null)
+  const [attachOpen, setAttachOpen] = useState(false)
+  useDismiss(attachMenu, () => setAttachOpen(false), attachOpen)
   const rec = useRef<InstanceType<SpeechCtor> | null>(null)
   const Speech = (window as unknown as { SpeechRecognition?: SpeechCtor; webkitSpeechRecognition?: SpeechCtor }).SpeechRecognition || (window as unknown as { webkitSpeechRecognition?: SpeechCtor }).webkitSpeechRecognition
 
@@ -156,6 +163,8 @@ export const Composer = React.forwardRef<ComposerHandle, {
       setTimeout(() => ta.current?.focus(), 0)
     },
   }), [addFiles])
+
+  const picked = (e: React.ChangeEvent<HTMLInputElement>) => { addFiles(Array.from(e.target.files || [])); e.target.value = '' }
 
   const remove = (a: Attachment) => {
     a.abort?.()
@@ -294,8 +303,14 @@ export const Composer = React.forwardRef<ComposerHandle, {
       <textarea {...noGrammarly} ref={ta} rows={big ? 3 : 1} value={text} disabled={disabled} placeholder={placeholder} aria-label="Message"
         onChange={e => setText(e.target.value)} onKeyDown={onKey} onPaste={onPaste} enterKeyHint={isTouch() ? 'enter' : 'send'} />
       <div className="composer-bar">
-        <input ref={fileInput} type="file" accept="image/*,.pdf,.docx,.xlsx,.pptx,.odt,.ods,.odp,.txt,.md,.csv,.tsv,.json,.xml" multiple hidden onChange={e => { addFiles(Array.from(e.target.files || [])); e.target.value = '' }} />
-        <button type="button" className="btn ghost icon-only sm attach-btn" aria-label="Attach images" title="Attach images (or paste / drop them)" disabled={disabled} onClick={() => fileInput.current?.click()}><Icon name="plus" size={18} /></button>
+        {/* Phones get Camera / Photos / Files like the Codex app: one input each, so iOS opens
+            the camera or the document browser directly. A computer opens one file dialog. */}
+        <input ref={fileInput} type="file" accept={'image/*,' + DOC_TYPES} multiple hidden onChange={picked} />
+        <input ref={photoInput} type="file" accept="image/*" multiple hidden onChange={picked} />
+        <input ref={cameraInput} type="file" accept="image/*" capture="environment" hidden onChange={picked} />
+        <input ref={docInput} type="file" accept={DOC_TYPES} multiple hidden onChange={picked} />
+        <button type="button" className={`btn ghost icon-only sm attach-btn ${attachOpen ? 'on' : ''}`} aria-label="Attach" title="Attach images or files (or paste / drop them)" aria-haspopup={isTouch() ? 'menu' : undefined} aria-expanded={isTouch() ? attachOpen : undefined} data-keep-open disabled={disabled}
+          onClick={() => { if (isTouch()) setAttachOpen(o => !o); else fileInput.current?.click() }}><Icon name="plus" size={18} /></button>
         <div className="composer-extra">{footer}</div>
         {Speech && <button type="button" className={`btn ghost icon-only sm mic-btn ${listening ? 'rec' : ''}`} aria-label={listening ? 'Stop dictation' : 'Dictate'} title={listening ? 'Stop dictation' : 'Dictate'} disabled={disabled} onClick={toggleDictation}><Icon name="mic" size={17} /></button>}
         {running && onStop && !text.trim() && atts.length === 0 ? (
@@ -306,6 +321,15 @@ export const Composer = React.forwardRef<ComposerHandle, {
           </button>
         )}
       </div>
+      {attachOpen && (
+        <div ref={attachMenu} className="attach-menu" role="menu" aria-label="Attach">
+          {([['camera', 'Camera', cameraInput], ['image', 'Photos', photoInput], ['paperclip', 'Files', docInput]] as const).map(([icon, label, input]) => (
+            <button key={label} type="button" role="menuitem" className="attach-row" onClick={() => { setAttachOpen(false); input.current?.click() }}>
+              <span className="attach-ico"><Icon name={icon} size={19} /></span>{label}
+            </button>
+          ))}
+        </div>
+      )}
       {dragging && <div className="drop-overlay"><div><Icon name="image" size={28} /><b>Drop images to attach</b></div></div>}
     </div>
   )
