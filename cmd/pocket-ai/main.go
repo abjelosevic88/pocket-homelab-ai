@@ -143,6 +143,7 @@ func serve() {
 		// no time limit: a long turn must never be killed by an update
 		// (`systemctl --user restart pocket-ai` still forces it)
 		srv.WaitIdle(ctx, 0)
+		srv.EndOffsets()
 		log.Info("restarting for the update")
 		cancel()
 	}()
