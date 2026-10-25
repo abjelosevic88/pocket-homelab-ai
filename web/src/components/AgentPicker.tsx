@@ -30,15 +30,36 @@ export function accountNote(a: Account) {
   return [a.plan && planName(a.plan), a.email, a.same_as && `same account as ${a.same_as}`].filter(Boolean).join(' · ')
 }
 
-/** Logins to pick from; empty when the provider has only the server's own. */
-export function accountOptions(accounts: Account[], pid: ProviderId): Option<number>[] {
-  const list = accounts.filter(a => a.provider === pid)
+/** The named login the server's own login (id 0) is signed in to the same account as. */
+function serverTwin(list: Account[]) {
+  const server = list.find(a => a.id === 0)
+  return server?.same_as ? list.find(a => a.id !== 0 && a.provider === server.provider && a.label === server.same_as) : undefined
+}
+
+/** What a login is called: the server's own login takes the name of the login on the same
+ * account ("Athena Max"), and stays "Server login" when there is none. */
+export function accountName(a: Account, accounts: Account[]) {
+  if (a.id !== 0) return a.label
+  return serverTwin(accounts.filter(x => x.provider === a.provider))?.label || a.label
+}
+
+/** Logins to pick from; empty when the provider has only the server's own. The server's
+ * login and a named login on the same account are one choice: the one in use (`current`)
+ * stays, the server's own otherwise. */
+export function accountOptions(accounts: Account[], pid: ProviderId, current?: number): Option<number>[] {
+  const all = accounts.filter(a => a.provider === pid)
+  const twin = serverTwin(all)
+  const drop = twin ? (current === twin.id ? 0 : twin.id) : -1
+  const list = all.filter(a => a.id !== drop)
   if (list.length < 2) return []
-  return list.map(a => ({
-    value: a.id, label: a.label, keywords: a.email,
-    description: accountNote(a),
-    disabled: !a.signed_in,
-  }))
+  return list.map(a => {
+    const merged = !!twin && (a.id === 0 || a.id === twin.id)
+    return {
+      value: a.id, label: accountName(a, all), keywords: a.email,
+      description: merged ? [a.plan && planName(a.plan), a.email, 'also the server login'].filter(Boolean).join(' · ') : accountNote(a),
+      disabled: !a.signed_in,
+    }
+  })
 }
 
 export function modelOptions(p: Provider | undefined, allowDefault: boolean): Option<string>[] {
@@ -104,7 +125,7 @@ export function AgentPicker({ value, onChange, allowDefault = false, compact = f
   const { providers, settings, accounts } = useApp()
   const pid = (value.provider || settings?.default_provider || 'claude') as ProviderId
   const p = providers.find(x => x.id === pid)
-  const accts = allowDefault || noAccount ? [] : accountOptions(accounts, pid)
+  const accts = allowDefault || noAccount ? [] : accountOptions(accounts, pid, value.account_id || 0)
   const models = modelOptions(p, allowDefault)
   const efforts = effortOptions(p, value.model, allowDefault)
   const modes = modeOptions(p, allowDefault)
