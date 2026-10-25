@@ -962,6 +962,16 @@ type provLimits struct {
 	Resets    *agent.Resets  `json:"resets,omitempty"` // Codex free resets
 	UpdatedAt string         `json:"updated_at"`
 	Error     string         `json:"error,omitempty"`
+	// Who the login is signed in as (kept with the limits so the merge
+	// below survives a restart). Ident never leaves the server.
+	Email string `json:"email,omitempty"`
+	Org   string `json:"org,omitempty"`
+	Plan  string `json:"plan,omitempty"`
+	Ident string `json:"ident,omitempty"`
+	// Filled in per snapshot: this login is also the server's own login, and
+	// the limits keys of the other logins folded into this one (same account).
+	ServerLogin bool     `json:"server_login,omitempty"`
+	Aliases     []string `json:"aliases,omitempty"`
 }
 
 // Limits merges what a running CLI reports (it only reports the windows of
@@ -1134,51 +1144,85 @@ func (rt *engine) refreshLimits(wait bool) {
 		type login struct {
 			provider string
 			id       int64
+			home     string
 			env      []string
+			key      string
+			st       acctStatus
 		}
-		logins := []login{{"claude", 0, nil}, {"codex", 0, nil}}
+		logins := []*login{{provider: "claude", home: rt.s.defaultHome("claude")}, {provider: "codex", home: rt.s.defaultHome("codex")}}
 		if list, err := rt.s.store.ListAccounts(ctx); err == nil {
 			for _, a := range list {
-				logins = append(logins, login{a.Provider, a.ID, agent.AccountEnv(a.Provider, a.Home)})
+				logins = append(logins, &login{provider: a.Provider, id: a.ID, home: a.Home, env: agent.AccountEnv(a.Provider, a.Home)})
 			}
 		}
+		// Who each login is first (cached 10 minutes; the refresh button asks
+		// again), so logins signed in to the same account are read once.
 		var wg sync.WaitGroup
 		for _, l := range logins {
-			key := limitsKey(l.provider, l.id)
+			l.key = limitsKey(l.provider, l.id)
 			if l.id != 0 && !rt.s.signedIn(l.provider, l.id) {
-				rt.setLimits(key, nil, nil, false, "Not signed in")
 				continue
+			}
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				l.st = rt.s.accountStatus(ctx, l.provider, l.id, l.home, wait)
+			}()
+		}
+		wg.Wait()
+		groups := map[string][]*login{}
+		var order []string
+		for _, l := range logins {
+			if l.id != 0 && !rt.s.signedIn(l.provider, l.id) {
+				rt.setWho(l.key, acctStatus{})
+				rt.setLimits(l.key, nil, nil, false, "Not signed in")
+				continue
+			}
+			rt.setWho(l.key, l.st)
+			g := l.st.ident
+			if g == "" {
+				g = "key|" + l.key // unknown: read it on its own
+			}
+			if groups[g] == nil {
+				order = append(order, g)
+			}
+			groups[g] = append(groups[g], l)
+		}
+		for _, g := range order {
+			ls := groups[g]
+			l := ls[0]
+			set := func(w []agent.Window, note *string, resets *agent.Resets, err error) {
+				for _, x := range ls {
+					if err != nil {
+						rt.s.log.Debug(x.provider+" limits", "account", x.id, "err", err)
+						rt.setLimits(x.key, nil, nil, false, err.Error())
+						continue
+					}
+					if x.provider == "codex" {
+						rt.mu.Lock() // before setLimits, which sends the update
+						if rt.limits[x.key] == nil {
+							rt.limits[x.key] = &provLimits{}
+						}
+						rt.limits[x.key].Resets = resets
+						rt.mu.Unlock()
+					}
+					rt.setLimits(x.key, w, note, true, "")
+				}
 			}
 			wg.Add(1)
 			if l.provider == "claude" {
 				go func() {
 					defer wg.Done()
 					w, note, err := agent.ClaudeLimits(ctx, rt.s.cfg.ClaudeBin, rt.s.cfg.Home, l.env)
-					if err != nil {
-						rt.s.log.Debug("claude limits", "account", l.id, "err", err)
-						rt.setLimits(key, nil, nil, false, err.Error())
-						return
-					}
-					rt.setLimits(key, w, &note, true, "")
+					set(w, &note, nil, err)
 				}()
 				continue
 			}
 			go func() {
 				defer wg.Done()
 				w, resets, err := agent.CodexLimits(ctx, rt.s.cfg.CodexBin, l.env)
-				if err != nil {
-					rt.s.log.Debug("codex limits", "account", l.id, "err", err)
-					rt.setLimits(key, nil, nil, false, err.Error())
-					return
-				}
-				rt.mu.Lock() // before setLimits, which sends the update
-				if rt.limits[key] == nil {
-					rt.limits[key] = &provLimits{}
-				}
-				rt.limits[key].Resets = resets
-				rt.mu.Unlock()
 				none := ""
-				rt.setLimits(key, w, &none, true, "")
+				set(w, &none, resets, err)
 			}()
 		}
 		wg.Wait()
@@ -1193,41 +1237,141 @@ func (rt *engine) refreshLimits(wait bool) {
 	}
 }
 
-// limitsStale reports whether the last full read is older than d.
-func (rt *engine) limitsStale(d time.Duration) bool {
+// setWho records who a login is signed in as (kept until it says otherwise:
+// a failed check leaves the last known answer).
+func (rt *engine) setWho(key string, st acctStatus) {
+	if st.Error != "" {
+		return
+	}
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
-	return time.Since(rt.limitsAt) > d
+	cur := rt.limits[key]
+	if cur == nil {
+		cur = &provLimits{}
+		rt.limits[key] = cur
+	}
+	cur.Email, cur.Org, cur.Plan, cur.Ident = st.Email, st.Org, st.Plan, st.ident
 }
 
+// limitsStale reports whether the last full read is older than d, or a
+// login was signed in again since (it may be a different account now).
+func (rt *engine) limitsStale(d time.Duration) bool {
+	rt.mu.Lock()
+	at := rt.limitsAt
+	rt.mu.Unlock()
+	if time.Since(at) > d {
+		return true
+	}
+	homes := rt.s.homes(rt.ctx)
+	for _, h := range homes.Claude {
+		if loginChanged("claude", h.Dir, at) {
+			return true
+		}
+	}
+	for _, h := range homes.Codex {
+		if loginChanged("codex", h.Dir, at) {
+			return true
+		}
+	}
+	return false
+}
+
+// limitsSnapshot is the limits of the logins a person may use. Logins
+// signed in to the same account share one set of limits, so they show once:
+// under the named account (the server's own login folds into it), with the
+// freshest numbers of any of them.
 func (rt *engine) limitsSnapshot(uid int64) map[string]any {
 	u, _ := rt.s.store.GetUser(rt.ctx, uid)
-	labels := map[string]string{"claude": "", "codex": ""}
+	type src struct {
+		label string
+		mine  bool // the person may see who it is signed in as
+	}
+	admin := u != nil && u.Role == "admin"
+	srcs := map[string]src{"claude": {"", admin}, "codex": {"", admin}}
 	if list, err := rt.s.store.ListAccounts(rt.ctx); err == nil {
 		for _, a := range list {
 			if mayUseAccount(u, a) {
-				labels[limitsKey(a.Provider, a.ID)] = a.Label
+				srcs[limitsKey(a.Provider, a.ID)] = src{a.Label, admin || (a.UserID != nil && u != nil && *a.UserID == u.ID)}
 			}
 		}
 	}
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
-	out := map[string]any{}
-	for k, l := range rt.limits {
-		label, ok := labels[k]
-		if !ok {
+	keys := make([]string, 0, len(rt.limits))
+	for k := range rt.limits {
+		if _, ok := srcs[k]; ok {
+			keys = append(keys, k)
+		}
+	}
+	sort.Slice(keys, func(i, j int) bool { return limitsLess(keys[i], keys[j]) })
+	// The named account with the lowest id leads its group.
+	lead := map[string]string{} // ident → key
+	for _, k := range keys {
+		id := rt.limits[k].Ident
+		if id == "" {
 			continue
 		}
+		if cur, ok := lead[id]; !ok || !strings.Contains(cur, ":") && strings.Contains(k, ":") {
+			lead[id] = k
+		}
+	}
+	out := map[string]any{}
+	for _, k := range keys {
+		l := rt.limits[k]
+		if l.Ident != "" && lead[l.Ident] != k {
+			continue // folded into its group's lead below
+		}
 		cp := *l
-		cp.Provider, cp.Label = k, label
+		cp.Provider, cp.Label, cp.Ident = k, srcs[k].label, ""
 		if i := strings.IndexByte(k, ':'); i > 0 {
 			cp.Provider = k[:i]
 			cp.AccountID, _ = strconv.ParseInt(k[i+1:], 10, 64)
+		} else {
+			cp.ServerLogin = true
 		}
-		cp.Windows = append([]agent.Window(nil), l.Windows...)
+		mine := srcs[k].mine
+		if l.Ident != "" {
+			best := l
+			for _, o := range keys {
+				ol := rt.limits[o]
+				if o == k || ol.Ident != l.Ident {
+					continue
+				}
+				cp.Aliases = append(cp.Aliases, o)
+				if !strings.Contains(o, ":") {
+					cp.ServerLogin = true
+				}
+				mine = mine || srcs[o].mine
+				if len(ol.Windows) > 0 && (len(best.Windows) == 0 || ol.UpdatedAt > best.UpdatedAt) {
+					best = ol
+				}
+			}
+			cp.Windows, cp.Note, cp.Resets, cp.UpdatedAt, cp.Error = best.Windows, best.Note, best.Resets, best.UpdatedAt, best.Error
+		}
+		if !mine {
+			cp.Email = ""
+		}
+		cp.Windows = append([]agent.Window(nil), cp.Windows...)
 		out[k] = cp
 	}
 	return out
+}
+
+// limitsLess orders limits keys: server login first, then by account id.
+func limitsLess(a, b string) bool {
+	ia, ib := strings.IndexByte(a, ':'), strings.IndexByte(b, ':')
+	if ia < 0 || ib < 0 {
+		if ia != ib {
+			return ia < 0
+		}
+		return a < b
+	}
+	if a[:ia] != b[:ib] {
+		return a[:ia] < b[:ib]
+	}
+	na, _ := strconv.ParseInt(a[ia+1:], 10, 64)
+	nb, _ := strconv.ParseInt(b[ib+1:], 10, 64)
+	return na < nb
 }
 
 func (k *runSink) Request(req agent.Request) {

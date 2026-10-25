@@ -11,22 +11,29 @@ export const limitKey = (src: string, w: LimitWindow) => `${src}:${w.id || w.nam
 export const usedFrac = (w: LimitWindow) => Math.max(0, Math.min(1, w.used > 1 ? w.used / 100 : w.used))
 export const limitTone = (f: number) => f > 0.9 ? 'danger' : f > 0.7 ? 'warn' : ''
 
-/** The logins that have limits, the server's own first per provider. */
+/** The logins that have limits, the one the server's own login is first per
+ * provider. Logins on the same account arrive as one (with aliases). */
 export function limitSources(limits: Limits) {
   const id = (k: string) => Number(k.split(':')[1] || 0)
+  const rank = (k: string) => limits[k]?.server_login ? -1 : id(k)
   return (['claude', 'codex'] as ProviderId[]).flatMap(p => Object.keys(limits)
     .filter(k => k === p || k.startsWith(p + ':'))
-    .sort((a, b) => id(a) - id(b))
-    .map(k => ({ src: k, p, label: limits[k]?.label || '' })))
+    .sort((a, b) => rank(a) - rank(b))
+    .map(k => ({ src: k, p, label: limits[k]?.label || '', aliases: limits[k]?.aliases || [] })))
 }
 
+/** Every window; keys = its pin key plus the keys it had under the logins
+ * folded into it, so a pin survives two logins turning out to be one. */
 export function limitRows(limits: Limits) {
-  return limitSources(limits).flatMap(({ src, p, label }) => (limits[src]?.windows || []).map(w => ({ src, p, label, w, key: limitKey(src, w) })))
+  return limitSources(limits).flatMap(({ src, p, label, aliases }) => (limits[src]?.windows || []).map(w => {
+    const key = limitKey(src, w)
+    return { src, p, label, w, key, keys: [key, ...aliases.map(a => limitKey(a, w))] }
+  }))
 }
 
 /** No pins yet means every limit shows. */
-export function isPinned(pinned: string[] | undefined, key: string) {
-  return !pinned?.length || pinned.includes(key)
+export function isPinned(pinned: string[] | undefined, keys: string | string[]) {
+  return !pinned?.length || (Array.isArray(keys) ? keys : [keys]).some(k => pinned.includes(k))
 }
 
 // "7 days · Fable" → "Fable 7d", "5 hours" → "5h"
@@ -40,7 +47,7 @@ export function UsageWidget({ onNavigate }: { onNavigate?: () => void }) {
   const { limits, settings } = useApp()
   const navigate = useNavigate()
   if (!settings || settings.usage_widget === false) return null
-  const rows = limitRows(limits).filter(r => isPinned(settings.usage_pinned, r.key))
+  const rows = limitRows(limits).filter(r => isPinned(settings.usage_pinned, r.keys))
   if (!rows.length) return null
   const resets = rows.some(r => r.p === 'codex') ? limits.codex?.resets : undefined
   const next = resets?.credits?.find(c => c.expires_at)?.expires_at

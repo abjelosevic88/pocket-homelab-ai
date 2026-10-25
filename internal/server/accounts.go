@@ -57,9 +57,22 @@ type acctStatus struct {
 	SignedIn  bool   `json:"signed_in"`
 	Email     string `json:"email,omitempty"`
 	Plan      string `json:"plan,omitempty"`
+	Org       string `json:"org,omitempty"`
 	Error     string `json:"error,omitempty"`
 	CheckedAt string `json:"checked_at,omitempty"`
-	at        time.Time
+	// SameAs names another login that is signed in to the same account.
+	SameAs string `json:"same_as,omitempty"`
+	ident  string // who the login really is ("" = unknown)
+	at     time.Time
+}
+
+// loginIdent is who a login is signed in as: the same email in two orgs
+// (personal + team) is two accounts.
+func loginIdent(provider, email, org string) string {
+	if email == "" {
+		return ""
+	}
+	return provider + "|" + strings.ToLower(email) + "|" + org
 }
 
 type accountState struct {
@@ -148,6 +161,14 @@ func (s *Server) accountsFor(ctx context.Context, u *store.User, manage, refresh
 		}(&out[i])
 	}
 	wg.Wait()
+	for i := range out {
+		for j := range out {
+			if j != i && out[i].ident != "" && out[i].ident == out[j].ident {
+				out[i].SameAs = out[j].Label
+				break
+			}
+		}
+	}
 	return out
 }
 
@@ -157,7 +178,7 @@ func (s *Server) accountStatus(ctx context.Context, provider string, id int64, h
 	s.accts.mu.Lock()
 	cur, ok := s.accts.status[k]
 	s.accts.mu.Unlock()
-	if ok && !refresh && time.Since(cur.at) < 10*time.Minute {
+	if ok && !refresh && time.Since(cur.at) < 10*time.Minute && !loginChanged(provider, home, cur.at) {
 		return cur
 	}
 	var env []string
@@ -185,6 +206,18 @@ func (s *Server) accountStatus(ctx context.Context, provider string, id int64, h
 	return st
 }
 
+// loginChanged reports whether the CLI wrote its login since t: a sign-in
+// from a terminal (or a token refresh) is noticed right away. Only the
+// file's time is looked at, never its contents.
+func loginChanged(provider, home string, t time.Time) bool {
+	name := ".credentials.json"
+	if provider == "codex" {
+		name = "auth.json"
+	}
+	fi, err := os.Stat(filepath.Join(home, name))
+	return err == nil && fi.ModTime().After(t)
+}
+
 func (s *Server) claudeStatus(ctx context.Context, env []string) acctStatus {
 	cmd := exec.CommandContext(ctx, s.cfg.ClaudeBin, "auth", "status")
 	cmd.Dir = s.cfg.Home
@@ -195,6 +228,8 @@ func (s *Server) claudeStatus(ctx context.Context, env []string) acctStatus {
 		Email            string `json:"email"`
 		SubscriptionType string `json:"subscriptionType"`
 		AuthMethod       string `json:"authMethod"`
+		OrgID            string `json:"orgId"`
+		OrgName          string `json:"orgName"`
 	}
 	if jerr := json.Unmarshal(out, &r); jerr != nil {
 		if err == nil {
@@ -206,7 +241,11 @@ func (s *Server) claudeStatus(ctx context.Context, env []string) acctStatus {
 	if plan == "" && r.AuthMethod != "claude.ai" {
 		plan = r.AuthMethod
 	}
-	return acctStatus{SignedIn: r.LoggedIn, Email: r.Email, Plan: plan}
+	st := acctStatus{SignedIn: r.LoggedIn, Email: r.Email, Plan: plan, Org: r.OrgName}
+	if r.LoggedIn {
+		st.ident = loginIdent("claude", r.Email, r.OrgID)
+	}
+	return st
 }
 
 func (s *Server) codexStatus(ctx context.Context, env []string) acctStatus {
@@ -214,7 +253,11 @@ func (s *Server) codexStatus(ctx context.Context, env []string) acctStatus {
 	if err != nil {
 		return acctStatus{Error: err.Error()}
 	}
-	return acctStatus{SignedIn: signedIn, Email: email, Plan: plan}
+	st := acctStatus{SignedIn: signedIn, Email: email, Plan: plan}
+	if signedIn {
+		st.ident = loginIdent("codex", email, plan) // no workspace id: the plan tells personal from team
+	}
+	return st
 }
 
 func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {

@@ -112,3 +112,6 @@ export function promptVars(prompt: string): string[] {
 }
 
 export const isTouch = () => window.matchMedia('(hover: none) and (pointer: coarse)').matches
+
+/** "team" → "Team", "PRO" → "Pro" */
+export const planName = (p: string) => p.length > 1 ? p[0].toUpperCase() + p.slice(1).toLowerCase() : p

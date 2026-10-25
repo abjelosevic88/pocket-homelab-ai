@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { api, qs, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
-import { fmtCost, fmtTokens, providerName, resetsIn, when } from '../lib/format'
+import { fmtCost, fmtTokens, planName, providerName, resetsIn, when } from '../lib/format'
 import { isPinned, limitKey, limitRows, limitSources, limitTone, usedFrac } from '../components/UsageWidget'
 import type { LimitWindow, ProviderId, Resets, UsageReport } from '../lib/types'
 import { Icon } from '../components/icons'
@@ -66,9 +66,10 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
   const sources = limitSources(limits)
   // Pins pick what the sidebar panel shows. No pins = all; unpinning the
   // last one leaves a marker that matches nothing, so the panel is empty.
-  const togglePin = (key: string) => {
+  // A window's keys include the ones it had under logins folded into it.
+  const togglePin = (keys: string[]) => {
     const cur = settings?.usage_pinned?.length ? settings.usage_pinned.filter(k => k !== '-') : limitRows(limits).map(x => x.key)
-    const next = cur.includes(key) ? cur.filter(k => k !== key) : [...cur, key]
+    const next = keys.some(k => cur.includes(k)) ? cur.filter(k => !keys.includes(k)) : [...cur, keys[0]]
     saveSettings({ usage_pinned: next.length ? next : ['-'] }).catch(() => {})
   }
 
@@ -78,19 +79,28 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
       <div className="page-scroll">
         <div className="page-inner stack loose">
           <section className="card">
-            <div className="card-head"><div className="grow"><h2>Plan limits</h2><p className="muted small">Read from every Claude Code and Codex login on the server, including per-model limits.</p></div>
+            <div className="card-head"><div className="grow"><h2>Plan limits</h2><p className="muted small">Read from every Claude Code and Codex login on the server, including per-model limits. Logins signed in to the same account share their limits and show once.</p></div>
               <button type="button" className="btn sm ghost icon-only" aria-label="Refresh limits" title="Refresh" disabled={refreshing}
                 onClick={async () => { setRefreshing(true); try { r.setData(await api.get<UsageReport>(`${V1}/usage${qs({ days, refresh: 1 })}`)) } finally { setRefreshing(false) } }}>
                 <Icon name="refresh" size={15} className={refreshing ? 'spin' : ''} /></button></div>
             <div className="card-body">
               <div className="two-col">
-                {(sources.length ? sources : providers.map(p => ({ src: p as string, p, label: '' }))).map(({ src, p, label }) => {
+                {(sources.length ? sources : providers.map(p => ({ src: p as string, p, label: '', aliases: [] as string[] }))).map(({ src, p, label, aliases }) => {
                   const l = limits[src]
+                  const keys = (w: LimitWindow) => [limitKey(src, w), ...aliases.map(a => limitKey(a, w))]
+                  // Who it is: the email (yours or as admin), else the org; then the plan.
+                  const who = [l?.email || l?.org, l?.plan && planName(l.plan)].filter(Boolean).join(' · ')
                   return (
                     <div key={src} className="limit-box">
-                      <div className="limit-prov"><span className={`prov-dot prov-${p}`} /><b>{providerName(p)}</b>{label && <span>{label}</span>}{l?.updated_at && <span className="muted xsmall">· {when(l.updated_at)}</span>}</div>
+                      <div className="limit-who">
+                        <div className="limit-prov"><span className={`prov-dot prov-${p}`} /><b className="nowrap">{providerName(p)}</b><span className="ellipsis">{label || 'Server login'}</span>
+                          {l?.updated_at && <span className="muted xsmall nowrap">· {when(l.updated_at)}</span>}</div>
+                        {(who || (label && l?.server_login)) && <div className="muted xsmall limit-acct">
+                          {label && l?.server_login && <span className="badge" title={`The server's own ${providerName(p)} login is signed in to this same account, so they share these limits.`}>Also the server login</span>}
+                          {who && <span className="ellipsis">{who}</span>}</div>}
+                      </div>
                       {l?.windows?.length ? l.windows.map(w => <LimitBar key={w.id || w.name} w={w}
-                        pinned={isPinned(settings?.usage_pinned, limitKey(src, w))} onPin={settings?.usage_widget !== false ? () => togglePin(limitKey(src, w)) : undefined} />) : <p className="muted small" style={{ margin: 0 }}>{l?.error ? 'Could not read the limits: ' + l.error : 'Reading the limits…'}</p>}
+                        pinned={isPinned(settings?.usage_pinned, keys(w))} onPin={settings?.usage_widget !== false ? () => togglePin(keys(w)) : undefined} />) : <p className="muted small" style={{ margin: 0 }}>{l?.error ? 'Could not read the limits: ' + l.error : 'Reading the limits…'}</p>}
                       {l?.note && <p className="muted xsmall" style={{ margin: 0 }}><Icon name="info" size={12} className="inline-ico" />{l.note}</p>}
                       {l?.resets && <FreeResets r={l.resets} />}
                     </div>

@@ -6,13 +6,13 @@ import { api, V1 } from '../../lib/api'
 import { useApp } from '../../lib/app-context'
 import type { Account, LoginState, ProviderId, User } from '../../lib/types'
 import { ProviderToggle } from '../../components/AgentPicker'
+import { planName } from '../../lib/format'
 import { Select } from '../../components/Select'
 import { Icon } from '../../components/icons'
 import { Confirm, CopyField, errMsg, Field, MenuButton, Modal, Spinner, useAsync, useToast, type MenuItem, useContextMenu } from '../../components/ui'
 import { ago, Section, StatusDot } from './common'
 
 /** "max" → "Max", "PRO" → "Pro". */
-const planName = (p: string) => p.length > 1 ? p[0].toUpperCase() + p.slice(1).toLowerCase() : p
 
 export function AccountsSection() {
   const { user, reloadAccounts } = useApp()
@@ -70,6 +70,7 @@ export function AccountsSection() {
                         <span className="ellipsis">{a.label}</span>
                         {a.signed_in ? (a.plan && <span className="badge ok">{planName(a.plan)}</span>) : a.error ? <span className="badge danger">Error</span> : <span className="badge">Not signed in</span>}
                         {a.default && <span className="badge">Default</span>}
+                        {a.same_as && <span className="badge" title={`${a.label} and ${a.same_as} are signed in to the same account, so they share one set of plan limits.`}>Same account as {a.same_as}</span>}
                       </div>
                       {a.email && <div className="acct-email ellipsis">{a.email}</div>}
                       <div className="acct-meta"><code>{a.home.replace(/^\/home\/[^/]+/, '~')}</code>{!a.default && <span>{who(a)}</span>}</div>
