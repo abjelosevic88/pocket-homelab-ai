@@ -11,7 +11,7 @@ export function ThreadStatus({ t }: { t: Pick<Thread, 'status' | 'unread' | 'pen
   if (t.status === 'running') return <span className="tstat running" title="Working…" aria-label="Working"><span className="spinner" /></span>
   if (t.status === 'waiting' || t.pending > 0) return <span className="tstat waiting" title="Needs your answer" aria-label="Needs your answer"><Icon name="help-circle" size={14} /></span>
   if (t.status === 'error') return <span className="tstat error" title="Stopped with an error" aria-label="Error"><Icon name="alert" size={13} /></span>
-  if (t.unread) return <span className="tstat unread" title="New reply" aria-label="Unread"><span /></span>
+  if (t.unread) return <span className="tstat unread" title="Done — new reply" aria-label="Done, new reply"><span /></span>
   return null
 }
 

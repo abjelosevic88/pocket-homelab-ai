@@ -86,6 +86,7 @@ export function TabBar({ tabs, active, close, move }: ReturnType<typeof useTabs>
               onDragOver={e => { if (drag) { e.preventDefault(); if (drag !== id) move(drag, id) } }}>
               <span className={`tab-ico ${t?.provider || ''}`}>
                 {busy ? <span className={`tab-busy ${t?.status === 'waiting' || (t?.pending || 0) > 0 ? 'waiting' : ''}`} role="img" aria-label="Working" />
+                  : t?.unread && !on ? <span className="tab-done" role="img" aria-label="Done, new reply" title="Done — new reply" />
                   : <Icon name={t?.provider === 'codex' ? 'codex' : 'claude'} size={13} />}
               </span>
               <span className="tab-title">{t ? threadTitle(t) : '…'}</span>

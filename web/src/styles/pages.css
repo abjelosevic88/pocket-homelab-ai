@@ -125,6 +125,8 @@
 .tab:not(.on) .tab-ico { opacity: .8; }
 .tab-busy { width: 12px; height: 12px; border-radius: 50%; border: 1.8px solid currentColor; border-top-color: transparent; animation: spin .8s linear infinite; }
 .tab-busy.waiting { border-color: var(--warning); border-top-color: transparent; }
+.tab-done { width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px var(--success-soft); }
+.tab:not(.on) .tab-ico:has(.tab-done) { opacity: 1; }
 .tab-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tab-x { display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--faint); cursor: pointer; opacity: 0; flex-shrink: 0; }
 .tab:hover .tab-x, .tab.on .tab-x, .tab:focus-within .tab-x { opacity: 1; }
