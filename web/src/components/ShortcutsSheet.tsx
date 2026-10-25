@@ -1,17 +1,26 @@
+import { Link } from 'react-router-dom'
+import { isMac, keyCaps, SHORTCUTS, useShortcuts } from '../lib/shortcuts'
 import { Modal } from './ui'
 
-const GROUPS: { title: string; keys: [string[], string][] }[] = [
-  { title: 'Anywhere', keys: [[['⌘', 'K'], 'Search & commands'], [['⌘', 'N'], 'New thread'], [['c'], 'New thread'], [['?'], 'This sheet']] },
-  { title: 'In a thread', keys: [[['↵'], 'Send (desktop; set in Settings)'], [['⇧', '↵'], 'New line'], [['⌘', '↵'], 'Always sends'], [['⌘', '.'], 'Stop the agent'], [['/'], 'Recipes at the start of a message']] },
-  { title: 'Images', keys: [[['⌘', 'V'], 'Paste a screenshot'], [['drop'], 'Drag images onto the page']] },
-  { title: 'Dialogs', keys: [[['esc'], 'Close']] },
-]
+const M = isMac ? '⌘' : 'Ctrl'
+/** Fixed keys; the ones you can change come from lib/shortcuts.ts. */
+const FIXED: Record<string, [string[], string][]> = {
+  Anywhere: [[['c'], 'New thread'], [['?'], 'This sheet']],
+  'In a thread': [[['↵'], 'Send (desktop; set in Settings)'], [['⇧', '↵'], 'New line'], [[M, '↵'], 'Always sends'], [['/'], 'Recipes and skills at the start of a message']],
+  Images: [[[M, 'V'], 'Paste a screenshot'], [['drop'], 'Drag images onto the page']],
+  Dialogs: [[['esc'], 'Close']],
+}
 
 export function ShortcutsSheet({ onClose }: { onClose: () => void }) {
+  const keys = useShortcuts()
+  const groups = ['Anywhere', 'Tabs', 'In a thread', 'Images', 'Dialogs'].map(title => ({
+    title,
+    keys: [...SHORTCUTS.filter(s => s.group === title && keys[s.id]).map(s => [keyCaps(keys[s.id]), s.label] as [string[], string]), ...(FIXED[title] || [])],
+  })).filter(g => g.keys.length)
   return (
-    <Modal title="Keyboard shortcuts" onClose={onClose} size="lg">
+    <Modal title="Keyboard shortcuts" onClose={onClose} size="lg" footer={<Link to="/settings/general#shortcuts" className="btn" onClick={onClose}>Change shortcuts</Link>}>
       <div className="shortcuts">
-        {GROUPS.map(g => (
+        {groups.map(g => (
           <section key={g.title}>
             <h4 className="sc-h">{g.title}</h4>
             {g.keys.map(([keys, label]) => (

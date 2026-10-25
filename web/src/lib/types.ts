@@ -92,6 +92,8 @@ export interface Settings {
   show_thinking: boolean
   usage_widget: boolean
   thread_tabs: boolean
+  /** Keyboard shortcuts changed from their defaults (lib/shortcuts.ts); "" = off. */
+  shortcuts?: Record<string, string>
   usage_pinned: string[]
   system_prompt: string
 }

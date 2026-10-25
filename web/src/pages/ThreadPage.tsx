@@ -23,6 +23,7 @@ import { ThreadRefChip } from '../components/ThreadRefChip'
 import { Timeline } from '../components/Timeline'
 import { PrivacyBadge, ShareDialog } from '../components/ShareDialog'
 import { accessOf } from '../lib/share'
+import { actionFor, useShortcuts } from '../lib/shortcuts'
 import { Confirm, download, Empty, errMsg, Loading, type MenuItem, MenuButton, useContextMenu, useToast } from '../components/ui'
 
 function upsert(list: Item[], it: Item): Item[] {
@@ -171,11 +172,12 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const interrupt = useCallback(async () => {
     try { await api.post(`${V1}/threads/${id}/interrupt`); toast('Stopping…') } catch (e) { toast(errMsg(e), 'err') }
   }, [id, toast])
+  const keys = useShortcuts()
   useEffect(() => {
-    const h = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key === '.') { e.preventDefault(); interrupt() } }
+    const h = (e: KeyboardEvent) => { if (actionFor(e, keys) === 'stop') { e.preventDefault(); interrupt() } }
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
-  }, [interrupt])
+  }, [interrupt, keys])
 
   const send = async (text: string, uploadIds: string[], sendNow = false) => {
     try {

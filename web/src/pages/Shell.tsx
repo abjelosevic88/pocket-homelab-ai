@@ -21,6 +21,7 @@ import TodayPage from './TodayPage'
 import UsagePage from './UsagePage'
 import WorktreesPage from './WorktreesPage'
 import { BriefingPage, MemoryPage, ActionsPage, WorkflowsPage } from './AssistantPages'
+import { actionFor, useShortcuts } from '../lib/shortcuts'
 
 function typing(e: KeyboardEvent) {
   const t = e.target as HTMLElement | null
@@ -52,18 +53,29 @@ function ShellInner() {
   useEffect(() => tellParent(loc.pathname, openState), [loc.pathname, openState])
   useEffect(() => { if ((loc.state as { shortcuts?: boolean } | null)?.shortcuts) setShortcuts(true) }, [loc.state])
 
+  const keys = useShortcuts()
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey
-      if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); setPalette(p => !p); return }
-      if (mod && e.key.toLowerCase() === 'n' && !e.shiftKey) { e.preventDefault(); navigate('/'); return }
+      const action = actionFor(e, keys)
+      const tabAction = action === 'new_tab' || action === 'reopen_tab' || action === 'close_tab' || action === 'prev_tab' || action === 'next_tab'
+      if (action && action !== 'stop' && !(tabAction && !tabsOn)) {
+        e.preventDefault()
+        if (action === 'palette') setPalette(p => !p)
+        else if (action === 'new_thread' || action === 'new_tab') navigate('/')
+        else if (action === 'reopen_tab') tabs.reopen()
+        else if (action === 'close_tab') { if (tabs.active) tabs.close([tabs.active]) }
+        else if (action === 'prev_tab') tabs.step(-1)
+        else if (action === 'next_tab') tabs.step(1)
+        return
+      }
       if (mod || e.altKey || typing(e) || modalOpen()) return
       if (e.key === 'c') { e.preventDefault(); navigate('/') }
       else if (e.key === '?') { e.preventDefault(); setShortcuts(true) }
     }
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
-  }, [navigate])
+  }, [navigate, keys, tabs, tabsOn])
 
   const commands = useMemo<PaletteCommand[]>(() => [
     { id: 'new', label: 'New thread', icon: 'plus', hint: 'C', run: () => navigate('/') },
@@ -76,6 +88,7 @@ function ShellInner() {
     { id: 'agents', label: 'Agent defaults', icon: 'bot', keywords: 'model effort settings', run: () => navigate('/settings/agents') },
     { id: 'theme', label: theme === 'dark' ? 'Light theme' : 'Dark theme', icon: theme === 'dark' ? 'sun' : 'moon', run: () => setThemeMode(theme === 'dark' ? 'light' : 'dark') },
     { id: 'keys', label: 'Keyboard shortcuts', icon: 'keyboard', hint: '?', run: () => setShortcuts(true) },
+    { id: 'keys-edit', label: 'Change keyboard shortcuts', icon: 'keyboard', keywords: 'keys hotkeys bindings', run: () => navigate('/settings/general#shortcuts') },
   ], [navigate, theme, setThemeMode])
 
   const openMenu = useCallback(() => setDrawerOpen(true), [])
