@@ -127,3 +127,6 @@
 .sc-record { min-width: 96px; justify-content: center; font-variant-numeric: tabular-nums; }
 .sc-record.recording { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .scroll-anchor { scroll-margin-top: 16px; }
+/* a sample of the conversation under the display options */
+.display-preview { margin-top: 12px; padding: 12px 14px; border: 1px solid var(--hairline); border-radius: 12px; background: var(--bg); pointer-events: none; }
+.display-preview .msg.user { margin: 0; }

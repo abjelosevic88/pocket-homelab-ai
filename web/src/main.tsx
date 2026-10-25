@@ -8,6 +8,7 @@ import './styles/settings.css'
 import './styles/motion.css'
 import './styles/pages.css'
 import { AppProvider, useApp } from './lib/app-context'
+import { applyDisplay, loadDisplay } from './lib/display'
 import { Loading, ToastProvider } from './components/ui'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { trackViewport } from './lib/viewport'
@@ -38,6 +39,7 @@ function App() {
   )
 }
 
+applyDisplay(loadDisplay()) // before the first paint: no jump in text size
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter>

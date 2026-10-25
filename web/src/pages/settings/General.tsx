@@ -5,11 +5,15 @@ import { Icon } from '../../components/icons'
 import { Loading, Segmented, SettingRow, Switch } from '../../components/ui'
 import { Select } from '../../components/Select'
 import { Section, useSaveSettings } from './common'
+import { useDisplay } from '../../lib/display'
+import { useIsMobile } from '../../components/ui'
 import { comboOf, isMac, keyCaps, SHORTCUTS, type ShortcutId, useShortcuts } from '../../lib/shortcuts'
 
 export function GeneralTab() {
   const { settings, user, themeMode, setThemeMode } = useApp()
   const save = useSaveSettings()
+  const [display, setDisplay] = useDisplay()
+  const mobile = useIsMobile()
   const [title, setTitle] = useState(settings?.title || '')
   useEffect(() => { setTitle(settings?.title || '') }, [settings?.title])
   if (!settings) return <Loading />
@@ -34,6 +38,31 @@ export function GeneralTab() {
         <SettingRow title="Plan limits always in view" help="Claude’s and Codex’s limits at the bottom of the sidebar (in the menu on phones). Pick which ones with the pins on the Usage page.">
           <Switch label="Plan limits always in view" checked={s.usage_widget !== false} onChange={v => save({ usage_widget: v })} />
         </SettingRow>
+      </Section>
+
+      <Section title="On this device" sub="How conversations look in this browser. Your phone and your computer each keep their own.">
+        <SettingRow title="Text size" help="Messages, code, and the tool and thinking rows.">
+          <Segmented label="Text size" value={display.text} onChange={text => setDisplay({ text })} options={[
+            { value: 's', label: 'Small' }, { value: 'm', label: 'Default' }, { value: 'l', label: 'Large' }, { value: 'xl', label: 'Larger' },
+          ]} />
+        </SettingRow>
+        <SettingRow title="Spacing" help="Room between messages and around the “Ran a command” / “Thinking” rows.">
+          <Segmented label="Spacing" value={display.spacing} onChange={spacing => setDisplay({ spacing })} options={[
+            { value: 'compact', label: 'Compact' }, { value: 'default', label: 'Default' }, { value: 'roomy', label: 'Roomy' },
+          ]} />
+        </SettingRow>
+        {!mobile && <SettingRow title="Conversation width" help="How wide messages run on a big screen.">
+          <Segmented label="Conversation width" value={display.width} onChange={width => setDisplay({ width })} options={[
+            { value: 'narrow', label: 'Narrow' }, { value: 'default', label: 'Default' }, { value: 'wide', label: 'Wide' }, { value: 'full', label: 'Full' },
+          ]} />
+        </SettingRow>}
+        <div className="display-preview" aria-hidden>
+          <div className="timeline">
+            <div className="tl-item"><div className="msg user"><div className="bubble"><div className="user-text">How much space is left on the NAS?</div></div></div></div>
+            <div className="tl-item"><div className="thinking"><span className="thinking-h">Thinking</span></div></div>
+            <div className="tl-item"><div className="msg assistant"><div className="md"><p>The <code>tank</code> pool has <b>3.1 TB</b> free of 10.8 TB — about 29%.</p></div></div></div>
+          </div>
+        </div>
       </Section>
 
       <Section title="Composer">
