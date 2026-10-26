@@ -3,7 +3,7 @@
 // restore or delete archived ones, adopt or remove worktrees made elsewhere
 // (by hand, by Paseo).
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api, qs, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { ago, shortPath } from '../lib/format'
@@ -24,7 +24,9 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
   const [list, setList] = useState<Worktree[] | null>(null)
   const [others, setOthers] = useState<Other[]>([])
   const [n, setN] = useState(0)
-  const [open, setOpen] = useState<number | null>(null)
+  const [params, setParams] = useSearchParams()
+  // ?open=<id>: a link from another app (Pocket Projects' issue) opens that worktree
+  const [open, setOpen] = useState<number | null>(() => Number(params.get('open')) || null)
   const [busy, setBusy] = useState('')
   const [showArchived, setShowArchived] = useState(false)
   const [settings, setSettings] = useState<{ info: WorktreeRepoInfo; host: number } | null>(null)
@@ -178,7 +180,7 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
           </>}
         </div>
       </div>
-      {open !== null && <WorktreePanel id={open} onClose={() => { setOpen(null); reload() }} />}
+      {open !== null && <WorktreePanel id={open} onClose={() => { setOpen(null); if (params.has('open')) setParams(p => { p.delete('open'); return p }, { replace: true }); reload() }} />}
       {settings && <WorktreeSettingsDialog info={settings.info} host={settings.host} onClose={() => setSettings(null)} />}
       {removing && <Confirm title={`Remove ${removing.branch || 'this worktree'}?`} confirmLabel="Remove"
         message={<>The folder <code>{removing.path}</code> is removed. Anything uncommitted in it is saved under <code>refs/pocket-ai/removed/…</code> in the repository first; the branch stays.</>}

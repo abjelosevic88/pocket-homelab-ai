@@ -445,6 +445,17 @@ func TestLinkDraftWorktree(t *testing.T) {
 	gitT(t, repo, "add", "-A")
 	gitT(t, repo, "commit", "-q", "-m", "init")
 	gitT(t, repo, "branch", "as-3-old")
+	var started []string
+	// before the folders go: worktree setups done, the (fake) agents stopped
+	t.Cleanup(func() {
+		for _, id := range started {
+			for i := 0; i < 100 && s.holds().held(id); i++ {
+				time.Sleep(50 * time.Millisecond)
+			}
+			s.rt.stop(id)
+		}
+		time.Sleep(200 * time.Millisecond)
+	})
 
 	if code, b := app.call("POST", "/api/v1/link/drafts", map[string]any{"cwd": repo, "text": "x", "worktree": map[string]any{"name": "bad..name"}}); code != 400 {
 		t.Fatalf("bad branch name accepted: %d %s", code, b)
@@ -465,6 +476,7 @@ func TestLinkDraftWorktree(t *testing.T) {
 			t.Fatalf("draft worktree: %+v", d.Worktree)
 		}
 		owner.want("POST", "/api/v1/drafts/"+made.ID+"/start", map[string]any{"worktree": map[string]any{"mode": "new", "name": name}}, 201, &thread)
+		started = append(started, thread.ID)
 		return
 	}
 	branchOf := func(dir string) string { return gitT(t, dir, "rev-parse", "--abbrev-ref", "HEAD") }
@@ -478,5 +490,21 @@ func TestLinkDraftWorktree(t *testing.T) {
 	}
 	if old := start("as-3-old"); old.WorktreeID == 0 || old.WorktreeID == first.WorktreeID || branchOf(old.Cwd) != "as-3-old" {
 		t.Fatalf("existing branch: %+v", old)
+	}
+
+	// the item's worktrees: the conversations' own, plus branches named after it
+	var wts []linkWorktree
+	app.want("GET", "/api/v1/link/worktrees?source=projects&ref=AS-3", nil, 200, &wts)
+	if len(wts) != 1 || wts[0].Branch != "as-3-old" || wts[0].Status != "active" || len(wts[0].Threads) != 1 || !strings.Contains(wts[0].URL, "/worktrees?open=") {
+		t.Fatalf("AS-3 worktrees: %+v", wts)
+	}
+	app.want("GET", "/api/v1/link/worktrees?source=projects&ref=AS-2", nil, 200, &wts)
+	if len(wts) != 1 || wts[0].Branch != "you/as-2-login" || len(wts[0].Threads) != 2 {
+		t.Fatalf("AS-2 worktrees (named by branch, not by ref): %+v", wts)
+	}
+	var threads []linkThread
+	app.want("GET", "/api/v1/link/threads?source=projects&ref=as-3-old", nil, 200, &threads)
+	if len(threads) != 1 || threads[0].Worktree != "as-3-old" || threads[0].WorktreeID == 0 {
+		t.Fatalf("thread worktree: %+v", threads)
 	}
 }

@@ -208,6 +208,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/link/dirs", s.handleLinkDirs)
 		r.Get("/link/active", s.handleLinkActive)
 		r.Get("/link/prs", s.handleLinkPRs)
+		r.Get("/link/worktrees", s.handleLinkWorktrees)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)

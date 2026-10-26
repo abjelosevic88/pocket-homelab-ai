@@ -310,8 +310,11 @@ type linkThread struct {
 	URL      string  `json:"url"`
 	// PullRequests the agent opened in this conversation (from its own commands' output)
 	PullRequests []string `json:"pull_requests"`
-	CreatedAt    string   `json:"created_at"`
-	UpdatedAt    string   `json:"updated_at"`
+	// Worktree: the branch of the worktree it works in ("" = the folder itself)
+	Worktree   string `json:"worktree,omitempty"`
+	WorktreeID int64  `json:"worktree_id,omitempty"`
+	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
 }
 
 // handleLinkThreads lists the person's conversations about one item.
@@ -339,6 +342,11 @@ func (s *Server) handleLinkThreads(w http.ResponseWriter, r *http.Request) {
 					lt.Status = "waiting"
 				}
 				lt.PullRequests = s.threadPRs(ctx, t.ID)
+				if t.WorktreeID != 0 {
+					if wt, err := s.store.GetWorktree(ctx, u.ID, t.WorktreeID); err == nil {
+						lt.Worktree, lt.WorktreeID = wt.Branch, wt.ID
+					}
+				}
 			} else {
 				lt.Status, lt.URL = "deleted", ""
 			}
