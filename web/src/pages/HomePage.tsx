@@ -39,8 +39,18 @@ interface DraftFile { id: string; name: string; mime: string; size: number; url:
 
 /** The worktree a prepared conversation asks for, when the app's panel has no worktree
  * chooser: its branch, and the branch a new one starts from (pickable). */
-function DraftWorktree({ spec, cwd, onChange }: { spec: WorktreeSpec; cwd: string; onChange: (v: WorktreeSpec | null) => void }) {
+function DraftWorktree({ spec, cwd, onChange, onRename }: { spec: WorktreeSpec; cwd: string; onChange: (v: WorktreeSpec | null) => void; onRename: (from: string, to: string) => void }) {
   const [info, setInfo] = useState<WorktreeRepoInfo | null>(null)
+  const [editing, setEditing] = useState<string | null>(null)
+  // spaces become dashes, like the server does; git's own rules are checked on send
+  const clean = (v: string) => v.trim().replace(/\s+/g, '-').replace(/^\/+|\/+$/g, '')
+  const bad = (v: string) => !v || v.startsWith('-') || /[~^:?*[\\]|\.\.|\.lock$/.test(v)
+  const commit = () => {
+    if (editing === null) return
+    const to = clean(editing)
+    setEditing(null)
+    if (!bad(to) && to !== spec.name) { onRename(spec.name || '', to); onChange({ ...spec, name: to }) }
+  }
   useEffect(() => {
     let live = true
     api.get<WorktreeRepoInfo>(`${V1}/worktrees/config${qs({ path: cwd })}`).then(d => { if (live) setInfo(d) }).catch(() => {})
@@ -55,7 +65,13 @@ function DraftWorktree({ spec, cwd, onChange }: { spec: WorktreeSpec; cwd: strin
     <div className="draft-files" aria-label="Worktree">
       <div className="draft-files-list">
         <span className="draft-file draft-wt" title="Works in a git worktree of its own on this branch (an existing one for this branch is reused, and then it keeps its own base)">
-          <Icon name="fork" size={14} /><span className="ellipsis">Worktree <span className="mono">{spec.name}</span></span>
+          <Icon name="fork" size={14} />
+          {editing !== null
+            ? <input className="draft-wt-name mono" autoFocus value={editing} aria-label="Branch name" aria-invalid={bad(clean(editing)) || undefined} size={Math.max(16, Math.min(editing.length + 1, 60))}
+                onChange={e => setEditing(e.target.value)} onBlur={commit}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commit() } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setEditing(null) } }} />
+            : <button type="button" className="draft-wt-rename" title="Rename the branch" onClick={() => setEditing(spec.name || '')}>
+                <span className="ellipsis">Worktree <span className="mono">{spec.name}</span></span><Icon name="edit" size={12} /></button>}
           {opts.length > 0 && <><span className="muted">from</span>
             <Select className="ghost inline" size="sm" label="Start from branch" searchable value={spec.base || def} options={opts} width={280} onChange={b => onChange({ ...spec, base: b })} /></>}
           <button type="button" className="draft-file-x" aria-label="Work in the folder itself" title="Work in the folder itself" onClick={() => onChange(null)}><Icon name="x" size={12} /></button>
@@ -253,7 +269,11 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
     <div className="home embed-draft">
       {!draft || !choice || (params.get('send') === '1' && autoSent.current !== 'failed') ? <div className="embed-starting"><Loading label={params.get('send') === '1' ? 'Starting the conversation…' : 'Loading…'} /></div> : (
         <>
-        {choice.worktree && <DraftWorktree spec={choice.worktree} cwd={choice.cwd} onChange={wt => setChoice(c => c && { ...c, worktree: wt })} />}
+        {choice.worktree && <DraftWorktree spec={choice.worktree} cwd={choice.cwd} onChange={wt => setChoice(c => c && { ...c, worktree: wt })} onRename={(from, to) => {
+          // the prompt names the branch: it follows the new name
+          const text = sessionStorage.getItem('pai-draft-link-' + draft.id) ?? draft.text
+          if (from && text.includes(from)) serverComposer.current?.setText(text.split(from).join(to))
+        }} />}
         <DraftFiles files={draftFiles} source={draft.ref} onRemove={id => setDraftFiles(f => f.filter(x => x.id !== id))} />
         <Composer ref={serverComposer} big autoFocus draftKey={`link-${draft.id}`} onSend={send} skills={choice?.provider ? { provider: choice.provider, cwd: choice.cwd, account_id: choice.account_id, host_id: hostId } : undefined}
           placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} about ${draft.ref || 'this'}…`}

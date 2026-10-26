@@ -460,7 +460,8 @@ func (s *Server) handleStartDraft(w http.ResponseWriter, r *http.Request) {
 		in.Text = d.Text
 	}
 	in.Title = d.Title
-	if in.Worktree != nil && d.Worktree != nil && (in.Worktree.Mode == "" || in.Worktree.Mode == "new") && in.Worktree.Name == d.Worktree.Name {
+	// the app's worktree (its name possibly changed by the person): reuse, base, fast-forward
+	if in.Worktree != nil && d.Worktree != nil && (in.Worktree.Mode == "" || in.Worktree.Mode == "new") && in.Worktree.Name != "" {
 		in.Worktree = s.ticketWorktree(ctx, u, in.Cwd, *in.Worktree)
 	}
 	source := "link:" + d.Source
