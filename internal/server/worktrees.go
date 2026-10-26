@@ -80,6 +80,7 @@ func (l *stringList) UnmarshalJSON(b []byte) error {
 }
 
 const wtReadConfig = `cd -- "$1" || exit 3
+echo "@@origin=$(git remote get-url origin 2>/dev/null)"
 for f in .pocket-ai.json paseo.json; do
   [ -f "$f" ] && { echo "@@file=$f"; head -c 200000 "$f"; exit 0; }
 done
@@ -87,16 +88,26 @@ exit 0
 `
 
 type wtConfigView struct {
-	File        string    `json:"file"`        // paseo.json / .pocket-ai.json in the repo, if any
-	FileConfig  wtConfig  `json:"file_config"` // what it says
-	Saved       *wtConfig `json:"saved"`       // what Pocket AI keeps for the repo (wins)
-	Effective   wtConfig  `json:"effective"`
-	DefaultCopy []string  `json:"default_copy"`
+	File       string    `json:"file"`        // paseo.json / .pocket-ai.json in the repo, if any
+	FileConfig wtConfig  `json:"file_config"` // what it says
+	Saved      *wtConfig `json:"saved"`       // what Pocket AI keeps for the repo (wins)
+	// Project: who the repo is on any machine (github.com/owner/repo, from
+	// origin; "" = no remote). Scope: where Saved comes from — "project"
+	// (every machine), "machine" (this checkout only, wins), "" (none).
+	Project     string   `json:"project"`
+	Scope       string   `json:"scope"`
+	Effective   wtConfig `json:"effective"`
+	DefaultCopy []string `json:"default_copy"`
 }
 
 func (s *Server) repoConfig(ctx context.Context, h *store.Host, hostID int64, repo string) wtConfigView {
 	v := wtConfigView{DefaultCopy: defaultCopy}
-	if out, _, err := shOn(ctx, h, 20*time.Second, wtReadConfig, repo); err == nil && strings.HasPrefix(out, "@@file=") {
+	out, _, err := shOn(ctx, h, 20*time.Second, wtReadConfig, repo)
+	if first, rest, _ := strings.Cut(out, "\n"); err == nil && strings.HasPrefix(first, "@@origin=") {
+		v.Project = gitProjectID(strings.TrimPrefix(first, "@@origin="))
+		out = rest
+	}
+	if err == nil && strings.HasPrefix(out, "@@file=") {
 		first, body, _ := strings.Cut(out, "\n")
 		v.File = strings.TrimPrefix(first, "@@file=")
 		var f struct {
@@ -111,10 +122,15 @@ func (s *Server) repoConfig(ctx context.Context, h *store.Host, hostID int64, re
 			v.FileConfig = wtConfig{Setup: f.Worktree.Setup, Teardown: f.Worktree.Teardown, Copy: f.Worktree.Copy, Base: f.Worktree.Base}
 		}
 	}
-	if raw := s.store.RepoSettings(ctx, hostID, repo); raw != "" {
+	// This machine's own setup wins over the project's (every machine's).
+	for _, src := range []struct{ scope, raw string }{
+		{"machine", s.store.RepoSettings(ctx, hostID, repo)},
+		{"project", s.store.ProjectSettings(ctx, v.Project)},
+	} {
 		var saved wtConfig
-		if json.Unmarshal([]byte(raw), &saved) == nil {
-			v.Saved = &saved
+		if src.raw != "" && json.Unmarshal([]byte(src.raw), &saved) == nil {
+			v.Saved, v.Scope = &saved, src.scope
+			break
 		}
 	}
 	v.Effective = v.FileConfig
@@ -1145,6 +1161,9 @@ func (s *Server) handleSaveWorktreeConfig(w http.ResponseWriter, r *http.Request
 		Host  int64     `json:"host"`
 		Path  string    `json:"path"`
 		Saved *wtConfig `json:"saved"` // null = forget Pocket AI's settings (use the repo file)
+		// "project" (default when the repo has a remote): every machine, and
+		// this machine's own setup is dropped; "machine": this checkout only.
+		Scope string `json:"scope"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, 400, "bad body")
@@ -1161,7 +1180,23 @@ func (s *Server) handleSaveWorktreeConfig(w http.ResponseWriter, r *http.Request
 		b, _ := json.Marshal(in.Saved)
 		data = string(b)
 	}
-	if err := s.store.SaveRepoSettings(r.Context(), in.Host, info.Main, data); err != nil {
+	project := info.ProjectID
+	if in.Scope == "" && project != "" {
+		in.Scope = "project"
+	}
+	if in.Scope == "project" {
+		if project == "" {
+			writeErr(w, 400, "this repository has no git remote, so its setup can only be kept for this machine")
+			return
+		}
+		err = s.store.SaveProjectSettings(r.Context(), project, data)
+		if err == nil {
+			err = s.store.SaveRepoSettings(r.Context(), in.Host, info.Main, "")
+		}
+	} else {
+		err = s.store.SaveRepoSettings(r.Context(), in.Host, info.Main, data)
+	}
+	if err != nil {
 		s.fail(w, err, "worktree settings")
 		return
 	}

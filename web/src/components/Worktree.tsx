@@ -213,30 +213,47 @@ const lines = (s: string) => s.split('\n').map(x => x.trim()).filter(Boolean)
 
 export function WorktreeSettingsDialog({ info, host, onClose }: { info: WorktreeRepoInfo; host: number; onClose: () => void }) {
   const { toast } = useToast()
+  const { hosts } = useApp()
+  const project = info.config.project || ''
+  const machine = host ? hosts.find(x => x.id === host)?.name || 'that machine' : 'this server'
+  // One setup for every machine with this repo, unless this one has its own.
+  const [everywhere, setEverywhere] = useState(!!project && info.config.scope !== 'machine')
   const start = info.config.saved || info.config.file_config
   const [setup, setSetup] = useState((start.setup || []).join('\n'))
   const [teardown, setTeardown] = useState((start.teardown || []).join('\n'))
   const [copy, setCopy] = useState((info.config.saved?.copy || info.config.file_config.copy || []).join('\n'))
   const [base, setBase] = useState(start.base || '')
   const [busy, setBusy] = useState(false)
-  const save = async (saved: WorktreeSetupConfig | null) => {
+  const save = async (saved: WorktreeSetupConfig | null, scope: 'project' | 'machine' = everywhere ? 'project' : 'machine') => {
     setBusy(true)
     try {
-      await api.put(`${V1}/worktrees/config`, { host, path: info.repo, saved })
-      toast(saved ? 'Worktree setup saved' : `Back to ${info.config.file || 'no setup'}`)
+      await api.put(`${V1}/worktrees/config`, { host, path: info.repo, saved, scope })
+      toast(saved ? (scope === 'project' ? 'Saved for every machine with this repo' : `Saved for ${machine} only`) : scope === 'machine' && project ? `${machine} uses the setup for every machine again` : `Back to ${info.config.file || 'no setup'}`)
       onClose()
     } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
   }
   return (
-    <Modal title={`Worktree setup · ${info.repo.split('/').pop()}`} onClose={onClose} size="lg" footer={<>
-      {info.config.saved && <button type="button" className="btn ghost" disabled={busy} onClick={() => save(null)}>{info.config.file ? `Use ${info.config.file}` : 'Clear'}</button>}
+    <Modal title={`Worktree setup · ${(project || info.repo).split('/').pop()}`} onClose={onClose} size="lg" footer={<>
+      {info.config.saved && <button type="button" className="btn ghost" disabled={busy} onClick={() => save(null, info.config.scope === 'machine' ? 'machine' : 'project')}>
+        {info.config.scope === 'machine' && project ? 'Use the setup for every machine' : info.config.file ? `Use ${info.config.file}` : 'Clear'}</button>}
       <span className="grow" />
       <button type="button" className="btn" onClick={onClose}>Cancel</button>
       <button type="button" className="btn primary" disabled={busy} onClick={() => save({ setup: lines(setup), teardown: lines(teardown), copy: lines(copy), base: base.trim() || undefined })}>Save</button>
     </>}>
       <div className="stack">
+        <div className="wt-scope">
+          <Switch checked={everywhere} onChange={setEverywhere} disabled={!project} label="Same setup on every machine" />
+          <div className="grow">
+            <b>Same setup on every machine</b>
+            <p className="muted xsmall" style={{ margin: 0 }}>
+              {!project ? <>This repo has no git remote, so its setup is kept for <code>{shortPath(info.repo)}</code> on {machine} only.</>
+                : everywhere ? <>Used wherever <code>{project}</code> is checked out — this server and your other machines.{info.config.scope === 'machine' && <> Saving replaces the setup {machine} had of its own.</>}</>
+                  : <>Only for <code>{shortPath(info.repo)}</code> on {machine}; it wins over the setup for every machine.</>}
+            </p>
+          </div>
+        </div>
         <p className="muted small" style={{ margin: 0 }}>
-          Kept in Pocket AI for <code>{shortPath(info.repo)}</code>, so nothing has to be added to the repository.
+          Kept in Pocket AI, so nothing has to be added to the repository.
           {info.config.file ? <> The repo’s <code>{info.config.file}</code> is used for anything left empty here{info.config.saved ? '' : ' (it is what runs now)'}.</> : null}
           {' '}Commands run in the new worktree with <code>sh</code>, one after another; <code>$POCKET_ROOT_PATH</code> is the main checkout, <code>$POCKET_WORKTREE_PATH</code> the worktree (Paseo’s <code>$PASEO_*</code> names work too).
         </p>
