@@ -964,10 +964,15 @@ func mcpText(raw json.RawMessage) string {
 
 // Translate the private, per-session MCP proxy config without writing global
 // Codex configuration or handing the Core credential to the agent process.
+// The config is a file here, or the JSON itself (a conversation on another
+// machine).
 func codexPocketConfig(path string) (map[string]any, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
+	raw := []byte(path)
+	if !strings.HasPrefix(strings.TrimSpace(path), "{") {
+		var err error
+		if raw, err = os.ReadFile(path); err != nil {
+			return nil, err
+		}
 	}
 	var config struct {
 		Servers map[string]struct {

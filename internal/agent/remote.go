@@ -20,6 +20,10 @@ import (
 type Remote struct {
 	Target string // ssh destination: a Host from ~/.ssh/config or user@host
 	Port   int
+	// Forwards are ssh -R specs ("127.0.0.1:41234:127.0.0.1:38211") an agent's
+	// connection carries: the Pocket app tools, whose endpoint is on this
+	// server's loopback, reached from the remote machine's loopback.
+	Forwards []string
 }
 
 // sshArgs are the options of every connection: never prompt, learn a new
@@ -88,7 +92,16 @@ func Command(r *Remote, dir string, env []string, bin string, args ...string) *e
 		cmd.Env = append(os.Environ(), env...)
 		return cmd
 	}
-	cmd := exec.Command("ssh", append(r.sshArgs(), remoteCommand(remoteScript(dir, env, bin, args)))...)
+	var argv []string
+	if len(r.Forwards) > 0 {
+		// a forward that cannot be made fails the start instead of leaving the tools dead
+		argv = append(argv, "-o", "ExitOnForwardFailure=yes")
+		for _, f := range r.Forwards {
+			argv = append(argv, "-R", f)
+		}
+	}
+	argv = append(argv, r.sshArgs()...)
+	cmd := exec.Command("ssh", append(argv, remoteCommand(remoteScript(dir, env, bin, args)))...)
 	cmd.Env = os.Environ()
 	return cmd
 }

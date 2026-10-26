@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	mathrand "math/rand/v2"
+	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -473,9 +475,26 @@ func (rt *engine) startRemote(t *store.Thread, h *store.Host) (*run, error) {
 	o.Remote = remoteOf(h)
 	o.Bin = hostBin(h, t.Provider)
 	o.SystemPrompt = strings.Replace(o.SystemPrompt, "the coding-agent CLIs on this server", "the coding-agent CLIs on the person's machines", 1) +
-		"\nThis conversation runs on the machine \"" + h.Name + "\" (" + firstNonEmpty(h.Info.Hostname, h.Target) + "), reached over ssh from the Pocket AI server. " +
-		"Pocket app tools are not available here; for Pocket app data, the person can use a conversation on the Pocket AI server."
+		"\nThis conversation runs on the machine \"" + h.Name + "\" (" + firstNonEmpty(h.Info.Hostname, h.Target) + "), reached over ssh from the Pocket AI server."
 	sink := &runSink{rt: rt, r: r}
+	// Pocket app tools: their endpoint is on this server's loopback, so the
+	// ssh connection carries it to the remote machine's loopback.
+	tools := false
+	if t.Source != "ask" {
+		if _, err := rt.s.askToken(ctx, t.UserID); err == nil {
+			if err := rt.s.preparePocketTools(ctx, t, sink, &o); err != nil {
+				rt.s.log.Warn("Pocket app tools unavailable", "thread", t.ID, "host", h.Name, "err", err)
+			} else if err := remotePocketTools(&o); err != nil {
+				rt.s.log.Warn("Pocket app tools not forwarded", "thread", t.ID, "host", h.Name, "err", err)
+				o.MCPConfig = ""
+			} else {
+				tools = true
+			}
+		}
+	}
+	if !tools {
+		o.SystemPrompt += " Pocket app tools are not available here; for Pocket app data, the person can use a conversation on the Pocket AI server."
+	}
 	var err error
 	switch t.Provider {
 	case "claude":
@@ -489,7 +508,7 @@ func (rt *engine) startRemote(t *store.Thread, h *store.Host) (*run, error) {
 		cancel()
 		return nil, err
 	}
-	rt.s.log.Info("agent started", "thread", t.ID, "provider", t.Provider, "host", h.Name, "model", t.Model, "mode", t.Mode, "resume", o.ResumeID != "", "cwd", t.Cwd)
+	rt.s.log.Info("agent started", "thread", t.ID, "provider", t.Provider, "host", h.Name, "model", t.Model, "mode", t.Mode, "resume", o.ResumeID != "", "cwd", t.Cwd, "pocket_tools", tools)
 	return r, nil
 }
 
@@ -1668,4 +1687,36 @@ func (rt *engine) withMemory(r *run, in agent.Input, sender int64) agent.Input {
 	}
 	in.Text += rt.s.memoryContext(rt.ctx, r.userID, t.NoMemory)
 	return in
+}
+
+// remotePocketTools moves a conversation's Pocket tool connection to another
+// machine: a port on its loopback is forwarded over the agent's ssh
+// connection to the tool endpoint here, and the CLI there gets the config
+// itself (it has no file of ours).
+func remotePocketTools(o *agent.Options) error {
+	raw, err := os.ReadFile(o.MCPConfig)
+	if err != nil {
+		return err
+	}
+	var config struct {
+		Servers map[string]map[string]any `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		return err
+	}
+	pocket := config.Servers["pocket"]
+	u, err := url.Parse(fmt.Sprint(pocket["url"]))
+	if pocket == nil || err != nil || u.Hostname() != "127.0.0.1" || u.Port() == "" {
+		return errors.New("no local Pocket tool endpoint")
+	}
+	remote := 20000 + mathrand.IntN(40000)
+	o.Remote.Forwards = append(o.Remote.Forwards, fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%s", remote, u.Port()))
+	u.Host = fmt.Sprintf("127.0.0.1:%d", remote)
+	pocket["url"] = u.String()
+	out, err := json.Marshal(config)
+	if err != nil {
+		return err
+	}
+	o.MCPConfig = string(out)
+	return nil
 }
