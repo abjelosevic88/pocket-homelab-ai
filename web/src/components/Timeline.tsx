@@ -78,7 +78,7 @@ function logImages(threadId: string | undefined, key: string, n: number): ItemIm
 // Older tool rows only have "[image]" lines in their output.
 const imageCount = (t: ToolInfo) => t.images ?? (t.output || '').split('\n').filter(l => l === '[image]').length
 
-export const ItemView = memo(function ItemView({ item, showThinking, threadId, ownerId, ownerName }: { item: Item; showThinking: boolean; threadId?: string; ownerId?: number; ownerName?: string }) {
+export const ItemView = memo(function ItemView({ item, showThinking, threadId, ownerId, ownerName, onMoveFolder }: { item: Item; showThinking: boolean; threadId?: string; ownerId?: number; ownerName?: string; onMoveFolder?: () => void }) {
   switch (item.kind) {
     case 'user': {
       const pics = [...(item.images || []), ...logImages(threadId, item.key, item.log_images || 0)]
@@ -114,7 +114,8 @@ export const ItemView = memo(function ItemView({ item, showThinking, threadId, o
       return (
         <div className={`notice ${item.level || 'info'}`}>
           <Icon name={item.level === 'error' ? 'alert' : item.level === 'warn' ? 'alert' : 'info'} size={14} />
-          <span>{item.text}</span>
+          <span className="grow">{item.text}</span>
+          {item.fix === 'folder' && onMoveFolder && <button type="button" className="btn sm" onClick={onMoveFolder}><Icon name="folder" size={13} />Move to another folder…</button>}
         </div>
       )
     case 'turn':
@@ -150,7 +151,7 @@ function TurnFoot({ t, onFork, text }: { t: TurnInfo; onFork?: () => void; text?
   )
 }
 
-export function Timeline({ items, showThinking, streamingKey, onFork, threadId, onResend, onDropUnsent, onEdit, onRewind, rewindDisabled, owner }: { items: Item[]; showThinking: boolean; streamingKey?: string; onFork?: (after: string) => void; threadId?: string; onResend?: (it: Item) => void; onDropUnsent?: (it: Item) => void; onEdit?: (it: Item) => void; onRewind?: (it: Item) => void; rewindDisabled?: boolean; owner?: Owner }) {
+export function Timeline({ items, showThinking, streamingKey, onFork, threadId, onResend, onDropUnsent, onEdit, onRewind, rewindDisabled, owner, onMoveFolder }: { items: Item[]; showThinking: boolean; streamingKey?: string; onFork?: (after: string) => void; threadId?: string; onResend?: (it: Item) => void; onDropUnsent?: (it: Item) => void; onEdit?: (it: Item) => void; onRewind?: (it: Item) => void; rewindDisabled?: boolean; owner?: Owner; onMoveFolder?: () => void }) {
   // Items there when the thread opened render still; anything that arrives
   // while you watch slides in.
   const initial = useRef<Set<string> | null>(null)
@@ -175,13 +176,13 @@ export function Timeline({ items, showThinking, streamingKey, onFork, threadId, 
         return (
         <div key={entry.key} className={`tl-item ${initial.current!.has(it.key) ? '' : 'appear'} ${it.key === streamingKey ? 'streaming' : ''}`}>
           {entry.type === 'tools' ? <ToolActivity items={entry.items} /> : it.kind === 'turn' && it.turn ? <TurnFoot t={it.turn} text={said.get(it.key)} onFork={onFork ? () => onFork(it.key) : undefined} />
-            : <ItemView item={it} showThinking={showThinking} threadId={threadId} ownerId={owner?.id} ownerName={owner?.name} />}
+            : <ItemView item={it} showThinking={showThinking} threadId={threadId} ownerId={owner?.id} ownerName={owner?.name} onMoveFolder={onMoveFolder} />}
           {it.kind === 'user' && !it.queued && !it.unsent && (onEdit || onRewind) && <div className="message-actions">
             {onEdit && <button type="button" className="btn ghost icon-only xs" disabled={rewindDisabled} onClick={() => onEdit(it)} title={rewindDisabled ? 'Stop the agent and clear its queue before editing' : 'Edit message'} aria-label="Edit message"><Icon name="edit" size={14} /></button>}
             {onRewind && <button type="button" className="btn ghost icon-only xs" disabled={rewindDisabled} onClick={() => onRewind(it)} title={rewindDisabled ? 'Stop the agent and clear its queue before rewinding' : 'Rewind here (keeps the original conversation)'} aria-label="Rewind here"><Icon name="undo" size={14} /></button>}
           </div>}
           {it.kind === 'user' && it.unsent && (
-            <div className="unsent-tag"><Icon name="alert" size={12} /><span>Not sent — Pocket AI restarted before it went out.</span>
+            <div className="unsent-tag"><Icon name="alert" size={12} /><span>{it.unsent_why || 'Not sent — Pocket AI restarted before it went out.'}</span>
               {onResend && <button type="button" className="btn sm" onClick={() => onResend(it)}>Send again</button>}
               {onDropUnsent && <button type="button" className="btn ghost sm" onClick={() => onDropUnsent(it)}>Remove</button>}
             </div>

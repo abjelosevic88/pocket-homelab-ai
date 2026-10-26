@@ -25,6 +25,7 @@ import { Timeline } from '../components/Timeline'
 import { PrivacyBadge, ShareDialog } from '../components/ShareDialog'
 import { accessOf } from '../lib/share'
 import { actionFor, useShortcuts } from '../lib/shortcuts'
+import { FolderPicker } from '../components/FolderPicker'
 import { Confirm, download, Empty, errMsg, Loading, type MenuItem, MenuButton, useContextMenu, useToast } from '../components/ui'
 
 function upsert(list: Item[], it: Item): Item[] {
@@ -49,6 +50,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [rewinding, setRewinding] = useState(false)
   const [sharing, setSharing] = useState(false)
+  const [moving, setMoving] = useState(false)
   const [atBottom, setAtBottom] = useState(true)
   const [newBelow, setNewBelow] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
@@ -241,6 +243,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
     ...(document.querySelector('pocket-ask-launcher') ? [{ label: 'Ask about an item…', icon: 'sparkles' as const, onSelect: () => window.dispatchEvent(new Event('pocket-ask-pick')) }] : []),
     { label: t.pinned ? 'Unpin' : 'Pin to top', icon: 'bookmark', onSelect: () => patch({ pinned: !t.pinned }) },
     { label: 'Rename', icon: 'edit', onSelect: () => { setTitleDraft(t.title || threadTitle(t)); setEditingTitle(true) } },
+    { label: 'Move to another folder…', icon: 'folder', disabled: t.source === 'ask' || !canRun || running, onSelect: () => setMoving(true) },
     { label: 'Fork into a new thread', icon: 'fork', disabled: t.source === 'ask' || !t.provider_session_id || !canRun, onSelect: fork },
     { label: 'Export as Markdown', icon: 'download', onSelect: () => download(`${V1}/threads/${id}/export.md`) },
     'sep',
@@ -295,9 +298,9 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
                 onFork={owner && t.source !== 'ask' && t.provider_session_id && canRun ? forkNewTab : undefined}
                 onEdit={owner && canRun && !t.host_id ? it => { void rewind(it) } : undefined}
                 onRewind={owner && canRun && !t.host_id ? it => { void rewind(it) } : undefined} rewindDisabled={rewindDisabled}
-                owner={sharedOwner} />
+                owner={sharedOwner} onMoveFolder={owner && canRun ? () => setMoving(true) : undefined} />
               <ThreadEvidence id={id} revision={visible.filter(i => i.kind === 'turn').length} />
-              {t.status === 'error' && t.error && <div className="notice error"><Icon name="alert" size={14} /><span>{t.error}</span></div>}
+              {t.status === 'error' && t.error && !(lastItem?.kind === 'notice' && lastItem.text === t.error) && <div className="notice error"><Icon name="alert" size={14} /><span>{t.error}</span></div>}
             </>
           )}
         </div>
@@ -343,6 +346,9 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
         </div>
       </div>
 
+      {moving && <FolderPicker value={t.cwd} host={t.host_id || 0} onClose={() => setMoving(false)} onPick={async cwd => {
+        try { const th = await api.post<Thread>(`${V1}/threads/${id}/folder`, { cwd }); setThread(th); upsertThread(th); toast(`Moved to ${shortPath(th.cwd)}`) } catch (e) { toast(errMsg(e), 'err') }
+      }} />}
       {sharing && <ShareDialog thread={t} onClose={() => setSharing(false)} onSaved={th => { setThread(th); upsertThread(th) }} />}
       {ctx.menu}
       {confirmDelete && <Confirm title="Delete this thread?" message="The conversation disappears from Pocket AI. The CLI’s own session file on the server stays." onCancel={() => setConfirmDelete(false)} onConfirm={remove} />}

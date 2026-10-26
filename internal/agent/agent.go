@@ -26,6 +26,8 @@ type Item struct {
 	// Unsent: it was waiting in the queue when Pocket AI stopped, so it never
 	// reached the agent.
 	Unsent bool `json:"unsent,omitempty"`
+	// UnsentWhy says why, when it is not a restart ("" = Pocket AI restarted).
+	UnsentWhy string `json:"unsent_why,omitempty"`
 	// By: who sent a message in a shared thread (person id and name).
 	ByID    int64     `json:"by_id,omitempty"`
 	By      string    `json:"by,omitempty"`
@@ -34,6 +36,7 @@ type Item struct {
 	Todos   []Todo    `json:"todos,omitempty"`
 	Request *Request  `json:"request,omitempty"`
 	Level   string    `json:"level,omitempty"` // notice: info | warn | error
+	Fix     string    `json:"fix,omitempty"`   // notice: what the page offers to put it right ("folder": move the conversation)
 	Turn    *TurnInfo `json:"turn,omitempty"`
 }
 

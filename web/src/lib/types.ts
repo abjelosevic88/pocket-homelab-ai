@@ -266,9 +266,13 @@ export interface Item {
   todos?: Todo[]
   request?: AgentRequest
   level?: 'info' | 'warn' | 'error'
+  /** notice: what the page offers to put it right ('folder' = move the conversation) */
+  fix?: string
   turn?: TurnInfo
   log_images?: number
   unsent?: boolean
+  /** why it was not sent, when it is not a restart */
+  unsent_why?: string
   /** Who sent a message in a shared thread. */
   by?: string
   by_id?: number
