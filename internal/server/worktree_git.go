@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -78,6 +79,7 @@ echo "rel=$(git rev-parse --show-prefix)"
 echo "branch=$(git symbolic-ref --short -q HEAD)"
 echo "mainbranch=$(git -C "$main" symbolic-ref --short -q HEAD 2>/dev/null)"
 echo "originhead=$(git symbolic-ref --short -q refs/remotes/origin/HEAD 2>/dev/null)"
+echo "origin=$(git remote get-url origin 2>/dev/null)"
 echo "home=$HOME"
 `
 
@@ -89,6 +91,7 @@ type repoInfo struct {
 	Branch     string `json:"branch"`      // checked out in this folder
 	MainBranch string `json:"main_branch"` // checked out in the main checkout
 	Default    string `json:"default"`     // origin's default branch (main)
+	ProjectID  string `json:"project_id,omitempty"`
 	Home       string `json:"-"`
 }
 
@@ -102,7 +105,40 @@ func inspectRepo(ctx context.Context, h *store.Host, dir string) (repoInfo, erro
 		return repoInfo{}, badRequest(m["err"])
 	}
 	return repoInfo{Repo: m["repo"] == "1", Top: m["top"], Main: m["main"], Rel: m["rel"], Branch: m["branch"], MainBranch: m["mainbranch"],
-		Default: strings.TrimPrefix(m["originhead"], "origin/"), Home: m["home"]}, nil
+		Default: strings.TrimPrefix(m["originhead"], "origin/"), ProjectID: gitProjectID(m["origin"]), Home: m["home"]}, nil
+}
+
+// Match HTTPS, ssh:// and scp-style origins without returning credentials,
+// query strings or fragments. Local filesystem remotes stay machine-specific.
+func gitProjectID(remote string) string {
+	remote = strings.TrimSpace(remote)
+	var host, repo string
+	if strings.Contains(remote, "://") {
+		u, err := url.Parse(remote)
+		if err != nil || u.Hostname() == "" || u.Scheme == "file" {
+			return ""
+		}
+		host, repo = strings.ToLower(u.Hostname()), u.Path
+		if port := u.Port(); port != "" && port != "22" && port != "443" && port != "80" && port != "9418" {
+			host += ":" + port
+		}
+	} else if i := strings.IndexByte(remote, ':'); i > 0 && !strings.ContainsAny(remote[:i], "/\\") {
+		host, repo = remote[:i], remote[i+1:]
+		if at := strings.LastIndexByte(host, '@'); at >= 0 {
+			host = host[at+1:]
+		}
+		host = strings.ToLower(host)
+	} else {
+		return ""
+	}
+	repo = strings.TrimSuffix(strings.Trim(repo, "/"), ".git")
+	if host == "" || repo == "" {
+		return ""
+	}
+	if host == "github.com" {
+		repo = strings.ToLower(repo)
+	}
+	return host + "/" + repo
 }
 
 // ---------- create ----------
