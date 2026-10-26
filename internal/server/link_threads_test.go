@@ -425,3 +425,58 @@ func TestLinkUnlinkAndDelete(t *testing.T) {
 	}
 	app.want("DELETE", "/api/v1/link/threads/"+d3, nil, 404, nil)
 }
+
+// An app can ask for a worktree of the ticket's own: made on send, reused by
+// the next conversation about the same ticket, the branch picked up when the
+// repo already has it.
+func TestLinkDraftWorktree(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	s, h, root := testServer(t)
+	owner, _ := person(t, s, h, "link@example.test", "member", true)
+	linkCore(t, s, map[string]string{"pcx_valid": "link@example.test"})
+	fakeClaude(t, s, root)
+	app := &client{t: t, h: h, token: "pcx_valid"}
+	repo := filepath.Join(root, "repo")
+	if err := os.MkdirAll(repo, 0700); err != nil {
+		t.Fatal(err)
+	}
+	gitT(t, repo, "init", "-q", "-b", "main")
+	_ = os.WriteFile(filepath.Join(repo, "a.txt"), []byte("one\n"), 0o644)
+	gitT(t, repo, "add", "-A")
+	gitT(t, repo, "commit", "-q", "-m", "init")
+	gitT(t, repo, "branch", "as-3-old")
+
+	if code, b := app.call("POST", "/api/v1/link/drafts", map[string]any{"cwd": repo, "text": "x", "worktree": map[string]any{"name": "bad..name"}}); code != 400 {
+		t.Fatalf("bad branch name accepted: %d %s", code, b)
+	}
+	start := func(name string) (thread struct {
+		ID         string `json:"id"`
+		Cwd        string `json:"cwd"`
+		WorktreeID int64  `json:"worktree_id"`
+	}) {
+		var made struct{ ID string }
+		app.want("POST", "/api/v1/link/drafts", map[string]any{"cwd": repo, "text": "Fix " + name, "source": "projects", "ref": name,
+			"worktree": map[string]any{"name": name}}, 201, &made)
+		var d struct {
+			Worktree *store.DraftWorktree `json:"worktree"`
+		}
+		owner.want("GET", "/api/v1/drafts/"+made.ID, nil, 200, &d)
+		if d.Worktree == nil || d.Worktree.Name != name {
+			t.Fatalf("draft worktree: %+v", d.Worktree)
+		}
+		owner.want("POST", "/api/v1/drafts/"+made.ID+"/start", map[string]any{"worktree": map[string]any{"mode": "new", "name": name}}, 201, &thread)
+		return
+	}
+	branchOf := func(dir string) string { return gitT(t, dir, "rev-parse", "--abbrev-ref", "HEAD") }
+
+	first := start("you/as-2-login")
+	if first.WorktreeID == 0 || first.Cwd == repo || branchOf(first.Cwd) != "you/as-2-login" {
+		t.Fatalf("first: %+v", first)
+	}
+	if again := start("you/as-2-login"); again.WorktreeID != first.WorktreeID || again.Cwd != first.Cwd {
+		t.Fatalf("second conversation did not reuse the worktree: %+v vs %+v", again, first)
+	}
+	if old := start("as-3-old"); old.WorktreeID == 0 || old.WorktreeID == first.WorktreeID || branchOf(old.Cwd) != "as-3-old" {
+		t.Fatalf("existing branch: %+v", old)
+	}
+}

@@ -32,8 +32,24 @@ interface LinkDraft {
   title: string; text: string; system: string; source: string; ref: string; ref_url: string; ref_label: string; thread_id: string | null
   /** files the app attached (the issue's screenshots, documents): they go with the first message */
   uploads?: DraftFile[]
+  /** the app asks for a git worktree of its own on this branch (a ticket's) */
+  worktree?: { name: string; base?: string } | null
 }
 interface DraftFile { id: string; name: string; mime: string; size: number; url: string }
+
+/** The worktree a prepared conversation asks for, when the app's panel has no worktree chooser. */
+function DraftWorktree({ spec, onRemove }: { spec: WorktreeSpec; onRemove: () => void }) {
+  return (
+    <div className="draft-files" aria-label="Worktree">
+      <div className="draft-files-list">
+        <span className="draft-file draft-wt" title="Works in a git worktree of its own on this branch (an existing one for this branch is reused)">
+          <Icon name="fork" size={14} /><span className="ellipsis">Worktree <span className="mono">{spec.name}</span></span>
+          <button type="button" className="draft-file-x" aria-label="Work in the folder itself" title="Work in the folder itself" onClick={onRemove}><Icon name="x" size={12} /></button>
+        </span>
+      </div>
+    </div>
+  )
+}
 
 /** The files a prepared conversation brings along, each removable before sending. */
 function DraftFiles({ files, source, onRemove }: { files: DraftFile[]; source: string; onRemove: (id: string) => void }) {
@@ -128,8 +144,9 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
   const hostId = choice?.host_id && hosts.some(h => h.id === choice.host_id) ? choice.host_id : 0
   // the start page's repository (for the worktree switch): null = still looking, 'no' = not a git repo
   const [repo, setRepo] = useState<WorktreeRepoInfo | null | 'no'>(null)
-  const wtSpec = !draft && choice?.worktree && (repo !== 'no' || choice.worktree.mode === 'existing') ? choice.worktree : undefined
-  const wtWhere = !wtSpec ? '' : wtSpec.mode === 'existing' ? ` in worktree ${wtSpec.branch}` : wtSpec.mode === 'branch' ? ` in a worktree on ${wtSpec.branch}` : wtSpec.mode === 'pr' ? ` in a worktree of PR #${wtSpec.pr}` : ` in a new worktree from ${wtSpec.base || (repo && repo !== 'no' ? repo.base : 'the default branch')}`
+  // embedded drafts have no chooser to look at the folder: the server checks it on send
+  const wtSpec = choice?.worktree && (repo !== 'no' || choice.worktree.mode === 'existing' || (embedded && !!draft)) ? choice.worktree : undefined
+  const wtWhere = !wtSpec ? '' : wtSpec.mode === 'existing' ? ` in worktree ${wtSpec.branch}` : wtSpec.mode === 'branch' ? ` in a worktree on ${wtSpec.branch}` : wtSpec.mode === 'pr' ? ` in a worktree of PR #${wtSpec.pr}` : wtSpec.name ? ` in worktree ${wtSpec.name}` : ` in a new worktree from ${wtSpec.base || (repo && repo !== 'no' ? repo.base : 'the default branch')}`
   const pickHost = (id: number) => setChoice(c => c && { ...c, host_id: id, worktree: c.worktree?.mode === 'new' ? { mode: 'new' } : null, cwd: hostCwds()[String(id)] ?? (id ? '' : settings?.default_cwd || '') })
   // ?worktree=<id>: a new thread in one of my worktrees ("New thread here")
   const wtParam = Number(params.get('worktree')) || 0
@@ -174,6 +191,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
       account_id: draft.account_id ?? d.account_id,
       cwd: draft.cwd,
       host_id: 0,
+      worktree: draft.worktree?.name ? { mode: 'new', name: draft.worktree.name, base: draft.worktree.base || undefined } : null,
     })
   }, [draft, settings, providers, providersReady]) // eslint-disable-line react-hooks/exhaustive-deps
   const dropDraft = () => { if (draft) sessionStorage.removeItem('pai-draft-link-' + draft.id); setParams({}, { replace: true }) }
@@ -182,7 +200,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
 
   const send = async (text: string, uploadIds: string[]) => {
     if (!choice) return false
-    if (wtSpec && repo === null && wtSpec.mode !== 'existing') { toast('Still checking the folder for the worktree — try again in a second', 'err'); return false }
+    if (wtSpec && repo === null && wtSpec.mode !== 'existing' && !(embedded && draft)) { toast('Still checking the folder for the worktree — try again in a second', 'err'); return false }
     const ws = workspaces.find(w => w.path === choice.cwd)
     try {
       const t = await api.post<Thread>(draft ? `${V1}/drafts/${draft.id}/start` : `${V1}/threads`, {
@@ -221,6 +239,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
     <div className="home embed-draft">
       {!draft || !choice || (params.get('send') === '1' && autoSent.current !== 'failed') ? <div className="embed-starting"><Loading label={params.get('send') === '1' ? 'Starting the conversation…' : 'Loading…'} /></div> : (
         <>
+        {choice.worktree && <DraftWorktree spec={choice.worktree} onRemove={() => setChoice(c => c && { ...c, worktree: null })} />}
         <DraftFiles files={draftFiles} source={draft.ref} onRemove={id => setDraftFiles(f => f.filter(x => x.id !== id))} />
         <Composer ref={serverComposer} big autoFocus draftKey={`link-${draft.id}`} onSend={send} skills={choice?.provider ? { provider: choice.provider, cwd: choice.cwd, account_id: choice.account_id, host_id: hostId } : undefined}
           placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} about ${draft.ref || 'this'}…`}
@@ -289,7 +308,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
                 <ProviderToggle value={choice.provider} onChange={pickProvider} />
                 <div className="home-where">
                   {!draft && <HostPicker value={hostId} onChange={pickHost} />}
-                  {!draft && <WorktreeChooser cwd={choice.cwd} host={hostId} value={choice.worktree || null} onChange={wt => setChoice(c => c && { ...c, worktree: wt })} onRepo={setRepo} />}
+                  <WorktreeChooser cwd={choice.cwd} host={hostId} value={choice.worktree || null} onChange={wt => setChoice(c => c && { ...c, worktree: wt })} onRepo={setRepo} />
                   {choice.worktree?.mode !== 'existing' && <BranchButton cwd={choice.cwd} host={hostId} />}
                   <FolderButton value={choice.cwd} host={hostId} onChange={cwd => setChoice(c => c && { ...c, cwd, worktree: c.worktree?.mode === 'existing' ? null : c.worktree })} className="btn sm" />
                 </div>
