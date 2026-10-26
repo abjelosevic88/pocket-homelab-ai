@@ -111,6 +111,9 @@ export const Composer = React.forwardRef<ComposerHandle, {
   const [atShut, setAtShut] = useState('')
   const [ctx, setCtx] = useState<{ label: string; items: ParentContextItem[] } | null>(null)
   const [ctxBusy, setCtxBusy] = useState(false)
+  // the menus open above the box; with no room there (a draft filling the panel) they open inside it
+  const box = useRef<HTMLDivElement>(null)
+  const [menuInside, setMenuInside] = useState(false)
   const ta = useRef<HTMLTextAreaElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const photoInput = useRef<HTMLInputElement>(null)
@@ -265,6 +268,18 @@ export const Composer = React.forwardRef<ComposerHandle, {
     } catch (err) { toast(errMsg(err), 'err') } finally { setCtxBusy(false) }
   }
 
+  const menuOpen = slashList.length > 0 || (atQ !== null && (atList.length > 0 || !ctx || ctxBusy))
+  useLayoutEffect(() => {
+    if (!menuOpen || !box.current) return
+    // room above the box, inside the nearest scrolling area (or the window)
+    let top = 0
+    for (let el = box.current.parentElement; el; el = el.parentElement) {
+      const o = getComputedStyle(el).overflowY
+      if (o === 'auto' || o === 'scroll' || o === 'hidden') { top = el.getBoundingClientRect().top; break }
+    }
+    setMenuInside(box.current.getBoundingClientRect().top - Math.max(top, 0) < 220)
+  }, [menuOpen])
+
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return
     if (atList.length) {
@@ -305,9 +320,9 @@ export const Composer = React.forwardRef<ComposerHandle, {
   useEffect(() => () => rec.current?.stop(), [])
 
   return (
-    <div className={`composer ${big ? 'big' : ''} ${disabled ? 'disabled' : ''}`}>
+    <div ref={box} className={`composer ${big ? 'big' : ''} ${disabled ? 'disabled' : ''}`}>
       {slashList.length > 0 && (
-        <div className="slash-menu" role="listbox" aria-label="Recipes and skills">
+        <div className={`slash-menu ${menuInside ? 'inside' : ''}`} role="listbox" aria-label="Recipes and skills">
           {slashList.map((p, i) => {
             const first = i === 0 || ('recipe' in p) !== ('recipe' in slashList[i - 1])
             return (
@@ -340,7 +355,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
         </div>
       )}
       {atQ !== null && (atList.length > 0 || !ctx || ctxBusy) && (
-        <div className="slash-menu at-menu" role="listbox" aria-label="Add from the page">
+        <div className={`slash-menu at-menu ${menuInside ? 'inside' : ''}`} role="listbox" aria-label="Add from the page">
           <div className="slash-h">{ctx?.label ? `From ${ctx.label}` : 'Add as context'}</div>
           {!ctx ? <div className="slash-row muted"><Spinner size={14} /> Looking…</div>
             : atList.map((item, i) => (

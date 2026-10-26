@@ -253,6 +253,7 @@
 .attach-ico { width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; background: var(--hover); color: var(--text); flex: none; }
 .composer-bar > .attach-btn.on { color: var(--text); background: var(--hover); }
 .slash-menu { position: absolute; left: 8px; right: 8px; bottom: calc(100% + 6px); z-index: 30; background: var(--raised); border-radius: 12px; box-shadow: var(--shadow-lg); padding: 4px; max-height: 300px; overflow-y: auto; }
+.slash-menu.inside { top: 46px; bottom: auto; max-height: min(300px, max(160px, calc(100% - 100px))); }
 .slash-h { font-size: 11px; font-weight: 650; color: var(--faint); text-transform: uppercase; letter-spacing: .05em; padding: 6px 10px 4px; }
 .slash-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 10px; border: 0; border-radius: 8px; background: none; text-align: left; cursor: pointer; font: inherit; color: inherit; }
 .slash-row.hi { background: var(--hover); }
