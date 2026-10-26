@@ -159,6 +159,27 @@ func notConnected(err error, stderr string) bool {
 // muxArgs share one connection per machine between short commands. The
 // shared link notices a dead network within ~15 s (agents: 2 min), and closes
 // 5 minutes after its last use. They come first: ssh keeps the first value.
+// Put writes data to path on the remote machine (mode 600, replaced in one
+// step: a half-written file never takes its place).
+func (r *Remote) Put(ctx context.Context, timeout time.Duration, path string, data []byte) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	script := "set -e; umask 077; t=\"$1.part.$$\"; cat > \"$t\"; mv -f -- \"$t\" \"$1\""
+	argv := append(muxArgs(), r.sshArgs()...)
+	argv = append(argv, remoteCommand("set -- "+shq(path)+"\n"+script))
+	cmd := exec.CommandContext(ctx, "ssh", argv...)
+	cmd.Stdin = bytes.NewReader(data)
+	var errb bytes.Buffer
+	cmd.Stderr = &errb
+	if err := cmd.Run(); err != nil {
+		if msg := strings.TrimSpace(errb.String()); msg != "" {
+			return errors.New(msg)
+		}
+		return err
+	}
+	return nil
+}
+
 func muxArgs() []string {
 	dir := muxDir()
 	if dir == "" {

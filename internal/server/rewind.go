@@ -7,7 +7,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/agent"
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
@@ -66,9 +69,9 @@ func nextSentPrompt(rows []*store.Item, turnKey string) string {
 // the original keeps working: it never reads past an earlier, finished turn.
 func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.Thread, key string, fork bool) {
 	ctx := r.Context()
-	if t.HostID != 0 {
-		// the copy is cut from the CLI's session file, which is on the other machine
-		writeErr(w, 400, "conversations on another server can only be forked at the latest response (for now)")
+	if t.HostID != 0 && t.Provider != "claude" {
+		// Codex cuts its copy with its own CLI, which would have to run over there
+		writeErr(w, 400, "Codex conversations on another server can only be forked at the latest response (for now)")
 		return
 	}
 	rows, err := s.store.ListItems(ctx, t.ID)
@@ -116,7 +119,10 @@ func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.T
 			writeErr(w, 409, "the agent history is unavailable for this message")
 			return
 		}
-		if err = s.ensureSession(ctx, t, t.ProviderSessionID); err == nil {
+		if t.HostID != 0 {
+			// the session file is on the other machine: cut the copy here, put it back there
+			sid, err = s.rewindRemoteClaude(ctx, t, users)
+		} else if err = s.ensureSession(ctx, t, t.ProviderSessionID); err == nil {
 			home, env := s.accountHome(ctx, t.Provider, t.AccountID)
 			switch t.Provider {
 			case "claude":
@@ -135,7 +141,7 @@ func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.T
 	n := &store.Thread{ID: uuid.NewString(), UserID: t.UserID, Title: "Rewind · " + t.Title,
 		Provider: t.Provider, AccountID: t.AccountID, Model: t.Model, Effort: t.Effort, Mode: t.Mode, Speed: t.Speed,
 		Cwd: t.Cwd, WorkspaceID: t.WorkspaceID, WorktreeID: t.WorktreeID, NoMemory: t.NoMemory, ProviderSessionID: sid,
-		Source: "rewind", SourceRef: t.ID}
+		Source: "rewind", SourceRef: t.ID, HostID: t.HostID}
 	if fork {
 		n.Title, n.Source = "Fork of "+t.Title, "fork"
 	}
@@ -303,4 +309,49 @@ func (s *Server) writeRewindUpload(ctx context.Context, t *store.Thread, name, m
 		return uploadOut{}, err
 	}
 	return uploadOut{Upload: up, URL: "/api/v1/uploads/" + id}, nil
+}
+
+// rewindRemoteClaude makes the cut copy of a Claude session that lives on
+// another machine: the file comes here over ssh, RewindClaude cuts it in a
+// scratch folder, and the copy goes back next to the original. "" when the
+// copy starts with no earlier context (a fresh session).
+func (s *Server) rewindRemoteClaude(ctx context.Context, t *store.Thread, users []agent.Item) (string, error) {
+	h, err := s.host(ctx, t.HostID)
+	if err != nil || h == nil {
+		return "", fmt.Errorf("the server this conversation runs on is gone")
+	}
+	rm := remoteOf(h)
+	out, errOut, err := rm.Run(ctx, 30*time.Second, `for f in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/"$1".jsonl; do [ -f "$f" ] && { printf '%s\n' "$f"; exit 0; }; done; exit 3`, t.ProviderSessionID)
+	src := strings.TrimSpace(out)
+	if err != nil || src == "" {
+		return "", fmt.Errorf("the session file is not on %s (%s)", h.Name, sshError(errOut, err))
+	}
+	data, errOut, err := rm.Run(ctx, 2*time.Minute, `cat -- "$1"`, src)
+	if err != nil {
+		return "", fmt.Errorf("could not read the session on %s: %s", h.Name, sshError(errOut, err))
+	}
+	scratch, err := os.MkdirTemp(s.cfg.DataDir, "remote-rewind-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(scratch)
+	dir := filepath.Join(scratch, "projects", "remote")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(dir, t.ProviderSessionID+".jsonl"), []byte(data), 0o600); err != nil {
+		return "", err
+	}
+	sid, cut, err := agent.RewindClaude(scratch, t.ProviderSessionID, users)
+	if err != nil || sid == "" {
+		return sid, err
+	}
+	copied, err := os.ReadFile(cut)
+	if err != nil {
+		return "", err
+	}
+	if err := rm.Put(ctx, 2*time.Minute, path.Join(path.Dir(src), sid+".jsonl"), copied); err != nil {
+		return "", fmt.Errorf("could not write the copy on %s: %v", h.Name, err)
+	}
+	return sid, nil
 }
