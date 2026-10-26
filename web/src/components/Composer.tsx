@@ -3,9 +3,10 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { api, uploadWithProgress, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { isTouch } from '../lib/format'
+import { parentContext, parentContextItem, parentTabs, type ParentContextItem } from '../lib/embed'
 import type { ProviderId, Recipe, Skill, Upload } from '../lib/types'
 import { Icon } from './icons'
-import { Spinner, useDismiss, useToast, noGrammarly } from './ui'
+import { errMsg, Spinner, useDismiss, useToast, noGrammarly } from './ui'
 
 interface Attachment {
   lid: string
@@ -104,6 +105,12 @@ export const Composer = React.forwardRef<ComposerHandle, {
   const [dragging, setDragging] = useState(false)
   const [listening, setListening] = useState(false)
   const [slashHi, setSlashHi] = useState(0)
+  // "@": the framing page's items (Pocket Projects: the issue's notes, files, links)
+  const [caret, setCaret] = useState(0)
+  const [atHi, setAtHi] = useState(0)
+  const [atShut, setAtShut] = useState('')
+  const [ctx, setCtx] = useState<{ label: string; items: ParentContextItem[] } | null>(null)
+  const [ctxBusy, setCtxBusy] = useState(false)
   const ta = useRef<HTMLTextAreaElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const photoInput = useRef<HTMLInputElement>(null)
@@ -232,8 +239,40 @@ export const Composer = React.forwardRef<ComposerHandle, {
     setTimeout(() => ta.current?.focus(), 0)
   }
 
+  const before = text.slice(0, caret)
+  const atMatch = parentTabs && slash === null ? /(^|\s)@([^\s@]*)$/.exec(before) : null
+  const atQ = atMatch && before !== atShut ? atMatch[2].toLowerCase() : null
+  useEffect(() => {
+    if (atQ === null) { setCtx(null); return } // asked again next time: the page's items change
+    let live = true
+    parentContext().then(c => { if (live) setCtx(c) }).catch(() => { if (live) setCtx({ label: '', items: [] }) })
+    return () => { live = false }
+  }, [atQ !== null]) // eslint-disable-line react-hooks/exhaustive-deps
+  const atList: ParentContextItem[] = atQ === null || !ctx ? [] : ctx.items.filter(i => i.title.toLowerCase().includes(atQ) || (i.sub || '').toLowerCase().includes(atQ)).slice(0, 10)
+  useEffect(() => setAtHi(0), [atQ])
+  const pickAt = async (item: ParentContextItem) => {
+    if (!atMatch) return
+    const start = caret - atMatch[2].length - 1
+    const rest = text.slice(caret)
+    setText(text.slice(0, start) + rest)
+    setCaret(start)
+    setTimeout(() => { ta.current?.focus(); ta.current?.setSelectionRange(start, start) }, 0)
+    setCtxBusy(true)
+    try {
+      const got = await parentContextItem(item.id)
+      if (got.file) addFiles([got.file])
+      else if (got.text) setText(t => t.slice(0, start) + got.text + ' ' + t.slice(start))
+    } catch (err) { toast(errMsg(err), 'err') } finally { setCtxBusy(false) }
+  }
+
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return
+    if (atList.length) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setAtHi(h => (h + 1) % atList.length); return }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setAtHi(h => (h - 1 + atList.length) % atList.length); return }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); void pickAt(atList[atHi]); return }
+      if (e.key === 'Escape') { e.preventDefault(); setAtShut(before); return }
+    }
     if (slashList.length) {
       if (e.key === 'ArrowDown') { e.preventDefault(); setSlashHi(h => (h + 1) % slashList.length); return }
       if (e.key === 'ArrowUp') { e.preventDefault(); setSlashHi(h => (h - 1 + slashList.length) % slashList.length); return }
@@ -300,8 +339,21 @@ export const Composer = React.forwardRef<ComposerHandle, {
           ))}
         </div>
       )}
+      {atQ !== null && (atList.length > 0 || !ctx || ctxBusy) && (
+        <div className="slash-menu at-menu" role="listbox" aria-label="Add from the page">
+          <div className="slash-h">{ctx?.label ? `From ${ctx.label}` : 'Add as context'}</div>
+          {!ctx ? <div className="slash-row muted"><Spinner size={14} /> Looking…</div>
+            : atList.map((item, i) => (
+              <button key={item.id} type="button" role="option" aria-selected={i === atHi} className={`slash-row ${i === atHi ? 'hi' : ''}`} onMouseEnter={() => setAtHi(i)} onMouseDown={e => e.preventDefault()} onClick={() => { void pickAt(item) }}>
+                <span className={`slash-ico at-ico ${item.kind}`}><Icon name={item.kind === 'note' ? 'note' : item.kind === 'file' ? 'paperclip' : 'link'} size={14} /></span>
+                <span className="grow"><span className="slash-name">{item.title}</span><span className="slash-sub">{[item.kind === 'note' ? 'Note' : item.kind === 'file' ? 'File' : 'Link', item.sub].filter(Boolean).join(' · ')}</span></span>
+              </button>
+            ))}
+        </div>
+      )}
       <textarea {...noGrammarly} ref={ta} rows={big ? 3 : 1} value={text} disabled={disabled} placeholder={placeholder} aria-label="Message"
-        onChange={e => setText(e.target.value)} onKeyDown={onKey} onPaste={onPaste} enterKeyHint={isTouch() ? 'enter' : 'send'} />
+        onSelect={e => setCaret(e.currentTarget.selectionStart)}
+        onChange={e => { setText(e.target.value); setCaret(e.target.selectionStart) }} onKeyDown={onKey} onPaste={onPaste} enterKeyHint={isTouch() ? 'enter' : 'send'} />
       <div className="composer-bar">
         {/* Phones get Camera / Photos / Files like the Codex app: one input each, so iOS opens
             the camera or the document browser directly. A computer opens one file dialog. */}

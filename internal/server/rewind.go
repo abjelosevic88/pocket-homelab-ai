@@ -211,6 +211,7 @@ func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.T
 			return
 		}
 		complete = true
+		s.inheritLink(ctx, t, n)
 		s.rt.publishThread(n)
 		writeJSON(w, http.StatusCreated, n)
 		return
@@ -254,6 +255,7 @@ func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.T
 		return
 	}
 	complete = true
+	s.inheritLink(ctx, t, n)
 	s.rt.publishThread(n)
 	writeJSON(w, http.StatusCreated, map[string]any{"thread": n, "draft": map[string]any{"text": target.Text, "uploads": uploads}})
 }

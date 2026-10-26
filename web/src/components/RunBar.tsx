@@ -2,6 +2,7 @@
 // on the go, and a fork button that opens the fork in a new tab.
 import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
+import { openInParent, parentTabs } from '../lib/embed'
 import type { Item, Thread } from '../lib/types'
 import { Icon } from './icons'
 import { RunDots, elapsed, useNow } from './RunningList'
@@ -15,11 +16,13 @@ export function useForkNewTab(threadId: string) {
   const { toast } = useToast()
   // after = a turn footer's key: fork as the conversation was right after it.
   return async (after?: string) => {
-    const w = window.open('about:blank', '_blank')
+    // in a panel with tabs (Pocket Projects), the fork opens in a tab there
+    const w = parentTabs ? null : window.open('about:blank', '_blank')
     try {
       const n = await api.post<Thread>(`${V1}/threads/${threadId}/fork`, after ? { after } : undefined)
       upsertThread(n)
-      if (w) w.location.href = `/t/${n.id}`
+      if (parentTabs) { openInParent(n.id, n.title); toast('Forked — the copy opened in a new tab') }
+      else if (w) w.location.href = `/t/${n.id}`
       else window.location.href = `/t/${n.id}`
     } catch (e) { w?.close(); toast(errMsg(e), 'err') }
   }
