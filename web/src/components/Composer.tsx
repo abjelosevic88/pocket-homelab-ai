@@ -140,8 +140,18 @@ export const Composer = React.forwardRef<ComposerHandle, {
     const el = ta.current
     if (!el) return
     el.style.height = 'auto'
-    el.style.height = Math.min(el.scrollHeight, big ? 360 : 280) + 'px'
+    const max = big ? 360 : 280
+    // a scrollbar only once the text is taller than the box may grow (CSS may cap it lower, a
+    // phone with the keyboard open): otherwise a pixel of rounding shows an empty one
+    const cap = Math.min(max, parseFloat(getComputedStyle(el).maxHeight) || max)
+    el.style.overflowY = el.scrollHeight > cap + 2 ? 'auto' : 'hidden'
+    el.style.height = Math.min(el.scrollHeight, max) + 'px'
   }, [text, big])
+  useEffect(() => {
+    const again = () => { const el = ta.current; if (el) el.style.overflowY = el.scrollHeight > el.clientHeight + 2 ? 'auto' : 'hidden' }
+    window.addEventListener('resize', again)
+    return () => window.removeEventListener('resize', again)
+  }, [])
   useEffect(() => { if (autoFocus && !isTouch()) ta.current?.focus() }, [autoFocus, draftKey])
 
   const addFiles = useCallback(async (files: File[]) => {
