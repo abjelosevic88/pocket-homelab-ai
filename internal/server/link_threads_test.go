@@ -477,7 +477,7 @@ func TestLinkDraftWorktree(t *testing.T) {
 	if code, b := app.call("POST", "/api/v1/link/drafts", map[string]any{"cwd": repo, "text": "x", "worktree": map[string]any{"name": "bad..name"}}); code != 400 {
 		t.Fatalf("bad branch name accepted: %d %s", code, b)
 	}
-	start := func(name string) (thread struct {
+	start := func(name string, rename ...string) (thread struct {
 		ID         string `json:"id"`
 		Cwd        string `json:"cwd"`
 		WorktreeID int64  `json:"worktree_id"`
@@ -492,7 +492,11 @@ func TestLinkDraftWorktree(t *testing.T) {
 		if d.Worktree == nil || d.Worktree.Name != name {
 			t.Fatalf("draft worktree: %+v", d.Worktree)
 		}
-		owner.want("POST", "/api/v1/drafts/"+made.ID+"/start", map[string]any{"worktree": map[string]any{"mode": "new", "name": name}}, 201, &thread)
+		send := name
+		if len(rename) > 0 {
+			send = rename[0]
+		}
+		owner.want("POST", "/api/v1/drafts/"+made.ID+"/start", map[string]any{"worktree": map[string]any{"mode": "new", "name": send}}, 201, &thread)
 		started = append(started, thread.ID)
 		return
 	}
@@ -510,6 +514,12 @@ func TestLinkDraftWorktree(t *testing.T) {
 	}
 	if again := start("you/as-2-login"); again.WorktreeID != first.WorktreeID || again.Cwd != first.Cwd {
 		t.Fatalf("second conversation did not reuse the worktree: %+v vs %+v", again, first)
+	}
+	// renamed before sending: the new name, still from origin's up-to-date main
+	if ren := start("you/as-4-long-title-cut-o", "fix/as-4-tidy"); branchOf(ren.Cwd) != "fix/as-4-tidy" {
+		t.Fatalf("renamed: %+v", ren)
+	} else if _, err := os.Stat(filepath.Join(ren.Cwd, "c.txt")); err != nil {
+		t.Fatal("the renamed worktree did not start from origin's main")
 	}
 	if old := start("as-3-old"); old.WorktreeID == 0 || old.WorktreeID == first.WorktreeID || branchOf(old.Cwd) != "as-3-old" {
 		t.Fatalf("existing branch: %+v", old)
