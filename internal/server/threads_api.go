@@ -489,13 +489,9 @@ func (s *Server) handlePatchThread(w http.ResponseWriter, r *http.Request) {
 	}
 	if switched != "" {
 		// The next turn runs on the other login: a new process, the session
-		// file copied over first (startRun → ensureSession).
+		// file copied over first (startRun → ensureSession). The account
+		// picker shows the switch; no notice in the conversation.
 		restart = true
-		text := "From here on this conversation runs on " + switched + "."
-		if t.ProviderSessionID != "" {
-			text += " The conversation so far was moved over; the first reply may take a little longer (the new account has nothing cached yet)."
-		}
-		s.rt.saveItem(t.ID, agent.Item{Key: "acct-" + uuid.NewString()[:8], Kind: "notice", Level: "info", Text: text})
 	}
 	modeChanged := false
 	if in.Mode != nil && *in.Mode != t.Mode {
