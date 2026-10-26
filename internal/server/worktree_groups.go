@@ -1,11 +1,14 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
 )
 
 // A person's own groups on the Worktrees page: named, ordered, folded or
@@ -33,7 +36,8 @@ func (s *Server) handleCreateWorktreeGroup(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var in struct {
-		Name string `json:"name"`
+		Name     string `json:"name"`
+		ParentID int64  `json:"parent_id"`
 	}
 	_ = decode(r, &in)
 	name, ok := groupName(in.Name)
@@ -41,7 +45,7 @@ func (s *Server) handleCreateWorktreeGroup(w http.ResponseWriter, r *http.Reques
 		writeErr(w, 400, "name the group")
 		return
 	}
-	g, err := s.store.CreateWorktreeGroup(r.Context(), me(r), name)
+	g, err := s.store.CreateWorktreeGroup(r.Context(), me(r), name, in.ParentID)
 	if err != nil {
 		s.fail(w, err, "worktree group")
 		return
@@ -123,6 +127,31 @@ func (s *Server) handlePlaceWorktree(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err := s.store.PlaceWorktree(r.Context(), me(r), id, in.GroupID, in.Order); err != nil {
 		s.fail(w, err, "move worktree")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// PUT /worktree-groups/{id}/move {parent_id (0: at the top), order: the parent's groups after the move}
+func (s *Server) handleMoveWorktreeGroup(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRun(w, r) {
+		return
+	}
+	var in struct {
+		ParentID int64   `json:"parent_id"`
+		Order    []int64 `json:"order"`
+	}
+	if err := decode(r, &in); err != nil || len(in.Order) > 500 {
+		writeErr(w, 400, "invalid json")
+		return
+	}
+	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err := s.store.MoveWorktreeGroup(r.Context(), me(r), id, in.ParentID, in.Order); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			writeErr(w, 409, "a group cannot go inside itself or one of its own groups")
+			return
+		}
+		s.fail(w, err, "move group")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
