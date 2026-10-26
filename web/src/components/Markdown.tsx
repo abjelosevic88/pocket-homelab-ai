@@ -10,7 +10,13 @@ export const Markdown = memo(function Markdown({ text, className = '' }: { text:
     const el = ref.current
     if (!el) return
     el.querySelectorAll('pre').forEach(pre => {
-      if (pre.querySelector(':scope > .code-copy')) return
+      if (pre.parentElement?.classList.contains('code-wrap')) return
+      // The button sits on a wrapper, not in the <pre>: a long line scrolls
+      // the <pre> sideways and would carry the button into the code.
+      const wrap = document.createElement('div')
+      wrap.className = 'code-wrap'
+      pre.replaceWith(wrap)
+      wrap.appendChild(pre)
       const b = document.createElement('button')
       b.type = 'button'
       b.className = 'code-copy'
@@ -20,7 +26,7 @@ export const Markdown = memo(function Markdown({ text, className = '' }: { text:
         b.textContent = (await copyText(code)) ? 'Copied' : 'Failed'
         setTimeout(() => { b.textContent = 'Copy' }, 1400)
       })
-      pre.appendChild(b)
+      wrap.appendChild(b)
     })
   }, [html])
   return <div ref={ref} className={`md ${className}`} dangerouslySetInnerHTML={{ __html: html }} />
