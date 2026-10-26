@@ -288,6 +288,8 @@ export interface DirListing {
   home?: string
   /** another machine: its working folders outside home (/work, /srv/app) */
   places?: string[]
+  /** the folder asked for does not exist; path is the nearest one that does */
+  missing?: string
 }
 
 export interface AgentChoice { provider: ProviderId | ''; model: string; effort: string; mode: string; speed?: string; cwd: string }

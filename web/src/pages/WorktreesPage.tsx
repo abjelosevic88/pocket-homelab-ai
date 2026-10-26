@@ -30,10 +30,21 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
   const [settings, setSettings] = useState<{ info: WorktreeRepoInfo; host: number } | null>(null)
   const [removing, setRemoving] = useState<Other | null>(null)
 
-  // live git state + sizes; the cheap list from the app context keeps it current between loads
+  // The list shows at once; git state and folder sizes (ssh to other
+  // machines, du) fill in as they arrive. The cheap list from the app
+  // context keeps it current between loads.
   useEffect(() => {
     let live = true
-    api.get<Worktree[]>(`${V1}/worktrees?state=1&sizes=1`).then(d => { if (live) setList(d) }).catch(e => { if (live) { toast(errMsg(e), 'err'); setList([]) } })
+    let full = false
+    let sizes: Record<number, number> | null = null
+    const withSizes = (d: Worktree[]) => sizes ? d.map(w => w.id in sizes! ? { ...w, state: { ...w.state, size_kb: sizes![w.id] } as Worktree['state'] } : w) : d
+    api.get<Worktree[]>(`${V1}/worktrees`).then(d => { if (live && !full) setList(withSizes(d)) }).catch(() => {})
+    api.get<Worktree[]>(`${V1}/worktrees?state=1`).then(d => { if (live) { full = true; setList(withSizes(d)) } }).catch(e => { if (live) { toast(errMsg(e), 'err'); setList(l => l || []) } })
+    api.get<Worktree[]>(`${V1}/worktrees?sizes=1`).then(d => {
+      if (!live) return
+      sizes = Object.fromEntries(d.filter(w => w.state?.size_kb).map(w => [w.id, w.state!.size_kb!]))
+      setList(l => l && withSizes(l))
+    }).catch(() => {})
     api.get<Other[]>(`${V1}/worktrees/others`).then(d => { if (live) setOthers(d) }).catch(() => {})
     return () => { live = false }
   }, [n, worktrees.length]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -61,7 +72,8 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
     } catch (e) { toast(errMsg(e), 'err') } finally { setBusy('') }
   }
   const openSettings = async (repo: string, host: number) => {
-    try { setSettings({ info: await api.get<WorktreeRepoInfo>(`${V1}/worktrees/config${qs({ path: repo, host: host || undefined })}`), host }) } catch (e) { toast(errMsg(e), 'err') }
+    setBusy(`setup:${host}:${repo}`)
+    try { setSettings({ info: await api.get<WorktreeRepoInfo>(`${V1}/worktrees/config${qs({ path: repo, host: host || undefined })}`), host }) } catch (e) { toast(errMsg(e), 'err') } finally { setBusy('') }
   }
   const adopt = async (o: Other) => {
     setBusy(o.path)
@@ -124,7 +136,9 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
             {groups.map(g => (
               <section key={`${g.host}:${g.repo}`} className="srv-group">
                 <h3 className="srv-h"><span className="ellipsis">{shortPath(g.repo)}</span>{g.host_name && <span className="badge"><Icon name="server" size={10} />{g.host_name}</span>}<span className="muted">{g.items.length}</span>
-                  <span className="grow" /><button type="button" className="link-btn xsmall" onClick={() => openSettings(g.repo, g.host)}>Setup…</button></h3>
+                  <span className="grow" /><button type="button" className="link-btn xsmall" disabled={busy === `setup:${g.host}:${g.repo}`} onClick={() => openSettings(g.repo, g.host)}
+                    title="How new worktrees of this repo are prepared: commands to run (e.g. install), files to copy (.env), teardown on archive, the branch to start from">
+                    {busy === `setup:${g.host}:${g.repo}` && <Spinner size={10} />}Setup…</button></h3>
                 <div className="wt-cards">{g.items.map(card)}</div>
               </section>
             ))}

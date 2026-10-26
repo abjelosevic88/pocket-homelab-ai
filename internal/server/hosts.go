@@ -30,6 +30,8 @@ func (s *Server) hostRoutes(r chi.Router) {
 	r.Delete("/hosts/{id}", s.handleDeleteHost)
 	r.Post("/hosts/{id}/check", s.handleCheckHost)
 	r.Get("/hosts/key", s.handleHostKey)
+	r.Post("/fs/mkdir", s.handleMkdir)
+	r.Post("/fs/clone", s.handleClone)
 }
 
 func remoteOf(h *store.Host) *agent.Remote {
@@ -322,7 +324,14 @@ func (s *Server) checkHostUse(ctx context.Context, u *store.User, id int64) (*st
 const remoteDirs = `cd -- "$HOME" 2>/dev/null && home=$(pwd -P) || home=$HOME
 p=$1
 case "$p" in "") p=$HOME;; "~") p=$HOME;; "~/"*) p="$HOME/${p#\~/}";; esac
-cd -- "$p" 2>/dev/null || { echo "err=the folder $p does not exist there"; exit 0; }
+if ! cd -- "$p" 2>/dev/null; then
+  # not there (yet): show the nearest folder that is, and say so
+  case "$p" in /*) ;; *) echo "err=use an absolute folder path (or ~/…)"; exit 0;; esac
+  echo "missing=$p"
+  q=$p
+  while [ "$q" != / ] && ! cd -- "$q" 2>/dev/null; do q=$(dirname -- "$q"); done
+  [ "$q" = / ] && cd /
+fi
 echo "path=$(pwd -P)"
 echo "home=$home"
 n=0
@@ -364,6 +373,8 @@ func (s *Server) listRemoteDirs(ctx context.Context, h *store.Host, p string, hi
 			l.Path = v
 		case "home":
 			l.Home = v
+		case "missing":
+			l.Missing = v
 		case "p":
 			l.Places = append(l.Places, v)
 		case "d", "g":

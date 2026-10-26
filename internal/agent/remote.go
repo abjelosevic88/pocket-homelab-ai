@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -91,7 +94,12 @@ func Command(r *Remote, dir string, env []string, bin string, args ...string) *e
 }
 
 // Run runs a short sh script on the remote machine (the same profile and
-// PATH as an agent gets) and returns its output.
+// PATH as an agent gets) and returns its output. Short commands share one
+// ssh connection per machine (a fresh one costs a full handshake, ~1.5 s to a
+// far-away box; a shared one two round trips), and a connection that could
+// not be made at all is tried again: a home line drops outgoing connections
+// for a few seconds now and then ("No route to host"). Agents do not share
+// it (see Command): a lost link must not take every running session along.
 func (r *Remote) Run(ctx context.Context, timeout time.Duration, script string, args ...string) (string, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -101,9 +109,62 @@ func (r *Remote) Run(ctx context.Context, timeout time.Duration, script string, 
 		full += " " + shq(a)
 	}
 	full += "\n" + script
-	cmd := exec.CommandContext(ctx, "ssh", append(r.sshArgs(), remoteCommand(full))...)
-	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	err := cmd.Run()
-	return out.String(), strings.TrimSpace(errb.String()), err
+	argv := append(muxArgs(), r.sshArgs()...)
+	argv = append(argv, remoteCommand(full))
+	for try := 0; ; try++ {
+		cmd := exec.CommandContext(ctx, "ssh", argv...)
+		var out, errb bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &out, &errb
+		err := cmd.Run()
+		stderr := strings.TrimSpace(errb.String())
+		if err == nil || try >= 2 || !notConnected(err, stderr) {
+			return out.String(), stderr, err
+		}
+		select { // 1 s, then 3 s: blips last a few seconds
+		case <-ctx.Done():
+			return out.String(), stderr, err
+		case <-time.After(time.Duration(1+2*try) * time.Second):
+		}
+	}
 }
+
+// notConnected: ssh gave up before the script started (exit 255 with a
+// connect error), so running it again cannot do anything twice.
+func notConnected(err error, stderr string) bool {
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) || ee.ExitCode() != 255 {
+		return false
+	}
+	for _, m := range []string{"No route to host", "Network is unreachable", "Connection refused", "Could not resolve hostname", "Connection timed out", "Operation timed out"} {
+		if strings.Contains(stderr, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// muxArgs share one connection per machine between short commands. The
+// shared link notices a dead network within ~15 s (agents: 2 min), and closes
+// 5 minutes after its last use. They come first: ssh keeps the first value.
+func muxArgs() []string {
+	dir := muxDir()
+	if dir == "" {
+		return nil
+	}
+	return []string{"-o", "ControlMaster=auto", "-o", "ControlPath=" + filepath.Join(dir, "%C"), "-o", "ControlPersist=300",
+		"-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3"}
+}
+
+var muxDirOnce = sync.OnceValue(func() string {
+	base := os.Getenv("XDG_RUNTIME_DIR")
+	if base == "" {
+		base = os.TempDir()
+	}
+	dir := filepath.Join(base, "pocket-ai-ssh-"+strconv.Itoa(os.Getuid()))
+	if err := os.MkdirAll(dir, 0o700); err != nil || os.Chmod(dir, 0o700) != nil {
+		return "" // no private folder for the sockets: connect every time
+	}
+	return dir
+})
+
+func muxDir() string { return muxDirOnce() }
