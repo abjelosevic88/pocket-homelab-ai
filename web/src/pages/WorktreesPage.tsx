@@ -207,7 +207,7 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
         actions={<>{activeCount > 0 && <button type="button" className="btn sm ghost" onClick={() => { void newGroup() }} title="A group of your own: drag worktrees into it"><Icon name="plus" size={13} />New group</button>}{merged.length > 0 && <button type="button" className="btn sm" disabled={!!busy} onClick={cleanup} title="Archive every merged worktree without uncommitted work, and delete its branch">{busy === 'cleanup' ? <Spinner /> : <Icon name="archive" size={13} />}Clean up {merged.length} merged</button>}</>} />
       <div className="page-scroll">
         <div className="page-inner srv">
-          {list === null ? <Loading label="Looking at the worktrees…" /> : !groups.length && !archived.length && !others.length ? (
+          {list === null ? <Loading label="Looking at the worktrees…" /> : !groups.length && !wgroups.length && !archived.length && !others.length ? (
             <Empty title="No worktrees yet" icon="fork">On the start page, pick a folder inside a git repository and switch on <b>Worktree</b>: the agent gets its own copy and branch, and you merge (or drop) its work from here or from the thread.</Empty>
           ) : <>
             {total > 0 && <p className="muted xsmall" style={{ margin: '0 0 4px' }}>{size(total)} on disk in {activeCount} worktrees.</p>}
