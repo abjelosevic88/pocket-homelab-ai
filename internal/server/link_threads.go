@@ -196,6 +196,10 @@ func (s *Server) handleLinkCreateDraft(w http.ResponseWriter, r *http.Request) {
 			Name string `json:"name"`
 			Data []byte `json:"data"` // base64 in JSON
 		} `json:"files"`
+		// Worktree: work in a git worktree of its own on this branch (a
+		// ticket's branch); made when the person sends, reused when they
+		// already have one on it.
+		Worktree *store.DraftWorktree `json:"worktree"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 12*s.cfg.UploadMax)).Decode(&in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json (or the files are too large together)")
@@ -208,7 +212,7 @@ func (s *Server) handleLinkCreateDraft(w http.ResponseWriter, r *http.Request) {
 	d, err := s.validDraft(ctx, u, &store.LinkDraft{Provider: strings.TrimSpace(in.Provider), AccountID: in.AccountID, Model: strings.TrimSpace(in.Model),
 		Effort: strings.TrimSpace(in.Effort), Mode: strings.TrimSpace(in.Mode), Cwd: strings.TrimSpace(in.Cwd), Title: oneLine(in.Title, 120), Text: in.Text,
 		System: strings.TrimSpace(in.System), Source: strings.ToLower(strings.TrimSpace(in.Source)), Ref: oneLine(in.Ref, 80), RefURL: strings.TrimSpace(in.RefURL),
-		RefLabel: oneLine(in.RefLabel, 140)})
+		RefLabel: oneLine(in.RefLabel, 140), Worktree: in.Worktree})
 	if err != nil {
 		s.fail(w, err, "draft")
 		return
@@ -286,6 +290,15 @@ func (s *Server) validDraft(ctx context.Context, u *store.User, d *store.LinkDra
 		return nil, err
 	}
 	d.Cwd = clean
+	if wt := d.Worktree; wt != nil {
+		wt.Name, wt.Base = strings.Trim(strings.ReplaceAll(strings.TrimSpace(wt.Name), " ", "-"), "/"), strings.TrimSpace(wt.Base)
+		if !branchNameOK(wt.Name) {
+			return nil, badRequest("worktree.name must be a branch name")
+		}
+		if wt.Base != "" && !branchNameOK(wt.Base) {
+			return nil, badRequest("worktree.base must be a branch name")
+		}
+	}
 	return d, nil
 }
 
@@ -439,6 +452,9 @@ func (s *Server) handleStartDraft(w http.ResponseWriter, r *http.Request) {
 		in.Text = d.Text
 	}
 	in.Title = d.Title
+	if in.Worktree != nil && d.Worktree != nil && (in.Worktree.Mode == "" || in.Worktree.Mode == "new") && in.Worktree.Name == d.Worktree.Name {
+		in.Worktree = s.ticketWorktree(ctx, u, in.Cwd, *in.Worktree)
+	}
 	source := "link:" + d.Source
 
 	linkStartMu.Lock()

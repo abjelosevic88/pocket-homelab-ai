@@ -107,7 +107,7 @@ export function WorktreeChooser({ cwd, host, value, onChange, onRepo }: {
   }, [cwd, host]) // eslint-disable-line react-hooks/exhaustive-deps
   if (!info) return null
   const on = !!value
-  const label = !value ? 'Worktree' : value.mode === 'branch' || value.mode === 'existing' ? value.branch : value.mode === 'pr' ? `PR #${value.pr}` : `new from ${value.base || info.base}`
+  const label = !value ? 'Worktree' : value.mode === 'branch' || value.mode === 'existing' ? value.branch : value.mode === 'pr' ? `PR #${value.pr}` : value.name || `new from ${value.base || info.base}`
   return (
     <>
       <button type="button" className={`btn sm wt-toggle ${on ? 'on' : ''}`} aria-pressed={on} aria-haspopup="dialog"
