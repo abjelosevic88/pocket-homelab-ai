@@ -17,10 +17,10 @@ test('repeated calls collapse without losing order or touching source items', ()
   if (result[1].type === 'tools') assert.deepEqual(result[1].items.map(i => i.key), items.slice(1, -1).map(i => i.key))
   assert.equal(JSON.stringify(items), before)
 })
-test('errors, denied calls, approvals, replies and image previews remain outside groups', () => {
+test('denied calls, approvals, replies and image previews remain outside groups', () => {
   const image = call('picture'); image.tool!.images = 1
   const legacyImage = call('legacy-picture'); legacyImage.tool!.output = '[image]'
-  const separate = [call('error', 'error'), call('denied', 'denied'), message('approval', 'request'), message('reply', 'assistant'), image, legacyImage]
+  const separate = [call('denied', 'denied'), message('approval', 'request'), message('reply', 'assistant'), image, legacyImage]
   for (const boundary of separate) {
     const groups = groupToolActivity([call('first'), boundary, call('last')])
     assert.deepEqual(groups.map(x => x.type), ['tools', 'item', 'tools'])
@@ -39,4 +39,15 @@ test('tool names are readable while preserving ordinary names and action meaning
   assert.equal(toolLabel({ name: 'mcp__pocket__pocket_list_apps' }), 'List Pocket apps')
   assert.equal(toolLabel({ name: 'mcp__github__search_repositories' }), 'Github · Search repositories')
   assert.equal(toolLabel({ name: 'Bash' }), 'Bash')
+})
+
+test('failed attempts merge into the same quiet row without losing details', () => {
+  const failed = call('failed', 'error'); failed.tool!.exit_code = 65
+  const groups = groupToolActivity([call('first'), failed, call('retry')])
+  assert.equal(groups.length, 1)
+  assert.equal(groups[0].type, 'tools')
+  if (groups[0].type === 'tools') {
+    assert.deepEqual(groups[0].items.map(i => i.key), ['first', 'failed', 'retry'])
+    assert.equal(groups[0].items[1].tool!.exit_code, 65)
+  }
 })

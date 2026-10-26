@@ -108,6 +108,7 @@ export function ToolBody({ tool, className = 'tool-body' }: { tool: ToolInfo; cl
       {!command && !tool.diff && path && <div className="tool-sec"><div className="tool-sec-h"><span>{tool.name} · {path}</span></div></div>}
       {tool.diff && <div className="tool-sec"><div className="tool-sec-h"><span>{path || 'Changes'}</span></div><Diff text={tool.diff} /></div>}
       {restInput && <Clip text={restInput} label="Input" />}
+      {tool.exit_code !== undefined && tool.exit_code !== 0 && <div className="muted xsmall">Exit code {tool.exit_code}</div>}
       <Clip text={tool.output} label={status === 'error' ? 'Error' : 'Output'} />
       {!tool.output && status === 'running' && <div className="muted xsmall">Running…</div>}
     </div>

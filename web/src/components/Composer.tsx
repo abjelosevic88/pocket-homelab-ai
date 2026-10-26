@@ -1,3 +1,5 @@
+import { Modal } from './ui'
+import { Snippets } from './Snippets'
 // The prompt box: text, images (paste / drop / camera / photo library), dictation, slash menu (recipes + the CLI's skills).
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api, uploadWithProgress, V1 } from '../lib/api'
@@ -120,6 +122,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
   const cameraInput = useRef<HTMLInputElement>(null)
   const docInput = useRef<HTMLInputElement>(null)
   const attachMenu = useRef<HTMLDivElement>(null)
+  const [snippetsOpen, setSnippetsOpen] = useState(false)
   const [attachOpen, setAttachOpen] = useState(false)
   useDismiss(attachMenu, () => setAttachOpen(false), attachOpen)
   const rec = useRef<InstanceType<SpeechCtor> | null>(null)
@@ -388,6 +391,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
         <input ref={docInput} type="file" accept={DOC_TYPES} multiple hidden onChange={picked} />
         <button type="button" className={`btn ghost icon-only sm attach-btn ${attachOpen ? 'on' : ''}`} aria-label="Attach" title="Attach images or files (or paste / drop them)" aria-haspopup={isTouch() ? 'menu' : undefined} aria-expanded={isTouch() ? attachOpen : undefined} data-keep-open disabled={disabled}
           onClick={() => { if (isTouch()) setAttachOpen(o => !o); else fileInput.current?.click() }}><Icon name="plus" size={18} /></button>
+        <button type="button" className="btn ghost icon-only sm" aria-label="Insert snippet" title="Snippets" disabled={disabled} onClick={() => setSnippetsOpen(true)}><Icon name="bookmark" size={17} /></button>
         <div className="composer-extra">{footer}</div>
         {Speech && <button type="button" className={`btn ghost icon-only sm mic-btn ${listening ? 'rec' : ''}`} aria-label={listening ? 'Stop dictation' : 'Dictate'} title={listening ? 'Stop dictation' : 'Dictate'} disabled={disabled} onClick={toggleDictation}><Icon name="mic" size={17} /></button>}
         {running && onStop && !text.trim() && atts.length === 0 ? (
@@ -407,6 +411,13 @@ export const Composer = React.forwardRef<ComposerHandle, {
           ))}
         </div>
       )}
+      {snippetsOpen && <Modal title="Snippets" onClose={() => setSnippetsOpen(false)} size="lg">
+        <Snippets onInsert={snippet => {
+          setText(draft => draft + (draft ? draft.endsWith('\n\n') ? '' : draft.endsWith('\n') ? '\n' : '\n\n' : '') + snippet.body)
+          setSnippetsOpen(false)
+          setTimeout(() => ta.current?.focus(), 0)
+        }} />
+      </Modal>}
       {dragging && <div className="drop-overlay"><div><Icon name="image" size={28} /><b>Drop images to attach</b></div></div>}
     </div>
   )

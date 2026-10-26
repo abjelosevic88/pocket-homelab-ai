@@ -15,6 +15,10 @@ import (
 )
 
 func (s *Server) libraryRoutes(r chi.Router) {
+	r.Get("/snippets", s.handleListSnippets)
+	r.Post("/snippets", s.handleSaveSnippet)
+	r.Put("/snippets/{id}", s.handleSaveSnippet)
+	r.Delete("/snippets/{id}", s.handleDeleteSnippet)
 	r.Get("/workspaces", s.handleListWorkspaces)
 	r.Post("/workspaces", s.handleSaveWorkspace)
 	r.Put("/workspaces/{id}", s.handleSaveWorkspace)

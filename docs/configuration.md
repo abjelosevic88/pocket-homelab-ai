@@ -41,3 +41,41 @@ Everything is an environment variable (the systemd unit reads `~/.config/pocket-
 - `DATA_DIR/uploads/<user>/` — images sent in prompts; unsent ones are deleted after a day, the rest with their thread.
 - The CLIs keep their own session files (`~/.claude/projects`, `~/.codex/sessions`); deleting a thread here does
   not delete those.
+
+## Native iOS notifications
+
+APNs delivery runs alongside each person's existing notification route and follows the same
+finished/input/failed and only-away preferences. Configure these server environment variables:
+
+| Variable | Value |
+| --- | --- |
+| `APNS_TEAM_ID` | Apple developer team ID |
+| `APNS_KEY_ID` | APNs token signing key ID |
+| `APNS_KEY_FILE` | Private mount path to the EC P-256 `.p8` signing key |
+| `APNS_TOPIC` | App bundle ID; defaults to `org.bjelke.pocketai` |
+| `BASE_URL` | Server URL used in notification links; match the URL signed into on iOS |
+
+The app requires Apple Push Notifications provisioning. Enable it under iOS Settings →
+Notifications after enabling native delivery in Pocket AI's notification settings. Native
+registrations are bound to the device's API token and cascade away when it is revoked.
+Invalid/unregistered APNs tokens are removed after Apple's response. Signing out unregisters
+on a best-effort basis. No signing key or API token is placed in a push payload.
+
+The iOS client discovers support through authenticated `GET /api/v1/mobile`. Native endpoints
+include `PUT /mobile/devices`, `DELETE /mobile/devices/{device}`, `POST /mobile/push/test`, and
+`GET /mobile/attention`. Migration `0020_mobile.sql` also adds durable message receipts:
+`POST /threads/{id}/messages` with an `Idempotency-Key` dispatches at most once and replays its
+saved response. A reservation interrupted before its response was saved returns 409 and
+requires checking the timeline; it is never automatically dispatched again. Keys must not be
+reused for different content. `GET /threads/{id}/review` is owner-only and requires run access;
+it returns current Git status and a tracked-file diff capped at 2 MB.
+
+
+### Personal snippets
+
+Migration `0021_snippets.sql` stores each person's reusable text on this server. Authenticated
+`GET /api/v1/snippets`, `POST /api/v1/snippets`, `PUT /api/v1/snippets/{id}` and
+`DELETE /api/v1/snippets/{id}` list and manage only the caller's library. A title is required
+(up to 120 Unicode code points); text is required (up to 64 KiB). Body formatting is preserved.
+Saving and inserting snippets does not start an agent and does not require run permission.
+The web Snippets link sits below Usage; iOS offers Snippets below Usage in composer tools.

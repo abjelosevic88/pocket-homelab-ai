@@ -21,6 +21,7 @@ import HistoryPage from './HistoryPage'
 import SharedPage from './SharedPage'
 import TodayPage from './TodayPage'
 import UsagePage from './UsagePage'
+import SnippetsPage from './SnippetsPage'
 import WorktreesPage from './WorktreesPage'
 import { BriefingPage, MemoryPage, ActionsPage, WorkflowsPage } from './AssistantPages'
 import { actionFor, useShortcuts } from '../lib/shortcuts'
@@ -97,6 +98,7 @@ function ShellInner() {
     { id: 'recipes', label: 'Recipes', icon: 'zap', keywords: 'prompts saved', run: () => navigate('/recipes') },
     { id: 'schedules', label: 'Schedules', icon: 'clock', keywords: 'cron timer automatic', run: () => navigate('/schedules') },
     { id: 'history', label: 'On this server — CLI sessions', icon: 'history', keywords: 'import resume history claude codex', run: () => navigate('/history') },
+    { id: 'snippets', label: 'Snippets', icon: 'bookmark', keywords: 'saved text prompts', run: () => navigate('/snippets') },
     { id: 'usage', label: 'Usage & limits', icon: 'chart', keywords: 'cost tokens rate limit', run: () => navigate('/usage') },
     { id: 'settings', label: 'Settings', icon: 'settings', run: () => navigate('/settings') },
     { id: 'agents', label: 'Agent defaults', icon: 'bot', keywords: 'model effort settings', run: () => navigate('/settings/agents') },
@@ -130,6 +132,7 @@ function ShellInner() {
             <Route path="/actions" element={<ActionsPage onMenu={onMenu} />} />
             <Route path="/workflows" element={<WorkflowsPage onMenu={onMenu} />} />
             <Route path="/usage" element={<UsagePage onMenu={onMenu} />} />
+            <Route path="/snippets" element={<SnippetsPage onMenu={onMenu} />} />
             <Route path="/worktrees" element={<WorktreesPage onMenu={onMenu} />} />
             <Route path="*" element={<HomePage onMenu={onMenu} />} />
           </Routes>

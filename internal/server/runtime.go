@@ -1610,6 +1610,7 @@ func (rt *engine) notify(t *store.Thread, kind, title, body string) {
 	if st.NotifyOnlyAway && rt.viewing(t) {
 		return
 	}
+	rt.s.notifyMobile(t.UserID, title, body, t.ID)
 	rt.s.notifyUser(rt.ctx, t.UserID, kind, title, body, rt.s.threadURL(t.ID))
 }
 
