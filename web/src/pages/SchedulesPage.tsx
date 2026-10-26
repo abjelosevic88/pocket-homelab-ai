@@ -7,14 +7,15 @@ import { ago, when } from '../lib/format'
 import type { Schedule, SchedulePreview, Thread } from '../lib/types'
 import { AgentPicker } from '../components/AgentPicker'
 import { FolderButton } from '../components/FolderPicker'
+import { HostPicker, useHostName } from '../components/HostPicker'
 import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
 import { Confirm, Empty, errMsg, Field, Loading, MenuButton, Modal, Segmented, Spinner, Switch, useAsync, useDebounce, useToast, type MenuItem, useContextMenu, noGrammarly } from '../components/ui'
 import { AgentSummary } from './RecipesPage'
 
-type Draft = Pick<Schedule, 'name' | 'prompt' | 'provider' | 'model' | 'effort' | 'mode' | 'speed' | 'cwd' | 'spec' | 'notify' | 'enabled'> & { id?: number }
+type Draft = Pick<Schedule, 'name' | 'prompt' | 'provider' | 'model' | 'effort' | 'mode' | 'speed' | 'host_id' | 'cwd' | 'spec' | 'notify' | 'enabled'> & { id?: number }
 
-const blank: Draft = { name: '', prompt: '', provider: '', model: '', effort: '', mode: '', speed: '', cwd: '', spec: 'daily 08:00', notify: 'attention', enabled: true }
+const blank: Draft = { name: '', prompt: '', provider: '', model: '', effort: '', mode: '', speed: '', host_id: 0, cwd: '', spec: 'daily 08:00', notify: 'attention', enabled: true }
 
 const STATUS: Record<string, { label: string; cls: string; icon: string }> = {
   ok: { label: 'OK', cls: 'ok', icon: 'check-circle' },
@@ -81,6 +82,7 @@ export default function SchedulesPage({ onMenu }: { onMenu?: () => void }) {
                         {st && <span className={`badge ${st.cls}`}><Icon name={st.icon} size={10} />{st.label}</span>}
                         {s.last_thread_id && <button type="button" className="link-btn xsmall" onClick={() => navigate(`/t/${s.last_thread_id}`)}>Open last run</button>}
                         <span className="faint">notify: {s.notify}</span>
+                        <HostName id={s.host_id} />
                       </div>
                       {s.last_summary && <div className={`sched-summary ${s.last_status}`}>{s.last_summary}</div>}
                       <AgentSummary c={s} />
@@ -101,6 +103,11 @@ export default function SchedulesPage({ onMenu }: { onMenu?: () => void }) {
         onConfirm={async () => { const d = del; setDel(null); try { await api.del(`${V1}/schedules/${d.id}`); list.reload(); toast('Schedule deleted') } catch (e) { toast(errMsg(e), 'err') } }} />}
     </div>
   )
+}
+
+function HostName({ id }: { id: number }) {
+  const name = useHostName(id)
+  return name ? <span className="faint"><Icon name="server" size={11} />{name}</span> : null
 }
 
 function ScheduleDialog({ draft, onClose, onSaved }: { draft: Draft; onClose: () => void; onSaved: () => void }) {
@@ -146,7 +153,7 @@ function ScheduleDialog({ draft, onClose, onSaved }: { draft: Draft; onClose: ()
         </Field>
         <Field label="Agent" group><AgentPicker allowDefault value={f} onChange={p => setF(x => ({ ...x, ...p }))} /></Field>
         <Field label="Folder" group>
-          <div className="row"><FolderButton value={f.cwd} onChange={cwd => setF({ ...f, cwd })} className="btn" />{f.cwd && <button type="button" className="btn ghost sm" onClick={() => setF({ ...f, cwd: '' })}>Use default</button>}</div>
+          <div className="row"><HostPicker value={f.host_id} onChange={host_id => setF({ ...f, host_id, cwd: '' })} className="btn" /><FolderButton value={f.cwd} host={f.host_id} onChange={cwd => setF({ ...f, cwd })} className="btn" />{f.cwd && <button type="button" className="btn ghost sm" onClick={() => setF({ ...f, cwd: '' })}>Use default</button>}</div>
         </Field>
         <label className="inline-switch"><Switch checked={f.enabled} onChange={v => setF({ ...f, enabled: v })} label="Enabled" />Enabled</label>
       </div>

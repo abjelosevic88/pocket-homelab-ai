@@ -162,6 +162,7 @@ type Schedule struct {
 	Effort       string `json:"effort"`
 	Mode         string `json:"mode"`
 	Speed        string `json:"speed"`
+	HostID       int64  `json:"host_id"` // 0 = this server, else the machine it runs on over ssh
 	Cwd          string `json:"cwd"`
 	Spec         string `json:"spec"`
 	Notify       string `json:"notify"`

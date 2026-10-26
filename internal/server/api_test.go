@@ -498,3 +498,36 @@ func TestSharedAskChats(t *testing.T) {
 		t.Fatalf("alice's turn runs as %d", got)
 	}
 }
+
+// A schedule can run on another machine: its folder is that machine's (only
+// required to be absolute here), and the machine is kept with the schedule.
+func TestScheduleHost(t *testing.T) {
+	s, h, _ := testServer(t)
+	c, _ := person(t, s, h, "sched@example.test", "admin", false)
+	box := &store.Host{Name: "athena-box", Target: "ubuntu@example.invalid"}
+	if err := s.store.CreateHost(t.Context(), box); err != nil {
+		t.Fatal(err)
+	}
+	for name, in := range map[string]map[string]any{
+		"unknown host":  {"name": "n", "prompt": "p", "spec": "daily 00:00", "host_id": box.ID + 100, "cwd": "/home/ubuntu/athena/instance"},
+		"relative path": {"name": "n", "prompt": "p", "spec": "daily 00:00", "host_id": box.ID, "cwd": "athena/instance"},
+		"missing here":  {"name": "n", "prompt": "p", "spec": "daily 00:00", "cwd": "/home/ubuntu/athena/instance"},
+	} {
+		if code, b := c.call("POST", "/api/v1/schedules", in); code < 400 {
+			t.Fatalf("%s accepted: %d %s", name, code, b)
+		}
+	}
+	var sc store.Schedule
+	c.want("POST", "/api/v1/schedules", map[string]any{"name": "Nightly refresh", "prompt": "refresh", "spec": "daily 00:00",
+		"host_id": box.ID, "cwd": "/home/ubuntu/athena/instance", "provider": "claude", "mode": "auto"}, 201, &sc)
+	var list []store.Schedule
+	c.want("GET", "/api/v1/schedules", nil, 200, &list)
+	if len(list) != 1 || list[0].HostID != box.ID || list[0].Cwd != "/home/ubuntu/athena/instance" || list[0].Mode != "auto" {
+		t.Fatalf("schedule: %+v", list)
+	}
+	sc.HostID, sc.Cwd = 0, ""
+	c.want("PUT", "/api/v1/schedules/"+itoa(sc.ID), sc, 200, &sc)
+	if sc.HostID != 0 {
+		t.Fatalf("moved back to this server: %+v", sc)
+	}
+}
