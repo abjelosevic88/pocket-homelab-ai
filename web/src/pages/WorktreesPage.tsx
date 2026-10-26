@@ -131,7 +131,9 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
   const dragData = (e: React.DragEvent, d: Drag) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', `${d.kind}:${d.id}`); setDrag(d) }
   const endDrag = () => { setDrag(null); setOver('') }
   const target = (key: string, ok: boolean, drop: () => void) => ok ? {
-    onDragOver: (e: React.DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (over !== key) setOver(key) },
+    // the innermost target under the pointer answers: its parents (a group around a card, a group
+    // around a group) must not take the highlight back on the same event, or it flickers
+    onDragOver: (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; if (over !== key) setOver(key) },
     onDragLeave: (e: React.DragEvent) => { if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) setOver(o => o === key ? '' : o) },
     onDrop: (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); drop(); endDrag() },
   } : {}
