@@ -311,6 +311,8 @@ export interface Recipe extends AgentChoice {
 export interface Schedule extends AgentChoice {
   id: number
   name: string
+  /** The machine it runs on (0 = this server, else a Host). */
+  host_id: number
   prompt: string
   spec: string
   notify: 'always' | 'attention' | 'never'

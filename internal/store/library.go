@@ -149,12 +149,12 @@ func (s *Store) CountRecipeRun(ctx context.Context, id int64) {
 
 // ---------- schedules ----------
 
-const scheduleCols = `id, user_id, name, prompt, provider, model, effort, mode, speed, cwd, spec, notify, enabled, next_run_at, last_run_at,
+const scheduleCols = `id, user_id, name, prompt, provider, model, effort, mode, speed, host_id, cwd, spec, notify, enabled, next_run_at, last_run_at,
 	last_thread_id, last_status, last_summary, created_at, updated_at`
 
 func scanSchedule(row interface{ Scan(...any) error }) (*Schedule, error) {
 	var sc Schedule
-	if err := row.Scan(&sc.ID, &sc.UserID, &sc.Name, &sc.Prompt, &sc.Provider, &sc.Model, &sc.Effort, &sc.Mode, &sc.Speed, &sc.Cwd, &sc.Spec,
+	if err := row.Scan(&sc.ID, &sc.UserID, &sc.Name, &sc.Prompt, &sc.Provider, &sc.Model, &sc.Effort, &sc.Mode, &sc.Speed, &sc.HostID, &sc.Cwd, &sc.Spec,
 		&sc.Notify, &sc.Enabled, &sc.NextRunAt, &sc.LastRunAt, &sc.LastThreadID, &sc.LastStatus, &sc.LastSummary,
 		&sc.CreatedAt, &sc.UpdatedAt); err != nil {
 		return nil, notFound(err)
@@ -205,8 +205,8 @@ func (s *Store) SaveSchedule(ctx context.Context, sc *Schedule) error {
 	sc.UpdatedAt = now
 	if sc.ID == 0 {
 		sc.CreatedAt = now
-		res, err := s.DB.ExecContext(ctx, `INSERT INTO schedules (user_id, name, prompt, provider, model, effort, mode, speed, cwd, spec, notify, enabled, next_run_at, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sc.UserID, sc.Name, sc.Prompt, sc.Provider, sc.Model, sc.Effort, sc.Mode, sc.Speed, sc.Cwd,
+		res, err := s.DB.ExecContext(ctx, `INSERT INTO schedules (user_id, name, prompt, provider, model, effort, mode, speed, host_id, cwd, spec, notify, enabled, next_run_at, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sc.UserID, sc.Name, sc.Prompt, sc.Provider, sc.Model, sc.Effort, sc.Mode, sc.Speed, sc.HostID, sc.Cwd,
 			sc.Spec, sc.Notify, boolInt(sc.Enabled), sc.NextRunAt, now, now)
 		if err != nil {
 			return err
@@ -214,9 +214,9 @@ func (s *Store) SaveSchedule(ctx context.Context, sc *Schedule) error {
 		sc.ID, _ = res.LastInsertId()
 		return nil
 	}
-	_, err := s.DB.ExecContext(ctx, `UPDATE schedules SET name = ?, prompt = ?, provider = ?, model = ?, effort = ?, mode = ?, speed = ?, cwd = ?, spec = ?,
+	_, err := s.DB.ExecContext(ctx, `UPDATE schedules SET name = ?, prompt = ?, provider = ?, model = ?, effort = ?, mode = ?, speed = ?, host_id = ?, cwd = ?, spec = ?,
 		notify = ?, enabled = ?, next_run_at = ?, last_run_at = ?, last_thread_id = ?, last_status = ?, last_summary = ?, updated_at = ?
-		WHERE id = ? AND user_id = ?`, sc.Name, sc.Prompt, sc.Provider, sc.Model, sc.Effort, sc.Mode, sc.Speed, sc.Cwd, sc.Spec, sc.Notify,
+		WHERE id = ? AND user_id = ?`, sc.Name, sc.Prompt, sc.Provider, sc.Model, sc.Effort, sc.Mode, sc.Speed, sc.HostID, sc.Cwd, sc.Spec, sc.Notify,
 		boolInt(sc.Enabled), sc.NextRunAt, sc.LastRunAt, sc.LastThreadID, sc.LastStatus, sc.LastSummary, now, sc.ID, sc.UserID)
 	return err
 }

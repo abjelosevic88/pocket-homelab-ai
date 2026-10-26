@@ -282,7 +282,7 @@ func (s *Server) runSchedule(ctx context.Context, sc *store.Schedule) (*store.Th
 	sc.LastRunAt = store.Now()
 	sc.LastStatus, sc.LastSummary = "running", ""
 	title := sc.Name + " · " + time.Now().In(loc).Format("Jan 2 15:04")
-	t, err := s.createThread(ctx, u, newThread{Provider: sc.Provider, Model: sc.Model, Effort: sc.Effort, Mode: sc.Mode, Speed: optSpeed(sc.Speed), Cwd: sc.Cwd,
+	t, err := s.createThread(ctx, u, newThread{Provider: sc.Provider, HostID: sc.HostID, Model: sc.Model, Effort: sc.Effort, Mode: sc.Mode, Speed: optSpeed(sc.Speed), Cwd: sc.Cwd,
 		Text: sc.Prompt + scheduleSuffix, Title: title}, "schedule", strconv.FormatInt(sc.ID, 10))
 	if t != nil {
 		sc.LastThreadID = t.ID
@@ -406,7 +406,7 @@ func (s *Server) handleSaveSchedule(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := s.checkAgentFields(&in.Provider, &in.Mode, &in.Cwd); err != nil {
+	if err := s.checkScheduleAgent(ctx, userFrom(ctx), &in); err != nil {
 		s.fail(w, err, "schedule")
 		return
 	}
@@ -426,6 +426,28 @@ func (s *Server) handleSaveSchedule(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusCreated
 	}
 	writeJSON(w, status, in)
+}
+
+// checkScheduleAgent validates the agent fields. On another machine the
+// folder is that machine's (checked when a run starts, like a thread's), so
+// here it only has to be absolute; the machine's own login is used.
+func (s *Server) checkScheduleAgent(ctx context.Context, u *store.User, sc *store.Schedule) error {
+	if sc.HostID == 0 {
+		return s.checkAgentFields(&sc.Provider, &sc.Mode, &sc.Cwd)
+	}
+	if _, err := s.checkHostUse(ctx, u, sc.HostID); err != nil {
+		return err
+	}
+	cwd := strings.TrimSpace(sc.Cwd)
+	if cwd != "" && !strings.HasPrefix(cwd, "/") && cwd != "~" && !strings.HasPrefix(cwd, "~/") {
+		return badRequest("the folder on another machine must be absolute (or ~/…)")
+	}
+	none := ""
+	if err := s.checkAgentFields(&sc.Provider, &sc.Mode, &none); err != nil {
+		return err
+	}
+	sc.Cwd = cwd
+	return nil
 }
 
 func (s *Server) handleDeleteSchedule(w http.ResponseWriter, r *http.Request) {
