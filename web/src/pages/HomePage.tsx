@@ -34,12 +34,14 @@ interface LinkDraft {
   uploads?: DraftFile[]
   /** the app asks for a git worktree of its own on this branch (a ticket's) */
   worktree?: { name: string; base?: string } | null
+  /** the machine it runs on (Settings → Servers), 0 = this server */
+  host_id?: number
 }
 interface DraftFile { id: string; name: string; mime: string; size: number; url: string }
 
 /** The worktree a prepared conversation asks for, when the app's panel has no worktree
  * chooser: its branch, and the branch a new one starts from (pickable). */
-function DraftWorktree({ spec, cwd, onChange, onRename }: { spec: WorktreeSpec; cwd: string; onChange: (v: WorktreeSpec | null) => void; onRename: (from: string, to: string) => void }) {
+function DraftWorktree({ spec, cwd, host, onChange, onRename }: { spec: WorktreeSpec; cwd: string; host: number; onChange: (v: WorktreeSpec | null) => void; onRename: (from: string, to: string) => void }) {
   const [info, setInfo] = useState<WorktreeRepoInfo | null>(null)
   const [editing, setEditing] = useState<string | null>(null)
   // spaces become dashes, like the server does; git's own rules are checked on send
@@ -53,9 +55,9 @@ function DraftWorktree({ spec, cwd, onChange, onRename }: { spec: WorktreeSpec; 
   }
   useEffect(() => {
     let live = true
-    api.get<WorktreeRepoInfo>(`${V1}/worktrees/config${qs({ path: cwd })}`).then(d => { if (live) setInfo(d) }).catch(() => {})
+    api.get<WorktreeRepoInfo>(`${V1}/worktrees/config${qs({ path: cwd, host: host || undefined })}`).then(d => { if (live) setInfo(d) }).catch(() => {})
     return () => { live = false }
-  }, [cwd])
+  }, [cwd, host])
   // same rule as the server: the repo's base (Worktrees → Setup…), else origin's default branch
   const def = info ? info.config.effective.base || info.default || info.base : ''
   useEffect(() => { if (def && !spec.base) onChange({ ...spec, base: def }) }, [def]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -220,7 +222,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
       speed: d.speed,
       account_id: draft.account_id ?? d.account_id,
       cwd: draft.cwd,
-      host_id: 0,
+      host_id: draft.host_id || 0,
       worktree: draft.worktree?.name ? { mode: 'new', name: draft.worktree.name, base: draft.worktree.base || undefined } : null,
     })
   }, [draft, settings, providers, providersReady]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -269,15 +271,15 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
     <div className="home embed-draft">
       {!draft || !choice || (params.get('send') === '1' && autoSent.current !== 'failed') ? <div className="embed-starting"><Loading label={params.get('send') === '1' ? 'Starting the conversation…' : 'Loading…'} /></div> : (
         <>
-        {choice.worktree && <DraftWorktree spec={choice.worktree} cwd={choice.cwd} onChange={wt => setChoice(c => c && { ...c, worktree: wt })} onRename={(from, to) => {
+        {choice.worktree && <DraftWorktree spec={choice.worktree} cwd={choice.cwd} host={hostId} onChange={wt => setChoice(c => c && { ...c, worktree: wt })} onRename={(from, to) => {
           // the prompt names the branch: it follows the new name
           const text = sessionStorage.getItem('pai-draft-link-' + draft.id) ?? draft.text
           if (from && text.includes(from)) serverComposer.current?.setText(text.split(from).join(to))
         }} />}
         <DraftFiles files={draftFiles} source={draft.ref} onRemove={id => setDraftFiles(f => f.filter(x => x.id !== id))} />
         <Composer ref={serverComposer} big autoFocus draftKey={`link-${draft.id}`} onSend={send} skills={choice?.provider ? { provider: choice.provider, cwd: choice.cwd, account_id: choice.account_id, host_id: hostId } : undefined}
-          placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} about ${draft.ref || 'this'}…`}
-          footer={<AgentPicker compact showProvider={false} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} />} />
+          placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} about ${draft.ref || 'this'}${hostId ? ` on ${hosts.find(h => h.id === hostId)?.name}` : ''}…`}
+          footer={<AgentPicker compact showProvider={false} noAccount={!!hostId} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} />} />
         </>
       )}
     </div>

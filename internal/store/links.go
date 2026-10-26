@@ -31,6 +31,8 @@ type LinkDraft struct {
 	UploadIDs []string `json:"upload_ids"`
 	// Worktree: the app asks for a git worktree of its own (nil = the folder itself).
 	Worktree *DraftWorktree `json:"worktree"`
+	// HostID: the machine it runs on (Settings → Servers), 0 = this server.
+	HostID int64 `json:"host_id"`
 }
 
 // DraftWorktree is a new worktree an app asks for: Name is the branch (a
@@ -40,7 +42,7 @@ type DraftWorktree struct {
 	Base string `json:"base,omitempty"`
 }
 
-const draftCols = `id, user_id, provider, account_id, model, effort, mode, cwd, title, text, system, source, ref, ref_url, ref_label, thread_id, created_at, used_at, upload_ids, worktree`
+const draftCols = `id, user_id, provider, account_id, model, effort, mode, cwd, title, text, system, source, ref, ref_url, ref_label, thread_id, created_at, used_at, upload_ids, worktree, host_id`
 
 func scanDraft(row interface{ Scan(...any) error }) (*LinkDraft, error) {
 	var d LinkDraft
@@ -48,7 +50,7 @@ func scanDraft(row interface{ Scan(...any) error }) (*LinkDraft, error) {
 	var tid, used sql.NullString
 	var uploads, wt string
 	if err := row.Scan(&d.ID, &d.UserID, &d.Provider, &acct, &d.Model, &d.Effort, &d.Mode, &d.Cwd, &d.Title, &d.Text, &d.System,
-		&d.Source, &d.Ref, &d.RefURL, &d.RefLabel, &tid, &d.CreatedAt, &used, &uploads, &wt); err != nil {
+		&d.Source, &d.Ref, &d.RefURL, &d.RefLabel, &tid, &d.CreatedAt, &used, &uploads, &wt, &d.HostID); err != nil {
 		return nil, notFound(err)
 	}
 	d.UploadIDs = []string{}
@@ -78,9 +80,9 @@ func (s *Store) CreateLinkDraft(ctx context.Context, d *LinkDraft) error {
 	if d.Worktree != nil {
 		wt = jsonMarshal(d.Worktree)
 	}
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO link_drafts (id, user_id, provider, account_id, model, effort, mode, cwd, title, text, system, source, ref, ref_url, ref_label, created_at, upload_ids, worktree)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, d.ID, d.UserID, d.Provider, d.AccountID, d.Model, d.Effort, d.Mode, d.Cwd, d.Title, d.Text, d.System,
-		d.Source, d.Ref, d.RefURL, d.RefLabel, d.CreatedAt, jsonMarshal(d.UploadIDs), wt)
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO link_drafts (id, user_id, provider, account_id, model, effort, mode, cwd, title, text, system, source, ref, ref_url, ref_label, created_at, upload_ids, worktree, host_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, d.ID, d.UserID, d.Provider, d.AccountID, d.Model, d.Effort, d.Mode, d.Cwd, d.Title, d.Text, d.System,
+		d.Source, d.Ref, d.RefURL, d.RefLabel, d.CreatedAt, jsonMarshal(d.UploadIDs), wt, d.HostID)
 	return err
 }
 
