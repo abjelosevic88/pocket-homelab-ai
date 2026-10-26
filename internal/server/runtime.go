@@ -390,7 +390,7 @@ func (rt *engine) startRun(t *store.Thread) (*run, error) {
 		return rt.startRemote(t, h)
 	}
 	if fi, err := os.Stat(t.Cwd); err != nil || !fi.IsDir() {
-		return nil, badRequest("the folder " + t.Cwd + " does not exist any more")
+		return nil, &folderGoneError{dir: t.Cwd}
 	}
 	ctx, cancel := context.WithCancel(rt.ctx)
 	r := &run{threadID: t.ID, userID: t.UserID, provider: t.Provider, account: t.AccountID, cancel: cancel, pending: map[string]bool{},
@@ -454,6 +454,17 @@ func (rt *engine) baseOptions(ctx context.Context, t *store.Thread) agent.Option
 func (rt *engine) startRemote(t *store.Thread, h *store.Host) (*run, error) {
 	if why := h.Info.Missing[t.Provider]; why != "" && h.Info.OK {
 		return nil, badRequest(h.Name + ": " + why + " — install it there and press Check in Settings → Agents → Servers")
+	}
+	// The folder may be gone there (moved, cleaned up): say so plainly
+	// instead of letting the CLI fail on "cd" every time.
+	if t.Cwd != "" {
+		out, errOut, err := remoteOf(h).Run(rt.ctx, 20*time.Second, `[ -d "$1" ] && echo there`, t.Cwd)
+		if err != nil {
+			return nil, badRequest(h.Name + ": " + sshError(errOut, err))
+		}
+		if strings.TrimSpace(out) != "there" {
+			return nil, &folderGoneError{dir: t.Cwd, host: h.Name}
+		}
 	}
 	ctx, cancel := context.WithCancel(rt.ctx)
 	r := &run{threadID: t.ID, userID: t.UserID, provider: t.Provider, host: h.ID, cancel: cancel, pending: map[string]bool{},

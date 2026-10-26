@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -31,6 +32,7 @@ func (s *Server) threadRoutes(r chi.Router) {
 	r.Post("/threads/{id}/requests/{rid}", s.handleRespond)
 	r.Post("/threads/{id}/read", s.handleMarkRead)
 	r.Post("/threads/{id}/fork", s.handleFork)
+	r.Post("/threads/{id}/folder", s.handleMoveFolder)
 	r.Post("/threads/{id}/rewind", s.handleRewind)
 	r.Get("/threads/{id}/export.md", s.handleExport)
 	r.Get("/threads/{id}/log-image", s.handleLogImage)
@@ -596,6 +598,16 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		t.Status, t.Error = "idle", ""
 	}
 	queued, err := s.postMessage(r.Context(), userFrom(r.Context()), t, in.Text, in.UploadIDs, in.SendNow)
+	var gone *folderGoneError
+	if errors.As(err, &gone) {
+		// The message stays, marked not sent (Send again once moved), with one
+		// notice under it that offers the move. Nothing for the composer to keep.
+		s.rt.holdUnsent(t.ID, "Not sent — its folder is gone.")
+		s.rt.folderGoneNotice(t.ID, gone)
+		t, _ = s.store.GetThreadAny(r.Context(), t.ID)
+		writeJSON(w, http.StatusOK, map[string]any{"queued": false, "thread": s.rt.decorate(t)})
+		return
+	}
 	if err != nil {
 		s.rt.saveItem(t.ID, agent.Item{Key: "err-" + uuid.NewString()[:8], Kind: "notice", Level: "error", Text: err.Error()})
 		s.rt.setStatus(t.ID, "error", err.Error())
