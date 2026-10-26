@@ -251,7 +251,9 @@ func (s *Store) GetItem(ctx context.Context, threadID, key string) (*Item, error
 
 // ListItems returns a thread's timeline in order.
 func (s *Store) ListItems(ctx context.Context, threadID string) ([]*Item, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id, thread_id, key, kind, data, body, created_at, updated_at FROM items WHERE thread_id = ? ORDER BY id`, threadID)
+	// "acct-" notices ("From here on this conversation runs on …") were left
+	// in conversations by account switches before 0.13.1: no longer shown.
+	rows, err := s.DB.QueryContext(ctx, `SELECT id, thread_id, key, kind, data, body, created_at, updated_at FROM items WHERE thread_id = ? AND key NOT LIKE 'acct-%' ORDER BY id`, threadID)
 	if err != nil {
 		return nil, err
 	}
