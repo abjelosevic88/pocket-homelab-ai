@@ -361,7 +361,7 @@ func (s *Server) handleLinkThreads(w http.ResponseWriter, r *http.Request) {
 			lt.ThreadID = d.ThreadID
 			if t, err := s.store.GetThread(ctx, u.ID, *d.ThreadID); err == nil {
 				t = s.rt.decorate(t)
-				lt.Title, lt.Status, lt.URL, lt.UpdatedAt = firstNonEmpty(t.Title, d.Title), t.Status, s.threadURL(t.ID), firstNonEmpty(t.ActivityAt, t.UpdatedAt)
+				lt.Title, lt.Status, lt.URL, lt.UpdatedAt = firstNonEmpty(t.Title, d.Title), linkStatus(t), s.threadURL(t.ID), firstNonEmpty(t.ActivityAt, t.UpdatedAt)
 				if t.Pending > 0 {
 					lt.Status = "waiting"
 				}
@@ -518,6 +518,19 @@ func (s *Server) handleStartDraft(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, t)
 }
 
+// linkStatus is a decorated thread's state for other apps: waiting when it
+// asks something, running while its turn or its background sub-agents work
+// (the turn can end with sub-agents still at it).
+func linkStatus(t *store.Thread) string {
+	if t.Pending > 0 {
+		return "waiting"
+	}
+	if subs, ok := t.Subagents.([]agent.Subagent); t.Status != "running" && t.Status != "waiting" && ok && len(subs) > 0 {
+		return "running"
+	}
+	return t.Status
+}
+
 func draftContext(threadID string, d *store.LinkDraft) *store.ThreadContext {
 	return &store.ThreadContext{ThreadID: threadID, System: d.System, Source: d.Source, Ref: d.Ref, RefURL: d.RefURL, RefLabel: d.RefLabel}
 }
@@ -611,11 +624,7 @@ func (s *Server) handleLinkActive(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		t = s.rt.decorate(t)
-		st := t.Status
-		if t.Pending > 0 {
-			st = "waiting"
-		}
+		st := linkStatus(s.rt.decorate(t))
 		if st == "running" || st == "waiting" {
 			out = append(out, active{Ref: d.Ref, Status: st, ThreadID: t.ID, URL: s.threadURL(t.ID)})
 		}
