@@ -494,7 +494,14 @@ export interface WorktreeRepoInfo {
   branches: string[]
   dir: string
   is_worktree: boolean
-  config: { file: string; file_config: WorktreeSetupConfig; saved: WorktreeSetupConfig | null; effective: WorktreeSetupConfig; default_copy: string[] }
+  /** who the repo is on any machine (github.com/owner/repo); empty = no git remote */
+  project_id?: string
+  config: {
+    file: string; file_config: WorktreeSetupConfig; saved: WorktreeSetupConfig | null; effective: WorktreeSetupConfig; default_copy: string[]
+    project?: string
+    /** where saved comes from: every machine (project), this checkout only (machine), or nothing saved */
+    scope?: 'project' | 'machine' | ''
+  }
 }
 
 /** How a new thread gets its worktree. */

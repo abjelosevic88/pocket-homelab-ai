@@ -122,6 +122,24 @@ func (s *Store) SaveRepoSettings(ctx context.Context, hostID int64, repo, data s
 	return err
 }
 
+// Project settings live in repo_settings too, under host_id -1 (no machine
+// has that id) with the project id (github.com/owner/repo) as repo: one
+// worktree setup for every checkout of a project, on any machine.
+const projectHost = -1
+
+// ProjectSettings loads the stored settings JSON of a project ("" = none).
+func (s *Store) ProjectSettings(ctx context.Context, project string) string {
+	if project == "" {
+		return ""
+	}
+	return s.RepoSettings(ctx, projectHost, project)
+}
+
+// SaveProjectSettings stores the settings JSON of a project ("" = forget).
+func (s *Store) SaveProjectSettings(ctx context.Context, project, data string) error {
+	return s.SaveRepoSettings(ctx, projectHost, project, data)
+}
+
 // FailRunningSetups marks setups cut off by a restart as failed.
 func (s *Store) FailRunningSetups(ctx context.Context) []int64 {
 	rows, err := s.DB.QueryContext(ctx, `SELECT id FROM worktrees WHERE setup = 'running'`)

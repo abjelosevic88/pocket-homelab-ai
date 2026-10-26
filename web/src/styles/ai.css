@@ -618,3 +618,6 @@ button.privacy-badge:disabled { cursor: default; }
 .tool-head, .thinking-h, .tool-run.grouped .tool-head { font-size: calc(var(--fs-tool) * var(--ts)); height: calc(var(--tool-h) * var(--ts)); }
 .thinking-body { font-size: calc(var(--fs-think) * var(--ts)); }
 .turn-foot, .turn-foot .run-time { font-size: calc(var(--fs-foot) * var(--ts)); }
+
+.wt-scope { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; border-radius: 10px; background: var(--surface-2); }
+.wt-scope b { font-size: 14px; font-weight: 600; }
