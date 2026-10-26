@@ -15,6 +15,7 @@ export const Markdown = memo(function Markdown({ text, className = '' }: { text:
       // the <pre> sideways and would carry the button into the code.
       const wrap = document.createElement('div')
       wrap.className = 'code-wrap'
+      if (!(pre.textContent || '').trim().includes('\n')) wrap.classList.add('one-line')
       pre.replaceWith(wrap)
       wrap.appendChild(pre)
       const b = document.createElement('button')
