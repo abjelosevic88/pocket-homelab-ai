@@ -145,7 +145,7 @@ func (s *Server) handleLinkWorktrees(w http.ResponseWriter, r *http.Request) {
 		for _, id := range s.store.WorktreeThreads(ctx, wt.ID) {
 			if t, err := s.store.GetThread(ctx, u.ID, id); err == nil {
 				lw.Threads = append(lw.Threads, id)
-				if s.rt.decorate(t).Status == "running" {
+				if linkStatus(s.rt.decorate(t)) == "running" {
 					lw.Live = true
 				}
 			}

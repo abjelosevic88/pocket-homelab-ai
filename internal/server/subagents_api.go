@@ -16,7 +16,7 @@ func (s *Server) handleSubagents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	list := []agent.SubagentInfo{}
-	if path := s.claudeSessionPath(r, t.Provider, t.AccountID, t.ProviderSessionID); path != "" {
+	if path := s.threadSessionPath(r, t); path != "" {
 		list = agent.ListSubagents(path)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"subagents": list})
@@ -30,7 +30,7 @@ func (s *Server) handleSubagent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sid := chi.URLParam(r, "sid")
-	path := s.claudeSessionPath(r, t.Provider, t.AccountID, t.ProviderSessionID)
+	path := s.threadSessionPath(r, t)
 	if path == "" {
 		writeErr(w, http.StatusNotFound, "no such sub-agent")
 		return
