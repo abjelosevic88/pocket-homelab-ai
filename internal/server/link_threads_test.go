@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/agent"
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
@@ -579,5 +582,50 @@ func TestLinkDraftHost(t *testing.T) {
 	owner.want("GET", "/api/v1/drafts/"+made.ID, nil, 200, &d)
 	if d.HostID != box.ID || d.Cwd != "/work/Projects/athena" || d.AccountID != nil {
 		t.Fatalf("draft: %+v", d)
+	}
+}
+
+// A fork of a conversation an app prepared belongs to the same item and keeps
+// the app's hidden context.
+func TestForkInheritsLink(t *testing.T) {
+	s, h, root := testServer(t)
+	owner, user := person(t, s, h, "fork@example.test", "member", true)
+	linkCore(t, s, map[string]string{"pcx_valid": "fork@example.test"})
+	fakeClaude(t, s, root)
+	app := &client{t: t, h: h, token: "pcx_valid"}
+	repo := filepath.Join(root, "repo")
+	_ = os.MkdirAll(repo, 0700)
+	var made struct{ ID string }
+	app.want("POST", "/api/v1/link/drafts", map[string]any{"cwd": repo, "text": "Fix AS-9", "source": "projects", "ref": "AS-9", "system": "Team instructions: be brief."}, 201, &made)
+	var th struct{ ID string }
+	owner.want("POST", "/api/v1/drafts/"+made.ID+"/start", map[string]any{}, 201, &th)
+	ctx := context.Background()
+	from, err := s.store.GetThread(ctx, user.ID, th.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.threadContextPrompt(ctx, from) == "" {
+		t.Fatal("the original has no context")
+	}
+	n := &store.Thread{ID: uuid.NewString(), UserID: user.ID, Title: "Fork of " + from.Title, Provider: from.Provider, Cwd: from.Cwd, Source: "fork"}
+	if err := s.store.CreateThread(ctx, n); err != nil {
+		t.Fatal(err)
+	}
+	s.inheritLink(ctx, from, n)
+	var l []linkThread
+	app.want("GET", "/api/v1/link/threads?source=projects&ref=AS-9", nil, 200, &l)
+	if len(l) != 2 || l[0].ThreadID == nil || *l[0].ThreadID != n.ID || l[0].Status == "draft" {
+		t.Fatalf("issue conversations: %+v", l)
+	}
+	if got := s.threadContextPrompt(ctx, n); !strings.Contains(got, "be brief") {
+		t.Fatalf("fork context: %q", got)
+	}
+	// a thread no app prepared: nothing happens
+	plain := &store.Thread{ID: uuid.NewString(), UserID: user.ID, Title: "x", Provider: "claude", Cwd: repo}
+	_ = s.store.CreateThread(ctx, plain)
+	s.inheritLink(ctx, plain, &store.Thread{ID: uuid.NewString(), UserID: user.ID})
+	app.want("GET", "/api/v1/link/threads?source=projects&ref=AS-9", nil, 200, &l)
+	if len(l) != 2 {
+		t.Fatalf("plain fork changed the issue: %d", len(l))
 	}
 }

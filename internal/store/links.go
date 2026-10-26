@@ -147,6 +147,12 @@ func (s *Store) FinishLinkDraft(ctx context.Context, id, threadID string) error 
 	return err
 }
 
+// LinkDraftOfThread is the draft a thread was started from (ErrNotFound for
+// a thread no app prepared).
+func (s *Store) LinkDraftOfThread(ctx context.Context, userID int64, threadID string) (*LinkDraft, error) {
+	return scanDraft(s.DB.QueryRowContext(ctx, `SELECT `+draftCols+` FROM link_drafts WHERE user_id = ? AND thread_id = ? ORDER BY created_at DESC LIMIT 1`, userID, threadID))
+}
+
 // ThreadContext is what the app that prepared a thread added to it.
 type ThreadContext struct {
 	ThreadID string `json:"thread_id"`

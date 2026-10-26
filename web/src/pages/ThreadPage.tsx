@@ -4,6 +4,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { api, ApiError, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { fmtCost, providerName, shortPath, threadTitle } from '../lib/format'
+import { openInParent, parentTabs } from '../lib/embed'
 import { openSSE } from '../lib/sse'
 import type { Item, Thread, ThreadDetail, Upload } from '../lib/types'
 import { SubagentsChip } from '../components/Subagents'
@@ -192,7 +193,10 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
     } catch (e) { toast(errMsg(e), 'err'); return false }
   }
   const fork = async () => {
-    try { const th = await api.post<Thread>(`${V1}/threads/${id}/fork`); upsertThread(th); navigate(`/t/${th.id}`); toast('Forked — this is the copy') } catch (e) { toast(errMsg(e), 'err') }
+    try {
+      const th = await api.post<Thread>(`${V1}/threads/${id}/fork`); upsertThread(th)
+      if (parentTabs) { openInParent(th.id, th.title); toast('Forked — the copy opened in a new tab') } else { navigate(`/t/${th.id}`); toast('Forked — this is the copy') }
+    } catch (e) { toast(errMsg(e), 'err') }
   }
   const rewind = async (item: Item) => {
     if (rewinding) return

@@ -553,6 +553,28 @@ func (s *Server) threadContextPrompt(ctx context.Context, t *store.Thread) strin
 	return "\n\nContext from Pocket " + titleCase(c.Source) + " for this conversation (" + from + "):\n" + c.System
 }
 
+// inheritLink makes a fork or rewind of a conversation another app prepared
+// belong to the same item (an issue lists it among its conversations) and
+// keep the app's hidden context (team instructions, memory).
+func (s *Server) inheritLink(ctx context.Context, from, to *store.Thread) {
+	if c, err := s.store.GetThreadContext(ctx, from.ID); err == nil {
+		c.ThreadID = to.ID
+		_ = s.store.SaveThreadContext(ctx, c)
+	}
+	d, err := s.store.LinkDraftOfThread(ctx, from.UserID, from.ID)
+	if err != nil {
+		return
+	}
+	n := *d
+	n.ID, n.Title, n.Text, n.UploadIDs, n.ThreadID, n.UsedAt = uuid.NewString(), to.Title, "", nil, nil, nil
+	if err := s.store.CreateLinkDraft(ctx, &n); err != nil {
+		s.log.Warn("fork not linked", "thread", to.ID, "err", err)
+		return
+	}
+	_, _ = s.store.ClaimLinkDraft(ctx, n.UserID, n.ID)
+	_ = s.store.FinishLinkDraft(ctx, n.ID, to.ID)
+}
+
 func titleCase(s string) string {
 	if s == "" {
 		return s

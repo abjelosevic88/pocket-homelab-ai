@@ -774,6 +774,7 @@ func (s *Server) handleFork(w http.ResponseWriter, r *http.Request) {
 	}
 	n.Preview = t.Preview
 	_ = s.store.UpdateThread(ctx, n)
+	s.inheritLink(ctx, t, n)
 	s.rt.publishThread(n)
 	writeJSON(w, http.StatusCreated, n)
 }
