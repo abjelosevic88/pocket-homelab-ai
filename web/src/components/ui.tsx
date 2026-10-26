@@ -4,17 +4,30 @@ import { Icon } from './icons'
 
 // ---------- toasts (with an optional action, e.g. Undo) ----------
 
-type ToastItem = { id: number; msg: React.ReactNode; kind: 'ok' | 'err'; action?: { label: string; run: () => void } }
-type ToastFn = (msg: React.ReactNode, kind?: 'ok' | 'err', action?: { label: string; run: () => void }) => void
+type ToastItem = { id: number; msg: React.ReactNode; kind: 'ok' | 'err'; action?: { label: string; run: () => void }; ms: number }
+/** ms: how long it stays (an action, e.g. Undo, shows the time it has left). */
+type ToastFn = (msg: React.ReactNode, kind?: 'ok' | 'err', action?: { label: string; run: () => void }, ms?: number) => void
 const ToastCtx = createContext<{ toast: ToastFn }>({ toast: () => {} })
 export function useToast() { return useContext(ToastCtx) }
+/** The seconds an action toast has left, beside its button. */
+function ToastLeft({ ms }: { ms: number }) {
+  const [end] = useState(() => Date.now() + ms)
+  const [left, setLeft] = useState(Math.ceil(ms / 1000))
+  useEffect(() => {
+    const t = window.setInterval(() => setLeft(Math.max(0, Math.ceil((end - Date.now()) / 1000))), 250)
+    return () => window.clearInterval(t)
+  }, [end])
+  return <span className="toast-left tnum"> · {left}s</span>
+}
+
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([])
   const drop = (id: number) => setItems(t => t.filter(x => x.id !== id))
-  const toast = useCallback<ToastFn>((msg, kind = 'ok', action) => {
+  const toast = useCallback<ToastFn>((msg, kind = 'ok', action, ms) => {
     const id = Date.now() + Math.random()
-    setItems(t => [...t.slice(-2), { id, msg, kind, action }])
-    setTimeout(() => drop(id), action ? 8000 : kind === 'err' ? 6000 : 3000)
+    const life = ms || (action ? 8000 : kind === 'err' ? 6000 : 3000)
+    setItems(t => [...t.slice(-2), { id, msg, kind, action, ms: life }])
+    setTimeout(() => drop(id), life)
   }, [])
   return (
     <ToastCtx.Provider value={{ toast }}>
@@ -24,7 +37,8 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
           <div key={t.id} className={`toast ${t.kind}`}>
             {t.kind === 'err' && <Icon name="alert" size={15} />}
             <span className="grow">{t.msg}</span>
-            {t.action && <button type="button" className="toast-action" onClick={() => { t.action!.run(); drop(t.id) }}>{t.action.label}</button>}
+            {t.action && <button type="button" className="toast-action" onClick={() => { t.action!.run(); drop(t.id) }}>{t.action.label}<ToastLeft ms={t.ms} /></button>}
+            {t.action && <span className="toast-timer" style={{ animationDuration: `${t.ms}ms` }} aria-hidden />}
             <button type="button" className="toast-x" aria-label="Dismiss" onClick={() => drop(t.id)}><Icon name="x" size={14} /></button>
           </div>
         ))}
