@@ -16,7 +16,10 @@ import (
 // ticketWorktree turns an app's "a worktree for this ticket" into what to do
 // now: the person's worktree that is already on that branch, the branch itself
 // when the repo has it (an earlier conversation made it), else a new branch of
-// that name. Anything it can't tell is left to createWorktree to report.
+// that name. A new one starts from the repo's base (Worktrees → Setup…) or
+// else origin's default branch — never from whatever the main checkout
+// happens to have checked out (often another ticket's branch). Anything it
+// can't tell is left to createWorktree to report.
 func (s *Server) ticketWorktree(ctx context.Context, u *store.User, cwd string, spec newWorktree) *newWorktree {
 	info, err := inspectRepo(ctx, nil, cwd)
 	if err != nil || !info.Repo {
@@ -36,7 +39,28 @@ func (s *Server) ticketWorktree(ctx context.Context, u *store.User, cwd string, 
 			}
 		}
 	}
+	if spec.Base == "" {
+		spec.Base = ticketBase(s.repoConfig(ctx, nil, 0, info.Main).Effective.Base, info)
+	}
+	// start from today's base, not the last time someone pulled it: fast-forward
+	// only (a local branch with its own commits, or checked out, stays as it is)
+	if _, errOut, err := shOn(ctx, nil, 45*time.Second, wtFastForward, info.Main, strings.TrimPrefix(spec.Base, "origin/")); err != nil {
+		s.log.Info("worktree base not brought up to date", "repo", info.Main, "base", spec.Base, "err", strings.TrimSpace(errOut))
+	}
 	return &spec
+}
+
+// wtFastForward brings a local branch up to origin's ($1 repo, $2 branch):
+// fetch refuses anything but a fast-forward and a branch checked out somewhere.
+const wtFastForward = gitEnv + `cd -- "$1" || exit 3
+git remote get-url origin >/dev/null 2>&1 || exit 0
+git show-ref --verify -q "refs/heads/$2" || exit 0
+git fetch -q origin "refs/heads/$2:refs/heads/$2"
+`
+
+// ticketBase is where an app's worktree starts when nobody picked a base.
+func ticketBase(configured string, info repoInfo) string {
+	return firstNonEmpty(configured, info.Default, info.MainBranch, "main")
 }
 
 // linkWorktree is a worktree of an item (a ticket), for the app to list.

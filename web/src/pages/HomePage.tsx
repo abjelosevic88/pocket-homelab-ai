@@ -2,7 +2,7 @@ import { Select } from '../components/Select'
 // Start a thread: pick the agent and folder, type (or paste a screenshot), go. Recipes one tap away.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { api, ApiError, V1 } from '../lib/api'
+import { api, ApiError, qs, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { shortPath } from '../lib/format'
 import type { ProviderId, Thread, WorktreeRepoInfo, WorktreeSpec } from '../lib/types'
@@ -37,14 +37,28 @@ interface LinkDraft {
 }
 interface DraftFile { id: string; name: string; mime: string; size: number; url: string }
 
-/** The worktree a prepared conversation asks for, when the app's panel has no worktree chooser. */
-function DraftWorktree({ spec, onRemove }: { spec: WorktreeSpec; onRemove: () => void }) {
+/** The worktree a prepared conversation asks for, when the app's panel has no worktree
+ * chooser: its branch, and the branch a new one starts from (pickable). */
+function DraftWorktree({ spec, cwd, onChange }: { spec: WorktreeSpec; cwd: string; onChange: (v: WorktreeSpec | null) => void }) {
+  const [info, setInfo] = useState<WorktreeRepoInfo | null>(null)
+  useEffect(() => {
+    let live = true
+    api.get<WorktreeRepoInfo>(`${V1}/worktrees/config${qs({ path: cwd })}`).then(d => { if (live) setInfo(d) }).catch(() => {})
+    return () => { live = false }
+  }, [cwd])
+  // same rule as the server: the repo's base (Worktrees → Setup…), else origin's default branch
+  const def = info ? info.config.effective.base || info.default || info.base : ''
+  useEffect(() => { if (def && !spec.base) onChange({ ...spec, base: def }) }, [def]) // eslint-disable-line react-hooks/exhaustive-deps
+  const mine = info?.branches.filter(b => !b.startsWith('origin/')) || []
+  const opts = info ? [...mine, ...info.branches.filter(b => b.startsWith('origin/') && !mine.includes(b.slice(7)))].map(b => ({ value: b, label: b })) : []
   return (
     <div className="draft-files" aria-label="Worktree">
       <div className="draft-files-list">
-        <span className="draft-file draft-wt" title="Works in a git worktree of its own on this branch (an existing one for this branch is reused)">
+        <span className="draft-file draft-wt" title="Works in a git worktree of its own on this branch (an existing one for this branch is reused, and then it keeps its own base)">
           <Icon name="fork" size={14} /><span className="ellipsis">Worktree <span className="mono">{spec.name}</span></span>
-          <button type="button" className="draft-file-x" aria-label="Work in the folder itself" title="Work in the folder itself" onClick={onRemove}><Icon name="x" size={12} /></button>
+          {opts.length > 0 && <><span className="muted">from</span>
+            <Select className="ghost inline" size="sm" label="Start from branch" searchable value={spec.base || def} options={opts} width={280} onChange={b => onChange({ ...spec, base: b })} /></>}
+          <button type="button" className="draft-file-x" aria-label="Work in the folder itself" title="Work in the folder itself" onClick={() => onChange(null)}><Icon name="x" size={12} /></button>
         </span>
       </div>
     </div>
@@ -239,7 +253,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
     <div className="home embed-draft">
       {!draft || !choice || (params.get('send') === '1' && autoSent.current !== 'failed') ? <div className="embed-starting"><Loading label={params.get('send') === '1' ? 'Starting the conversation…' : 'Loading…'} /></div> : (
         <>
-        {choice.worktree && <DraftWorktree spec={choice.worktree} onRemove={() => setChoice(c => c && { ...c, worktree: null })} />}
+        {choice.worktree && <DraftWorktree spec={choice.worktree} cwd={choice.cwd} onChange={wt => setChoice(c => c && { ...c, worktree: wt })} />}
         <DraftFiles files={draftFiles} source={draft.ref} onRemove={id => setDraftFiles(f => f.filter(x => x.id !== id))} />
         <Composer ref={serverComposer} big autoFocus draftKey={`link-${draft.id}`} onSend={send} skills={choice?.provider ? { provider: choice.provider, cwd: choice.cwd, account_id: choice.account_id, host_id: hostId } : undefined}
           placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} about ${draft.ref || 'this'}…`}
