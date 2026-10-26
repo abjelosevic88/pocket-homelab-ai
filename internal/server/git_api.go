@@ -225,6 +225,19 @@ func (s *Server) handleGitInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, readGitInfo(r.Context(), dir))
 }
 
+// A lightweight identity lookup: no git status, branch listing or setup config.
+func (s *Server) handleGitProject(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRun(w, r) {
+		return
+	}
+	_, info, err := s.repoAt(r, queryInt64(r, "host"), r.URL.Query().Get("path"))
+	if err != nil {
+		s.fail(w, err, "git project")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"repo": info.Main, "branch": info.Branch, "project_id": info.ProjectID})
+}
+
 func (s *Server) handleGitSwitch(w http.ResponseWriter, r *http.Request) {
 	if !s.requireRun(w, r) {
 		return

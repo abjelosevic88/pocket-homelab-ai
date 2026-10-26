@@ -21,6 +21,7 @@ func (s *Server) libraryRoutes(r chi.Router) {
 	r.Delete("/workspaces/{id}", s.handleDeleteWorkspace)
 	r.Get("/fs/dirs", s.handleDirs)
 	r.Get("/fs/git", s.handleGitInfo)
+	r.Get("/fs/project", s.handleGitProject)
 	r.Post("/fs/git/switch", s.handleGitSwitch)
 	r.Get("/skills", s.handleSkills)
 

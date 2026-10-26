@@ -1130,7 +1130,7 @@ func (s *Server) handleWorktreeConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"repo": info.Main, "top": info.Top, "branch": info.Branch, "main_branch": info.MainBranch, "default": info.Default,
+		"repo": info.Main, "top": info.Top, "branch": info.Branch, "main_branch": info.MainBranch, "default": info.Default, "project_id": info.ProjectID,
 		"base":     firstNonEmpty(cfg.Effective.Base, info.MainBranch, info.Default, "main"),
 		"branches": branches, "config": cfg, "dir": s.worktreesDir(h, info.Main),
 		"is_worktree": info.Top != info.Main,
