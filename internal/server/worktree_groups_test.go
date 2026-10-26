@@ -61,4 +61,52 @@ func TestWorktreeGroups(t *testing.T) {
 	if len(bl) != 0 {
 		t.Fatalf("ben sees: %+v", bl)
 	}
+
+	// groups inside groups
+	var top, mid, leaf store.WorktreeGroup
+	alex.want("POST", "/api/v1/worktree-groups", map[string]any{"name": "Top"}, 201, &top)
+	alex.want("POST", "/api/v1/worktree-groups", map[string]any{"name": "Mid", "parent_id": top.ID}, 201, &mid)
+	alex.want("POST", "/api/v1/worktree-groups", map[string]any{"name": "Leaf", "parent_id": mid.ID}, 201, &leaf)
+	ben.want("POST", "/api/v1/worktree-groups", map[string]any{"name": "Sneaky", "parent_id": top.ID}, 404, nil)
+	if mid.ParentID == nil || *mid.ParentID != top.ID || leaf.Position != 0 {
+		t.Fatalf("nested: %+v %+v", mid, leaf)
+	}
+	// never inside itself or its own groups
+	alex.want("PUT", fmt.Sprintf("/api/v1/worktree-groups/%d/move", top.ID), map[string]any{"parent_id": leaf.ID}, 409, nil)
+	alex.want("PUT", fmt.Sprintf("/api/v1/worktree-groups/%d/move", top.ID), map[string]any{"parent_id": top.ID}, 409, nil)
+	// a group moves in and out
+	alex.want("PUT", fmt.Sprintf("/api/v1/worktree-groups/%d/move", g2.ID), map[string]any{"parent_id": top.ID, "order": []int64{g2.ID, mid.ID}}, 204, nil)
+	alex.want("PUT", fmt.Sprintf("/api/v1/worktrees/%d/group", a1), map[string]any{"group_id": mid.ID}, 204, nil)
+	alex.want("GET", "/api/v1/worktree-groups", nil, 200, &list)
+	find := func(id int64) store.WorktreeGroup {
+		for _, g := range list {
+			if g.ID == id {
+				return g
+			}
+		}
+		t.Fatalf("group %d missing", id)
+		return store.WorktreeGroup{}
+	}
+	if g := find(g2.ID); g.ParentID == nil || *g.ParentID != top.ID || g.Position != 0 || find(mid.ID).Position != 1 {
+		t.Fatalf("after move: %+v", list)
+	}
+	// deleting Mid: Leaf and its worktree move up into Top
+	alex.want("DELETE", fmt.Sprintf("/api/v1/worktree-groups/%d", mid.ID), nil, 204, nil)
+	alex.want("GET", "/api/v1/worktree-groups", nil, 200, &list)
+	if l := find(leaf.ID); l.ParentID == nil || *l.ParentID != top.ID || fmt.Sprint(find(top.ID).Items) != fmt.Sprint([]int64{a1}) {
+		t.Fatalf("after deleting mid: %+v", list)
+	}
+	// deleting Top: its groups go to the top, its worktrees back to their repository
+	alex.want("DELETE", fmt.Sprintf("/api/v1/worktree-groups/%d", top.ID), nil, 204, nil)
+	alex.want("GET", "/api/v1/worktree-groups", nil, 200, &list)
+	if l := find(leaf.ID); l.ParentID != nil || find(g2.ID).ParentID != nil {
+		t.Fatalf("after deleting top: %+v", list)
+	}
+	for _, g := range list {
+		for _, i := range g.Items {
+			if i == a1 {
+				t.Fatalf("a1 still grouped: %+v", list)
+			}
+		}
+	}
 }

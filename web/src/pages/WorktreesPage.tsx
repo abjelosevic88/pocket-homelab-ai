@@ -13,7 +13,7 @@ import { PageHead } from '../components/PageHead'
 import { WorktreePanel } from '../components/Worktree'
 import { type Anchor, Confirm, Empty, errMsg, Loading, Menu, type MenuItem, MenuButton, Spinner, useToast } from '../components/ui'
 
-interface Group { id: number; name: string; position: number; collapsed: boolean; items: number[] }
+interface Group { id: number; parent_id: number | null; name: string; position: number; collapsed: boolean; items: number[] }
 // what is being dragged: a worktree card or a group's heading
 type Drag = { kind: 'wt'; id: number } | { kind: 'group'; id: number }
 
@@ -77,9 +77,10 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
 
   // ---------- your groups: every change shows at once, then is saved ----------
   const saveFailed = (e: unknown) => { toast(errMsg(e), 'err'); reload() }
-  const newGroup = async (withWorktree?: number) => {
+  const newGroup = async (withWorktree?: number, parent?: number) => {
     try {
-      const g = await api.post<Group>(`${V1}/worktree-groups`, { name: 'New group' })
+      const g = await api.post<Group>(`${V1}/worktree-groups`, { name: 'New group', parent_id: parent || 0 })
+      if (parent) setWGroups(gs => gs.map(x => x.id === parent ? { ...x, collapsed: false } : x))
       setWGroups(gs => [...gs.map(x => withWorktree ? { ...x, items: x.items.filter(i => i !== withWorktree) } : x), { ...g, items: withWorktree ? [withWorktree] : [] }])
       setEditing(g.id)
       if (withWorktree) await api.put(`${V1}/worktrees/${withWorktree}/group`, { group_id: g.id })
@@ -99,22 +100,31 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
     setWGroups(next)
     api.put(`${V1}/worktrees/${wid}/group`, { group_id: gid, order: gid ? order : [] }).catch(saveFailed)
   }
-  const moveGroup = (id: number, before: number) => {
-    if (id === before) return
-    const g = wgroups.find(x => x.id === id)
-    if (!g) return
-    const rest = wgroups.filter(x => x.id !== id)
-    const at = rest.findIndex(x => x.id === before)
-    rest.splice(at < 0 ? rest.length : at, 0, g)
-    setWGroups(rest)
-    api.put(`${V1}/worktree-groups/order`, { ids: rest.map(x => x.id) }).catch(saveFailed)
+  // the tree: a group's own groups, and everything inside one (a group never goes into those)
+  const ids = new Set(wgroups.map(g => g.id))
+  const parentOf = (g: Group) => g.parent_id && ids.has(g.parent_id) ? g.parent_id : null
+  const kids = (pid: number | null) => wgroups.filter(g => parentOf(g) === pid).sort((x, y) => x.position - y.position)
+  const subtree = (id: number): Set<number> => { const out = new Set([id]); for (const k of kids(id)) subtree(k.id).forEach(x => out.add(x)); return out }
+  const pathOf = (g: Group): string => { const p = parentOf(g); const up = p ? wgroups.find(x => x.id === p) : undefined; return up ? `${pathOf(up)} › ${g.name}` : g.name }
+  /** Puts a group inside another (null: at the top), before a sibling or at the end. */
+  const moveGroup = (id: number, parent: number | null, before?: number) => {
+    if (parent !== null && subtree(id).has(parent)) return
+    const order = kids(parent).map(x => x.id).filter(x => x !== id)
+    const at = before !== undefined ? order.indexOf(before) : -1
+    order.splice(at < 0 ? order.length : at, 0, id)
+    setWGroups(gs => gs.map(g => g.id === id ? { ...g, parent_id: parent, position: order.indexOf(id) } : order.includes(g.id) ? { ...g, position: order.indexOf(g.id) } : g)
+      .map(g => g.id === parent ? { ...g, collapsed: false } : g))
+    api.put(`${V1}/worktree-groups/${id}/move`, { parent_id: parent || 0, order }).catch(saveFailed)
   }
   const patchGroup = (g: Group, p: Partial<Pick<Group, 'name' | 'collapsed'>>) => {
     setWGroups(gs => gs.map(x => x.id === g.id ? { ...x, ...p } : x))
     api.patch(`${V1}/worktree-groups/${g.id}`, p).catch(saveFailed)
   }
   const deleteGroup = (g: Group) => {
-    setWGroups(gs => gs.filter(x => x.id !== g.id))
+    const up = parentOf(g)
+    // its groups and worktrees move up to its parent (at the top, the worktrees go back to their repository)
+    setWGroups(gs => gs.filter(x => x.id !== g.id).map(x => x.parent_id === g.id ? { ...x, parent_id: up, position: x.position + 10000 }
+      : up !== null && x.id === up ? { ...x, items: [...x.items, ...g.items] } : x))
     api.del(`${V1}/worktree-groups/${g.id}`).catch(saveFailed)
   }
   // drag and drop (HTML5): a card onto a group, a card, a repository or "new group"; a heading onto a heading
@@ -129,7 +139,7 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
     const inGroup = wgroups.find(g => g.items.includes(w.id))
     return [
       { heading: 'Move to' },
-      ...wgroups.map(g => ({ label: g.name, icon: 'folder', checked: inGroup?.id === g.id, onSelect: () => place(w.id, g.id) })),
+      ...wgroups.map(g => ({ g, path: pathOf(g) })).sort((x, y) => x.path.localeCompare(y.path)).map(({ g, path }) => ({ label: path, icon: 'folder', checked: inGroup?.id === g.id, onSelect: () => place(w.id, g.id) })),
       { label: 'New group…', icon: 'plus', onSelect: () => { void newGroup(w.id) } },
       ...(inGroup ? ['sep' as const, { label: `Out of “${inGroup.name}”`, icon: 'x', onSelect: () => place(w.id, 0) }] : []),
     ]
@@ -200,6 +210,48 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
     )
   }
 
+  const countIn = (g: Group): number => g.items.filter(i => byId.get(i)?.status === 'active').length + kids(g.id).reduce((n, k) => n + countIn(k), 0)
+  const renderGroup = (g: Group): React.ReactNode => {
+    const items = g.items.map(i => byId.get(i)).filter((w): w is Worktree => !!w && w.status === 'active')
+    const inner = kids(g.id)
+    const blocked = drag?.kind === 'group' && subtree(drag.id).has(g.id) // the dragged group or one of its own
+    return (
+      <section key={`g${g.id}`} className={`srv-group wt-group ${parentOf(g) ? 'nested' : ''} ${over === `group:${g.id}` ? 'drop-on' : ''} ${drag?.kind === 'group' && drag.id === g.id ? 'dragging' : ''}`}
+        {...target(`group:${g.id}`, !!drag && !blocked, () => {
+          if (drag?.kind === 'wt') place(drag.id, g.id)
+          else if (drag?.kind === 'group') moveGroup(drag.id, g.id)
+        })}>
+        <h3 className={`srv-h wt-group-h ${over === `head:${g.id}` ? 'drop-before' : ''}`} draggable={editing !== g.id}
+          onDragStart={e => { e.stopPropagation(); dragData(e, { kind: 'group', id: g.id }) }} onDragEnd={endDrag}
+          title="Drag onto a group to put it inside, onto a heading to put it before that group"
+          {...target(`head:${g.id}`, drag?.kind === 'group' && !blocked, () => { if (drag?.kind === 'group') moveGroup(drag.id, parentOf(g), g.id) })}>
+          <button type="button" className="link-btn" onClick={() => patchGroup(g, { collapsed: !g.collapsed })} aria-label={g.collapsed ? 'Unfold' : 'Fold'}><Icon name={g.collapsed ? 'chevron-right' : 'chevron-down'} size={13} /></button>
+          <Icon name="folder" size={12} />
+          {editing === g.id
+            ? <input className="wt-group-name" autoFocus defaultValue={g.name} aria-label="Group name" onFocus={e => e.currentTarget.select()}
+                onBlur={e => { const v = e.currentTarget.value.trim(); setEditing(null); if (v && v !== g.name) patchGroup(g, { name: v }) }}
+                onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { e.currentTarget.value = g.name; e.currentTarget.blur() } }} />
+            : <span className="ellipsis" onDoubleClick={() => setEditing(g.id)} title="Double-click to rename">{g.name}</span>}
+          <span className="muted">{countIn(g)}</span>
+          <span className="grow" />
+          <MenuButton label={`${g.name} menu`} className="btn ghost icon-only xs" align="right" width={220} items={[
+            { label: 'New group inside', icon: 'plus', onSelect: () => { void newGroup(undefined, g.id) } },
+            { label: 'Rename', icon: 'edit', onSelect: () => setEditing(g.id) },
+            { label: g.collapsed ? 'Unfold' : 'Fold', icon: g.collapsed ? 'chevron-down' : 'chevron-right', onSelect: () => patchGroup(g, { collapsed: !g.collapsed }) },
+            ...(parentOf(g) ? [{ label: 'Move to the top level', icon: 'arrow-up', onSelect: () => moveGroup(g.id, null) }] : []),
+            'sep',
+            { label: 'Delete the group', icon: 'trash', danger: true, hint: parentOf(g) ? 'contents move up' : 'worktrees stay', onSelect: () => deleteGroup(g) },
+          ]}><Icon name="more" size={15} /></MenuButton>
+        </h3>
+        {!g.collapsed && <>
+          {inner.length > 0 && <div className="wt-subgroups">{inner.map(k => renderGroup(k))}</div>}
+          {items.length ? <div className="wt-cards">{items.map(card)}</div>
+            : !inner.length && <div className="wt-group-empty muted xsmall">Drag worktrees or groups here (or right-click a worktree → Move to)</div>}
+        </>}
+      </section>
+    )
+  }
+
   return (
     <div className="page">
       <PageHead title="Worktrees" icon="fork" onMenu={onMenu}
@@ -211,36 +263,12 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
             <Empty title="No worktrees yet" icon="fork">On the start page, pick a folder inside a git repository and switch on <b>Worktree</b>: the agent gets its own copy and branch, and you merge (or drop) its work from here or from the thread.</Empty>
           ) : <>
             {total > 0 && <p className="muted xsmall" style={{ margin: '0 0 4px' }}>{size(total)} on disk in {activeCount} worktrees.</p>}
-            {wgroups.map(g => {
-              const items = g.items.map(i => byId.get(i)).filter((w): w is Worktree => !!w && w.status === 'active')
-              return (
-                <section key={`g${g.id}`} className={`srv-group wt-group ${over === `group:${g.id}` ? 'drop-on' : ''} ${drag?.kind === 'group' && drag.id === g.id ? 'dragging' : ''}`}
-                  {...target(`group:${g.id}`, !!drag && !(drag.kind === 'group' && drag.id === g.id), () => {
-                    if (drag?.kind === 'wt') place(drag.id, g.id)
-                    else if (drag?.kind === 'group') moveGroup(drag.id, g.id)
-                  })}>
-                  <h3 className="srv-h wt-group-h" draggable={editing !== g.id} onDragStart={e => dragData(e, { kind: 'group', id: g.id })} onDragEnd={endDrag} title="Drag to reorder the groups">
-                    <button type="button" className="link-btn" onClick={() => patchGroup(g, { collapsed: !g.collapsed })} aria-label={g.collapsed ? 'Unfold' : 'Fold'}><Icon name={g.collapsed ? 'chevron-right' : 'chevron-down'} size={13} /></button>
-                    <Icon name="folder" size={12} />
-                    {editing === g.id
-                      ? <input className="wt-group-name" autoFocus defaultValue={g.name} aria-label="Group name" onFocus={e => e.currentTarget.select()}
-                          onBlur={e => { const v = e.currentTarget.value.trim(); setEditing(null); if (v && v !== g.name) patchGroup(g, { name: v }) }}
-                          onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { e.currentTarget.value = g.name; e.currentTarget.blur() } }} />
-                      : <span className="ellipsis" onDoubleClick={() => setEditing(g.id)} title="Double-click to rename">{g.name}</span>}
-                    <span className="muted">{items.length}</span>
-                    <span className="grow" />
-                    <MenuButton label={`${g.name} menu`} className="btn ghost icon-only xs" align="right" width={200} items={[
-                      { label: 'Rename', icon: 'edit', onSelect: () => setEditing(g.id) },
-                      { label: g.collapsed ? 'Unfold' : 'Fold', icon: g.collapsed ? 'chevron-down' : 'chevron-right', onSelect: () => patchGroup(g, { collapsed: !g.collapsed }) },
-                      'sep',
-                      { label: 'Delete the group', icon: 'trash', danger: true, hint: 'worktrees stay', onSelect: () => deleteGroup(g) },
-                    ]}><Icon name="more" size={15} /></MenuButton>
-                  </h3>
-                  {!g.collapsed && (items.length ? <div className="wt-cards">{items.map(card)}</div>
-                    : <div className="wt-group-empty muted xsmall">Drag worktrees here (or right-click one → Move to)</div>)}
-                </section>
-              )
-            })}
+            {kids(null).map(g => renderGroup(g))}
+            {drag?.kind === 'group' && wgroups.find(x => x.id === drag.id)?.parent_id != null && (
+              <div className={`wt-new-drop ${over === 'top' ? 'drop-on' : ''}`} {...target('top', true, () => moveGroup(drag.id, null))}>
+                <Icon name="arrow-up" size={14} />Drop here to move the group to the top level
+              </div>
+            )}
             {drag?.kind === 'wt' && (
               <div className={`wt-new-drop ${over === 'new' ? 'drop-on' : ''}`} {...target('new', true, () => { void newGroup(drag.id) })}>
                 <Icon name="plus" size={14} />Drop here for a new group

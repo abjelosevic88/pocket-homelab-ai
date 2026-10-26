@@ -623,6 +623,7 @@ func (s *Server) worktreeRoutes(r chi.Router) {
 	r.Post("/worktree-groups", s.handleCreateWorktreeGroup)
 	r.Put("/worktree-groups/order", s.handleOrderWorktreeGroups)
 	r.Patch("/worktree-groups/{id}", s.handleUpdateWorktreeGroup)
+	r.Put("/worktree-groups/{id}/move", s.handleMoveWorktreeGroup)
 	r.Delete("/worktree-groups/{id}", s.handleDeleteWorktreeGroup)
 }
 

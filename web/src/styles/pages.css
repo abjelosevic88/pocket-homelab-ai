@@ -397,3 +397,7 @@
 .wt-card.drop-before { box-shadow: 0 -3px 0 0 var(--accent); }
 .wt-new-drop { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 16px; border: 2px dashed color-mix(in srgb, var(--accent) 45%, var(--border)); border-radius: 12px; color: var(--muted); font-size: 13px; }
 .wt-new-drop.drop-on { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--text); }
+/* groups inside groups */
+.wt-subgroups { display: grid; gap: 10px; }
+.wt-group.nested { margin: 0 0 0 6px; padding: 2px 2px 2px 12px; border-left: 2px solid var(--border); border-radius: 0 12px 12px 0; }
+.wt-group-h.drop-before { box-shadow: 0 -3px 0 0 var(--accent); }
