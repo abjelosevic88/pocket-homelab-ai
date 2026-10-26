@@ -236,7 +236,12 @@ probe() {
   echo "version_$1=$("$p" --version 2>&1 </dev/null | head -n 1)"
   if [ "$1" = claude ]; then
     st=$("$p" auth status 2>/dev/null </dev/null | tr -d '\n')
-    case "$st" in *'"loggedIn": true'*|*'"loggedIn":true'*) ;; *) echo "missing_$1=installed but not signed in (run claude there once)";; esac
+    case "$st" in *'"loggedIn": true'*|*'"loggedIn":true'*) ;;
+      *) if [ "$(uname -s)" = Darwin ] && security find-generic-password -s "Claude Code-credentials" >/dev/null 2>&1; then
+           # signed in on the Mac, but its login sits in the Keychain, which stays locked over ssh
+           echo "missing_$1=signed in on this Mac, but the login is in the Keychain, which ssh cannot open: run claude setup-token there and add export CLAUDE_CODE_OAUTH_TOKEN=… to ~/.profile"
+         else echo "missing_$1=installed but not signed in (run claude there once)"; fi;;
+    esac
   else
     "$p" login status >/dev/null 2>&1 </dev/null || echo "missing_$1=installed but not signed in (run codex login there)"
   fi
