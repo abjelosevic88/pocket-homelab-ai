@@ -235,7 +235,7 @@ func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.T
 			}
 		}
 	}
-	if target.LogImages > 0 {
+	if target.LogImages > 0 && t.HostID == 0 { // a remote session's log is on that machine: those pictures stay behind
 		home, _ := s.accountHome(ctx, t.Provider, t.AccountID)
 		path, err := agent.FindClaude(home, t.ProviderSessionID)
 		if err != nil {
