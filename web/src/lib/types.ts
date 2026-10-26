@@ -248,7 +248,9 @@ export interface AgentRequest {
   for?: string
 }
 
-export interface TurnInfo { ok: boolean; duration_ms: number; cost_usd: number; input_tokens: number; output_tokens: number; error?: string }
+export interface TurnInfo { ok: boolean; duration_ms: number; cost_usd: number; input_tokens: number; output_tokens: number; error?: string
+  /** you pressed Stop: not an error, nothing to say about it */
+  interrupted?: boolean }
 
 export interface Item {
   files?: ItemImage[]

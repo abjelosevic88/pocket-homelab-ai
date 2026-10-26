@@ -133,12 +133,14 @@ function TurnFoot({ t, onFork, text }: { t: TurnInfo; onFork?: () => void; text?
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
   }
+  // Stopping a turn yourself is not a failure: the footer stays quiet.
+  const failed = !t.ok && !t.interrupted && t.error !== 'Stopped.'
   const bits = []
   if (t.cost_usd) bits.push(fmtCost(t.cost_usd))
   if (t.input_tokens || t.output_tokens) bits.push(`${fmtTokens(t.input_tokens + t.output_tokens)} tokens`)
   return (
-    <div className={`turn-foot ${t.ok ? '' : 'err'}`}>
-      {!t.ok && <span className="turn-err"><Icon name="alert" size={12} /><span className="ellipsis">{t.error || 'The turn failed'}</span></span>}
+    <div className={`turn-foot ${failed ? 'err' : ''}`}>
+      {failed && <span className="turn-err"><Icon name="alert" size={12} /><span className="ellipsis">{t.error || 'The turn failed'}</span></span>}
       <span className="grow" />
       {bits.length > 0 && <span className="tnum turn-bits">{bits.join(' · ')}</span>}
       {text && <button type="button" className="btn ghost icon-only xs" onClick={() => { void copy() }} title={copied ? 'Copied' : 'Copy response'} aria-label="Copy response"><Icon name={copied ? 'check' : 'copy'} size={14} /></button>}
