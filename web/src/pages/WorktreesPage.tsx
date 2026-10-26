@@ -4,13 +4,13 @@
 // (by hand, by Paseo).
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { api, qs, V1 } from '../lib/api'
+import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { ago, shortPath } from '../lib/format'
-import type { Worktree, WorktreeRepoInfo } from '../lib/types'
+import type { Worktree } from '../lib/types'
 import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
-import { WorktreePanel, WorktreeSettingsDialog } from '../components/Worktree'
+import { WorktreePanel } from '../components/Worktree'
 import { Confirm, Empty, errMsg, Loading, Spinner, useToast } from '../components/ui'
 
 interface Other { host_id: number; host_name?: string; repo: string; path: string; branch: string; head: string; missing: boolean; paseo: boolean }
@@ -29,7 +29,6 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
   const [open, setOpen] = useState<number | null>(() => Number(params.get('open')) || null)
   const [busy, setBusy] = useState('')
   const [showArchived, setShowArchived] = useState(false)
-  const [settings, setSettings] = useState<{ info: WorktreeRepoInfo; host: number } | null>(null)
   const [removing, setRemoving] = useState<Other | null>(null)
 
   // The list shows at once; git state and folder sizes (ssh to other
@@ -72,10 +71,6 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
       toast(r.archived.length ? `Archived ${r.archived.length}: ${r.archived.join(', ')}${r.skipped.length ? ` · skipped ${r.skipped.join(', ')} (uncommitted work or an agent at work)` : ''}` : 'Nothing to clean up')
       reload()
     } catch (e) { toast(errMsg(e), 'err') } finally { setBusy('') }
-  }
-  const openSettings = async (repo: string, host: number) => {
-    setBusy(`setup:${host}:${repo}`)
-    try { setSettings({ info: await api.get<WorktreeRepoInfo>(`${V1}/worktrees/config${qs({ path: repo, host: host || undefined })}`), host }) } catch (e) { toast(errMsg(e), 'err') } finally { setBusy('') }
   }
   const adopt = async (o: Other) => {
     setBusy(o.path)
@@ -138,9 +133,7 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
             {groups.map(g => (
               <section key={`${g.host}:${g.repo}`} className="srv-group">
                 <h3 className="srv-h"><span className="ellipsis">{shortPath(g.repo)}</span>{g.host_name && <span className="badge"><Icon name="server" size={10} />{g.host_name}</span>}<span className="muted">{g.items.length}</span>
-                  <span className="grow" /><button type="button" className="link-btn xsmall" disabled={busy === `setup:${g.host}:${g.repo}`} onClick={() => openSettings(g.repo, g.host)}
-                    title="How new worktrees of this repo are prepared: commands to run (e.g. install), files to copy (.env), teardown on archive, the branch to start from">
-                    {busy === `setup:${g.host}:${g.repo}` && <Spinner size={10} />}Setup…</button></h3>
+                  </h3>
                 <div className="wt-cards">{g.items.map(card)}</div>
               </section>
             ))}
@@ -181,7 +174,6 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
         </div>
       </div>
       {open !== null && <WorktreePanel id={open} onClose={() => { setOpen(null); if (params.has('open')) setParams(p => { p.delete('open'); return p }, { replace: true }); reload() }} />}
-      {settings && <WorktreeSettingsDialog info={settings.info} host={settings.host} onClose={() => setSettings(null)} />}
       {removing && <Confirm title={`Remove ${removing.branch || 'this worktree'}?`} confirmLabel="Remove"
         message={<>The folder <code>{removing.path}</code> is removed. Anything uncommitted in it is saved under <code>refs/pocket-ai/removed/…</code> in the repository first; the branch stays.</>}
         onCancel={() => setRemoving(null)} onConfirm={() => { const o = removing; setRemoving(null); removeOther(o) }} />}
