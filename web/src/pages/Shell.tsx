@@ -2,6 +2,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { useApp } from '../lib/app-context'
+import { api, V1 } from '../lib/api'
+import type { Thread } from '../lib/types'
 import { CommandPalette, type PaletteCommand } from '../components/CommandPalette'
 import { ErrorBoundary } from '../components/ErrorBoundary'
 import { RecipeRunnerProvider, useRunRecipe } from '../components/RecipeRunner'
@@ -29,7 +31,7 @@ function typing(e: KeyboardEvent) {
 }
 
 function ShellInner() {
-  const { setThemeMode, theme, settings, threads, running, user } = useApp()
+  const { setThemeMode, theme, settings, threads, running, user, upsertThread } = useApp()
   const navigate = useNavigate()
   const loc = useLocation()
   const mobile = useIsMobile()
@@ -52,6 +54,17 @@ function ShellInner() {
   // background sub-agents still at work after the turn: still working, for the app too
   const openState = !open ? '' : open.status === 'waiting' || open.pending > 0 ? 'waiting' : open.subagents?.length ? 'running' : open.status
   useEffect(() => tellParent(loc.pathname, openState), [loc.pathname, openState])
+  // the framing page (Pocket Projects' panel tab menu) renames the conversation shown here
+  useEffect(() => {
+    if (!embedded || !openId) return
+    const h = (e: MessageEvent) => {
+      if (e.source !== window.parent || e.data?.type !== 'pocket-ai-command' || typeof e.data.rename !== 'string') return
+      const title = e.data.rename.trim().slice(0, 200)
+      if (title) api.patch<Thread>(`${V1}/threads/${openId}`, { title }).then(upsertThread).catch(() => {})
+    }
+    window.addEventListener('message', h)
+    return () => window.removeEventListener('message', h)
+  }, [openId, upsertThread])
   useEffect(() => { if ((loc.state as { shortcuts?: boolean } | null)?.shortcuts) setShortcuts(true) }, [loc.state])
 
   const keys = useShortcuts()
