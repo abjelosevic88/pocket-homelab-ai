@@ -211,7 +211,21 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
       }
       upsertThread(next)
       navigate(`/t/${next.id}`)
-      if (!keepText) toast('Rewound — continue from that reply here; the original conversation is kept')
+      // Undo: back to the original, and the copy goes (it has nothing of its own yet)
+      const from = id
+      toast(keepText ? 'Rewound — edit the message and send it' : 'Rewound — continue from that reply here', 'ok', {
+        label: 'Undo', run: () => {
+          sessionStorage.removeItem('pai-draft-' + next.id)
+          sessionStorage.removeItem('pai-draft-uploads-' + next.id)
+          navigate(`/t/${from}`)
+          // a copy you already wrote in stays
+          api.get<ThreadDetail>(`${V1}/threads/${next.id}`).then(d => {
+            const th = d.thread
+            if (th.last_prompt !== next.last_prompt || th.status === 'running' || th.status === 'waiting') { toast('The copy already has your new message, so it was kept'); return }
+            return api.del(`${V1}/threads/${next.id}`)
+          }).catch(e => toast(errMsg(e), 'err'))
+        },
+      }, 12000)
     } catch (e) { toast(errMsg(e), 'err') }
     finally { setRewinding(false) }
   }

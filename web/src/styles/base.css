@@ -396,3 +396,8 @@ input.bare, textarea.bare { border-color: transparent; background: transparent; 
   .select-option { min-height: 40px; }
   .select-option .opt-label { white-space: normal; overflow-wrap: anywhere; }
 }
+/* an action toast (Undo) runs down: a bar along its foot and the seconds left */
+.toast { position: relative; overflow: hidden; }
+.toast-timer { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: color-mix(in srgb, #a78bfa 85%, transparent); transform-origin: left; animation: toast-run linear forwards; }
+@keyframes toast-run { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+.toast-left { opacity: .7; font-weight: 500; }
