@@ -89,7 +89,7 @@ func (s *Server) handleDirs(w http.ResponseWriter, r *http.Request) {
 	if h != nil {
 		out, err = s.listRemoteDirs(r.Context(), h, r.URL.Query().Get("path"), queryBool(r, "hidden"))
 	} else {
-		out, err = s.listDirs(r.URL.Query().Get("path"), queryBool(r, "hidden"))
+		out, err = s.listDirsNear(r.URL.Query().Get("path"), queryBool(r, "hidden"))
 	}
 	if err != nil {
 		s.fail(w, err, "dirs")
@@ -112,6 +112,8 @@ type dirListing struct {
 	Home   string     `json:"home"`
 	// Places: working folders outside home on another machine (/work, /srv/app).
 	Places []string `json:"places,omitempty"`
+	// Missing: the folder asked for does not exist; Path is the nearest one that does.
+	Missing string `json:"missing,omitempty"`
 }
 
 // listDirs lists the sub-folders of p (home when empty) inside the roots.

@@ -263,6 +263,10 @@
 
 /* ---------- folder picker ---------- */
 .crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; font-family: var(--mono); font-size: 12.5px; }
+.folder-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.folder-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.folder-actions .btn.active { background: var(--hover); color: var(--text); }
+.folder-make input { flex: 1; min-width: 0; }
 .dir-list { display: grid; gap: 1px; max-height: 46vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 10px; padding: 4px; }
 .dir-row { display: flex; align-items: center; gap: 9px; padding: 7px 8px; border: 0; border-radius: 7px; background: none; text-align: left; cursor: pointer; font: inherit; color: inherit; width: 100%; }
 .dir-row:hover { background: var(--hover); }
