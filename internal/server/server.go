@@ -243,6 +243,9 @@ func (s *Server) Router() http.Handler {
 			r.Delete("/users/{id}", s.handleDeleteUser)
 
 			r.Get("/settings", s.handleGetSettings)
+			r.Get("/remembered-folders", s.handleRememberedFolders)
+			r.Post("/remembered-folders", s.handleRememberedFolders)
+			r.Delete("/remembered-folders", s.handleRememberedFolders)
 			r.Get("/settings/app-models", s.handleAppModels)
 			r.Put("/settings", s.handlePutSettings)
 			r.Get("/settings/system", s.handleSystemInfo)
