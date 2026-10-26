@@ -541,3 +541,43 @@ func TestLinkDraftWorktree(t *testing.T) {
 		t.Fatalf("thread worktree: %+v", threads)
 	}
 }
+
+// A draft can run on another machine: its folder is that machine's (not
+// checked here), the machine's own login is used, and the app sees the
+// machines in agent-options.
+func TestLinkDraftHost(t *testing.T) {
+	s, h, _ := testServer(t)
+	owner, _ := person(t, s, h, "link@example.test", "member", true)
+	linkCore(t, s, map[string]string{"pcx_valid": "link@example.test"})
+	app := &client{t: t, h: h, token: "pcx_valid"}
+	box := &store.Host{Name: "athena-box", Target: "ubuntu@example.invalid"}
+	if err := s.store.CreateHost(t.Context(), box); err != nil {
+		t.Fatal(err)
+	}
+	var opts struct {
+		Hosts []linkHost `json:"hosts"`
+	}
+	app.want("GET", "/api/v1/link/agent-options", nil, 200, &opts)
+	if len(opts.Hosts) != 1 || opts.Hosts[0].Name != "athena-box" || opts.Hosts[0].ID != box.ID {
+		t.Fatalf("hosts: %+v", opts.Hosts)
+	}
+	for name, in := range map[string]map[string]any{
+		"unknown host":  {"cwd": "/work/athena", "text": "x", "host_id": box.ID + 100},
+		"relative path": {"cwd": "work/athena", "text": "x", "host_id": box.ID},
+	} {
+		if code, b := app.call("POST", "/api/v1/link/drafts", in); code < 400 {
+			t.Fatalf("%s accepted: %d %s", name, code, b)
+		}
+	}
+	var made struct{ ID string }
+	app.want("POST", "/api/v1/link/drafts", map[string]any{"cwd": "/work/Projects/athena", "text": "Fix AS-7", "host_id": box.ID, "account_id": 0}, 201, &made)
+	var d struct {
+		HostID    int64  `json:"host_id"`
+		Cwd       string `json:"cwd"`
+		AccountID *int64 `json:"account_id"`
+	}
+	owner.want("GET", "/api/v1/drafts/"+made.ID, nil, 200, &d)
+	if d.HostID != box.ID || d.Cwd != "/work/Projects/athena" || d.AccountID != nil {
+		t.Fatalf("draft: %+v", d)
+	}
+}

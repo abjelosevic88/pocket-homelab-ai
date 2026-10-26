@@ -102,6 +102,12 @@ type linkAccount struct {
 	SignedIn bool   `json:"signed_in"`
 }
 
+type linkHost struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	OK   bool   `json:"ok"` // reachable the last time it was checked
+}
+
 type linkWorkspace struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
@@ -120,10 +126,16 @@ func (s *Server) handleLinkAgentOptions(w http.ResponseWriter, r *http.Request) 
 		Providers       []linkProvider  `json:"providers"`
 		Accounts        []linkAccount   `json:"accounts"`
 		Workspaces      []linkWorkspace `json:"workspaces"`
+		Hosts           []linkHost      `json:"hosts"` // other machines (Settings → Servers); this server is id 0
 		DefaultProvider string          `json:"default_provider"`
 		Home            string          `json:"home"`
 		Roots           []string        `json:"roots"`
-	}{Providers: []linkProvider{}, Accounts: []linkAccount{}, Workspaces: []linkWorkspace{}, DefaultProvider: st.DefaultProvider, Home: s.cfg.Home, Roots: s.cfg.Roots}
+	}{Providers: []linkProvider{}, Accounts: []linkAccount{}, Workspaces: []linkWorkspace{}, Hosts: []linkHost{}, DefaultProvider: st.DefaultProvider, Home: s.cfg.Home, Roots: s.cfg.Roots}
+	if hosts, err := s.store.ListHosts(ctx); err == nil {
+		for _, h := range hosts {
+			out.Hosts = append(out.Hosts, linkHost{ID: h.ID, Name: h.Name, OK: h.Info.OK})
+		}
+	}
 	for _, p := range s.providers(ctx, false) {
 		def := st.Claude
 		if p.ID == "codex" {
@@ -179,6 +191,7 @@ func (s *Server) handleLinkCreateDraft(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Provider  string `json:"provider"`
 		AccountID *int64 `json:"account_id"`
+		HostID    int64  `json:"host_id"` // 0 = this server
 		Model     string `json:"model"`
 		Effort    string `json:"effort"`
 		Mode      string `json:"mode"`
@@ -212,7 +225,7 @@ func (s *Server) handleLinkCreateDraft(w http.ResponseWriter, r *http.Request) {
 	d, err := s.validDraft(ctx, u, &store.LinkDraft{Provider: strings.TrimSpace(in.Provider), AccountID: in.AccountID, Model: strings.TrimSpace(in.Model),
 		Effort: strings.TrimSpace(in.Effort), Mode: strings.TrimSpace(in.Mode), Cwd: strings.TrimSpace(in.Cwd), Title: oneLine(in.Title, 120), Text: in.Text,
 		System: strings.TrimSpace(in.System), Source: strings.ToLower(strings.TrimSpace(in.Source)), Ref: oneLine(in.Ref, 80), RefURL: strings.TrimSpace(in.RefURL),
-		RefLabel: oneLine(in.RefLabel, 140), Worktree: in.Worktree})
+		RefLabel: oneLine(in.RefLabel, 140), Worktree: in.Worktree, HostID: in.HostID})
 	if err != nil {
 		s.fail(w, err, "draft")
 		return
@@ -277,19 +290,30 @@ func (s *Server) validDraft(ctx context.Context, u *store.User, d *store.LinkDra
 	if d.Mode != "" && !validMode(prov, d.Mode) {
 		return nil, badRequest("unknown mode " + d.Mode + " for " + prov)
 	}
-	if d.AccountID != nil {
-		if err := s.checkAccount(ctx, u, prov, *d.AccountID); err != nil {
-			return nil, err
-		}
-	}
 	if d.Cwd == "" {
 		return nil, badRequest("choose the folder the agent works in (cwd)")
 	}
-	clean, err := s.checkDir(d.Cwd)
-	if err != nil {
-		return nil, err
+	if d.HostID != 0 {
+		// another machine: its own login, and its ssh account's permissions are the boundary
+		if _, err := s.checkHostUse(ctx, u, d.HostID); err != nil {
+			return nil, err
+		}
+		d.AccountID = nil
+		if !strings.HasPrefix(d.Cwd, "/") && d.Cwd != "~" && !strings.HasPrefix(d.Cwd, "~/") {
+			return nil, badRequest("cwd on another machine must be an absolute folder (or ~/…)")
+		}
+	} else {
+		if d.AccountID != nil {
+			if err := s.checkAccount(ctx, u, prov, *d.AccountID); err != nil {
+				return nil, err
+			}
+		}
+		clean, err := s.checkDir(d.Cwd)
+		if err != nil {
+			return nil, err
+		}
+		d.Cwd = clean
 	}
-	d.Cwd = clean
 	if wt := d.Worktree; wt != nil {
 		wt.Name, wt.Base = strings.Trim(strings.ReplaceAll(strings.TrimSpace(wt.Name), " ", "-"), "/"), strings.TrimSpace(wt.Base)
 		if !branchNameOK(wt.Name) {
@@ -369,7 +393,7 @@ func (s *Server) handleGetDraft(w http.ResponseWriter, r *http.Request) {
 	}
 	// A draft without a login runs on the account chosen for connected apps
 	// (looked up now, so a later change in App defaults still applies).
-	if d.AccountID == nil {
+	if d.AccountID == nil && d.HostID == 0 { // another machine uses its own login
 		st, _ := s.store.GetSettings(r.Context(), d.UserID)
 		if id, ok := s.appAccount(r.Context(), userFrom(r.Context()), st); ok && firstNonEmpty(d.Provider, st.DefaultProvider, "claude") == "claude" {
 			d.AccountID = &id
@@ -453,7 +477,10 @@ func (s *Server) handleStartDraft(w http.ResponseWriter, r *http.Request) {
 	in.Effort = firstNonEmpty(in.Effort, d.Effort)
 	in.Mode = firstNonEmpty(in.Mode, d.Mode)
 	in.Cwd = firstNonEmpty(in.Cwd, d.Cwd)
-	if in.AccountID == nil {
+	if in.HostID == 0 {
+		in.HostID = d.HostID
+	}
+	if in.AccountID == nil && in.HostID == 0 {
 		in.AccountID = d.AccountID
 	}
 	if strings.TrimSpace(in.Text) == "" && len(in.UploadIDs) == 0 {
@@ -462,7 +489,9 @@ func (s *Server) handleStartDraft(w http.ResponseWriter, r *http.Request) {
 	in.Title = d.Title
 	// the app's worktree (its name possibly changed by the person): reuse, base, fast-forward
 	if in.Worktree != nil && d.Worktree != nil && (in.Worktree.Mode == "" || in.Worktree.Mode == "new") && in.Worktree.Name != "" {
-		in.Worktree = s.ticketWorktree(ctx, u, in.Cwd, *in.Worktree)
+		if h, err := s.checkHostUse(ctx, u, in.HostID); err == nil {
+			in.Worktree = s.ticketWorktree(ctx, u, h, in.Cwd, *in.Worktree)
+		}
 	}
 	source := "link:" + d.Source
 
@@ -539,7 +568,17 @@ func (s *Server) handleLinkDirs(w http.ResponseWriter, r *http.Request) {
 	if u == nil {
 		return
 	}
-	out, err := s.listDirs(r.URL.Query().Get("path"), queryBool(r, "hidden"))
+	h, err := s.checkHostUse(r.Context(), u, queryInt64(r, "host"))
+	if err != nil {
+		s.fail(w, err, "dirs")
+		return
+	}
+	var out *dirListing
+	if h != nil {
+		out, err = s.listRemoteDirs(r.Context(), h, r.URL.Query().Get("path"), queryBool(r, "hidden"))
+	} else {
+		out, err = s.listDirs(r.URL.Query().Get("path"), queryBool(r, "hidden"))
+	}
 	if err != nil {
 		s.fail(w, err, "dirs")
 		return

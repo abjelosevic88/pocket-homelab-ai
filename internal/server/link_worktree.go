@@ -20,19 +20,23 @@ import (
 // else origin's default branch — never from whatever the main checkout
 // happens to have checked out (often another ticket's branch). Anything it
 // can't tell is left to createWorktree to report.
-func (s *Server) ticketWorktree(ctx context.Context, u *store.User, cwd string, spec newWorktree) *newWorktree {
-	info, err := inspectRepo(ctx, nil, cwd)
+func (s *Server) ticketWorktree(ctx context.Context, u *store.User, h *store.Host, cwd string, spec newWorktree) *newWorktree {
+	hostID := int64(0)
+	if h != nil {
+		hostID = h.ID
+	}
+	info, err := inspectRepo(ctx, h, cwd)
 	if err != nil || !info.Repo {
 		return &spec
 	}
 	if list, err := s.store.ListWorktrees(ctx, u.ID, "active"); err == nil {
 		for _, w := range list {
-			if w.HostID == 0 && w.Repo == info.Main && w.Branch == spec.Name {
+			if w.HostID == hostID && w.Repo == info.Main && w.Branch == spec.Name {
 				return &newWorktree{Mode: "existing", ID: w.ID}
 			}
 		}
 	}
-	if out, _, err := shOn(ctx, nil, 20*time.Second, wtBranches, info.Main); err == nil {
+	if out, _, err := shOn(ctx, h, 20*time.Second, wtBranches, info.Main); err == nil {
 		for _, l := range splitLines(out) {
 			if b := strings.TrimPrefix(l, "b="); b == spec.Name || b == "origin/"+spec.Name {
 				return &newWorktree{Mode: "branch", Branch: spec.Name}
@@ -40,11 +44,11 @@ func (s *Server) ticketWorktree(ctx context.Context, u *store.User, cwd string, 
 		}
 	}
 	if spec.Base == "" {
-		spec.Base = ticketBase(s.repoConfig(ctx, nil, 0, info.Main).Effective.Base, info)
+		spec.Base = ticketBase(s.repoConfig(ctx, h, hostID, info.Main).Effective.Base, info)
 	}
 	// start from today's base, not the last time someone pulled it: fast-forward
 	// only (a local branch with its own commits, or checked out, stays as it is)
-	if _, errOut, err := shOn(ctx, nil, 45*time.Second, wtFastForward, info.Main, strings.TrimPrefix(spec.Base, "origin/")); err != nil {
+	if _, errOut, err := shOn(ctx, h, 45*time.Second, wtFastForward, info.Main, strings.TrimPrefix(spec.Base, "origin/")); err != nil {
 		s.log.Info("worktree base not brought up to date", "repo", info.Main, "base", spec.Base, "err", strings.TrimSpace(errOut))
 	}
 	return &spec
