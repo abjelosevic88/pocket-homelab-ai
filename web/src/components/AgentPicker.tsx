@@ -1,4 +1,5 @@
 // Provider / model / effort / mode pickers, fed by GET /providers.
+import type { ReactNode } from 'react'
 import { useApp } from '../lib/app-context'
 import { planName } from '../lib/format'
 import type { Account, Provider, ProviderId, Settings } from '../lib/types'
@@ -140,25 +141,27 @@ export function AgentPicker({ value, onChange, allowDefault = false, compact = f
   const modes = ask ? [] : modeOptions(p, allowDefault)
   const speeds = ask ? [] : speedOptions(p, value.model, allowDefault)
   const size = compact ? 'sm' : ''
+  // in a form each dropdown gets its name above it; chips carry an icon instead
+  const named = (caption: string, picker: ReactNode) => compact ? picker : <div className="stack tight"><span className="muted xsmall">{caption}</span>{picker}</div>
   const cls = compact ? 'inline ghost' : ''
   const pickers = (
     <>
-      {accts.length > 0 && <Select size={size} className={cls} label="Account" value={value.account_id || 0} options={accts} onChange={v => onChange({ account_id: v })} width={compact ? 280 : 'trigger'}
-        renderValue={o => <span className="ellipsis">{compact && <Icon name="user" size={12} className="inline-ico" />}{o?.label ?? 'Account'}</span>} />}
-      {models.length > 0 && <Select size={size} className={cls} label="Model" value={value.model} options={models} onChange={v => onChange({ model: v })} width={compact ? 280 : 'trigger'}
-        renderValue={compact ? o => <span className="ellipsis"><Icon name={pid} size={14} className={`inline-ico prov-glyph ${pid}`} />{shortLabel(String(o?.label ?? 'Model'))}</span> : undefined} />}
-      {efforts.length > 0 && <Select size={size} className={cls} label="Effort" value={value.effort} options={efforts} onChange={v => onChange({ effort: v })} width={compact ? 180 : 'trigger'}
-        renderValue={o => <span className="ellipsis">{compact ? <Icon name="brain" size={12} className="inline-ico" /> : null}{o?.label ?? 'Effort'}</span>} />}
-      {modes.length > 0 && <Select size={size} className={cls} label="Permissions" value={value.mode} options={modes} onChange={v => onChange({ mode: v })} width={compact ? 300 : 'trigger'}
-        renderValue={compact ? o => <span className="ellipsis"><Icon name="shield" size={12} className="inline-ico" />{o?.label ?? 'Mode'}</span> : undefined} />}
+      {accts.length > 0 && named('Account', <Select size={size} className={cls} label="Account" value={value.account_id || 0} options={accts} onChange={v => onChange({ account_id: v })} width={compact ? 280 : 'trigger'}
+        renderValue={o => <span className="ellipsis">{compact && <Icon name="user" size={12} className="inline-ico" />}{o?.label ?? 'Account'}</span>} />)}
+      {models.length > 0 && named('Model', <Select size={size} className={cls} label="Model" value={value.model} options={models} onChange={v => onChange({ model: v })} width={compact ? 280 : 'trigger'}
+        renderValue={compact ? o => <span className="ellipsis"><Icon name={pid} size={14} className={`inline-ico prov-glyph ${pid}`} />{shortLabel(String(o?.label ?? 'Model'))}</span> : undefined} />)}
+      {efforts.length > 0 && named('Effort', <Select size={size} className={cls} label="Effort" value={value.effort} options={efforts} onChange={v => onChange({ effort: v })} width={compact ? 180 : 'trigger'}
+        renderValue={o => <span className="ellipsis">{compact ? <Icon name="brain" size={12} className="inline-ico" /> : null}{o?.label ?? 'Effort'}</span>} />)}
+      {modes.length > 0 && named('Permissions', <Select size={size} className={cls} label="Permissions" value={value.mode} options={modes} onChange={v => onChange({ mode: v })} width={compact ? 300 : 'trigger'}
+        renderValue={compact ? o => <span className="ellipsis"><Icon name="shield" size={12} className="inline-ico" />{o?.label ?? 'Mode'}</span> : undefined} />)}
       {speeds.length > 0 && (compact ? (() => {
         const fast = (p?.speeds || []).find(x => x.id)
         const on = !!value.speed
         return fast && <button type="button" className={`speed-toggle ${on ? 'on' : ''}`} aria-pressed={on} disabled={!fast.available && !on}
           title={fast.available ? (on ? `${fast.name} speed is on — tap for standard` : `${fast.name}: ${fast.description || 'faster replies'}`) : (fast.note || `${fast.name} is not available`)}
           onClick={() => onChange({ speed: on ? '' : fast.id })}><Icon name="zap" size={15} /></button>
-      })() : <Select size={size} className={cls} label="Speed" value={allowDefault && !value.speed ? '__default' : (value.speed || '')} options={speeds}
-        onChange={v => onChange({ speed: v === '__default' ? '' : v })} width="trigger" />)}
+      })() : named('Speed', <Select size={size} className={cls} label="Speed" value={allowDefault && !value.speed ? '__default' : (value.speed || '')} options={speeds}
+        onChange={v => onChange({ speed: v === '__default' ? '' : v })} width="trigger" />))}
     </>
   )
   if (compact) return <div className="agent-chips">{pickers}</div>

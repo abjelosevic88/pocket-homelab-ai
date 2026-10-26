@@ -115,6 +115,7 @@ function ScheduleDialog({ draft, onClose, onSaved }: { draft: Draft; onClose: ()
   const [f, setF] = useState<Draft>(draft)
   const [busy, setBusy] = useState(false)
   const [preview, setPreview] = useState<SchedulePreview | null>(null)
+  const { hosts } = useApp()
   const spec = useDebounce(f.spec.trim(), 250)
   useEffect(() => {
     if (!spec) { setPreview(null); return }
@@ -151,9 +152,12 @@ function ScheduleDialog({ draft, onClose, onSaved }: { draft: Draft; onClose: ()
             { value: 'attention', label: 'Only when something’s wrong' }, { value: 'always', label: 'Every run' }, { value: 'never', label: 'Never' },
           ]} label="Notify" />
         </Field>
-        <Field label="Agent" group><AgentPicker allowDefault value={f} onChange={p => setF(x => ({ ...x, ...p }))} /></Field>
+        {hosts.length > 0 && <Field label="Runs on" group help="This server, or a machine from Settings → Servers (it uses that machine’s own login).">
+          <HostPicker value={f.host_id} onChange={host_id => setF({ ...f, host_id, cwd: '' })} className="btn" />
+        </Field>}
+        <Field label="Agent" group><AgentPicker allowDefault noAccount={!!f.host_id} value={f} onChange={p => setF(x => ({ ...x, ...p }))} /></Field>
         <Field label="Folder" group>
-          <div className="row"><HostPicker value={f.host_id} onChange={host_id => setF({ ...f, host_id, cwd: '' })} className="btn" /><FolderButton value={f.cwd} host={f.host_id} onChange={cwd => setF({ ...f, cwd })} className="btn" />{f.cwd && <button type="button" className="btn ghost sm" onClick={() => setF({ ...f, cwd: '' })}>Use default</button>}</div>
+          <div className="row"><FolderButton value={f.cwd} host={f.host_id} onChange={cwd => setF({ ...f, cwd })} className="btn" />{f.cwd && <button type="button" className="btn ghost sm" onClick={() => setF({ ...f, cwd: '' })}>Use default</button>}</div>
         </Field>
         <label className="inline-switch"><Switch checked={f.enabled} onChange={v => setF({ ...f, enabled: v })} label="Enabled" />Enabled</label>
       </div>
