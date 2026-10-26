@@ -837,7 +837,6 @@ func (s *claudeSession) handleResult(m map[string]json.RawMessage) {
 	if !t.OK {
 		switch {
 		case r.Subtype == "error_during_execution":
-			t.Error = "Stopped."
 			t.Interrupted = true
 		case r.Subtype == "error_max_turns":
 			t.Error = "Stopped: too many turns."

@@ -62,6 +62,22 @@ func fakeClaude(t *testing.T, s *Server, root string) string {
 	if err := os.WriteFile(bin, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
+	// Bootstrap warms this cache asynchronously. Wait for its first result before
+	// replacing it, or a late probe of the deliberately missing CLI overwrites
+	// the fixture and makes requests fail depending on scheduling.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		s.provMu.Lock()
+		if !s.provAt.IsZero() {
+			break
+		}
+		s.provMu.Unlock()
+		if time.Now().After(deadline) {
+			t.Fatal("provider warmup did not finish")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	defer s.provMu.Unlock()
 	s.cfg.ClaudeBin = bin
 	s.provList = []agent.Provider{
 		{ID: "claude", Name: "Claude Code", Available: true, Models: []agent.Model{{ID: "default", Name: "Default", Efforts: []string{"low", "high"}}},

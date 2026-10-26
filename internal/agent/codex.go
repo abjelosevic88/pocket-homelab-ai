@@ -763,7 +763,6 @@ func (s *codexSession) notify(method string, params json.RawMessage) {
 			case p.Turn.Error != nil && p.Turn.Error.Message != "":
 				t.Error = p.Turn.Error.Message
 			case p.Turn.Status == "interrupted":
-				t.Error = "Stopped."
 				t.Interrupted = true
 			default:
 				t.Error = p.Turn.Status

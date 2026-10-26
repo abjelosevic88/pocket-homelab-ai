@@ -143,6 +143,7 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
         {(user?.role === 'admin' || user?.can_run) && nav('/worktrees', 'fork', 'Worktrees', activeWt > 0 ? <span className="badge">{activeWt}</span> : undefined)}
         {nav('/shared', 'users', 'Shared', sharedN > 0 ? <span className="badge">{sharedN}</span> : undefined)}
         {nav('/usage', 'chart', 'Usage')}
+        {nav('/snippets', 'bookmark', 'Snippets')}
       </nav>
 
       <div className="sb-sec">

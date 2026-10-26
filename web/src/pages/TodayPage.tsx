@@ -20,7 +20,7 @@ const addDays = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth(), 
 const STATUS: Record<Run['status'], { label: string; icon: string }> = {
   running: { label: 'Running', icon: '' },
   done: { label: 'Done', icon: 'check' },
-  interrupted: { label: 'Stopped', icon: 'stop' },
+  interrupted: { label: 'Interrupted', icon: 'stop' },
   unfinished: { label: 'Never finished', icon: 'alert' },
 }
 

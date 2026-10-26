@@ -135,7 +135,7 @@ function TurnFoot({ t, onFork, onRewindHere, rewindDisabled, text }: { t: TurnIn
     setTimeout(() => setCopied(false), 1500)
   }
   // Stopping a turn yourself is not a failure: the footer stays quiet.
-  const failed = !t.ok && !t.interrupted && t.error !== 'Stopped.'
+  const failed = !t.ok && !t.interrupted && !['stopped', 'stopped.', 'stoped', 'stoped.'].includes((t.error || '').trim().toLowerCase())
   const bits = []
   if (t.cost_usd) bits.push(fmtCost(t.cost_usd))
   if (t.input_tokens || t.output_tokens) bits.push(`${fmtTokens(t.input_tokens + t.output_tokens)} tokens`)

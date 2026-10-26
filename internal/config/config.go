@@ -51,8 +51,12 @@ type Config struct {
 
 	// Notifications: finished turns, questions, failed runs (each person
 	// can set their own route).
-	NotifyURL  string // Apprise route, ntfy topic URL or webhook
-	NotifyKind string // apprise | ntfy | webhook
+	NotifyURL   string // Apprise route, ntfy topic URL or webhook
+	NotifyKind  string // apprise | ntfy | webhook
+	APNSTeamID  string
+	APNSKeyID   string
+	APNSKeyFile string
+	APNSTopic   string
 
 	// The agents.
 	Home        string        // the server user's home (default folder, ~ expansion)
@@ -136,8 +140,12 @@ func Load() (*Config, error) {
 		CoreRegistrationKey: env("CORE_REGISTRATION_KEY", ""),
 		CoreAppURL:          strings.TrimRight(env("CORE_APP_URL", ""), "/"),
 
-		NotifyURL:  env("NOTIFY_URL", ""),
-		NotifyKind: strings.ToLower(env("NOTIFY_KIND", "apprise")),
+		NotifyURL:   env("NOTIFY_URL", ""),
+		NotifyKind:  strings.ToLower(env("NOTIFY_KIND", "apprise")),
+		APNSTeamID:  env("APNS_TEAM_ID", ""),
+		APNSKeyID:   env("APNS_KEY_ID", ""),
+		APNSKeyFile: env("APNS_KEY_FILE", ""),
+		APNSTopic:   env("APNS_TOPIC", "org.bjelke.pocketai"),
 
 		ClaudeBin:   env("CLAUDE_BIN", "claude"),
 		CodexBin:    env("CODEX_BIN", "codex"),

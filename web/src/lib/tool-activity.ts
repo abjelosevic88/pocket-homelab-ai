@@ -21,12 +21,12 @@ export function toolLabel(tool: Pick<ToolInfo, 'name'>): string {
 export type ActivityEntry = { type: 'item'; key: string; item: Item } | { type: 'tools'; key: string; items: Item[] }
 
 // Consecutive routine calls form one run of rows. Messages, permissions,
-// failures and image previews keep their place. The first key stays stable as a run grows.
+// image previews and denied calls keep their place. The first key stays stable as a run grows.
 export function groupToolActivity(items: Item[]): ActivityEntry[] {
   const out: ActivityEntry[] = []
   for (const item of items) {
     const tool = item.tool
-    const routine = item.kind === 'tool' && tool && tool.status !== 'error' && tool.status !== 'denied' && !tool.images && !/^\[image\]$/m.test(tool.output || '')
+    const routine = item.kind === 'tool' && tool && tool.status !== 'denied' && !tool.images && !/^\[image\]$/m.test(tool.output || '')
     const last = out[out.length - 1]
     if (routine) {
       if (last?.type === 'tools') last.items.push(item)

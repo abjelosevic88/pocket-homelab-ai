@@ -22,6 +22,7 @@ import (
 
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/agent"
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/config"
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/notify"
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
 	core "github.com/abjelosevic88/pocket-homelab-core/sdk"
 )
@@ -51,7 +52,8 @@ type Server struct {
 	oidc   *oidcProvider
 	oidcMu sync.Mutex
 
-	rt *engine
+	rt   *engine
+	apns *notify.APNS
 
 	wtOnce sync.Once
 	wtHold *wtHolds // messages waiting for a worktree's setup: worktrees.go
@@ -74,6 +76,7 @@ func New(cfg *config.Config, st *store.Store, log *slog.Logger, webFS fs.FS) *Se
 		accts: accountState{status: map[string]acctStatus{}, logins: map[int64]*loginRun{}}}
 	s.inferenceSlots = make(chan struct{}, 4)
 	s.rt = newRuntime(s)
+	s.apns = &notify.APNS{TeamID: cfg.APNSTeamID, KeyID: cfg.APNSKeyID, KeyFile: cfg.APNSKeyFile, Topic: cfg.APNSTopic}
 	agent.Version = Version
 	s.http = &http.Client{Timeout: 60 * time.Second}
 	s.core = core.New(cfg.CoreURL, core.Options{DB: st.DB, TokenFile: cfg.DataDir + "/core.token", UserAgent: ua, ServiceCache: time.Minute, ServiceStale: 15 * time.Minute})
