@@ -127,7 +127,7 @@ export const ItemView = memo(function ItemView({ item, showThinking, threadId, o
 
 // Under every reply, like Paseo: what it cost, copy, fork from here, and how
 // long the agent worked.
-function TurnFoot({ t, onFork, text }: { t: TurnInfo; onFork?: () => void; text?: string }) {
+function TurnFoot({ t, onFork, onRewindHere, rewindDisabled, text }: { t: TurnInfo; onFork?: () => void; onRewindHere?: () => void; rewindDisabled?: boolean; text?: string }) {
   const [copied, setCopied] = useState(false)
   const copy = async () => {
     if (!text || !await copyText(text)) return
@@ -145,13 +145,14 @@ function TurnFoot({ t, onFork, text }: { t: TurnInfo; onFork?: () => void; text?
       <span className="grow" />
       {bits.length > 0 && <span className="tnum turn-bits">{bits.join(' · ')}</span>}
       {text && <button type="button" className="btn ghost icon-only xs" onClick={() => { void copy() }} title={copied ? 'Copied' : 'Copy response'} aria-label="Copy response"><Icon name={copied ? 'check' : 'copy'} size={14} /></button>}
+      {onRewindHere && <button type="button" className="btn ghost icon-only xs" disabled={rewindDisabled} onClick={onRewindHere} title={rewindDisabled ? 'Stop the agent and clear its queue before rewinding' : 'Rewind to here: continue from this reply with a different message (the original stays)'} aria-label="Rewind to here"><Icon name="undo" size={14} /></button>}
       {onFork && <button type="button" className="btn ghost icon-only xs" onClick={onFork} title="Fork from here into a new tab" aria-label="Fork from here into a new tab"><Icon name="fork" size={14} /></button>}
       <span className="run-time tnum" title="How long the agent worked on this">Worked for {fmtDuration(t.duration_ms)}</span>
     </div>
   )
 }
 
-export function Timeline({ items, showThinking, streamingKey, onFork, threadId, onResend, onDropUnsent, onEdit, onRewind, rewindDisabled, owner, onMoveFolder }: { items: Item[]; showThinking: boolean; streamingKey?: string; onFork?: (after: string) => void; threadId?: string; onResend?: (it: Item) => void; onDropUnsent?: (it: Item) => void; onEdit?: (it: Item) => void; onRewind?: (it: Item) => void; rewindDisabled?: boolean; owner?: Owner; onMoveFolder?: () => void }) {
+export function Timeline({ items, showThinking, streamingKey, onFork, threadId, onResend, onDropUnsent, onEdit, onRewind, rewindDisabled, owner, onMoveFolder }: { items: Item[]; showThinking: boolean; streamingKey?: string; onFork?: (after: string) => void; threadId?: string; onResend?: (it: Item) => void; onDropUnsent?: (it: Item) => void; onEdit?: (it: Item) => void; onRewind?: (it: Item, keepText?: boolean) => void; rewindDisabled?: boolean; owner?: Owner; onMoveFolder?: () => void }) {
   // Items there when the thread opened render still; anything that arrives
   // while you watch slides in.
   const initial = useRef<Set<string> | null>(null)
@@ -169,13 +170,21 @@ export function Timeline({ items, showThinking, streamingKey, onFork, threadId, 
     if (it.kind === 'assistant' && it.text?.trim()) parts.push(it.text.trim())
     if (it.kind === 'turn') { said.set(it.key, parts.join('\n\n')); parts = [] }
   }
+  // the message that came after each reply: rewinding to the reply cuts the conversation there
+  const nextUser = new Map<string, Item>()
+  let lastTurn = ''
+  for (const it of shown) {
+    if (it.kind === 'turn') lastTurn = it.key
+    else if (it.kind === 'user' && lastTurn && !it.queued && !it.unsent) { nextUser.set(lastTurn, it); lastTurn = '' }
+  }
   return (
     <div className="timeline">
       {groupToolActivity(shown).map(entry => {
         const it = entry.type === 'item' ? entry.item : entry.items[0]
         return (
         <div key={entry.key} className={`tl-item ${initial.current!.has(it.key) ? '' : 'appear'} ${it.key === streamingKey ? 'streaming' : ''}`}>
-          {entry.type === 'tools' ? <ToolActivity items={entry.items} /> : it.kind === 'turn' && it.turn ? <TurnFoot t={it.turn} text={said.get(it.key)} onFork={onFork ? () => onFork(it.key) : undefined} />
+          {entry.type === 'tools' ? <ToolActivity items={entry.items} /> : it.kind === 'turn' && it.turn ? <TurnFoot t={it.turn} text={said.get(it.key)} onFork={onFork ? () => onFork(it.key) : undefined}
+              onRewindHere={onRewind && nextUser.has(it.key) ? () => onRewind(nextUser.get(it.key)!, false) : undefined} rewindDisabled={rewindDisabled} />
             : <ItemView item={it} showThinking={showThinking} threadId={threadId} ownerId={owner?.id} ownerName={owner?.name} onMoveFolder={onMoveFolder} />}
           {it.kind === 'user' && !it.queued && !it.unsent && (onEdit || onRewind) && <div className="message-actions">
             {onEdit && <button type="button" className="btn ghost icon-only xs" disabled={rewindDisabled} onClick={() => onEdit(it)} title={rewindDisabled ? 'Stop the agent and clear its queue before editing' : 'Edit message'} aria-label="Edit message"><Icon name="edit" size={14} /></button>}

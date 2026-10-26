@@ -198,17 +198,20 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
       if (parentTabs) { openInParent(th.id, th.title); toast('Forked — the copy opened in a new tab') } else { navigate(`/t/${th.id}`); toast('Forked — this is the copy') }
     } catch (e) { toast(errMsg(e), 'err') }
   }
-  const rewind = async (item: Item) => {
+  // keepText: the message rewound to comes back to edit; false (rewind to a reply): an empty box
+  const rewind = async (item: Item, keepText = true) => {
     if (rewinding) return
     setRewinding(true)
     try {
       const result = await api.post<{ thread: Thread; draft: { text: string; uploads: Upload[] } }>(`${V1}/threads/${id}/rewind`, { key: item.key })
       const next = result.thread
-      const text = result.draft.text
-      sessionStorage.setItem('pai-draft-' + next.id, text)
-      sessionStorage.setItem('pai-draft-uploads-' + next.id, JSON.stringify(result.draft.uploads))
+      if (keepText) {
+        sessionStorage.setItem('pai-draft-' + next.id, result.draft.text)
+        sessionStorage.setItem('pai-draft-uploads-' + next.id, JSON.stringify(result.draft.uploads))
+      }
       upsertThread(next)
       navigate(`/t/${next.id}`)
+      if (!keepText) toast('Rewound — continue from that reply here; the original conversation is kept')
     } catch (e) { toast(errMsg(e), 'err') }
     finally { setRewinding(false) }
   }
@@ -301,7 +304,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
               <Timeline key={id} threadId={t.provider === 'claude' ? id : undefined} items={visible} onResend={canSend ? resend : undefined} onDropUnsent={canSend ? dropUnsent : undefined} showThinking={!!settings?.show_thinking} streamingKey={streamingKey}
                 onFork={owner && t.source !== 'ask' && t.provider_session_id && canRun ? forkNewTab : undefined}
                 onEdit={owner && canRun && !t.host_id ? it => { void rewind(it) } : undefined}
-                onRewind={owner && canRun && !t.host_id ? it => { void rewind(it) } : undefined} rewindDisabled={rewindDisabled}
+                onRewind={owner && canRun && (!t.host_id || t.provider === 'claude') ? (it, keep) => { void rewind(it, keep) } : undefined} rewindDisabled={rewindDisabled}
                 owner={sharedOwner} onMoveFolder={owner && canRun ? () => setMoving(true) : undefined} />
               <ThreadEvidence id={id} revision={visible.filter(i => i.kind === 'turn').length} />
               {t.status === 'error' && t.error && !(lastItem?.kind === 'notice' && lastItem.text === t.error) && <div className="notice error"><Icon name="alert" size={14} /><span>{t.error}</span></div>}
