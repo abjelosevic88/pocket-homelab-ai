@@ -211,6 +211,10 @@ that is being driven elsewhere has `external: true` and `status: "running"`; `PO
 | PUT | `/workspaces/{id}` | |
 | DELETE | `/workspaces/{id}` | threads keep their cwd |
 | GET | `/fs/dirs?path=` | folder picker: `{path, parent, dirs: [{name, path, git: bool}], roots: string[]}` |
+| GET | `/fs/project?path=&host=` | lightweight Git identity: `{repo, branch, project_id}`; `repo` is the main checkout, `project_id` matches SSH/HTTPS network origins across machines and omits credentials; no network origin gives an empty ID; non-Git folders return 400 |
+| GET | `/remembered-folders?host=0` | personal, per-machine folder shortcuts: `{folders: [{path}], selected_path: string \| null}`, newest first, at most 12; null means no previous choice, empty string explicitly selects the machine default |
+| POST | `/remembered-folders` | `{host_id: 0, path: "/absolute/folder"}` remembers/selects a folder and returns that machine's history; empty path selects the default without adding a shortcut; does not touch the filesystem or connect over SSH |
+| DELETE | `/remembered-folders?host=0&path=...` | forgets only this person's shortcut and matching last choice; returns the remaining history; never removes the folder, workspace or chats |
 
 ## Recipes (saved prompts)
 

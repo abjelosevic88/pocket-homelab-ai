@@ -1,15 +1,16 @@
 // Pick the folder an agent starts in: workspaces first, or browse the server
 // (or, with host, another machine over ssh).
-import { type FormEvent, useEffect, useMemo, useState } from 'react'
+import { type FormEvent, useEffect, useState } from 'react'
 import { api, qs, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { baseName, shortPath } from '../lib/format'
 import type { DirListing } from '../lib/types'
+import { folderHistory, rememberFolder, forgetFolder, type FolderHistory } from '../lib/folder-history'
 import { Icon } from './icons'
 import { errMsg, Loading, Modal, Spinner, useToast } from './ui'
 
 export function FolderPicker({ value, host = 0, onPick, onClose }: { value: string; host?: number; onPick: (path: string) => void; onClose: () => void }) {
-  const { workspaces: all, hosts, threads } = useApp()
+  const { workspaces: all, hosts } = useApp()
   const { toast } = useToast()
   const workspaces = host ? [] : all // folders on this server
   const where = host ? hosts.find(h => h.id === host)?.name : ''
@@ -25,6 +26,28 @@ export function FolderPicker({ value, host = 0, onPick, onClose }: { value: stri
   const [make, setMake] = useState<'' | 'folder' | 'clone'>('')
   const [name, setName] = useState('')
   const [busy, setBusy] = useState('')
+  const [history, setHistory] = useState<FolderHistory | null>(null)
+  const [historyError, setHistoryError] = useState('')
+  const [saving, setSaving] = useState(false)
+  useEffect(() => {
+    let live = true
+    folderHistory(host).then(h => { if (live) setHistory(h) }).catch(e => { if (live) setHistoryError(errMsg(e)) })
+    return () => { live = false }
+  }, [host])
+  const pick = async (p: string) => {
+    setSaving(true); setHistoryError('')
+    onPick(p)
+    try { await rememberFolder(p, host) }
+    catch (e) { toast(`Folder selected. History could not sync: ${errMsg(e)}`, 'err') }
+    finally { setSaving(false) }
+    onClose()
+  }
+  const forget = async (p: string) => {
+    setSaving(true); setHistoryError('')
+    try { setHistory(await forgetFolder(p, host)) }
+    catch (e) { setHistoryError(`Could not forget this folder: ${errMsg(e)}`) }
+    finally { setSaving(false) }
+  }
 
   useEffect(() => {
     let live = true
@@ -35,16 +58,7 @@ export function FolderPicker({ value, host = 0, onPick, onClose }: { value: stri
       .catch(e => { if (live) { setErr(errMsg(e)); if (!list) setList({ path, parent: '', dirs: [], roots: [] }) } })
       .finally(() => { if (live) setLoading(false) })
     return () => { live = false }
-  }, [path, n, hidden]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Recent: where your threads on this machine worked lately.
-  const recent = useMemo(() => {
-    const skip = new Set([...places, ...workspaces.map(w => w.path)])
-    const seen = new Set<string>()
-    return [...(threads || [])].filter(t => (t.host_id || 0) === host && t.cwd && !skip.has(t.cwd))
-      .sort((a, b) => (b.activity_at || '').localeCompare(a.activity_at || ''))
-      .filter(t => !seen.has(t.cwd) && !!seen.add(t.cwd)).slice(0, 6).map(t => t.cwd)
-  }, [threads, host, places, workspaces])
+  }, [path, host, n, hidden]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Typing past the current folder filters its list ("…/Projects/po").
   const here = (list?.path || '').replace(/\/$/, '')
@@ -75,9 +89,24 @@ export function FolderPicker({ value, host = 0, onPick, onClose }: { value: stri
     <Modal title={where ? `Working folder on ${where}` : 'Working folder'} onClose={onClose} size="lg" className="folder-modal" footer={<>
       <span className="muted small grow ellipsis" title={list?.path}>{shortPath(list?.path)}</span>
       <button type="button" className="btn" onClick={onClose}>Cancel</button>
-      <button type="button" className="btn primary" disabled={!list?.path || !!err || loading} onClick={() => { onPick(list!.path); onClose() }}><span className="hide-narrow">Use this folder</span><span className="show-narrow">Use</span></button>
+      <button type="button" className="btn primary" disabled={!list?.path || !!err || saving || loading} onClick={() => void pick(list!.path)}><span className="hide-narrow">{saving ? 'Saving…' : 'Use this folder'}</span><span className="show-narrow">Use</span></button>
     </>}>
       <div className="stack">
+        {historyError && <div className="callout danger" role="alert">{historyError}</div>}
+        {!!history?.folders.length && <section className="remembered-folders" aria-label="Remembered folders">
+          <div className="row"><strong className="small grow">Remembered folders</strong><span className="muted xsmall">{where || 'This server'}</span></div>
+          <div className="remembered-folder-list">
+            {history.folders.map(f => <div key={f.path} className="remembered-folder-row">
+              <button type="button" className="remembered-folder-pick" disabled={saving} onClick={() => void pick(f.path)} title={f.path}>
+                <Icon name="folder" size={17} /><span><strong>{baseName(f.path) || '/'}</strong><small>{shortPath(f.path)}</small></span>
+                {f.path === value && <Icon name="check" size={16} />}
+              </button>
+              <button type="button" className="btn ghost sm" disabled={saving} onClick={() => void forget(f.path)} aria-label={`Forget ${f.path}`} title="Forget shortcut (keeps the folder)"><Icon name="x" size={15} /></button>
+            </div>)}
+          </div>
+          <span className="muted xsmall">Synced with your devices. Forgetting a shortcut keeps its folder and chats.</span>
+        </section>}
+        <button type="button" className="btn ghost sm" disabled={saving} onClick={() => void pick('')}>Use machine default</button>
         {places.length > 1 && (
           <div className="chips">
             {places.map((p, i) => (
@@ -92,15 +121,6 @@ export function FolderPicker({ value, host = 0, onPick, onClose }: { value: stri
             {workspaces.map(w => (
               <button key={w.id} type="button" className={`chip ${w.path === list?.path ? 'active' : ''}`} title={w.path} onClick={() => setPath(w.path)}>
                 <span className="dot" style={{ background: w.color || 'var(--accent)' }} />{w.name}
-              </button>
-            ))}
-          </div>
-        )}
-        {recent.length > 0 && (
-          <div className="chips" aria-label="Recent folders">
-            {recent.map(p => (
-              <button key={p} type="button" className={`chip ${p === list?.path ? 'active' : ''}`} title={`Recent: ${p}`} onClick={() => setPath(p)}>
-                <Icon name="history" size={13} />{baseName(p)}
               </button>
             ))}
           </div>

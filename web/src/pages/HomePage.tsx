@@ -16,15 +16,12 @@ import { Icon } from '../components/icons'
 import { AskButton } from '../components/AskButton'
 import { errMsg, Loading, useToast } from '../components/ui'
 import { embedded } from '../lib/embed'
+import { folderHistory, restoredFolder } from '../lib/folder-history'
 
 const LAST = 'pai-new-thread'
-const HOST_CWD = 'pai-host-cwd' // last folder per machine: {"<host id>": "/home/…"}
 
 type Choice = AgentValue & { cwd: string; host_id?: number; worktree?: WorktreeSpec | null }
 
-function hostCwds(): Record<string, string> {
-  try { return JSON.parse(localStorage.getItem(HOST_CWD) || '{}') || {} } catch { return {} }
-}
 
 /** A conversation another Pocket app prepared (?draft=<id>): the person reads it and presses send. */
 interface LinkDraft {
@@ -114,6 +111,8 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
   const canRun = !!user && (user.role === 'admin' || user.can_run)
   const [choice, setChoice] = useState<Choice | null>(null)
   const inited = useRef(false)
+  const folderRevision = useRef(0)
+  const lastChoiceKey = `${LAST}:${user?.id ?? 'anonymous'}`
   const [params, setParams] = useSearchParams()
   const draftId = params.get('draft')
   const [draft, setDraft] = useState<LinkDraft | null>(null)
@@ -149,7 +148,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
     if (inited.current || !settings || !providersReady) return
     inited.current = true
     let saved: Partial<Choice> = {}
-    try { saved = JSON.parse(localStorage.getItem(LAST) || '{}') } catch { /* ignore */ }
+    try { saved = JSON.parse(localStorage.getItem(lastChoiceKey) || '{}') } catch { /* ignore */ }
     const pid = ((saved.provider && providers.find(p => p.id === saved.provider)?.available) ? saved.provider : (providers.find(p => p.id === settings.default_provider)?.available ? settings.default_provider : providers.find(p => p.available)?.id || settings.default_provider)) as ProviderId
     const p = providers.find(x => x.id === pid)
     const d = defaultsFor(p, settings)
@@ -164,13 +163,20 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
       host_id: saved.host_id || 0,
       worktree: saved.worktree?.mode === 'new' ? { mode: 'new' } : null,
     })
+    const host = saved.host_id && hosts.some(h => h.id === saved.host_id) ? saved.host_id : 0
+    const revision = folderRevision.current
+    if (!draftId && !params.get('worktree')) {
+      folderHistory(host).then(h => {
+        if (folderRevision.current !== revision) return
+        setChoice(c => c && { ...c, host_id: host, cwd: restoredFolder(h, host ? '' : settings.default_cwd || '') })
+      }).catch(() => {}) // Older/offline servers retain the current choice.
+    }
   }, [settings, providers, providersReady])
   // a prepared conversation never becomes the person's "last choice"
   useEffect(() => {
     if (!choice || draftId) return
     // a worktree choice is kept as "on" only: bases and branches belong to one repo
-    localStorage.setItem(LAST, JSON.stringify({ ...choice, worktree: choice.worktree ? { mode: 'new' } : null }))
-    localStorage.setItem(HOST_CWD, JSON.stringify({ ...hostCwds(), [String(choice.host_id || 0)]: choice.cwd }))
+    localStorage.setItem(lastChoiceKey, JSON.stringify({ ...choice, worktree: choice.worktree ? { mode: 'new' } : null }))
   }, [choice, draftId])
   // a saved machine that was removed: back to this server
   const hostId = choice?.host_id && hosts.some(h => h.id === choice.host_id) ? choice.host_id : 0
@@ -179,13 +185,22 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
   // embedded drafts have no chooser to look at the folder: the server checks it on send
   const wtSpec = choice?.worktree && (repo !== 'no' || choice.worktree.mode === 'existing' || (embedded && !!draft)) ? choice.worktree : undefined
   const wtWhere = !wtSpec ? '' : wtSpec.mode === 'existing' ? ` in worktree ${wtSpec.branch}` : wtSpec.mode === 'branch' ? ` in a worktree on ${wtSpec.branch}` : wtSpec.mode === 'pr' ? ` in a worktree of PR #${wtSpec.pr}` : wtSpec.name ? ` in worktree ${wtSpec.name}` : ` in a new worktree from ${wtSpec.base || (repo && repo !== 'no' ? repo.base : 'the default branch')}`
-  const pickHost = (id: number) => setChoice(c => c && { ...c, host_id: id, worktree: c.worktree?.mode === 'new' ? { mode: 'new' } : null, cwd: hostCwds()[String(id)] ?? (id ? '' : settings?.default_cwd || '') })
+  const pickHost = (id: number) => {
+    const revision = ++folderRevision.current
+    const fallback = id ? '' : settings?.default_cwd || ''
+    setChoice(c => c && { ...c, host_id: id, worktree: c.worktree?.mode === 'new' ? { mode: 'new' } : null, cwd: fallback })
+    folderHistory(id).then(h => {
+      if (folderRevision.current !== revision) return
+      setChoice(c => c && c.host_id === id ? { ...c, cwd: restoredFolder(h, fallback) } : c)
+    }).catch(e => toast(`Could not load remembered folders: ${errMsg(e)}`, 'err'))
+  }
   // ?worktree=<id>: a new thread in one of my worktrees ("New thread here")
   const wtParam = Number(params.get('worktree')) || 0
   useEffect(() => {
     if (!wtParam || !choice) return
     const w = worktrees.find(x => x.id === wtParam && x.status === 'active')
     if (!w) return
+    folderRevision.current++
     setMode('server')
     setChoice(c => c && { ...c, host_id: w.host_id, cwd: w.path, worktree: { mode: 'existing', id: w.id, branch: w.branch } })
     setParams(p => { p.delete('worktree'); return p }, { replace: true })
@@ -210,6 +225,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
   useEffect(() => {
     if (!draft || !settings || !providersReady || draftApplied.current === draft.id) return
     draftApplied.current = draft.id
+    folderRevision.current++
     const pid = (draft.provider && providers.some(p => p.id === draft.provider) ? draft.provider : (choice?.provider || settings.default_provider)) as ProviderId
     const p = providers.find(x => x.id === pid)
     const d = defaultsFor(p, settings)
@@ -346,7 +362,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
                   {!draft && <HostPicker value={hostId} onChange={pickHost} />}
                   <WorktreeChooser cwd={choice.cwd} host={hostId} value={choice.worktree || null} onChange={wt => setChoice(c => c && { ...c, worktree: wt })} onRepo={setRepo} />
                   {choice.worktree?.mode !== 'existing' && <BranchButton cwd={choice.cwd} host={hostId} />}
-                  <FolderButton value={choice.cwd} host={hostId} onChange={cwd => setChoice(c => c && { ...c, cwd, worktree: c.worktree?.mode === 'existing' ? null : c.worktree })} className="btn sm" />
+                  <FolderButton value={choice.cwd} host={hostId} onChange={cwd => { folderRevision.current++; setChoice(c => c && { ...c, cwd, worktree: c.worktree?.mode === 'existing' ? null : c.worktree }) }} className="btn sm" />
                 </div>
               </div>
               {draft && (

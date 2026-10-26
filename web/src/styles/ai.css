@@ -268,6 +268,14 @@
 .folder-actions .btn.active { background: var(--hover); color: var(--text); }
 .folder-make input { flex: 1; min-width: 0; }
 .dir-list { display: grid; gap: 1px; max-height: 46vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 10px; padding: 4px; }
+.remembered-folders { display: grid; gap: 10px; }
+.remembered-folder-list { max-height: 240px; overflow-y: auto; border: 1px solid var(--border); border-radius: 12px; padding: 4px; }
+.remembered-folder-row { display: flex; align-items: center; gap: 4px; }
+.remembered-folder-pick { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; padding: 10px; text-align: left; border: 0; background: transparent; color: inherit; border-radius: 8px; cursor: pointer; }
+.remembered-folder-pick:hover { background: var(--hover); }
+.remembered-folder-pick > span { display: grid; gap: 3px; flex: 1; min-width: 0; }
+.remembered-folder-pick strong, .remembered-folder-pick small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.remembered-folder-pick small { color: var(--muted); }
 .dir-row { display: flex; align-items: center; gap: 9px; padding: 7px 8px; border: 0; border-radius: 7px; background: none; text-align: left; cursor: pointer; font: inherit; color: inherit; width: 100%; }
 .dir-row:hover { background: var(--hover); }
 .dir-row > .icon:first-child { color: var(--muted); }
