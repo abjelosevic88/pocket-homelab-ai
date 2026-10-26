@@ -118,12 +118,16 @@ export function WorktreeChooser({ cwd, host, value, onChange, onRepo }: {
         }}>
         <Icon name="fork" size={13} />{on && <span className="wt-toggle-on">Worktree:</span>}<span className="ellipsis">{label}</span>
       </button>
-      {anchor && <WorktreeSpecPopover anchor={anchor} info={info} host={host} value={value} onChange={onChange} onClose={() => setAnchor(null)} />}
+      {anchor && <WorktreeSpecPopover anchor={anchor} info={info} host={host} value={value} onChange={onChange} onClose={() => setAnchor(null)}
+        onSetup={config => setInfo(i => i && { ...i, config })} />}
     </>
   )
 }
 
-function WorktreeSpecPopover({ anchor, info, host, value, onChange, onClose }: { anchor: Anchor; info: WorktreeRepoInfo; host: number; value: WorktreeSpec | null; onChange: (v: WorktreeSpec | null) => void; onClose: () => void }) {
+function WorktreeSpecPopover({ anchor, info, host, value, onChange, onClose, onSetup }: {
+  anchor: Anchor; info: WorktreeRepoInfo; host: number; value: WorktreeSpec | null; onChange: (v: WorktreeSpec | null) => void; onClose: () => void
+  onSetup: (config: WorktreeRepoInfo['config']) => void
+}) {
   const { worktrees } = useApp()
   const [mode, setModeRaw] = useState<WorktreeSpec['mode'] | 'off'>(value ? (value.mode === 'existing' ? 'new' : value.mode) : 'off')
   const [base, setBaseRaw] = useState(value?.base || info.base)
@@ -153,7 +157,7 @@ function WorktreeSpecPopover({ anchor, info, host, value, onChange, onClose }: {
   const setPr = (v: string) => { setPrRaw(v); apply({ pr: v }) }
   const setName = (v: string) => { setNameRaw(v); apply({ name: v }) }
   const pending = (mode === 'branch' && !branch) || (mode === 'pr' && !(Number(pr) > 0))
-  if (settings) return <WorktreeSettingsDialog info={info} host={host} onClose={() => setSettings(false)} />
+  if (settings) return <WorktreeSettingsDialog info={info} host={host} onClose={() => setSettings(false)} onSaved={onSetup} />
   return (
     <Popover anchor={anchor} onClose={onClose} width={380} label="Worktree" prefer="below">
       <div className="wt-pop stack">
@@ -180,8 +184,9 @@ function WorktreeSpecPopover({ anchor, info, host, value, onChange, onClose }: {
           <div className="wt-pop-setup muted xsmall">
             <Icon name="terminal" size={12} />
             <span className="grow">{cfg.setup.length ? <>Setup: <code>{cfg.setup[0]}</code>{cfg.setup.length > 1 ? ` +${cfg.setup.length - 1}` : ''}</> : 'No setup commands'}
-              {info.config.file && !info.config.saved ? ` (from ${info.config.file})` : ''} · copies {cfg.copy.length} file patterns</span>
-            <button type="button" className="link-btn xsmall" onClick={() => setSettings(true)}>Edit</button>
+              {info.config.scope === 'project' ? ' · every machine' : info.config.scope === 'machine' ? ' · this machine only' : info.config.file ? ` · from ${info.config.file}` : ''}
+              {' '}· copies {cfg.copy.length} file patterns</span>
+            <button type="button" className="link-btn xsmall" onClick={() => setSettings(true)}>{info.config.saved || info.config.file ? 'Edit' : 'Set up'}</button>
           </div>
         )}
         {open.length > 0 && mode !== 'off' && (
@@ -211,7 +216,7 @@ function WorktreeSpecPopover({ anchor, info, host, value, onChange, onClose }: {
 
 const lines = (s: string) => s.split('\n').map(x => x.trim()).filter(Boolean)
 
-export function WorktreeSettingsDialog({ info, host, onClose }: { info: WorktreeRepoInfo; host: number; onClose: () => void }) {
+export function WorktreeSettingsDialog({ info, host, onClose, onSaved }: { info: WorktreeRepoInfo; host: number; onClose: () => void; onSaved?: (config: WorktreeRepoInfo['config']) => void }) {
   const { toast } = useToast()
   const { hosts } = useApp()
   const project = info.config.project || ''
@@ -227,7 +232,7 @@ export function WorktreeSettingsDialog({ info, host, onClose }: { info: Worktree
   const save = async (saved: WorktreeSetupConfig | null, scope: 'project' | 'machine' = everywhere ? 'project' : 'machine') => {
     setBusy(true)
     try {
-      await api.put(`${V1}/worktrees/config`, { host, path: info.repo, saved, scope })
+      onSaved?.(await api.put<WorktreeRepoInfo['config']>(`${V1}/worktrees/config`, { host, path: info.repo, saved, scope }))
       toast(saved ? (scope === 'project' ? 'Saved for every machine with this repo' : `Saved for ${machine} only`) : scope === 'machine' && project ? `${machine} uses the setup for every machine again` : `Back to ${info.config.file || 'no setup'}`)
       onClose()
     } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
