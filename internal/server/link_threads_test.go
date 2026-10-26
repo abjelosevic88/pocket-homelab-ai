@@ -445,6 +445,23 @@ func TestLinkDraftWorktree(t *testing.T) {
 	gitT(t, repo, "add", "-A")
 	gitT(t, repo, "commit", "-q", "-m", "init")
 	gitT(t, repo, "branch", "as-3-old")
+	// the main checkout is on another ticket's branch: new worktrees still start from main
+	gitT(t, repo, "switch", "-q", "-c", "as-9-other")
+	_ = os.WriteFile(filepath.Join(repo, "b.txt"), []byte("other\n"), 0o644)
+	gitT(t, repo, "add", "-A")
+	gitT(t, repo, "commit", "-q", "-m", "other")
+	// origin is ahead of the local main: the worktree starts from origin's
+	origin := filepath.Join(root, "origin.git")
+	gitT(t, root, "clone", "-q", "--bare", repo, origin)
+	gitT(t, repo, "remote", "add", "origin", origin)
+	up := filepath.Join(root, "up")
+	gitT(t, root, "clone", "-q", "-b", "main", origin, up)
+	_ = os.WriteFile(filepath.Join(up, "c.txt"), []byte("new on origin\n"), 0o644)
+	gitT(t, up, "add", "-A")
+	gitT(t, up, "commit", "-q", "-m", "origin moved on")
+	gitT(t, up, "push", "-q", "origin", "main")
+	gitT(t, repo, "fetch", "-q", "origin")
+	gitT(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
 	var started []string
 	// before the folders go: worktree setups done, the (fake) agents stopped
 	t.Cleanup(func() {
@@ -484,6 +501,12 @@ func TestLinkDraftWorktree(t *testing.T) {
 	first := start("you/as-2-login")
 	if first.WorktreeID == 0 || first.Cwd == repo || branchOf(first.Cwd) != "you/as-2-login" {
 		t.Fatalf("first: %+v", first)
+	}
+	if _, err := os.Stat(filepath.Join(first.Cwd, "b.txt")); err == nil {
+		t.Fatal("the worktree started from the main checkout's branch, not origin's default")
+	}
+	if _, err := os.Stat(filepath.Join(first.Cwd, "c.txt")); err != nil {
+		t.Fatal("the worktree started from a stale local main, not origin's")
 	}
 	if again := start("you/as-2-login"); again.WorktreeID != first.WorktreeID || again.Cwd != first.Cwd {
 		t.Fatalf("second conversation did not reuse the worktree: %+v vs %+v", again, first)
