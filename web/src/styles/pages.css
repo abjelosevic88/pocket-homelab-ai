@@ -386,3 +386,14 @@
 .draft-wt-rename:hover .icon, .draft-wt-rename:focus-visible .icon { opacity: 1; }
 .draft-wt-name { height: 26px; padding: 0 6px; border: 1px solid var(--accent); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 12.5px; outline: none; }
 .draft-wt-name[aria-invalid] { border-color: var(--danger); }
+/* your own worktree groups: drag cards in, drag headings to reorder */
+.wt-group { border-radius: 14px; padding: 2px; margin: -2px; transition: background .12s, box-shadow .12s; }
+.wt-group-h { cursor: grab; align-items: center; text-transform: none; letter-spacing: 0; font-size: 13.5px; color: var(--text); }
+.wt-group-h .link-btn { display: inline-flex; color: inherit; }
+.wt-group-name { font: inherit; text-transform: none; letter-spacing: 0; font-size: 13px; padding: 2px 6px; border-radius: 6px; border: 1px solid var(--accent); background: var(--surface); color: var(--text); min-width: 0; width: 220px; }
+.wt-group-empty { padding: 14px; border: 1px dashed var(--border); border-radius: 12px; text-align: center; }
+.srv-group.drop-on, .wt-group.drop-on { background: color-mix(in srgb, var(--accent) 8%, transparent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
+.wt-group.dragging, .wt-card.dragging { opacity: .45; }
+.wt-card.drop-before { box-shadow: 0 -3px 0 0 var(--accent); }
+.wt-new-drop { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 16px; border: 2px dashed color-mix(in srgb, var(--accent) 45%, var(--border)); border-radius: 12px; color: var(--muted); font-size: 13px; }
+.wt-new-drop.drop-on { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--text); }

@@ -618,6 +618,12 @@ func (s *Server) worktreeRoutes(r chi.Router) {
 	r.Post("/worktrees/{id}/archive", s.handleWorktreeArchive)
 	r.Post("/worktrees/{id}/restore", s.handleWorktreeRestore)
 	r.Delete("/worktrees/{id}", s.handleForgetWorktree)
+	r.Put("/worktrees/{id}/group", s.handlePlaceWorktree)
+	r.Get("/worktree-groups", s.handleWorktreeGroups)
+	r.Post("/worktree-groups", s.handleCreateWorktreeGroup)
+	r.Put("/worktree-groups/order", s.handleOrderWorktreeGroups)
+	r.Patch("/worktree-groups/{id}", s.handleUpdateWorktreeGroup)
+	r.Delete("/worktree-groups/{id}", s.handleDeleteWorktreeGroup)
 }
 
 // worktree loads the person's worktree from the URL, with its machine.
