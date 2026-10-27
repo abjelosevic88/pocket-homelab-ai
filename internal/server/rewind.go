@@ -17,14 +17,22 @@ import (
 	"github.com/google/uuid"
 )
 
-// A rewind is a private continuation, never an in-place edit of a provider
-// session that another terminal or shared conversation may still reference.
+// Rewind trims the existing Pocket conversation. The provider history is
+// snapshotted at the boundary so another terminal cannot restore discarded context.
 func (s *Server) handleRewind(w http.ResponseWriter, r *http.Request) {
 	if !s.requireRun(w, r) {
 		return
 	}
 	t := s.thread(w, r)
 	if t == nil {
+		return
+	}
+	unlock := s.lockThreadEdit(t.ID)
+	defer unlock()
+	// A send may have completed while this request waited for the edit lock.
+	t, err := s.store.GetThreadAny(r.Context(), t.ID)
+	if err != nil {
+		s.fail(w, err, "read thread")
 		return
 	}
 	var in struct {
@@ -63,10 +71,9 @@ func nextSentPrompt(rows []*store.Item, turnKey string) string {
 	return ""
 }
 
-// branchBefore copies the conversation up to (not including) the user message
-// key into a new private thread. A rewind hands that message back as a draft;
-// a fork (at the response before it) only opens the copy, and may run while
-// the original keeps working: it never reads past an earlier, finished turn.
+// branchBefore prepares provider context before the selected user message.
+// Rewind replaces the existing conversation; fork copies the prefix into a
+// private chat and can run while the original continues working.
 func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.Thread, key string, fork bool) {
 	ctx := r.Context()
 	rows, err := s.store.ListItems(ctx, t.ID)
@@ -159,13 +166,14 @@ func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.T
 			return
 		}
 	}
-	n := &store.Thread{ID: uuid.NewString(), UserID: t.UserID, Title: "Rewind · " + t.Title,
+	if !fork {
+		s.rewindInPlace(w, r, t, rows, prefix, target, sid, sessionPath)
+		return
+	}
+	n := &store.Thread{ID: uuid.NewString(), UserID: t.UserID, Title: "Fork of " + t.Title,
 		Provider: t.Provider, AccountID: t.AccountID, Model: t.Model, Effort: t.Effort, Mode: t.Mode, Speed: t.Speed,
 		Cwd: t.Cwd, WorkspaceID: t.WorkspaceID, WorktreeID: t.WorktreeID, NoMemory: t.NoMemory, ProviderSessionID: sid,
-		Source: "rewind", SourceRef: t.ID, HostID: t.HostID, LogOffset: -1}
-	if fork {
-		n.Title, n.Source = "Fork of "+t.Title, "fork"
-	}
+		Source: "fork", SourceRef: t.ID, HostID: t.HostID, LogOffset: -1}
 	if t.Source == "ask" {
 		n.Source, n.SourceRef = t.Source, t.SourceRef
 	}
@@ -232,59 +240,14 @@ func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.T
 			n.LastPrompt = promptLine(it.Text, len(it.Images))
 		}
 	}
-	if fork {
-		if err := s.store.UpdateThread(ctx, n); err != nil {
-			s.fail(w, err, "fork")
-			return
-		}
-		complete = true
-		s.inheritLink(ctx, t, n)
-		s.rt.publishThread(n)
-		writeJSON(w, http.StatusCreated, n)
-		return
-	}
-	if err := copyItem(target); err != nil {
-		s.fail(w, err, "copy attachment")
-		return
-	}
-	uploads := []uploadOut{}
-	for _, im := range append(append([]agent.Image{}, target.Images...), target.Files...) {
-		for _, up := range copied {
-			if up.ID == im.ID {
-				uploads = append(uploads, up)
-				break
-			}
-		}
-	}
-	if target.LogImages > 0 && t.HostID == 0 { // a remote session's log is on that machine: those pictures stay behind
-		home, _ := s.accountHome(ctx, t.Provider, t.AccountID)
-		path, err := agent.FindClaude(home, t.ProviderSessionID)
-		if err != nil {
-			s.fail(w, err, "read original images")
-			return
-		}
-		for i := 0; i < target.LogImages; i++ {
-			data, mime, err := agent.LogImage(path, target.Key, i)
-			if err != nil {
-				s.fail(w, err, "read original image")
-				return
-			}
-			up, err := s.writeRewindUpload(ctx, n, fmt.Sprintf("image-%d%s", i+1, imageExt[mime]), mime, "", func(out *os.File) error { _, err := out.Write(data); return err })
-			if err != nil {
-				s.fail(w, err, "copy original image")
-				return
-			}
-			uploads = append(uploads, up)
-		}
-	}
 	if err := s.store.UpdateThread(ctx, n); err != nil {
-		s.fail(w, err, "rewind")
+		s.fail(w, err, "fork")
 		return
 	}
 	complete = true
 	s.inheritLink(ctx, t, n)
 	s.rt.publishThread(n)
-	writeJSON(w, http.StatusCreated, map[string]any{"thread": n, "draft": map[string]any{"text": target.Text, "uploads": uploads}})
+	writeJSON(w, http.StatusCreated, n)
 }
 
 func codexRewindOptions(t *store.Thread, bin string, env []string, remote *agent.Remote) agent.Options {

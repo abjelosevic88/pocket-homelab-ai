@@ -62,6 +62,8 @@ type run struct {
 	sess     agent.Session
 	cancel   context.CancelFunc
 
+	eventMu   sync.Mutex // drains provider callbacks before rewinding this conversation
+	retired   bool
 	mu        sync.Mutex
 	running   bool
 	pending   map[string]bool
@@ -321,6 +323,10 @@ func (rt *engine) flusher(ctx context.Context) {
 
 func (rt *engine) flush(r *run) {
 	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.retired {
+		return
+	}
 	var items []agent.Item
 	for k := range r.dirty {
 		if it := r.live[k]; it != nil {
@@ -328,7 +334,6 @@ func (rt *engine) flush(r *run) {
 		}
 		delete(r.dirty, k)
 	}
-	r.mu.Unlock()
 	for _, it := range items {
 		data, _ := json.Marshal(it)
 		_, _ = rt.s.store.UpsertItem(rt.ctx, r.threadID, it.Key, it.Kind, data, itemBody(it))
@@ -911,6 +916,10 @@ type runSink struct {
 }
 
 func (k *runSink) Item(it agent.Item) {
+	if !k.beginEvent() {
+		return
+	}
+	defer k.r.eventMu.Unlock()
 	r := k.r
 	r.mu.Lock()
 	r.lastUsed = time.Now()
@@ -934,6 +943,10 @@ func (k *runSink) Item(it agent.Item) {
 }
 
 func (k *runSink) Delta(key, field, text string) {
+	if !k.beginEvent() {
+		return
+	}
+	defer k.r.eventMu.Unlock()
 	r := k.r
 	r.mu.Lock()
 	it := r.live[key]
@@ -959,6 +972,10 @@ func (k *runSink) Delta(key, field, text string) {
 }
 
 func (k *runSink) SessionID(id string) {
+	if !k.beginEvent() {
+		return
+	}
+	defer k.r.eventMu.Unlock()
 	t, err := k.rt.s.store.GetThreadAny(k.rt.ctx, k.r.threadID)
 	if err != nil || t.ProviderSessionID == id {
 		return
@@ -969,6 +986,10 @@ func (k *runSink) SessionID(id string) {
 }
 
 func (k *runSink) Context(c agent.Context) {
+	if !k.beginEvent() {
+		return
+	}
+	defer k.r.eventMu.Unlock()
 	t, err := k.rt.s.store.GetThreadAny(k.rt.ctx, k.r.threadID)
 	if err != nil {
 		return
@@ -1406,6 +1427,10 @@ func limitsLess(a, b string) bool {
 }
 
 func (k *runSink) Request(req agent.Request) {
+	if !k.beginEvent() {
+		return
+	}
+	defer k.r.eventMu.Unlock()
 	r := k.r
 	r.mu.Lock()
 	r.pending[req.ID] = true
@@ -1428,6 +1453,10 @@ func (k *runSink) Request(req agent.Request) {
 }
 
 func (k *runSink) Subagents(list []agent.Subagent) {
+	if !k.beginEvent() {
+		return
+	}
+	defer k.r.eventMu.Unlock()
 	k.r.mu.Lock()
 	k.r.subs = list
 	k.r.lastUsed = time.Now()
@@ -1438,6 +1467,10 @@ func (k *runSink) Subagents(list []agent.Subagent) {
 }
 
 func (k *runSink) TurnStarted() {
+	if !k.beginEvent() {
+		return
+	}
+	defer k.r.eventMu.Unlock()
 	r := k.r
 	r.mu.Lock()
 	r.running = true
@@ -1446,6 +1479,10 @@ func (k *runSink) TurnStarted() {
 }
 
 func (k *runSink) TurnDone(ti agent.TurnInfo) {
+	if !k.beginEvent() {
+		return
+	}
+	defer k.r.eventMu.Unlock()
 	r := k.r
 	rt := k.rt
 	if !ti.OK || ti.Interrupted {
@@ -1553,6 +1590,10 @@ func (k *runSink) TurnDone(ti agent.TurnInfo) {
 }
 
 func (k *runSink) Exited(err error) {
+	if !k.beginEvent() {
+		return
+	}
+	defer k.r.eventMu.Unlock()
 	rt := k.rt
 	r := k.r
 	// what our process wrote to the CLI's log is on the timeline already

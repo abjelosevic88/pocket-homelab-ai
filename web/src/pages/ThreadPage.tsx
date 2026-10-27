@@ -50,6 +50,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const [titleDraft, setTitleDraft] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [rewinding, setRewinding] = useState(false)
+  const [rewindTarget, setRewindTarget] = useState<{ item: Item; keepText: boolean } | null>(null)
   const [sharing, setSharing] = useState(false)
   const [moving, setMoving] = useState(false)
   const [atBottom, setAtBottom] = useState(true)
@@ -107,6 +108,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
           return next
         })
       },
+      history_reset: d => { setItems(d as Item[]); atBottomRef.current = true; setAtBottom(true); setNewBelow(false) },
       item_removed: d => { const { key } = d as { key: string }; setItems(list => list ? list.filter(x => x.key !== key) : list) },
       thread: d => { const th = d as Thread; if (th?.id === id) { setThread(th); upsertThread(th) } },
       revoked: () => { setMissing(true); dropThread(id) }, // no longer shared with you
@@ -215,29 +217,16 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
     if (rewinding) return
     setRewinding(true)
     try {
-      const result = await api.post<{ thread: Thread; draft: { text: string; uploads: Upload[] } }>(`${V1}/threads/${id}/rewind`, { key: item.key })
-      const next = result.thread
-      if (keepText) {
-        sessionStorage.setItem('pai-draft-' + next.id, result.draft.text)
-        sessionStorage.setItem('pai-draft-uploads-' + next.id, JSON.stringify(result.draft.uploads))
-      }
-      upsertThread(next)
-      navigate(`/t/${next.id}`)
-      // Undo: back to the original, and the copy goes (it has nothing of its own yet)
-      const from = id
-      toast(keepText ? 'Rewound — edit the message and send it' : 'Rewound — continue from that reply here', 'ok', {
-        label: 'Undo', run: () => {
-          sessionStorage.removeItem('pai-draft-' + next.id)
-          sessionStorage.removeItem('pai-draft-uploads-' + next.id)
-          navigate(`/t/${from}`)
-          // a copy you already wrote in stays
-          api.get<ThreadDetail>(`${V1}/threads/${next.id}`).then(d => {
-            const th = d.thread
-            if (th.last_prompt !== next.last_prompt || th.status === 'running' || th.status === 'waiting') { toast('The copy already has your new message, so it was kept'); return }
-            return api.del(`${V1}/threads/${next.id}`)
-          }).catch(e => toast(errMsg(e), 'err'))
-        },
-      }, 12000)
+      const result = await api.post<{ thread: Thread; items: Item[]; draft: { text: string; uploads: Upload[] } }>(`${V1}/threads/${id}/rewind`, { key: item.key })
+      if (result.thread.id !== id) throw new Error('Update the server to rewind within this conversation')
+      setThread(result.thread)
+      setItems(result.items)
+      upsertThread(result.thread)
+      if (keepText) composer.current?.restoreDraft(result.draft.text, result.draft.uploads)
+      atBottomRef.current = true
+      setAtBottom(true)
+      setNewBelow(false)
+      toast(keepText ? 'Rewound this chat — edit the message and send it' : 'Rewound this chat to that reply')
     } catch (e) { toast(errMsg(e), 'err') }
     finally { setRewinding(false) }
   }
@@ -329,8 +318,8 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
               {t.source === 'import' && items.length > 0 && <div className="notice info"><Icon name="history" size={14} /><span>Imported from the server’s {providerName(t.provider)} history — sending a message continues that session.</span></div>}
               <Timeline key={id} threadId={t.provider === 'claude' ? id : undefined} items={visible} onResend={canSend ? resend : undefined} onDropUnsent={canSend ? dropUnsent : undefined} showThinking={!!settings?.show_thinking} streamingKey={streamingKey}
                 onFork={owner && t.source !== 'ask' && t.provider_session_id && canRun ? forkNewTab : undefined}
-                onEdit={owner && canRun ? it => { void rewind(it) } : undefined}
-                onRewind={owner && canRun ? (it, keep) => { void rewind(it, keep) } : undefined} rewindDisabled={rewindDisabled}
+                onEdit={owner && canRun ? item => setRewindTarget({ item, keepText: true }) : undefined}
+                onRewind={owner && canRun ? (item, keepText = true) => setRewindTarget({ item, keepText }) : undefined} rewindDisabled={rewindDisabled}
                 owner={sharedOwner} onMoveFolder={owner && canRun ? () => setMoving(true) : undefined} />
               <ThreadEvidence id={id} revision={visible.filter(i => i.kind === 'turn').length} />
               {t.status === 'error' && t.error && !(lastItem?.kind === 'notice' && lastItem.text === t.error) && <div className="notice error"><Icon name="alert" size={14} /><span>{t.error}</span></div>}
@@ -384,6 +373,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
       }} />}
       {sharing && <ShareDialog thread={t} onClose={() => setSharing(false)} onSaved={th => { setThread(th); upsertThread(th) }} />}
       {ctx.menu}
+      {rewindTarget && <Confirm title="Rewind this chat?" message={(rewindTarget.keepText ? 'Removes this message and everything after it from this chat, and restores it in the composer.' : 'Removes all messages after this reply from this chat.') + ' This cannot be undone. Files and app changes already made remain in place.'} confirmLabel="Rewind" onCancel={() => setRewindTarget(null)} onConfirm={() => { const target = rewindTarget; setRewindTarget(null); void rewind(target.item, target.keepText) }} />}
       {confirmDelete && <Confirm title="Delete this thread?" message="The conversation disappears from Pocket AI. The CLI’s own session file on the server stays." onCancel={() => setConfirmDelete(false)} onConfirm={remove} />}
     </div>
   )

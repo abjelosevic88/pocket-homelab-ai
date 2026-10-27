@@ -326,6 +326,13 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 
 // postMessage writes the user item and hands it to the agent (or the queue).
 func (s *Server) postMessage(ctx context.Context, u *store.User, t *store.Thread, text string, uploadIDs []string, sendNow ...bool) (bool, error) {
+	unlock := s.lockThreadEdit(t.ID)
+	defer unlock()
+	fresh, err := s.store.GetThreadAny(ctx, t.ID)
+	if err != nil {
+		return false, err
+	}
+	*t = *fresh // a rewind may have replaced the provider session while waiting
 	if len(uploadIDs) > 10 {
 		return false, badRequest("Attach at most 10 files per message")
 	}
