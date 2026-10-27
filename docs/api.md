@@ -131,7 +131,7 @@ only their own calls.
 | POST | `/threads/{id}/interrupt` | | 204 — stop the current turn |
 | POST | `/threads/{id}/requests/{requestId}` | `{decision: "allow"\|"allow_session"\|"deny", message?: string, answers?: {[questionId]: string[]}}` | 204 |
 | POST | `/threads/{id}/read` | | 204 — clears `unread` |
-| POST | `/threads/{id}/fork` | | `Thread` — a new thread continuing from the same agent session (Claude: `--fork-session`; Codex: `thread/fork`) |
+| POST | `/threads/{id}/fork` | | `Thread` — an immediately frozen, independent agent session and attachment copy; active chats branch at their last finished reply, without inheriting live work, approvals or queued prompts |
 | GET | `/threads/{id}/export.md` | | Markdown transcript (download) |
 | GET | `/threads/{id}/shares` | | owner only: `{shares: ThreadShare[], people: [{id, name, email, can_run}]}` |
 | PUT | `/threads/{id}/shares` | `{shares: [{user_id, role: "view"\|"chat"}]}` (the full list; `[]` = private again) | `Thread` — people removed lose it at once, open views included |
@@ -306,3 +306,31 @@ Admins and members with `can_run` only (these are the server user's files).
 
 Users (`GET/POST/PUT/DELETE /users`, admin; body adds `can_run`), tokens (`GET/POST/DELETE /tokens`),
 `GET /backup` (admin, single-user boxes) work as in the other Pocket apps.
+## Deferred prompts
+
+`GET /mobile` includes `deferred_prompts: true` on supported servers.
+
+- `POST /threads/{id}/after`: save `{text, upload_ids, after_thread_id}` for the destination
+  chat. Send an `Idempotency-Key` exactly as for `/messages`. Returns `201 {queued:true,thread}`.
+  Both chats must belong to the caller; the source must be running or waiting and managed
+  by Pocket AI. The destination cannot be the source, archived, or externally driven.
+- `GET /threads/{id}/after`: list the owner's active saved prompts, including IDs, source
+  title, text, attachments, status and any review message.
+- `DELETE /threads/{id}/after/{job}`: cancel a waiting/blocked prompt, or dismiss an
+  uncertain receipt after checking its destination. A dispatch already in progress wins.
+- `POST /threads/{id}/after/{job}/now`: send a waiting/blocked prompt sooner using the
+  destination's normal queue; it never interrupts the destination. Repeated calls cannot
+  dispatch it twice. Uncertain deliveries cannot be replayed this way.
+
+Migration `0024_deferred_prompts.sql` stores the dependency, source turn counter and
+attachments independently of phone connectivity. The worker checks every two seconds,
+waits for a successful newer source turn and a drained source queue, and rechecks current
+ownership and run permission before dispatch. Failure, interruption or connection loss
+pauses dependents immediately, even if another source turn starts before the next poll.
+Attachment ownership is checked before saving and dispatch. There is a limit of 50
+active saved prompts per person.
+
+States are `waiting`, `blocked`, `dispatching`, `uncertain`, `sent`, and `cancelled`.
+Claiming a dispatch happens before sending; a process interrupted during dispatch becomes
+`uncertain` on startup, never automatically retried. Sent and cancelled records are omitted
+from the active list. Existing same-chat queue and message-receipt semantics are unchanged.

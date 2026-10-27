@@ -1,13 +1,9 @@
 // One tool call: a one-line summary that opens to its input and output.
 import { memo, useState } from 'react'
-import type { ToolInfo, ToolKind } from '../lib/types'
-import { shellLabel, toolLabel } from '../lib/tool-activity'
+import type { ToolInfo } from '../lib/types'
+import { toolLabel } from '../lib/tool-activity'
 import { Icon } from './icons'
 import { copyText, Spinner } from './ui'
-
-const KIND_ICON: Record<ToolKind, string> = {
-  bash: 'terminal', edit: 'file-edit', write: 'file-edit', read: 'file', search: 'search', web: 'globe', task: 'bot', mcp: 'layers', skill: 'sparkles', other: 'wrench',
-}
 
 const LIMIT = 4000
 
@@ -56,27 +52,12 @@ function Clip({ text, label }: { text: string; label: string }) {
 
 export const ToolRow = memo(function ToolRow({ tool }: { tool: ToolInfo }) {
   const [open, setOpen] = useState(false)
-  const kind = tool.kind || 'other'
-  const label = toolLabel(tool)
-  const friendly = label !== tool.name
   const status = tool.status || 'done'
-  const command = kind === 'bash' ? field(tool.input, 'command', 'cmd') : ''
-  const path = field(tool.input, 'file_path', 'path', 'notebook_path')
-  // "Write demo.go" under the name "Write" reads twice: drop the repeated word
-  const rawTitle = command ? shellLabel(tool.input) : tool.title || path || tool.name
-  const title = rawTitle.startsWith(tool.name + ' ') ? rawTitle.slice(tool.name.length + 1) : rawTitle
-  const shownName = kind === 'bash' ? 'Shell' : label
   return (
-    <div className={`tool ${status} ${open ? 'open' : ''}`}>
+    <div className={`tool ${open || status === 'running' ? status : ''} ${open ? 'open' : ''}`}>
       <button type="button" className="tool-head" onClick={() => setOpen(o => !o)} aria-expanded={open}>
-        <span className="tool-ico"><Icon name={KIND_ICON[kind] || 'wrench'} size={14} /></span>
-        <span className={`tool-name ${friendly ? 'friendly' : ''}`} title={label}>{shownName}</span>
-        {!friendly && <span className="tool-title ellipsis" title={title}>{title !== tool.name ? title : ''}</span>}
-        <span className="tool-state">
-          {status === 'running' && <Spinner size={12} />}
-          {status === 'error' && <span className="badge danger">{tool.exit_code !== undefined && tool.exit_code !== 0 ? `exit ${tool.exit_code}` : 'error'}</span>}
-          {status === 'denied' && <span className="badge warn">denied</span>}
-        </span>
+        <span className="tool-ico">{status === 'running' ? <Spinner size={12} /> : <Icon name="sparkles" size={14} />}</span>
+        <span className="tool-name">{status === 'running' ? 'Working…' : 'Work details'}</span>
         <Icon name="chevron-down" size={14} className="tool-caret" />
       </button>
       {open && <ToolBody tool={tool} />}

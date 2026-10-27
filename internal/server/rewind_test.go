@@ -202,9 +202,138 @@ func TestForkAtEarlierResponse(t *testing.T) {
 	if strings.Contains(string(data), "FUTURE") || strings.Contains(string(data), "snapshots") {
 		t.Fatal("later context leaked into the fork")
 	}
-	// The latest response forks the whole session, as before.
+	// The latest response also freezes a private provider session immediately.
 	owner.want("POST", endpoint, map[string]any{"after": "t2"}, 201, &n)
-	if n.SourceRef != "fork:"+th.ProviderSessionID {
-		t.Fatalf("latest turn should fork the live session: %+v", n)
+	if n.SourceRef != th.ID || n.ProviderSessionID == "" || n.ProviderSessionID == th.ProviderSessionID {
+		t.Fatalf("latest turn should freeze an independent session: %+v", n)
+	}
+}
+
+func TestRemoteCodexRewindUsesHostAndKeepsOriginal(t *testing.T) {
+	s, h, root := testServer(t)
+	owner, u := person(t, s, h, "remote-rewind@example.test", "admin", true)
+	ctx := t.Context()
+	th := thread(t, s, u.ID, root)
+	box := &store.Host{Name: "remote-test", Target: "remote-test.invalid", Port: 2222, CodexBin: "/remote/custom codex"}
+	if err := s.store.CreateHost(ctx, box); err != nil {
+		t.Fatal(err)
+	}
+	th.Provider = "codex"
+	th.HostID = box.ID
+	if _, err := s.store.DB.ExecContext(ctx, `UPDATE threads SET provider='codex', host_id=? WHERE id=?`, box.ID, th.ID); err != nil {
+		t.Fatal(err)
+	}
+	th.Model = "test-model"
+	th.Effort = "high"
+	th.Mode = "full-access"
+	th.Speed = "fast"
+	if err := s.store.UpdateThread(ctx, th); err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range []agent.Item{{Key: "turn-t1", Kind: "turn", Turn: &agent.TurnInfo{ID: "t1", OK: true}}, {Key: "u2", Kind: "user", Text: "Later question"}, {Key: "a2", Kind: "assistant", Text: "FUTURE"}} {
+		data, _ := json.Marshal(it)
+		if _, err := s.store.UpsertItem(ctx, th.ID, it.Key, it.Kind, data, it.Text); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Fake ssh validates the remote executable and speaks the real JSON-RPC
+	// transport. No connection to a host or model is made by this test.
+	script := `#!/usr/bin/env python3
+import sys,json,base64,re
+args=sys.argv[1:]
+assert args[args.index('--')-1]=='remote-test.invalid'
+assert args[args.index('-p')+1]=='2222'
+command=base64.b64decode(re.search(r'echo ([A-Za-z0-9+/=]+)',args[-1]).group(1)).decode()
+assert "'/remote/custom codex' app-server" in command
+assert 'CODEX_HOME=' not in command
+turns=[{'id':'t1','status':'completed','items':[]},{'id':'t2','status':'completed','items':[]}]
+for line in sys.stdin:
+ m=json.loads(line)
+ if 'id' not in m: continue
+ p=m.get('params',{}); method=m['method']
+ if method=='initialize': result={}
+ elif method=='thread/read':
+  data=turns[:1] if p['threadId']=='remote-copy' else turns
+  result={'thread':{'id':p['threadId'],'historyMode':'legacy','turns':data if p['includeTurns'] else []}}
+ elif method=='thread/fork':
+  assert p['lastTurnId']=='t1' and p['model']=='test-model'
+  assert p['serviceTier']=='fast' and p['config']['model_reasoning_effort']=='high'
+  result={'thread':{'id':'remote-copy'}}
+ else: raise Exception('Must not start inference: '+method)
+ print(json.dumps({'id':m['id'],'result':result}),flush=True)
+`
+	fake := filepath.Join(t.TempDir(), "ssh")
+	if err := os.WriteFile(fake, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", filepath.Dir(fake)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	var result struct {
+		Thread store.Thread `json:"thread"`
+		Draft  struct {
+			Text string `json:"text"`
+		} `json:"draft"`
+	}
+	owner.want("POST", "/api/v1/threads/"+th.ID+"/rewind", map[string]any{"key": "u2"}, 201, &result)
+	n := result.Thread
+	if n.ID == th.ID || n.HostID != box.ID || n.ProviderSessionID != "remote-copy" || n.Model != th.Model || n.Effort != th.Effort || n.Speed != th.Speed || n.Mode != th.Mode || n.Cwd != th.Cwd {
+		t.Fatalf("settings lost: %+v", n)
+	}
+	rows, err := s.store.ListItems(ctx, n.ID)
+	if err != nil || len(rows) != 3 || rows[0].Key != "u1" || rows[1].Key != "a1" || result.Draft.Text != "Later question" {
+		t.Fatal("incorrect continuation", rows, result.Draft, err)
+	}
+	original, err := s.store.GetThread(ctx, u.ID, th.ID)
+	if err != nil || original.ProviderSessionID != th.ProviderSessionID {
+		t.Fatal("original session changed", err)
+	}
+	rows, err = s.store.ListItems(ctx, th.ID)
+	if err != nil || len(rows) != 5 {
+		t.Fatal("original messages changed", err)
+	}
+	if s.rt.get(n.ID) != nil {
+		t.Fatal("rewind started a model")
+	}
+	// Latest-history forks also create their own session on the selected host
+	// immediately, without waiting for the first prompt or starting inference.
+	forkScript := strings.ReplaceAll(script, "remote-copy", "remote-fork-copy")
+	forkScript = strings.ReplaceAll(forkScript, "assert p['lastTurnId']=='t1' and p['model']=='test-model'", "assert 'lastTurnId' not in p and p['model']=='test-model'\n  assert p['deferGoalContinuation'] is True")
+	if err := os.WriteFile(fake, []byte(forkScript), 0700); err != nil {
+		t.Fatal(err)
+	}
+	var fork store.Thread
+	owner.want("POST", "/api/v1/threads/"+th.ID+"/fork", map[string]any{}, 201, &fork)
+	if fork.HostID != box.ID || fork.ProviderSessionID != "remote-fork-copy" || fork.SourceRef != th.ID || fork.Status != "idle" {
+		t.Fatalf("remote fork is not independent: %+v", fork)
+	}
+	// First prompt on a remote host also starts a fresh independent history.
+	owner.want("POST", "/api/v1/threads/"+th.ID+"/rewind", map[string]any{"key": "u1"}, 201, &result)
+	if result.Thread.HostID != box.ID || result.Thread.ProviderSessionID != "" {
+		t.Fatal("first-message rewind retained a session")
+	}
+}
+
+func TestCodexReplyCheckpointDoesNotCrossAnotherSentPrompt(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		extra []agent.Item
+		want  string
+	}{
+		{"next prompt", nil, "t1"},
+		{"queued and unsent do not reach Codex", []agent.Item{{Key: "queued", Kind: "user", Queued: true}, {Key: "unsent", Kind: "user", Unsent: true}}, "t1"},
+		{"steered message must not drop preceding prompt", []agent.Item{{Key: "steered", Kind: "user"}}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			items := []agent.Item{{Key: "u1", Kind: "user"}, {Key: "turn-t1", Kind: "turn", Turn: &agent.TurnInfo{ID: "t1"}}}
+			items = append(items, tc.extra...)
+			items = append(items, agent.Item{Key: "selected", Kind: "user"})
+			var rows []*store.Item
+			for _, it := range items {
+				data, _ := json.Marshal(it)
+				rows = append(rows, &store.Item{Key: it.Key, Data: data})
+			}
+			if got := codexReplyCheckpoint(rows, "selected"); got != tc.want {
+				t.Fatal(got, tc.want)
+			}
+		})
 	}
 }

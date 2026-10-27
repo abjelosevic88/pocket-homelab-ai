@@ -255,7 +255,15 @@ func (c *rpc) close() {
 }
 
 func (c *rpc) initialize(ctx context.Context, version string) error {
-	_, err := c.call(ctx, "initialize", map[string]any{"clientInfo": map[string]any{"name": "pocket-ai", "title": "Pocket AI", "version": version}})
+	return c.initializeWithCapabilities(ctx, version, nil)
+}
+
+func (c *rpc) initializeWithCapabilities(ctx context.Context, version string, capabilities map[string]any) error {
+	params := map[string]any{"clientInfo": map[string]any{"name": "pocket-ai", "title": "Pocket AI", "version": version}}
+	if capabilities != nil {
+		params["capabilities"] = capabilities
+	}
+	_, err := c.call(ctx, "initialize", params)
 	if err != nil {
 		return err
 	}
@@ -346,6 +354,10 @@ func StartCodex(ctx context.Context, o Options, sink Sink) (Session, error) {
 		} `json:"thread"`
 	}
 	_ = json.Unmarshal(res, &r)
+	if o.Fork && (r.Thread.ID == "" || r.Thread.ID == o.ResumeID) {
+		c.close()
+		return nil, fmt.Errorf("codex: the agent did not create a separate session")
+	}
 	s.threadID = r.Thread.ID
 	if s.threadID == "" {
 		s.threadID = o.ResumeID

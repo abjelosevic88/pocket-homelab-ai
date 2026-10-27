@@ -26,6 +26,7 @@ func (s *Server) threadRoutes(r chi.Router) {
 	r.Patch("/threads/{id}", s.handlePatchThread)
 	r.Delete("/threads/{id}", s.handleDeleteThread)
 	r.Post("/threads/{id}/messages", s.messageOnce(s.handleSendMessage))
+	s.deferredRoutes(r)
 	r.Delete("/threads/{id}/queue", s.handleClearQueue)
 	r.Delete("/threads/{id}/queue/{key}", s.handleDropQueued)
 	r.Post("/threads/{id}/queue/{key}/now", s.handleSendNow)
@@ -560,6 +561,7 @@ func (s *Server) deleteThread(ctx context.Context, t *store.Thread) error {
 	}
 	gone := sseEvent{Name: "thread_removed", Data: map[string]string{"id": t.ID}}
 	s.rt.toUser(t.UserID, gone)
+	s.notifyMobileBadge(t.UserID)
 	for _, uid := range s.rt.sharers(t.ID) {
 		s.rt.toUser(uid, gone)
 		s.rt.dropViewer(t.ID, uid)
@@ -719,15 +721,20 @@ func (s *Server) handleMarkRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if t.Unread && t.UserID == me(r) { // unread is the owner's
-		t.Unread = false
-		_ = s.store.UpdateThread(r.Context(), t)
-		s.rt.publishThread(t)
+		// A read acknowledgement must not overwrite a concurrently finishing turn.
+		if _, err := s.store.DB.ExecContext(r.Context(), `UPDATE threads SET unread=0, completed_unread=0 WHERE id=? AND user_id=?`, t.ID, me(r)); err != nil {
+			s.fail(w, err, "mark conversation read")
+			return
+		}
+		if latest, err := s.store.GetThread(r.Context(), me(r), t.ID); err == nil {
+			s.rt.publishThread(latest)
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleFork starts a new thread that continues the same agent session
-// under a new id; the timeline so far is copied.
+// handleFork freezes a private continuation now. Live work and queued prompts
+// belong to the original; a busy conversation branches at its last finished reply.
 func (s *Server) handleFork(w http.ResponseWriter, r *http.Request) {
 	if !s.requireRun(w, r) {
 		return
@@ -741,19 +748,28 @@ func (s *Server) handleFork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if t.ProviderSessionID == "" {
-		writeErr(w, http.StatusBadRequest, "nothing to fork yet")
+		writeErr(w, 400, "nothing to fork yet")
 		return
 	}
-	ctx := r.Context()
-	// Forking at an earlier response = a private copy up to the next prompt.
 	var in struct {
 		After string `json:"after"`
 	}
 	_ = decode(r, &in)
+	rows, err := s.store.ListItems(r.Context(), t.ID)
+	if err != nil {
+		s.fail(w, err, "read history")
+		return
+	}
 	if in.After != "" {
-		rows, err := s.store.ListItems(ctx, t.ID)
-		if err != nil {
-			s.fail(w, err, "read history")
+		found := false
+		for _, row := range rows {
+			if row.Key == in.After && row.Kind == "turn" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			writeErr(w, 400, "select a finished reply to fork")
 			return
 		}
 		if key := nextSentPrompt(rows, in.After); key != "" {
@@ -761,24 +777,24 @@ func (s *Server) handleFork(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	n := &store.Thread{ID: uuid.NewString(), UserID: t.UserID, Title: "Fork of " + t.Title, Provider: t.Provider, AccountID: t.AccountID, HostID: t.HostID, WorktreeID: t.WorktreeID, Model: t.Model,
-		Effort: t.Effort, Mode: t.Mode, Speed: t.Speed, Cwd: t.Cwd, WorkspaceID: t.WorkspaceID, Source: "fork", SourceRef: "fork:" + t.ProviderSessionID}
-	if err := s.store.CreateThread(ctx, n); err != nil {
-		s.fail(w, err, "fork")
-		return
-	}
-	items, _ := s.store.ListItems(ctx, t.ID)
-	for _, it := range items {
-		if it.Kind == "request" || it.Kind == "turn" {
-			continue
+	s.rt.decorate(t)
+	if t.Status == "running" || t.Status == "waiting" || t.External {
+		last := ""
+		for _, row := range rows {
+			if row.Kind == "turn" {
+				last = row.Key
+			}
 		}
-		_, _ = s.store.UpsertItem(ctx, n.ID, it.Key, it.Kind, it.Data, it.Body)
+		if last == "" {
+			writeErr(w, 409, "Wait for the first reply to finish before forking")
+			return
+		}
+		if key := nextSentPrompt(rows, last); key != "" {
+			s.branchBefore(w, r, t, key, true)
+			return
+		}
 	}
-	n.Preview = t.Preview
-	_ = s.store.UpdateThread(ctx, n)
-	s.inheritLink(ctx, t, n)
-	s.rt.publishThread(n)
-	writeJSON(w, http.StatusCreated, n)
+	s.branchBefore(w, r, t, "", true)
 }
 
 // handleExport writes the thread as Markdown.

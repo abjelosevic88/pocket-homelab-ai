@@ -3,7 +3,14 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/notify"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +18,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/agent"
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
@@ -203,5 +211,204 @@ func TestGitReviewAndAttentionStayPrivate(t *testing.T) {
 	files := parseReviewStatus("R  new name\x00old name\x00?? a\nstrange name\x00")
 	if len(files) != 2 || files[1].Path != "a\nstrange name" {
 		t.Fatal("rename or newline path lost")
+	}
+}
+
+func TestCompletionBadgeCountsChatsAndClearsOnReadArchiveDelete(t *testing.T) {
+	s, h, root := testServer(t)
+	owner, u := person(t, s, h, "badge@example.test", "admin", true)
+	other, v := person(t, s, h, "badge-other@example.test", "member", true)
+	ctx := context.Background()
+	completed := func(uid int64, status string, archived, unread, success bool) *store.Thread {
+		th := thread(t, s, uid, root)
+		th.Status, th.Archived, th.Unread, th.CompletedUnread = status, archived, unread, success
+		if err := s.store.UpdateThread(ctx, th); err != nil {
+			t.Fatal(err)
+		}
+		return th
+	}
+	first := completed(u.ID, "idle", false, true, true)
+	second := completed(u.ID, "idle", false, true, true)
+	third := completed(u.ID, "idle", false, true, true)
+	completed(u.ID, "error", false, true, false)
+	completed(u.ID, "running", false, true, true)
+	completed(u.ID, "waiting", false, true, true)
+	completed(u.ID, "idle", true, true, true)
+	completed(u.ID, "idle", false, false, true)
+	completed(u.ID, "idle", false, true, false) // interrupted, not a completion
+	completed(v.ID, "idle", false, true, true)
+	check := func(c *client, expected int) {
+		t.Helper()
+		var out struct {
+			Count int `json:"count"`
+		}
+		c.want("GET", "/api/v1/mobile/badge", nil, 200, &out)
+		if out.Count != expected {
+			t.Fatalf("badge=%d, want %d", out.Count, expected)
+		}
+	}
+	check(owner, 3)
+	check(other, 1)
+	other.want("POST", "/api/v1/threads/"+first.ID+"/read", nil, 404, nil)
+	check(owner, 3)
+	owner.want("POST", "/api/v1/threads/"+first.ID+"/read", nil, 204, nil)
+	owner.want("POST", "/api/v1/threads/"+first.ID+"/read", nil, 204, nil)
+	check(owner, 2)
+	owner.want("PATCH", "/api/v1/threads/"+second.ID, map[string]bool{"archived": true}, 200, nil)
+	check(owner, 1)
+	owner.want("DELETE", "/api/v1/threads/"+third.ID, nil, 204, nil)
+	check(owner, 0)
+	check(other, 1)
+}
+
+func TestTurnCompletionCreatesOneBadgeUnlessViewedFailedOrInterrupted(t *testing.T) {
+	s, h, root := testServer(t)
+	_, u := person(t, s, h, "turn-badge@example.test", "admin", true)
+	ctx := context.Background()
+	th := thread(t, s, u.ID, root)
+	th.ProviderSessionID = "" // no real session files in this integration test
+	if err := s.store.UpdateThread(ctx, th); err != nil {
+		t.Fatal(err)
+	}
+	sink := &runSink{rt: s.rt, r: &run{threadID: th.ID, userID: u.ID, provider: "claude"}}
+	check := func(expected int) {
+		t.Helper()
+		actual, err := s.store.CompletionBadge(ctx, u.ID)
+		if err != nil || actual != expected {
+			t.Fatalf("badge=%d err=%v, want %d", actual, err, expected)
+		}
+	}
+	sink.TurnDone(agent.TurnInfo{ID: "one", OK: true})
+	check(1)
+	sink.TurnDone(agent.TurnInfo{ID: "two", OK: true})
+	check(1) // two replies in a single conversation still count as one
+	sink.TurnDone(agent.TurnInfo{ID: "failed", Error: "fixture failure"})
+	check(0)
+	sink.TurnDone(agent.TurnInfo{ID: "stopped", Interrupted: true})
+	check(0)
+	subscription := s.rt.subscribeThread(th.ID, u.ID)
+	defer s.rt.unsubscribeThread(th.ID, subscription)
+	sink.TurnDone(agent.TurnInfo{ID: "viewed", OK: true})
+	check(0)
+}
+
+func TestMobileNotificationPreferencesAreDeviceScopedAndSurviveRotation(t *testing.T) {
+	s, h, _ := testServer(t)
+	owner, u := person(t, s, h, "device-preferences@example.test", "admin", true)
+	other, _ := person(t, s, h, "other-preferences@example.test", "member", true)
+	var caps map[string]bool
+	owner.want("GET", "/api/v1/mobile", nil, 200, &caps)
+	if !caps["notification_preferences"] {
+		t.Fatal("missing separate-preferences capability")
+	}
+	web, err := s.store.GetSettings(context.Background(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"device-one", "device-two"} {
+		owner.want("PUT", "/api/v1/mobile/devices", map[string]any{"device_id": id, "token": strings.Repeat(map[string]string{"device-one": "ab", "device-two": "cd"}[id], 32), "environment": "sandbox"}, 204, nil)
+	}
+	prefs := mobileNotificationPreferences{Finished: false, Input: true, Failed: false, OnlyAway: false}
+	path := "/api/v1/mobile/devices/device-one/notifications"
+	owner.want("PUT", path, prefs, 204, nil)
+	var got mobileNotificationPreferences
+	owner.want("GET", path, nil, 200, &got)
+	if got != prefs {
+		t.Fatalf("saved device policy differs: %+v", got)
+	}
+	other.want("GET", path, nil, 404, nil)
+	other.want("PUT", path, prefs, 404, nil)
+	owner.want("PUT", path, map[string]bool{"finished": true}, 400, nil)
+	owner.want("GET", "/api/v1/mobile/devices/device-two/notifications", nil, 200, &got)
+	if !got.Finished || !got.Input || !got.Failed || !got.OnlyAway {
+		t.Fatalf("another phone changed: %+v", got)
+	}
+	after, _ := s.store.GetSettings(context.Background(), u.ID)
+	if web.NotifyFinished != after.NotifyFinished || web.NotifyInput != after.NotifyInput || web.NotifyFailed != after.NotifyFailed || web.NotifyOnlyAway != after.NotifyOnlyAway {
+		t.Fatal("phone policy changed web settings")
+	}
+	// Token refresh, including an older client's registration, preserves the policy.
+	owner.want("PUT", "/api/v1/mobile/devices", map[string]any{"device_id": "device-one", "token": strings.Repeat("ef", 32), "environment": "sandbox", "notifications": mobileNotificationPreferences{true, true, true, true}}, 204, nil)
+	owner.want("GET", path, nil, 200, &got)
+	if got != prefs {
+		t.Fatal("registration reset device preferences")
+	}
+	web.NotifyFinished = false
+	web.NotifyInput = false
+	web.NotifyFailed = false
+	if err := s.store.SaveSettings(context.Background(), u.ID, web); err != nil {
+		t.Fatal(err)
+	}
+	owner.want("GET", path, nil, 200, &got)
+	if got != prefs {
+		t.Fatal("web settings changed phone preferences")
+	}
+	if !got.allows("input") || got.allows("finished") || got.allows("failed") || got.allows("unknown") {
+		t.Fatal("wrong native event selection")
+	}
+}
+
+// The real APNs sender uses this transport with a generated test-only signing key.
+type mobileTestTransport func(*http.Request) (*http.Response, error)
+
+func (f mobileTestTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestNativeAlertsIgnoreWebEventAndViewingSwitches(t *testing.T) {
+	s, h, root := testServer(t)
+	owner, u := person(t, s, h, "native-routing@example.test", "admin", true)
+	th := thread(t, s, u.ID, root)
+	web, _ := s.store.GetSettings(context.Background(), u.ID)
+	web.NotifyFinished = false
+	if err := s.store.SaveSettings(context.Background(), u.ID, web); err != nil {
+		t.Fatal(err)
+	}
+	s.rt.mu.Lock()
+	s.rt.watchers[th.ID] = map[chan sseEvent]int64{make(chan sseEvent): u.ID}
+	s.rt.mu.Unlock()
+	tokenA, tokenB := strings.Repeat("ab", 32), strings.Repeat("cd", 32)
+	for token, prefs := range map[string]mobileNotificationPreferences{tokenA: {true, true, true, true}, tokenB: {false, true, true, true}} {
+		owner.want("PUT", "/api/v1/mobile/devices", map[string]any{"device_id": "phone-" + token[:8], "token": token, "environment": "sandbox", "notifications": prefs}, 204, nil)
+	}
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	der, _ := x509.MarshalPKCS8PrivateKey(key)
+	path := filepath.Join(t.TempDir(), "test-signing-key.p8")
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s.apns = &notify.APNS{TeamID: "TEST", KeyID: "TEST", Topic: "org.bjelke.pocketai", KeyFile: path}
+	type push struct {
+		token string
+		alert bool
+	}
+	sent := make(chan push, 4)
+	original := http.DefaultTransport
+	http.DefaultTransport = mobileTestTransport(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host != "api.sandbox.push.apple.com" {
+			return original.RoundTrip(r)
+		}
+		var payload struct {
+			APS struct {
+				Alert json.RawMessage `json:"alert"`
+			} `json:"aps"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			return nil, err
+		}
+		sent <- push{strings.TrimPrefix(r.URL.Path, "/3/device/"), len(payload.APS.Alert) > 0}
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("{}")), Request: r}, nil
+	})
+	defer func() { s.mobilePushMu.Lock(); http.DefaultTransport = original; s.mobilePushMu.Unlock() }()
+	s.rt.notify(th, "finished", "Finished", "A useful answer")
+	got := map[string]bool{}
+	for len(got) < 2 {
+		select {
+		case p := <-sent:
+			got[p.token] = p.alert
+		case <-time.After(5 * time.Second):
+			t.Fatal("native delivery was blocked by web settings")
+		}
+	}
+	if !got[tokenA] || got[tokenB] {
+		t.Fatalf("wrong per-device alerts: %+v", got)
 	}
 }

@@ -4,8 +4,6 @@ import { Icon } from './icons'
 import { ToolBody } from './ToolRow'
 import { Spinner } from './ui'
 
-const RUN_ICON: Record<string, string> = { bash: 'terminal', edit: 'file-edit', write: 'file-edit', read: 'file', search: 'search', web: 'globe', task: 'bot', skill: 'sparkles', mcp: 'layers', other: 'wrench' }
-
 /** "Ran 3 commands, read 2 files" for a run of tool calls. */
 export function runSummary(tools: ToolInfo[]): string {
   const n: Record<string, number> = {}
@@ -29,20 +27,16 @@ export function runSummary(tools: ToolInfo[]): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
-// A run of consecutive tool calls — one or many — is one quiet line that says
-// what kind of work it was ("Ran a command", "Ran 3 commands, read 2 files"),
-// never the commands themselves; it opens into the calls with their details.
+// One quiet activity line opens into the calls with their details.
 export function ToolActivity({ items }: { items: Item[] }) {
   const [open, setOpen] = useState(false)
   const tools = items.map(i => i.tool!)
   const running = tools.find(t => t.status === 'running')
-  const kinds = new Set(tools.map(t => (t.kind === 'write' ? 'edit' : t.kind)))
-  const icon = kinds.size === 1 ? RUN_ICON[[...kinds][0]] || 'wrench' : 'layers'
   return (
     <div className={`tool-run grouped ${open ? 'open' : ''}`} id={items.length === 1 ? `item-${items[0].key}` : undefined}>
       <button type="button" className="tool-head tool-run-head" onClick={() => setOpen(o => !o)} aria-expanded={open}>
-        <span className="tool-ico">{running ? <Spinner size={12} /> : <Icon name={icon} size={14} />}</span>
-        <span className="tool-name">{runSummary(tools)}</span>
+        <span className="tool-ico">{running ? <Spinner size={12} /> : <Icon name="sparkles" size={14} />}</span>
+        <span className="tool-name">{running ? 'Working…' : 'Work details'}</span>
         <Icon name="chevron-down" size={14} className="tool-caret" />
       </button>
       {/* one layer: the commands and their output, straight away */}

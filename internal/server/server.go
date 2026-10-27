@@ -46,14 +46,17 @@ type Server struct {
 	core       *core.Client
 	coreMu     sync.Mutex
 	workflowMu sync.Mutex
+	deferredMu sync.Mutex
 	coreOK     bool
 	coreErr    string
 
 	oidc   *oidcProvider
 	oidcMu sync.Mutex
 
-	rt   *engine
-	apns *notify.APNS
+	rt           *engine
+	apns         *notify.APNS
+	mobilePushMu sync.Mutex
+	mobileBadges map[int64]int
 
 	wtOnce sync.Once
 	wtHold *wtHolds // messages waiting for a worktree's setup: worktrees.go
@@ -133,6 +136,10 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	go s.scheduleLoop(ctx)
 	_, _ = s.store.DB.ExecContext(ctx, `UPDATE workflows SET last_status='interrupted' WHERE last_status='running'`)
 	go s.workflowLoop(ctx)
+	// A dispatch interrupted by a server restart is reconciled by the person,
+	// never automatically replayed into a coding agent.
+	_, _ = s.store.DB.ExecContext(ctx, `UPDATE deferred_prompts SET status='uncertain', error='Delivery was interrupted. Check this chat before sending the prompt again.' WHERE status='dispatching'`)
+	go s.deferredLoop(ctx)
 	_, _ = s.store.DB.ExecContext(ctx, `UPDATE app_calls SET status=CASE WHEN status='pending' THEN 'denied' WHEN is_write=1 THEN 'unknown' ELSE 'interrupted' END WHERE status IN ('running','pending')`)
 	go agent.WarmSessions(s.homes(ctx))    // first parse of every session file takes a while
 	go func() { s.providers(ctx, true) }() // warm the provider cache

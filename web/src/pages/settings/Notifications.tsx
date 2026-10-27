@@ -46,7 +46,7 @@ export function NotificationsTab() {
 
   return (
     <div className="stack loose">
-      <Section title="Tell me when" sub="Pushed from the server, so it arrives with the phone locked and no tab open.">
+      <Section title="Web and notification services" sub="These event choices apply to browser alerts and configured services. Native iPhone and iPad alerts have separate choices on each device.">
         <SettingRow title="An agent finished" help="With the first lines of its answer.">
           <Switch label="Finished" checked={!!s.notify_finished} onChange={v => save({ notify_finished: v })} />
         </SettingRow>
