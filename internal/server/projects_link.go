@@ -94,10 +94,10 @@ func (s *Server) projectsIssues(ctx context.Context, email string, refs []string
 	}
 	tok, err := s.core.ActAs(ctx, email, "projects", projectsScope)
 	if err != nil {
-		s.log.Debug("projects link token", "err", err)
+		s.log.Warn("projects link token", "err", err)
 		return got
 	}
-	base := strings.TrimRight(tok.URL, "/")
+	base := onThisHost(strings.TrimRight(tok.URL, "/"))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for _, ref := range missing {
@@ -145,4 +145,20 @@ func projectsGetIssue(ctx context.Context, base, token, ref string) (*projectsIs
 		return nil, err
 	}
 	return &is, nil
+}
+
+// onThisHost: Core hands out addresses for its Docker apps
+// (host.docker.internal); Pocket AI runs natively on that host, where the
+// name does not resolve, so it means 127.0.0.1 here.
+func onThisHost(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() != "host.docker.internal" {
+		return raw
+	}
+	if port := u.Port(); port != "" {
+		u.Host = "127.0.0.1:" + port
+	} else {
+		u.Host = "127.0.0.1"
+	}
+	return u.String()
 }
