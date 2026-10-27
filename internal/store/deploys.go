@@ -37,7 +37,7 @@ func scanDeploy(row interface{ Scan(...any) error }) (*Deploy, error) {
 func (s *Store) CreateDeploy(ctx context.Context, d *Deploy) error {
 	d.StartedAt = Now()
 	res, err := s.DB.ExecContext(ctx, `INSERT INTO deploys (user_id, project, host_id, branch, sha, source, ref, status, note, log, error, url, started_at, finished_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		d.UserID, d.Project, d.HostID, d.Branch, d.SHA, d.Source, d.Ref, d.Status, d.Note, d.Log, d.Error, d.URL, d.StartedAt, d.FinishedAt)
 	if err != nil {
 		return err
