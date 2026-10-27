@@ -14,7 +14,7 @@ type Deploy struct {
 	Source     string `json:"source"`
 	Ref        string `json:"ref"`
 	Status     string `json:"status"` // running | ok | failed
-	Note       string `json:"note"` // Pocket AI's own lines (what it pushed)
+	Note       string `json:"note"`   // Pocket AI's own lines (what it pushed)
 	Log        string `json:"log,omitempty"`
 	Error      string `json:"error"`
 	URL        string `json:"url"`
