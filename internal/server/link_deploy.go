@@ -37,6 +37,9 @@ type deployConfig struct {
 	Run     []string `json:"run"`               // the commands, stopping at the first failure
 	URL     string   `json:"url"`               // where the deployed app is
 	Current string   `json:"current,omitempty"` // prints the branch or commit that runs now
+	// Check: what a deploy of $POCKET_BRANCH would do, shown before the click
+	// (one line each; a line starting with "!" is a warning: "! resets the database")
+	Check string `json:"check,omitempty"`
 }
 
 func deployKey(project string) string { return "deploy:" + project }
@@ -234,6 +237,65 @@ func (s *Server) deployLive(ctx context.Context, project string, cfg deployConfi
 	return v
 }
 
+// ---------- before the click ----------
+
+type deployCheckLine struct {
+	Text string `json:"text"`
+	Warn bool   `json:"warn"`
+}
+
+type deployCheckResult struct {
+	Lines []deployCheckLine `json:"lines"`
+	Error string            `json:"error,omitempty"`
+}
+
+var deployCheckCache sync.Map // project|branch|latest deploy → deployCheckCached
+
+type deployCheckCached struct {
+	at time.Time
+	v  deployCheckResult
+}
+
+// deployCheck runs the project's check command for a branch on the deploy
+// machine (?check=<branch> on GET /link/deploy). Kept a minute, and until the
+// next deploy changes what is on the machine.
+func (s *Server) deployCheck(ctx context.Context, project string, cfg deployConfig, branch string) deployCheckResult {
+	if cfg.Check == "" {
+		return deployCheckResult{Lines: []deployCheckLine{}}
+	}
+	latest := int64(0)
+	if d, _ := s.store.LatestDeploy(ctx, project); d != nil {
+		latest = d.ID
+		if d.Status == "running" {
+			latest = -d.ID // the slot is changing: ask again when it is done
+		}
+	}
+	key := project + "|" + branch + "|" + strconv.FormatInt(latest, 10)
+	if c, ok := deployCheckCache.Load(key); ok && time.Since(c.(deployCheckCached).at) < time.Minute {
+		return c.(deployCheckCached).v
+	}
+	th, err := s.host(ctx, cfg.HostID)
+	if err != nil {
+		return deployCheckResult{Lines: []deployCheckLine{}, Error: err.Error()}
+	}
+	script := "export POCKET_BRANCH=" + deployQuote(branch) + "\n" + deployCdScript(cfg.Dir) + cfg.Check + "\n"
+	out, errOut, err := shOn(ctx, th, 90*time.Second, script)
+	v := deployCheckResult{Lines: []deployCheckLine{}}
+	for _, l := range splitLines(cleanLog(out)) {
+		if l = strings.TrimSpace(l); l == "" || len(v.Lines) >= 12 {
+			continue
+		}
+		warn := strings.HasPrefix(l, "!")
+		v.Lines = append(v.Lines, deployCheckLine{Text: oneLine(strings.TrimSpace(strings.TrimPrefix(l, "!")), 400), Warn: warn})
+	}
+	if err != nil {
+		v.Error = oneLine(firstNonEmpty(strings.TrimSpace(errOut), err.Error()), 300)
+	} else {
+		deployCheckCache.Store(key, deployCheckCached{time.Now(), v})
+	}
+	return v
+}
+
 // ---------- API ----------
 
 func (s *Server) handleLinkDeploy(w http.ResponseWriter, r *http.Request) {
@@ -263,6 +325,14 @@ func (s *Server) handleLinkDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out["configured"] = true
+	if b := strings.TrimPrefix(strings.TrimSpace(q.Get("check")), "origin/"); b != "" {
+		if !branchNameOK(b) {
+			writeErr(w, http.StatusBadRequest, "bad branch")
+			return
+		}
+		writeJSON(w, http.StatusOK, s.deployCheck(ctx, info.ProjectID, cfg, b))
+		return
+	}
 	source, ref := strings.ToLower(q.Get("source")), strings.TrimSpace(q.Get("ref"))
 	if ref != "" {
 		out["branches"] = s.itemBranches(ctx, u, h, info, source, ref, strings.TrimSpace(q.Get("branch")))
@@ -297,7 +367,7 @@ func (s *Server) handleLinkDeployConfig(w http.ResponseWriter, r *http.Request) 
 	data := ""
 	if in.Config != nil {
 		c := in.Config
-		c.Run, c.Dir, c.URL, c.Current = nonEmpty(c.Run), strings.TrimSpace(c.Dir), strings.TrimSpace(c.URL), strings.TrimSpace(c.Current)
+		c.Run, c.Dir, c.URL, c.Current, c.Check = nonEmpty(c.Run), strings.TrimSpace(c.Dir), strings.TrimSpace(c.URL), strings.TrimSpace(c.Current), strings.TrimSpace(c.Check)
 		if len(c.Run) > 0 {
 			if _, err := s.checkHostUse(ctx, u, c.HostID); err != nil {
 				s.fail(w, err, "deploy")
