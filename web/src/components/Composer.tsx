@@ -139,9 +139,11 @@ export const Composer = React.forwardRef<ComposerHandle, {
     else sessionStorage.removeItem('pai-draft-uploads-' + draftKey)
   }, [atts, draftKey])
 
-  useLayoutEffect(() => {
+  const fit = useCallback(() => {
     const el = ta.current
-    if (!el) return
+    // Not on screen (a hidden tab in another app's side panel): nothing to measure, and a
+    // height taken now would be 0 and squash the box once it shows.
+    if (!el || !el.clientWidth) return
     el.style.height = 'auto'
     const max = big ? 360 : 280
     // a scrollbar only once the text is taller than the box may grow (CSS may cap it lower, a
@@ -149,9 +151,19 @@ export const Composer = React.forwardRef<ComposerHandle, {
     const cap = Math.min(max, parseFloat(getComputedStyle(el).maxHeight) || max)
     el.style.overflowY = el.scrollHeight > cap + 2 ? 'auto' : 'hidden'
     el.style.height = Math.min(el.scrollHeight, max) + 'px'
-  }, [text, big])
+  }, [big])
+  useLayoutEffect(fit, [text, fit])
+  // Measured again when the box changes width: a window resize, or being shown after hidden.
   useEffect(() => {
-    const again = () => { const el = ta.current; if (el) el.style.overflowY = el.scrollHeight > el.clientHeight + 2 ? 'auto' : 'hidden' }
+    const el = ta.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    let w = el.clientWidth
+    const ro = new ResizeObserver(() => { if (el.clientWidth !== w) { w = el.clientWidth; fit() } })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [fit])
+  useEffect(() => {
+    const again = () => { const el = ta.current; if (el && el.clientWidth) el.style.overflowY = el.scrollHeight > el.clientHeight + 2 ? 'auto' : 'hidden' }
     window.addEventListener('resize', again)
     return () => window.removeEventListener('resize', again)
   }, [])
