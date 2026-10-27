@@ -212,6 +212,10 @@ func (s *Server) Router() http.Handler {
 		r.Get("/link/active", s.handleLinkActive)
 		r.Get("/link/prs", s.handleLinkPRs)
 		r.Get("/link/worktrees", s.handleLinkWorktrees)
+		r.Get("/link/deploy", s.handleLinkDeploy)
+		r.Put("/link/deploy/config", s.handleLinkDeployConfig)
+		r.Post("/link/deploys", s.handleLinkStartDeploy)
+		r.Get("/link/deploys/{id}", s.handleLinkGetDeploy)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
