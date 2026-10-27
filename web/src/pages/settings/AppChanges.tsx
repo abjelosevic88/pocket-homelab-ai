@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api, V1 } from '../../lib/api'
 import { Icon } from '../../components/icons'
-import { errMsg, Loading, Segmented, SettingRow, Switch, useToast } from '../../components/ui'
+import { errMsg, Loading, SettingRow, Switch, useToast } from '../../components/ui'
+import { Select } from '../../components/Select'
 import { Section } from './common'
 
 export interface AutoRules { apps: Record<string, 'add' | 'all'>; tools: string[] }
@@ -10,6 +11,18 @@ interface AutoApp { slug: string; name: string; ops: AutoOp[]; adds: number; tot
 interface AutoData { rules: AutoRules; apps: AutoApp[]; catalog_error?: string }
 
 type Level = 'ask' | 'add' | 'all'
+
+const list = (ops: AutoOp[]) => ops.map(o => o.title).join(', ')
+
+/** One sentence: what happens on its own in this app, and what still asks. */
+function explain(a: AutoApp, level: Level, picked: Set<string>): string {
+  const adds = a.ops.filter(o => o.kind === 'add'), edits = a.ops.filter(o => o.kind === 'change')
+  if (level === 'all') return `Runs on its own: ${list(a.ops)}.`
+  const auto = level === 'add' ? [...adds, ...edits.filter(o => picked.has(o.name))] : a.ops.filter(o => picked.has(o.name))
+  const asks = a.ops.filter(o => !auto.includes(o))
+  if (!auto.length) return `Asks you first: ${list(asks)}.`
+  return `Runs on its own: ${list(auto)}. Still asks: ${list(asks)}.`
+}
 
 export function AppChangesTab() {
   const { toast } = useToast()
@@ -45,19 +58,19 @@ export function AppChangesTab() {
           return (
             <div key={a.slug} className="stack">
               <SettingRow title={a.name} help={<>
-                {a.adds} that add, {a.total - a.adds} that change{extra > 0 && level !== 'all' ? ` · ${extra} picked one by one` : ''}
-                {' · '}<button type="button" className="link-btn small" onClick={() => setOpen(open === a.slug ? null : a.slug)}>{open === a.slug ? 'Hide operations' : 'Show operations'}</button>
+                {explain(a, level, new Set(data.rules.tools))}
+                {' '}<button type="button" className="link-btn small" onClick={() => setOpen(open === a.slug ? null : a.slug)}>{open === a.slug ? 'Done' : 'Choose one by one'}</button>
               </>}>
-                <Segmented size="sm" label={`${a.name} changes`} value={level} onChange={v => setLevel(a.slug, v)} options={[
-                  { value: 'ask', label: 'Ask' },
-                  ...(a.adds ? [{ value: 'add' as Level, label: 'Adds', title: 'New things run automatically; edits still ask' }] : []),
-                  { value: 'all', label: 'All', title: 'Every change runs automatically' },
+                <Select size="sm" width={300} label={`${a.name} changes`} value={level} searchable={false} onChange={v => setLevel(a.slug, v)} options={[
+                  { value: 'ask', label: 'Always ask me', description: 'Every change waits for your Allow' },
+                  ...(a.adds ? [{ value: 'add' as Level, label: 'Auto-approve new items', description: 'Creating, adding and commenting run on their own; edits still ask' }] : []),
+                  { value: 'all', label: 'Auto-approve everything', description: 'New items and edits run on their own' },
                 ]} />
               </SettingRow>
               {open === a.slug && a.ops.map(o => {
                 const covered = level === 'all' || (level === 'add' && o.kind === 'add')
                 return (
-                  <SettingRow key={o.name} title={<span className="small">{o.title} <span className="badge">{o.kind === 'add' ? 'adds' : 'changes'}</span></span>} help={o.description}>
+                  <SettingRow key={o.name} title={<span className="small">{o.title} <span className="badge">{o.kind === 'add' ? 'new item' : 'edit'}</span></span>} help={o.description}>
                     <Switch size="sm" label={o.title} checked={covered || data.rules.tools.includes(o.name)} disabled={covered} onChange={v => setTool(o.name, v)} />
                   </SettingRow>
                 )

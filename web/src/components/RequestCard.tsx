@@ -113,7 +113,7 @@ export function RequestCard({ threadId, req, onDone }: { threadId: string; req: 
     setBusy(null)
     await answer('allow')
   }
-  const appName = req.app ? req.app[0].toUpperCase() + req.app.slice(1).replace(/-/g, ' ') : ''
+  const appName = !req.app ? '' : req.app.length <= 2 ? req.app.toUpperCase() : req.app[0].toUpperCase() + req.app.slice(1).replace(/-/g, ' ')
 
   const pv = inputPreview(req.input)
   return (
