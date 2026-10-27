@@ -34,6 +34,20 @@ function typing(e: KeyboardEvent) {
 function ShellInner() {
   const { setThemeMode, theme, settings, threads, running, user, upsertThread } = useApp()
   const navigate = useNavigate()
+  // Installed app: a Pocket AI link opened from elsewhere (Projects' "Open in
+  // Pocket AI") focuses this window (manifest launch_handler) and lands here,
+  // so it opens as a tab instead of in a second window.
+  useEffect(() => {
+    const lq = (window as unknown as { launchQueue?: { setConsumer: (f: (p: { targetURL?: string }) => void) => void } }).launchQueue
+    if (!lq || embedded) return
+    lq.setConsumer(p => {
+      if (!p.targetURL) return
+      const u = new URL(p.targetURL)
+      const path = u.pathname + u.search + u.hash
+      if (u.origin === location.origin && path !== location.pathname + location.search + location.hash) navigate(path)
+      window.focus()
+    })
+  }, [navigate])
   const loc = useLocation()
   const mobile = useIsMobile()
   const narrow = useMediaQuery('(max-width: 980px)')
