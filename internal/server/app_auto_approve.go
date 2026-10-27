@@ -29,15 +29,37 @@ func (s *Server) appAutoRules(ctx context.Context, uid int64) appAutoRules {
 	return r.clean()
 }
 
+// Pocket Collaborator became Pocket Review (2026-10-27): rules saved under the
+// old slug and tool names keep working under the new ones.
+var renamedApps = map[string]string{"collaborator": "review"}
+var renamedTools = map[string]string{"pocket_collaborator_reviews": "pocket_review_list", "pocket_collaborator_get_review": "pocket_review_get", "pocket_collaborator_create_review": "pocket_review_create"}
+
+func renamedTool(t string) string {
+	if n, ok := renamedTools[t]; ok {
+		return n
+	}
+	if rest, ok := strings.CutPrefix(t, "pocket_collaborator_"); ok {
+		return "pocket_review_" + rest
+	}
+	return t
+}
+
 func (r appAutoRules) clean() appAutoRules {
 	out := appAutoRules{Apps: map[string]string{}, Tools: []string{}}
 	for app, level := range r.Apps {
+		if n, ok := renamedApps[app]; ok {
+			if _, set := r.Apps[n]; set {
+				continue
+			}
+			app = n
+		}
 		if appSlugRe.MatchString(app) && (level == "add" || level == "all") {
 			out.Apps[app] = level
 		}
 	}
 	seen := map[string]bool{}
 	for _, t := range r.Tools {
+		t = renamedTool(t)
 		if appToolRe.MatchString(t) && !seen[t] && len(out.Tools) < 500 {
 			seen[t] = true
 			out.Tools = append(out.Tools, t)
