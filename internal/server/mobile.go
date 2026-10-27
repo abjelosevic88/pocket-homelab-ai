@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -17,15 +18,97 @@ import (
 
 func (s *Server) mobileRoutes(r chi.Router) {
 	r.Get("/mobile", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]bool{"idempotency": true, "push": s.apns.Configured() && s.cfg.BaseURL != ""})
+		writeJSON(w, 200, map[string]bool{"idempotency": true, "push": s.apns.Configured() && s.cfg.BaseURL != "", "notification_preferences": true, "deferred_prompts": true, "latest_clip": true})
 	})
 	r.Get("/mobile/attention", s.handleAttention)
+	r.Get("/mobile/badge", func(w http.ResponseWriter, r *http.Request) {
+		count, err := s.store.CompletionBadge(r.Context(), me(r))
+		if err != nil {
+			s.fail(w, err, "count completed conversations")
+			return
+		}
+		writeJSON(w, 200, map[string]int{"count": count})
+	})
+	r.Get("/mobile/devices/{device}/notifications", s.handleMobileNotificationPreferences)
+	r.Put("/mobile/devices/{device}/notifications", s.handleMobileNotificationPreferences)
 	r.Put("/mobile/devices", s.handleMobileDevice)
 	r.Delete("/mobile/devices/{device}", s.handleDeleteMobileDevice)
 	r.Post("/mobile/push/test", s.handleMobilePushTest)
+	r.Get("/mobile/clips/latest", s.handleLatestClip)
 }
 
-type mobileDevice struct{ ID, Token, Environment string }
+type mobileNotificationPreferences struct {
+	Finished bool `json:"finished"`
+	Input    bool `json:"input"`
+	Failed   bool `json:"failed"`
+	OnlyAway bool `json:"only_away"`
+}
+
+func (p mobileNotificationPreferences) allows(kind string) bool {
+	switch kind {
+	case "finished":
+		return p.Finished
+	case "input":
+		return p.Input
+	case "failed":
+		return p.Failed
+	default:
+		return false
+	}
+}
+
+type mobileDevice struct {
+	ID, Token, Environment string
+	Notifications          mobileNotificationPreferences
+}
+
+func (s *Server) handleMobileNotificationPreferences(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.mobileTokenID(r); err != nil {
+		writeErr(w, 403, "use this device's API token")
+		return
+	}
+	device := chi.URLParam(r, "device")
+	if len(device) < 8 || len(device) > 128 {
+		writeErr(w, 400, "invalid device ID")
+		return
+	}
+	if r.Method == http.MethodPut {
+		// Require the complete policy: missing booleans must not silently disable alerts.
+		var in struct {
+			Finished *bool `json:"finished"`
+			Input    *bool `json:"input"`
+			Failed   *bool `json:"failed"`
+			OnlyAway *bool `json:"only_away"`
+		}
+		if decode(r, &in) != nil || in.Finished == nil || in.Input == nil || in.Failed == nil || in.OnlyAway == nil {
+			writeErr(w, 400, "provide all notification choices")
+			return
+		}
+		result, err := s.store.DB.ExecContext(r.Context(), `UPDATE mobile_devices SET notify_finished=?, notify_input=?, notify_failed=?, notify_only_away=? WHERE user_id=? AND device_id=?`, *in.Finished, *in.Input, *in.Failed, *in.OnlyAway, me(r), device)
+		if err != nil {
+			s.fail(w, err, "save device notification choices")
+			return
+		}
+		n, _ := result.RowsAffected()
+		if n == 0 {
+			writeErr(w, 404, "this device is not registered")
+			return
+		}
+		w.WriteHeader(204)
+		return
+	}
+	var prefs mobileNotificationPreferences
+	err := s.store.DB.QueryRowContext(r.Context(), `SELECT notify_finished, notify_input, notify_failed, notify_only_away FROM mobile_devices WHERE user_id=? AND device_id=?`, me(r), device).Scan(&prefs.Finished, &prefs.Input, &prefs.Failed, &prefs.OnlyAway)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, 404, "this device is not registered")
+		return
+	}
+	if err != nil {
+		s.fail(w, err, "load device notification choices")
+		return
+	}
+	writeJSON(w, 200, prefs)
+}
 
 // Native registrations are tied to a revocable local API token, not browser
 // sessions. Revoking that token deletes its devices through the foreign key.
@@ -41,9 +124,10 @@ func (s *Server) mobileTokenID(r *http.Request) (int64, error) {
 
 func (s *Server) handleMobileDevice(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		DeviceID    string `json:"device_id"`
-		Token       string `json:"token"`
-		Environment string `json:"environment"`
+		DeviceID      string                         `json:"device_id"`
+		Token         string                         `json:"token"`
+		Environment   string                         `json:"environment"`
+		Notifications *mobileNotificationPreferences `json:"notifications,omitempty"`
 	}
 	if decode(r, &in) != nil || len(in.DeviceID) < 8 || len(in.DeviceID) > 128 || len(in.Token) < 32 || len(in.Token) > 512 || (in.Environment != "sandbox" && in.Environment != "production") {
 		writeErr(w, 400, "invalid device registration")
@@ -59,6 +143,10 @@ func (s *Server) handleMobileDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.Token = strings.ToLower(in.Token)
+	prefs := mobileNotificationPreferences{Finished: true, Input: true, Failed: true, OnlyAway: true}
+	if in.Notifications != nil {
+		prefs = *in.Notifications
+	}
 	// Enforce a finite device count; token rotation of an existing device is free.
 	var count int
 	if err := s.store.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM mobile_devices WHERE user_id=? AND device_id<>?`, me(r), in.DeviceID).Scan(&count); err != nil {
@@ -77,10 +165,11 @@ func (s *Server) handleMobileDevice(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 	// A phone can change accounts. Remove the old token's registration to avoid
 	// exposing the previous person's notifications to its new signed-in user.
-	if _, err = tx.ExecContext(r.Context(), `DELETE FROM mobile_devices WHERE token=? AND environment=?`, in.Token, in.Environment); err == nil {
-		_, err = tx.ExecContext(r.Context(), `INSERT INTO mobile_devices (user_id, device_id, token_id, token, environment) VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(user_id, device_id) DO UPDATE SET token_id=excluded.token_id, token=excluded.token, environment=excluded.environment, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, me(r), in.DeviceID, tokenID, in.Token, in.Environment)
+	if _, err = tx.ExecContext(r.Context(), `DELETE FROM mobile_devices WHERE token=? AND environment=? AND NOT (user_id=? AND device_id=?)`, in.Token, in.Environment, me(r), in.DeviceID); err == nil {
+		_, err = tx.ExecContext(r.Context(), `INSERT INTO mobile_devices (user_id, device_id, token_id, token, environment, notify_finished, notify_input, notify_failed, notify_only_away) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, device_id) DO UPDATE SET token_id=excluded.token_id, token=excluded.token, environment=excluded.environment, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, me(r), in.DeviceID, tokenID, in.Token, in.Environment, prefs.Finished, prefs.Input, prefs.Failed, prefs.OnlyAway)
 	}
+
 	if err == nil {
 		err = tx.Commit()
 	}
@@ -101,7 +190,7 @@ func (s *Server) handleDeleteMobileDevice(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) mobileDevices(ctx context.Context, uid int64) ([]mobileDevice, error) {
-	rows, err := s.store.DB.QueryContext(ctx, `SELECT device_id, token, environment FROM mobile_devices WHERE user_id=? ORDER BY updated_at DESC LIMIT 20`, uid)
+	rows, err := s.store.DB.QueryContext(ctx, `SELECT device_id, token, environment, notify_finished, notify_input, notify_failed, notify_only_away FROM mobile_devices WHERE user_id=? ORDER BY updated_at DESC LIMIT 20`, uid)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +198,7 @@ func (s *Server) mobileDevices(ctx context.Context, uid int64) ([]mobileDevice, 
 	devices := []mobileDevice{}
 	for rows.Next() {
 		var d mobileDevice
-		if err := rows.Scan(&d.ID, &d.Token, &d.Environment); err != nil {
+		if err := rows.Scan(&d.ID, &d.Token, &d.Environment, &d.Notifications.Finished, &d.Notifications.Input, &d.Notifications.Failed, &d.Notifications.OnlyAway); err != nil {
 			return nil, err
 		}
 		devices = append(devices, d)
@@ -117,8 +206,8 @@ func (s *Server) mobileDevices(ctx context.Context, uid int64) ([]mobileDevice, 
 	return devices, rows.Err()
 }
 
-func (s *Server) sendMobilePush(ctx context.Context, uid int64, d mobileDevice, title, body, threadID string) error {
-	err := s.apns.Send(ctx, d.Token, d.Environment, title, body, s.cfg.BaseURL, threadID)
+func (s *Server) sendMobilePush(ctx context.Context, uid int64, d mobileDevice, title, body, threadID string, badge int) error {
+	err := s.apns.Send(ctx, d.Token, d.Environment, title, body, s.cfg.BaseURL, threadID, badge)
 	var failure *notify.APNSError
 	if errors.As(err, &failure) && failure.InvalidDevice() {
 		_, _ = s.store.DB.ExecContext(ctx, `DELETE FROM mobile_devices WHERE user_id=? AND device_id=? AND token=? AND environment=?`, uid, d.ID, d.Token, d.Environment)
@@ -126,22 +215,44 @@ func (s *Server) sendMobilePush(ctx context.Context, uid int64, d mobileDevice, 
 	return err
 }
 
-func (s *Server) notifyMobile(uid int64, title, body, threadID string) {
+func (s *Server) notifyMobile(uid int64, kind, title, body, threadID string) {
 	if !s.apns.Configured() {
 		return
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
+		// Serialize delivery and calculate the count at send time, so overlapping
+		// completions/read acknowledgements cannot send stale incremented counts.
+		s.mobilePushMu.Lock()
+		defer s.mobilePushMu.Unlock()
+		badge, err := s.store.CompletionBadge(ctx, uid)
+		if err != nil {
+			s.log.Warn("count native badge", "err", err)
+			return
+		}
 		devices, err := s.mobileDevices(ctx, uid)
 		if err != nil {
 			s.log.Warn("load native push devices", "err", err)
 			return
 		}
+		delivered := true
 		for _, d := range devices {
-			if err := s.sendMobilePush(ctx, uid, d, title, body, threadID); err != nil {
+			deviceTitle, deviceBody := title, body
+			if !d.Notifications.allows(kind) {
+				deviceTitle, deviceBody = "", ""
+			}
+			// Away-only presentation is decided on that phone, never by an open web tab.
+			// Muted event types still receive badge-only updates.
+			if err := s.sendMobilePush(ctx, uid, d, deviceTitle, deviceBody, threadID, badge); err != nil {
+				delivered = false
 				s.log.Warn("native push failed", "user", uid, "err", err)
 			}
+		}
+		// An alert also changes the icon badge. Remember it so a following read
+		// cannot mistake the previous cached zero for an already-delivered reset.
+		if delivered {
+			s.rememberMobileBadge(uid, badge)
 		}
 	}()
 }
@@ -167,10 +278,19 @@ func (s *Server) handleMobilePushTest(w http.ResponseWriter, r *http.Request) {
 		if d.ID != in.DeviceID {
 			continue
 		}
-		if err := s.sendMobilePush(r.Context(), me(r), d, "Pocket AI", "Native notifications are ready.", ""); err != nil {
+		s.mobilePushMu.Lock()
+		defer s.mobilePushMu.Unlock()
+		badge, err := s.store.CompletionBadge(r.Context(), me(r))
+		if err != nil {
+			s.fail(w, err, "count native badge")
+			return
+		}
+		if err := s.sendMobilePush(r.Context(), me(r), d, "Pocket AI", "Native notifications are ready.", "", badge); err != nil {
 			s.fail(w, err, "send native test")
 			return
 		}
+		// A test targets only one phone, so invalidate the all-device snapshot.
+		delete(s.mobileBadges, me(r))
 		w.WriteHeader(204)
 		return
 	}
@@ -216,4 +336,48 @@ func (s *Server) handleAttention(w http.ResponseWriter, r *http.Request) {
 		result = append(result, entry)
 	}
 	writeJSON(w, 200, result)
+}
+
+// Badge-only pushes also keep phones in sync when a chat is read on the web,
+// archived, deleted, or finishes with completion alerts turned off.
+func (s *Server) notifyMobileBadge(uid int64) {
+	if !s.apns.Configured() {
+		return
+	}
+	go func() {
+		s.mobilePushMu.Lock()
+		defer s.mobilePushMu.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		badge, err := s.store.CompletionBadge(ctx, uid)
+		if err != nil {
+			s.log.Warn("count native badge", "err", err)
+			return
+		}
+		if previous, ok := s.mobileBadges[uid]; ok && previous == badge {
+			return
+		}
+		devices, err := s.mobileDevices(ctx, uid)
+		if err != nil {
+			return
+		}
+		delivered := true
+		for _, d := range devices {
+			if err := s.sendMobilePush(ctx, uid, d, "", "", "", badge); err != nil {
+				delivered = false
+				s.log.Warn("native badge failed", "user", uid, "err", err)
+			}
+		}
+		if delivered {
+			s.rememberMobileBadge(uid, badge)
+		}
+	}()
+}
+
+// Caller holds mobilePushMu; this snapshot represents delivery to all devices.
+func (s *Server) rememberMobileBadge(uid int64, badge int) {
+	if s.mobileBadges == nil {
+		s.mobileBadges = make(map[int64]int)
+	}
+	s.mobileBadges[uid] = badge
 }

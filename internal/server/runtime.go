@@ -241,6 +241,7 @@ func (rt *engine) publishThread(t *store.Thread) {
 	ev := sseEvent{Name: "thread", Data: t}
 	rt.toThread(t.ID, ev)
 	rt.toUser(t.UserID, ev)
+	rt.s.notifyMobileBadge(t.UserID)
 	for _, uid := range rt.sharers(t.ID) {
 		rt.toUser(uid, ev)
 	}
@@ -1447,6 +1448,9 @@ func (k *runSink) TurnStarted() {
 func (k *runSink) TurnDone(ti agent.TurnInfo) {
 	r := k.r
 	rt := k.rt
+	if !ti.OK || ti.Interrupted {
+		rt.s.pauseDeferredSource(rt.ctx, r.threadID, "The other chat failed or was stopped. Review it before sending this prompt.")
+	}
 	rt.flush(r)
 	r.mu.Lock()
 	r.running = false
@@ -1517,6 +1521,7 @@ func (k *runSink) TurnDone(ti agent.TurnInfo) {
 		t.Status, t.Error = "error", ti.Error
 	}
 	viewing := rt.viewing(t)
+	t.CompletedUnread = ti.OK && !viewing
 	if !viewing {
 		t.Unread = true
 	}
@@ -1566,6 +1571,7 @@ func (k *runSink) Exited(err error) {
 	r.mu.Unlock()
 	if err != nil {
 		rt.s.log.Warn("agent exited", "thread", r.threadID, "err", err)
+		rt.s.pauseDeferredSource(rt.ctx, r.threadID, "The other chat lost its connection. Review it before sending this prompt.")
 		rt.saveItem(r.threadID, agent.Item{Key: "exit-" + uuid.NewString()[:8], Kind: "notice", Level: "error", Text: err.Error()})
 		rt.setStatus(r.threadID, "error", err.Error())
 	} else if t, e := rt.s.store.GetThreadAny(rt.ctx, r.threadID); e == nil && (t.Status == "running" || t.Status == "waiting") {
@@ -1589,6 +1595,8 @@ func (k *runSink) Exited(err error) {
 // notify pushes a message to the thread's owner when they asked for that
 // kind ("finished" | "input" | "failed") and are not looking at the thread.
 func (rt *engine) notify(t *store.Thread, kind, title, body string) {
+	// Native devices choose independently of the web/external-service policy.
+	rt.s.notifyMobile(t.UserID, kind, title, body, t.ID)
 	st, err := rt.s.store.GetSettings(rt.ctx, t.UserID)
 	if err != nil {
 		return
@@ -1610,7 +1618,6 @@ func (rt *engine) notify(t *store.Thread, kind, title, body string) {
 	if st.NotifyOnlyAway && rt.viewing(t) {
 		return
 	}
-	rt.s.notifyMobile(t.UserID, title, body, t.ID)
 	rt.s.notifyUser(rt.ctx, t.UserID, kind, title, body, rt.s.threadURL(t.ID))
 }
 

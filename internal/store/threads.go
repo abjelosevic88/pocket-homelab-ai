@@ -9,14 +9,14 @@ import (
 )
 
 const threadCols = `id, user_id, title, provider, model, effort, mode, speed, cwd, workspace_id, provider_session_id, log_offset, status, error,
-	pinned, archived, unread, source, source_ref, preview, last_prompt, prompt_at, usage, created_at, updated_at, activity_at, no_memory, account_id, host_id, worktree_id`
+	pinned, archived, unread, completed_unread, source, source_ref, preview, last_prompt, prompt_at, usage, created_at, updated_at, activity_at, no_memory, account_id, host_id, worktree_id`
 
 func scanThread(row interface{ Scan(...any) error }) (*Thread, error) {
 	var t Thread
 	var ws sql.NullInt64
 	var usage string
 	if err := row.Scan(&t.ID, &t.UserID, &t.Title, &t.Provider, &t.Model, &t.Effort, &t.Mode, &t.Speed, &t.Cwd, &ws, &t.ProviderSessionID, &t.LogOffset,
-		&t.Status, &t.Error, &t.Pinned, &t.Archived, &t.Unread, &t.Source, &t.SourceRef, &t.Preview, &t.LastPrompt, &t.PromptAt, &usage,
+		&t.Status, &t.Error, &t.Pinned, &t.Archived, &t.Unread, &t.CompletedUnread, &t.Source, &t.SourceRef, &t.Preview, &t.LastPrompt, &t.PromptAt, &usage,
 		&t.CreatedAt, &t.UpdatedAt, &t.ActivityAt, &t.NoMemory, &t.AccountID, &t.HostID, &t.WorktreeID); err != nil {
 		return nil, notFound(err)
 	}
@@ -105,10 +105,10 @@ func (s *Store) ListThreads(ctx context.Context, userID int64, f ThreadFilter) (
 func (s *Store) UpdateThread(ctx context.Context, t *Thread) error {
 	t.UpdatedAt = Now()
 	_, err := s.DB.ExecContext(ctx, `UPDATE threads SET title = ?, model = ?, effort = ?, mode = ?, speed = ?, cwd = ?, workspace_id = ?,
-		provider_session_id = ?, log_offset = ?, status = ?, error = ?, pinned = ?, archived = ?, unread = ?, preview = ?, last_prompt = ?, prompt_at = ?, usage = ?,
+		provider_session_id = ?, log_offset = ?, status = ?, error = ?, pinned = ?, archived = ?, unread = ?, completed_unread = ?, preview = ?, last_prompt = ?, prompt_at = ?, usage = ?,
 		updated_at = ?, activity_at = ?, account_id = ? WHERE id = ?`,
 		t.Title, t.Model, t.Effort, t.Mode, t.Speed, t.Cwd, nullInt(t.WorkspaceID), t.ProviderSessionID, t.LogOffset, t.Status, t.Error,
-		boolInt(t.Pinned), boolInt(t.Archived), boolInt(t.Unread), t.Preview, t.LastPrompt, t.PromptAt, jsonMarshal(t.Usage), t.UpdatedAt, t.ActivityAt, t.AccountID, t.ID)
+		boolInt(t.Pinned), boolInt(t.Archived), boolInt(t.Unread), boolInt(t.CompletedUnread), t.Preview, t.LastPrompt, t.PromptAt, jsonMarshal(t.Usage), t.UpdatedAt, t.ActivityAt, t.AccountID, t.ID)
 	if err == nil {
 		s.claimSession(ctx, t)
 	}
@@ -475,4 +475,11 @@ func (s *Store) UsageByProvider(ctx context.Context, userID int64, since string)
 		out[p] = t
 	}
 	return out, rows.Err()
+}
+
+// CompletionBadge counts conversations, never turns, and excludes other owners.
+func (s *Store) CompletionBadge(ctx context.Context, userID int64) (int, error) {
+	var count int
+	err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM threads WHERE user_id=? AND completed_unread=1 AND unread=1 AND archived=0 AND status='idle'`, userID).Scan(&count)
+	return count, err
 }

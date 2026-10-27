@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"sync"
@@ -84,7 +85,7 @@ func (e *APNSError) InvalidDevice() bool {
 	return e.Status == 410 || e.Reason == "BadDeviceToken" || e.Reason == "DeviceTokenNotForTopic"
 }
 
-func (a *APNS) Send(ctx context.Context, token, environment, title, body, server, threadID string) error {
+func (a *APNS) Send(ctx context.Context, token, environment, title, body, server, threadID string, badge int) error {
 	if !a.Configured() {
 		return fmt.Errorf("native push is not configured on this server")
 	}
@@ -105,10 +106,23 @@ func (a *APNS) Send(ctx context.Context, token, environment, title, body, server
 	// Keep the payload under Apple's 4 KB limit even with multibyte text.
 	title = truncateUTF8(title, 180)
 	body = truncateUTF8(body, 900)
-	payload, err := json.Marshal(map[string]any{
-		"aps":    map[string]any{"alert": map[string]string{"title": title, "body": body}, "sound": "default", "thread-id": threadID},
-		"server": server, "thread_id": threadID,
-	})
+	if badge < 0 {
+		badge = 0
+	}
+	aps := map[string]any{"badge": badge}
+	if title != "" || body != "" {
+		aps["alert"] = map[string]string{"title": title, "body": body}
+		aps["sound"] = "default"
+		aps["thread-id"] = threadID
+	}
+	payloadData := map[string]any{"aps": aps, "server": server, "thread_id": threadID}
+	if threadID != "" {
+		link := url.URL{Scheme: "pocketai", Host: "thread", Path: "/" + threadID}
+		query := url.Values{"server": {server}}
+		link.RawQuery = query.Encode()
+		payloadData["url"] = link.String()
+	}
+	payload, err := json.Marshal(payloadData)
 	if err != nil {
 		return err
 	}
@@ -123,6 +137,9 @@ func (a *APNS) Send(ctx context.Context, token, environment, title, body, server
 	req.Header.Set("apns-topic", a.Topic)
 	req.Header.Set("apns-push-type", "alert")
 	req.Header.Set("apns-priority", "10")
+	if title == "" && body == "" {
+		req.Header.Set("apns-collapse-id", "completion-badge")
+	}
 	req.Header.Set("apns-expiration", strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10))
 	req.Header.Set("Content-Type", "application/json")
 	a.mu.Lock()
