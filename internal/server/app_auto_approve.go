@@ -67,8 +67,8 @@ func (r appAutoRules) allows(tool askTool) string {
 }
 
 func appTitle(slug string) string {
-	if slug == "" {
-		return ""
+	if len(slug) <= 2 {
+		return strings.ToUpper(slug) // AI
 	}
 	return strings.ToUpper(slug[:1]) + strings.ReplaceAll(slug[1:], "-", " ")
 }
