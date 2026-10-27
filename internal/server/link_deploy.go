@@ -28,7 +28,8 @@ import (
 //   - asks the target what runs now (optional "current" command), so a deploy
 //     replaced since (a nightly reset, someone by hand) isn't shown as live.
 // The commands get POCKET_BRANCH, POCKET_SHA, POCKET_REF, POCKET_SOURCE,
-// POCKET_PROJECT, POCKET_DEPLOY_ID and POCKET_DEPLOYED_BY.
+// POCKET_PROJECT, POCKET_DEPLOY_ID, POCKET_DEPLOYED_BY, POCKET_REF_URL and
+// POCKET_REF_TITLE (the item's address and title, when the app sent them).
 
 type deployConfig struct {
 	HostID  int64    `json:"host_id"`           // where it runs (0 = this server)
@@ -335,6 +336,10 @@ func (s *Server) handleLinkStartDeploy(w http.ResponseWriter, r *http.Request) {
 		Source string `json:"source"`
 		Ref    string `json:"ref"`
 		Branch string `json:"branch"`
+		// RefURL, RefLabel: the item's address and title, for the deploy commands
+		// (POCKET_REF_URL, POCKET_REF_TITLE: a "what's deployed" badge can link back)
+		RefURL   string `json:"ref_url"`
+		RefLabel string `json:"ref_label"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
@@ -398,7 +403,8 @@ func (s *Server) handleLinkStartDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	who := firstNonEmpty(u.Name, u.Username, u.Email)
 	env := [][2]string{{"POCKET_DEPLOY", "1"}, {"POCKET_DEPLOY_ID", strconv.FormatInt(d.ID, 10)}, {"POCKET_BRANCH", d.Branch}, {"POCKET_SHA", d.SHA},
-		{"POCKET_REF", d.Ref}, {"POCKET_SOURCE", d.Source}, {"POCKET_PROJECT", d.Project}, {"POCKET_DEPLOYED_BY", who}}
+		{"POCKET_REF", d.Ref}, {"POCKET_SOURCE", d.Source}, {"POCKET_PROJECT", d.Project}, {"POCKET_DEPLOYED_BY", who},
+		{"POCKET_REF_URL", oneLine(strings.TrimSpace(in.RefURL), 500)}, {"POCKET_REF_TITLE", oneLine(strings.TrimSpace(in.RefLabel), 200)}}
 	var run strings.Builder
 	for _, e := range env {
 		run.WriteString("export " + e[0] + "=" + deployQuote(e[1]) + "\n")
