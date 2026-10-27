@@ -6,7 +6,8 @@ import { api, qs, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { fmtDuration, fmtTokens, shortPath } from '../lib/format'
 import { dayLabel, hhmm, hourLabel, ORIGINS, originLabel, shortModel, useOpenSession } from '../lib/sessions'
-import type { Origin, ProviderId, Run } from '../lib/types'
+import type { Account, Origin, ProviderId, Run } from '../lib/types'
+import { accountName } from '../components/AgentPicker'
 import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
 import { elapsed, useNow } from '../components/RunningList'
@@ -24,13 +25,21 @@ const STATUS: Record<Run['status'], { label: string; icon: string }> = {
   unfinished: { label: 'Never finished', icon: 'alert' },
 }
 
+/** The login a run used, by name: the server's own login and a named login on
+ * the same account read as one (accountName), so they filter together. */
+function runAccount(r: Run, accounts: Account[]) {
+  const a = accounts.find(x => x.provider === r.provider && x.id === (r.account_id || 0))
+  return a ? accountName(a, accounts) : r.account_id ? `Login ${r.account_id}` : 'Server login'
+}
+
 export default function TodayPage({ onMenu }: { onMenu?: () => void }) {
-  const { user, running } = useApp()
+  const { user, running, accounts } = useApp()
   const openSession = useOpenSession()
   const now = useNow(1000)
   const [day, setDay] = useState(() => midnight(new Date()))
   const [provider, setProvider] = useState<Prov>('all')
   const [origin, setOrigin] = useState<Origin | ''>('')
+  const [account, setAccount] = useState('') // provider + ':' + login name
   const [runs, setRuns] = useState<Run[] | null>(null)
   const [err, setErr] = useState('')
   const isToday = day.getTime() === midnight(new Date()).getTime()
@@ -47,7 +56,21 @@ export default function TodayPage({ onMenu }: { onMenu?: () => void }) {
   }, [day, isToday, runKey])
   useEffect(() => { setRuns(null) }, [day])
 
-  const shown = useMemo(() => (runs || []).filter(r => (provider === 'all' || r.provider === provider) && (!origin || r.origin === origin)), [runs, provider, origin])
+  const acctKey = (r: Run) => r.provider + ':' + runAccount(r, accounts)
+  // logins that ran something this day (for the chosen agent), busiest first
+  const logins = useMemo(() => {
+    const m = new Map<string, { provider: ProviderId; name: string; n: number }>()
+    for (const r of runs || []) {
+      if (provider !== 'all' && r.provider !== provider) continue
+      const k = acctKey(r), x = m.get(k)
+      if (x) x.n++; else m.set(k, { provider: r.provider, name: runAccount(r, accounts), n: 1 })
+    }
+    return [...m.entries()].sort((a, b) => b[1].n - a[1].n)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runs, provider, accounts])
+  const shown = useMemo(() => (runs || []).filter(r => (provider === 'all' || r.provider === provider) && (!origin || r.origin === origin) && (!account || acctKey(r) === account)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [runs, provider, origin, account, accounts])
   const runMS = (r: Run) => r.status === 'running' ? Math.max(0, now - new Date(r.started_at).getTime()) : r.duration_ms
   const stats = useMemo(() => {
     const work = shown.reduce((a, r) => a + runMS(r), 0)
@@ -112,6 +135,11 @@ export default function TodayPage({ onMenu }: { onMenu?: () => void }) {
             <button type="button" className={`fchip ${origin === '' ? 'on' : ''}`} onClick={() => setOrigin('')}>Everywhere</button>
             {ORIGINS.map(o => <button key={o.id} type="button" className={`fchip ${origin === o.id ? 'on' : ''}`} onClick={() => setOrigin(origin === o.id ? '' : o.id)}><span className={`odot o-${o.id}`} />{o.label}</button>)}
           </div>
+          {(logins.length > 1 || account) && <div className="chip-row" role="group" aria-label="Account">
+            <button type="button" className={`fchip ${account === '' ? 'on' : ''}`} onClick={() => setAccount('')}>All accounts</button>
+            {logins.map(([k, l]) => <button key={k} type="button" className={`fchip ${account === k ? 'on' : ''}`} onClick={() => setAccount(account === k ? '' : k)}><Icon name={l.provider} size={12} />{l.name}<span className="muted tnum">{l.n}</span></button>)}
+            {account && !logins.some(([k]) => k === account) && <button type="button" className="fchip on" onClick={() => setAccount('')}>{account.split(':').slice(1).join(':')}<Icon name="x" size={12} /></button>}
+          </div>}
           {err && <div className="callout danger"><Icon name="alert" size={15} /><span>{err}</span></div>}
           {!runs ? <Loading label="Reading the session files…" /> : (
             <>
@@ -137,12 +165,12 @@ export default function TodayPage({ onMenu }: { onMenu?: () => void }) {
               </figure>
 
               {shown.length === 0 ? (
-                <Empty title={isToday ? 'Nothing yet today' : 'Nothing that day'} icon="today">{provider !== 'all' || origin ? 'No runs match these filters.' : 'No agent worked on a prompt this day.'}</Empty>
+                <Empty title={isToday ? 'Nothing yet today' : 'Nothing that day'} icon="today">{provider !== 'all' || origin || account ? 'No runs match these filters.' : 'No agent worked on a prompt this day.'}</Empty>
               ) : groups.map(g => (
                 <section key={g.hour} className="tl-hour">
                   <h3 className="tl-hour-h tnum">{hourLabel(g.hour)}<span className="muted">{g.items.length} {g.items.length === 1 ? 'run' : 'runs'}</span></h3>
                   <div className="run-list">
-                    {g.items.map(r => <RunCard key={r.provider + r.session_id + r.started_at} r={r} now={now} onOpen={() => openSession(r, r.key)} />)}
+                    {g.items.map(r => <RunCard key={r.provider + r.session_id + r.started_at} r={r} login={runAccount(r, accounts)} now={now} onOpen={() => openSession(r, r.key)} />)}
                   </div>
                 </section>
               ))}
@@ -154,7 +182,7 @@ export default function TodayPage({ onMenu }: { onMenu?: () => void }) {
   )
 }
 
-function RunCard({ r, now, onOpen }: { r: Run; now: number; onOpen: () => void }) {
+function RunCard({ r, login, now, onOpen }: { r: Run; login: string; now: number; onOpen: () => void }) {
   const st = STATUS[r.status] || STATUS.done
   const dur = r.status === 'running' ? elapsed(r.started_at, now) : r.duration_ms ? fmtDuration(r.duration_ms) : ''
   return (
@@ -165,6 +193,7 @@ function RunCard({ r, now, onOpen }: { r: Run; now: number; onOpen: () => void }
           <span className="run-at-m tnum">{hhmm(r.started_at)}</span>
           <span className={`run-st ${r.status}`}>{r.status === 'running' ? <span className="spinner" /> : <Icon name={st.icon} size={12} />}{st.label}</span>
           <span className={`srv-ico sm ${r.provider}`}><Icon name={r.provider} size={12} /></span>
+          <span className="badge" title={`Ran on the ${login} login`}>{login}</span>
           <span className={`origin-chip o-${r.origin}`}>{originLabel(r.origin)}</span>
           <PrivacyChip sharedWith={r.shared_with} />
           <span className="grow" />

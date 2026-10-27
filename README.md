@@ -197,3 +197,4 @@ Native iPhone/iPad notification event choices are per registered device, separat
 registration preserves existing choices. Migration 0023 snapshots the former shared choices once for existing
 devices. Disabled event types still get badge-only pushes. Web tabs do not suppress native pushes; the native
 foreground notification delegate applies away-only presentation on its own phone.
+

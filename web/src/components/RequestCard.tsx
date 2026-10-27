@@ -35,6 +35,7 @@ export function RequestCard({ threadId, req, onDone }: { threadId: string; req: 
   const { toast } = useToast()
   const [busy, setBusy] = useState<Decision | null>(null)
   const [denying, setDenying] = useState(false)
+  const [always, setAlways] = useState(false)
   const [message, setMessage] = useState('')
   const [answers, setAnswers] = useState<Record<string, string[]>>({})
   const [other, setOther] = useState<Record<string, string>>({})
@@ -105,6 +106,15 @@ export function RequestCard({ threadId, req, onDone }: { threadId: string; req: 
     )
   }
 
+  // "Always allow…" on a Pocket app change: save a rule, then allow this one.
+  const allowAlways = async (rule: { tool: string } | { app: string; level: 'add' | 'all' }, what: string) => {
+    setBusy('allow')
+    try { await api.post(`${V1}/pocket-tools/auto-approve`, rule); toast(`${what} now run without asking · Settings → App changes`) } catch (e) { toast(errMsg(e), 'err'); setBusy(null); return }
+    setBusy(null)
+    await answer('allow')
+  }
+  const appName = !req.app ? '' : req.app.length <= 2 ? req.app.toUpperCase() : req.app[0].toUpperCase() + req.app.slice(1).replace(/-/g, ' ')
+
   const pv = inputPreview(req.input)
   return (
     <div className="req-card permission">
@@ -114,12 +124,20 @@ export function RequestCard({ threadId, req, onDone }: { threadId: string; req: 
       {pv.diff && <div className="req-diff"><Diff text={pv.diff} /></div>}
       {req.id.startsWith('ask-') ? <ActionPreview input={req.input} /> : pv.rest && <pre className="tool-pre">{pv.rest.slice(0, 3000)}</pre>}
       {denying && <textarea {...noGrammarly} autoFocus className="req-msg" placeholder="Optional: tell the agent why, or what to do instead" value={message} onChange={e => setMessage(e.target.value)} rows={2} />}
+      {always && req.app && <div className="req-opts">
+        <button type="button" className="req-opt" disabled={!!busy} onClick={() => allowAlways({ tool: req.tool_name }, req.title || req.tool_name)}><span className="grow"><span className="req-opt-label">Always “{req.title || req.tool_name}”</span><span className="req-opt-desc">Only this operation</span></span></button>
+        {req.kind === 'add' && <button type="button" className="req-opt" disabled={!!busy} onClick={() => allowAlways({ app: req.app!, level: 'add' }, `New ${appName} items`)}><span className="grow"><span className="req-opt-label">Everything that adds in {appName}</span><span className="req-opt-desc">Creating, commenting, linking — edits still ask</span></span></button>}
+        <button type="button" className="req-opt" disabled={!!busy} onClick={() => allowAlways({ app: req.app!, level: 'all' }, `All ${appName} changes`)}><span className="grow"><span className="req-opt-label">Every change in {appName}</span><span className="req-opt-desc">Adds and edits</span></span></button>
+      </div>}
       <div className="req-actions">
-        {denying ? <>
+        {always ? <>
+          <button type="button" className="btn ghost" onClick={() => setAlways(false)}>Back</button>
+        </> : denying ? <>
           <button type="button" className="btn ghost" onClick={() => setDenying(false)}>Back</button>
           <button type="button" className="btn danger" disabled={!!busy} onClick={() => answer('deny', message.trim() ? { message: message.trim() } : {})}>{busy === 'deny' && <Spinner />}Deny</button>
         </> : <>
           <button type="button" className="btn" disabled={!!busy} onClick={() => setDenying(true)}>Deny…</button>
+          {req.app && req.id.startsWith('ask-') && <button type="button" className="btn" disabled={!!busy} onClick={() => setAlways(true)} title="Let this kind of change run without asking from now on">Always allow…</button>}
           {req.can_allow_session && <button type="button" className="btn" disabled={!!busy} onClick={() => answer('allow_session')} title="Don't ask again for this in this thread">{busy === 'allow_session' && <Spinner />}Allow for session</button>}
           <button type="button" className="btn primary" disabled={!!busy} onClick={() => answer('allow')} autoFocus>{busy === 'allow' ? <Spinner /> : <Icon name="check" size={14} />}Allow</button>
         </>}
@@ -133,7 +151,7 @@ export function RequestSummary({ req }: { req: AgentRequest }) {
   const label = req.type === 'question' ? 'Question' : req.type === 'plan' ? 'Plan' : (req.title || req.tool_name)
   const st = req.status
   const icon = st === 'allowed' || st === 'answered' ? 'check-circle' : st === 'denied' ? 'x-circle' : st === 'pending' ? 'clock' : 'minus'
-  const word = st === 'allowed' ? (req.type === 'plan' ? 'approved' : 'allowed') : st === 'answered' ? 'answered' : st === 'denied' ? (req.type === 'plan' ? 'sent back' : 'denied') : st === 'pending' ? 'waiting for you' : 'expired'
+  const word = st === 'allowed' ? (req.type === 'plan' ? 'approved' : req.auto ? 'allowed automatically' : 'allowed') : st === 'answered' ? 'answered' : st === 'denied' ? (req.type === 'plan' ? 'sent back' : 'denied') : st === 'pending' ? 'waiting for you' : 'expired'
   let detail = ''
   if (req.type === 'question' && req.answer && typeof req.answer === 'object') {
     const a = req.answer as Record<string, unknown>
@@ -143,7 +161,7 @@ export function RequestSummary({ req }: { req: AgentRequest }) {
   return (
     <div className={`req-line ${st}`}>
       <Icon name={icon} size={13} />
-      <span className="ellipsis"><b>{label}</b> — {word}{detail ? `: ${detail}` : ''}</span>
+      <span className="ellipsis" title={req.auto ? `Your rule: ${req.auto} (Settings → App changes)` : undefined}><b>{label}</b> — {word}{detail ? `: ${detail}` : ''}</span>
     </div>
   )
 }

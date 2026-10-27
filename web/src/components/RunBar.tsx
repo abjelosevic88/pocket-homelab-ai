@@ -42,13 +42,13 @@ export function RunBar({ t, items }: { t: Thread; items: Item[] }) {
   const turnOver = t.status !== 'running' && !waiting
   const since = t.prompt_at || t.activity_at
   const origin = running.find(r => r.session_id === t.provider_session_id)?.origin || ''
-  const what = waiting ? 'Waiting for you' : turnOver ? 'Sub-agents working' : t.external ? `Working ${WHERE[origin] || 'elsewhere'}` : tools[0]?.tool?.title || 'Working'
+  const what = waiting ? 'Waiting for you' : turnOver ? 'Sub-agents working' : t.external ? `Working ${WHERE[origin] || 'elsewhere'}` : 'Working…'
 
   return (
     <div className="run-bar">
       <div className="run-bar-row">
         <RunDots waiting={waiting} size={14} />
-        <span className="run-bar-what ellipsis">{what}</span>
+        <span className="run-bar-what ellipsis" title={!waiting && !turnOver ? tools[0]?.tool?.title : undefined}>{what}</span>
         <SubagentsChip t={t} />
         <span className="grow" />
         {t.provider_session_id && <button type="button" className="btn ghost icon-only xs" onClick={() => fork()} title="Fork into a new tab" aria-label="Fork into a new tab"><Icon name="fork" size={15} /></button>}

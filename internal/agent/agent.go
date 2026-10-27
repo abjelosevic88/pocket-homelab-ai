@@ -98,6 +98,11 @@ type Request struct {
 	// person (their apps); only they may answer it.
 	ForID int64  `json:"for_id,omitempty"`
 	For   string `json:"for,omitempty"`
+	// App / Kind: a Pocket app change (kind add or change), so the card can
+	// offer "always allow"; Auto names the rule that allowed it without asking.
+	App  string `json:"app,omitempty"`
+	Kind string `json:"kind,omitempty"`
+	Auto string `json:"auto,omitempty"`
 }
 
 // TurnInfo summarises a finished turn.
