@@ -240,12 +240,17 @@ export const Composer = React.forwardRef<ComposerHandle, {
     if (!canSend) return
     stopDictation()
     setSending(true)
+    // Empty the box right away (starting an agent can take seconds); the
+    // message comes back only if it did not go, above anything typed since.
+    const sentText = text.trim(), sentAtts = atts
+    setText('')
+    setAtts([])
     try {
-      const ok = await onSend(text.trim(), ready.map(a => a.upload!.id), sendNow)
-      if (ok) {
-        setText('')
-        atts.forEach(a => URL.revokeObjectURL(a.preview))
-        setAtts([])
+      const ok = await onSend(sentText, ready.map(a => a.upload!.id), sendNow)
+      if (ok) sentAtts.forEach(a => URL.revokeObjectURL(a.preview))
+      else {
+        setText(cur => sentText + (cur ? '\n\n' + cur : ''))
+        setAtts(cur => [...sentAtts, ...cur])
       }
     } finally { setSending(false) }
   }
