@@ -197,7 +197,11 @@ export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, i
   }
 
   return (
-    <div className="tabbar" role="tablist" aria-label="Open threads">
+    <div className="tabbar" role="tablist" aria-label="Open threads"
+      // a drag always lands somewhere: the bar already moved things live, so
+      // the browser must not animate the dragged picture back to its start
+      onDragOver={e => { if (drag || dragGroup) { e.preventDefault(); e.dataTransfer.dropEffect = 'move' } }}
+      onDrop={e => { if (drag || dragGroup) { e.preventDefault(); setDrag(''); setDragGroup('') } }}>
       <div className="tabbar-scroll">
         {row.map(r => {
           if (!('id' in r)) {
