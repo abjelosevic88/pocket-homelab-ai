@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRewindClaudeExcludesFutureContext(t *testing.T) {
@@ -100,9 +101,10 @@ for line in sys.stdin:
   sid=p['threadId']; assert sid in ('original','copy')
   data=turns if sid=='original' or mode=='ignore' else turns[:1]
   if sid=='copy' and mode=='altered': data=[dict(data[0],id='wrong-turn')]
-  result={'thread':{'id':sid,'historyMode':'paginated' if mode in ('paginated','cursor-loop') else 'legacy','turns':data if p.get('includeTurns') else []}}
+  result={'thread':{'id':sid,'historyMode':'paginated' if mode in ('paginated','cursor-loop','metadata-only') else 'legacy','turns':data if p.get('includeTurns') else []}}
  elif method=='thread/turns/list':
-  assert p['sortDirection']=='asc' and p['itemsView']=='full'
+  assert p['sortDirection']=='asc' and p['itemsView'] in ('full','notLoaded')
+  if mode=='metadata-only': assert p['itemsView']=='notLoaded'
   data=turns if p['threadId']=='original' else turns[:1]
   index=int(p.get('cursor','0'))
   result={'data':data[index:index+1], 'nextCursor':str(index+1) if index+1<len(data) else None}
@@ -119,6 +121,8 @@ for line in sys.stdin:
   result={'thread':{'id':'original' if mode=='same-id' else 'copy','turns':[]}}
  else: raise Exception('Unexpected call, must never send a turn: '+method)
  print(json.dumps({'id':m['id'],'result':result}),flush=True)
+if mode=='slow-shutdown':
+ import time; time.sleep(10)
 `
 	if err := os.WriteFile(bin, []byte(script), 0700); err != nil {
 		t.Fatal(err)
@@ -168,12 +172,99 @@ func TestRewindCodexUsesSavedReplyAfterMissingUserHistory(t *testing.T) {
 	if _, err := RewindCodex(t.Context(), o, visible); err == nil || !strings.Contains(err.Error(), "not in the agent history") {
 		t.Fatal("fixture does not reproduce the old failure", err)
 	}
-	id, err := RewindCodex(t.Context(), o, visible, "t1")
+	id, err := RewindCodex(t.Context(), o, visible, RewindCheckpoint{TurnID: "t1"})
 	if err != nil || id != "copy" {
 		t.Fatal("valid reply boundary was blocked by missing user records", id, err)
 	}
-	if _, err := RewindCodex(t.Context(), o, visible, "missing-turn"); err == nil {
+	if _, err := RewindCodex(t.Context(), o, visible, RewindCheckpoint{TurnID: "missing-turn"}); err == nil {
 		t.Fatal("unknown checkpoint was guessed")
+	}
+}
+
+func TestCodexExitPreservesRewindCheckpoint(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "codex")
+	script := `#!/usr/bin/env python3
+import sys,json,time
+for line in sys.stdin:
+ m=json.loads(line)
+ if 'id' not in m: continue
+ method=m['method']
+ if method=='initialize': result={}
+ elif method=='thread/start': result={'thread':{'id':'original'}}
+ elif method=='turn/start': result={'turn':{'id':'interrupted-turn'}}
+ else: raise Exception('Unexpected call: '+method)
+ print(json.dumps({'id':m['id'],'result':result}),flush=True)
+ if method=='turn/start':
+  time.sleep(0.05)
+  sys.exit(1)
+`
+	if err := os.WriteFile(bin, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	sink := newRec()
+	sess, err := StartCodex(t.Context(), Options{Bin: bin, Cwd: dir}, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+	if err := sess.Send(Input{Text: "synthetic prompt"}); err != nil {
+		t.Fatal(err)
+	}
+	sink.wait(t, func() bool { return len(sink.turns) == 1 })
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	turn := sink.turns[0]
+	if turn.ID != "interrupted-turn" || turn.DurationMS <= 0 || !strings.HasPrefix(turn.Error, "Codex exited") {
+		t.Fatalf("exit lost the checkpoint or elapsed time: %+v", turn)
+	}
+}
+
+func TestCodexCheckpointMatchesUnconfirmedFailedSendsWithoutGuessing(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		native []Item
+		want   int
+	}{
+		{"failed before recording", []Item{{Text: "one"}, {Text: "two"}}, 1},
+		{"recorded before exit", []Item{{Text: "one"}, {Text: "failed"}, {Text: "two"}}, 2},
+		{"unrelated native history", []Item{{Text: "one"}, {Text: "different"}, {Text: "two"}}, -1},
+		{"no verified history", nil, -1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			visible := []Item{{Text: "one"}, {Key: "failed-send", Text: "failed"}, {Text: "two"}}
+			index, err := codexCheckpointIndex(tc.native, visible, map[string]bool{"failed-send": true})
+			if (err != nil) != (tc.want < 0) || index != tc.want {
+				t.Fatal(index, err)
+			}
+		})
+	}
+	visible := []Item{{Text: "one"}, {Key: "failed-send", Text: "repeat"}, {Text: "repeat"}}
+	if _, err := codexCheckpointIndex([]Item{{Text: "one"}, {Text: "repeat"}, {Text: "repeat"}}, visible, map[string]bool{"failed-send": true}); err == nil {
+		t.Fatal("ambiguous repeated message accepted")
+	}
+}
+
+func TestRewindCodexSkipsFailedSendAndDoesNotWaitForShutdown(t *testing.T) {
+	bin, dir := rewindCodexFixture(t)
+	o := Options{Bin: bin, Cwd: dir, ResumeID: "original", Model: "test-model", Effort: "high", Mode: "full-access", Speed: "fast", Env: []string{"REWIND_SCENARIO=slow-shutdown"}}
+	visible := []Item{{Text: "one"}, {Key: "failed-send", Text: "not recorded"}, {Text: "two"}}
+	start := time.Now()
+	id, err := RewindCodex(t.Context(), o, visible, RewindCheckpoint{UnconfirmedPrompts: map[string]bool{"failed-send": true}})
+	if err != nil || id != "copy" {
+		t.Fatal(id, err)
+	}
+	if elapsed := time.Since(start); elapsed > 1500*time.Millisecond {
+		t.Fatal("rewind waited for process shutdown", elapsed)
+	}
+}
+
+func TestRewindCodexSavedCheckpointLoadsOnlyTurnMetadata(t *testing.T) {
+	bin, dir := rewindCodexFixture(t)
+	o := Options{Bin: bin, Cwd: dir, ResumeID: "original", Model: "test-model", Effort: "high", Mode: "full-access", Speed: "fast", Env: []string{"REWIND_SCENARIO=metadata-only"}}
+	id, err := RewindCodex(t.Context(), o, nil, RewindCheckpoint{TurnID: "t1"})
+	if err != nil || id != "copy" {
+		t.Fatal(id, err)
 	}
 }
 
@@ -233,7 +324,7 @@ func TestRewindCodexRealCLIWithMissingOldUserRecords(t *testing.T) {
 	}
 	writeFile(t, path, log.String())
 	o := Options{Bin: bin, Cwd: dir, ResumeID: sid, Mode: "full-access", Env: []string{"CODEX_HOME=" + dir}}
-	id, err := RewindCodex(t.Context(), o, []Item{{Text: "Old message"}, {Text: "Interrupted message"}, {Text: "Status?"}}, "turn-1")
+	id, err := RewindCodex(t.Context(), o, []Item{{Text: "Old message"}, {Text: "Interrupted message"}, {Text: "Status?"}}, RewindCheckpoint{TurnID: "turn-1"})
 	if err != nil || id == "" || id == sid {
 		t.Fatal("could not use native saved checkpoint", id, err)
 	}

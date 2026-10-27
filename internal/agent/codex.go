@@ -371,11 +371,12 @@ func StartCodex(ctx context.Context, o Options, sink Sink) (Session, error) {
 		}
 		s.mu.Lock()
 		running := s.running
+		turnID, turnFrom := s.turnID, s.turnFrom
 		s.running = false
 		s.closed = true
 		s.mu.Unlock()
 		if running {
-			sink.TurnDone(TurnInfo{OK: false, Error: "Codex exited" + stderrHint(c.errb)})
+			sink.TurnDone(TurnInfo{ID: turnID, OK: false, DurationMS: time.Since(turnFrom).Milliseconds(), Error: "Codex exited" + stderrHint(c.errb)})
 		}
 		close(s.exited)
 		sink.Exited(nil)
