@@ -329,8 +329,8 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
               {t.source === 'import' && items.length > 0 && <div className="notice info"><Icon name="history" size={14} /><span>Imported from the server’s {providerName(t.provider)} history — sending a message continues that session.</span></div>}
               <Timeline key={id} threadId={t.provider === 'claude' ? id : undefined} items={visible} onResend={canSend ? resend : undefined} onDropUnsent={canSend ? dropUnsent : undefined} showThinking={!!settings?.show_thinking} streamingKey={streamingKey}
                 onFork={owner && t.source !== 'ask' && t.provider_session_id && canRun ? forkNewTab : undefined}
-                onEdit={owner && canRun && !t.host_id ? it => { void rewind(it) } : undefined}
-                onRewind={owner && canRun && (!t.host_id || t.provider === 'claude') ? (it, keep) => { void rewind(it, keep) } : undefined} rewindDisabled={rewindDisabled}
+                onEdit={owner && canRun ? it => { void rewind(it) } : undefined}
+                onRewind={owner && canRun ? (it, keep) => { void rewind(it, keep) } : undefined} rewindDisabled={rewindDisabled}
                 owner={sharedOwner} onMoveFolder={owner && canRun ? () => setMoving(true) : undefined} />
               <ThreadEvidence id={id} revision={visible.filter(i => i.kind === 'turn').length} />
               {t.status === 'error' && t.error && !(lastItem?.kind === 'notice' && lastItem.text === t.error) && <div className="notice error"><Icon name="alert" size={14} /><span>{t.error}</span></div>}

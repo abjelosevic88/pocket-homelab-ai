@@ -82,6 +82,7 @@ type Thread struct {
 	Pinned            bool   `json:"pinned"`
 	Archived          bool   `json:"archived"`
 	Unread            bool   `json:"unread"`
+	CompletedUnread   bool   `json:"completed_unread"`
 	Source            string `json:"source"` // web | recipe | schedule | import | api
 	SourceRef         string `json:"source_ref"`
 	Preview           string `json:"preview"`

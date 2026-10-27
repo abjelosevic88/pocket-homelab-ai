@@ -170,6 +170,11 @@ Only the owner can rewind, after the agent and its queue have stopped. The new
 conversation is private and keeps its account, model, effort, workspace, memory
 preference, and Pocket Ask restrictions. Claude continues from an independent
 copy of the earlier session history; Codex uses its native turn-boundary fork.
+Codex uses the previous reply’s saved turn ID when available, so missing older
+user-message records or interrupted sends do not block a valid checkpoint.
+Both providers support connected machines: Codex forks and verifies the retained
+history on that machine over SSH, using its configured binary and login. Legacy
+and paginated Codex history are supported. No model turn is started by rewind.
 An unsupported Codex version or a history mismatch returns an error instead of
 continuing with later messages still in context.
 
@@ -184,3 +189,6 @@ ahead of older queued messages. **Settings → General → Composer → Send beh
 swaps those actions and sets the send button's behavior. **Shift+Enter** adds a
 new line; turning off **Enter sends** makes plain Enter add a new line too.
 Phones keep Enter for new lines and use the send button.
+
+
+Native notification event choices are per registered device (`GET/PUT /api/v1/mobile/devices/{device}/notifications`), independent of web/external-service notification settings. Registration refresh preserves them. Migration 0023 snapshots the previous shared choices once. Muted event types still receive badge-only pushes. Web presence does not suppress phone alerts; the native foreground delegate applies each phone’s away-only choice.
