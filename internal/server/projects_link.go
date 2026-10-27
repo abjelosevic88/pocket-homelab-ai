@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -65,9 +66,28 @@ func (s *Server) handleProjectsLink(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, out)
 		return
 	}
+	// every conversation of mine that belongs to a Projects issue, forks and
+	// rewinds included (they inherit the context; their source says "fork")
+	threads := map[string]string{}
+	if rows, err := s.store.DB.QueryContext(r.Context(), `SELECT c.thread_id, c.ref FROM thread_context c JOIN threads t ON t.id = c.thread_id
+		WHERE t.user_id = ? AND c.source = 'projects' AND c.ref != ''`, u.ID); err == nil {
+		for rows.Next() {
+			var id, ref string
+			if rows.Scan(&id, &ref) == nil {
+				threads[id] = strings.ToUpper(ref)
+			}
+		}
+		rows.Close()
+	}
+	out["threads"] = threads
 	refs := []string{}
 	for _, ref := range strings.Split(r.URL.Query().Get("refs"), ",") {
 		if ref = strings.ToUpper(strings.TrimSpace(ref)); projectsRefRe.MatchString(ref) && len(refs) < 40 {
+			refs = append(refs, ref)
+		}
+	}
+	for _, ref := range threads { // issues known only through forks get titles too
+		if len(refs) < 40 && !slices.Contains(refs, ref) && projectsRefRe.MatchString(ref) {
 			refs = append(refs, ref)
 		}
 	}

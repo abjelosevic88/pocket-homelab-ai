@@ -22,7 +22,7 @@ const CLOSED = 'pai-tabs-closed'
 export interface TabGroup { id: string; name: string; color: string; collapsed?: boolean; tabs: string[]; /** made by the app: "projects:AS-7" */ auto?: string }
 const GROUPS = 'pai-tab-groups'
 /** Tabs already offered to an automatic group (taking one out keeps it out). */
-const AUTO = 'pai-tab-auto'
+const AUTO = 'pai-tab-auto2' // 2: forks of Projects conversations count too
 export const GROUP_COLORS = ['blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange', 'grey']
 const loadGroups = (): TabGroup[] => {
   try { const v = JSON.parse(localStorage.getItem(GROUPS) || '[]'); return Array.isArray(v) ? v.filter(g => g && typeof g.id === 'string' && Array.isArray(g.tabs)) : [] } catch { return [] }
@@ -106,6 +106,24 @@ export function useTabs(enabled: boolean) {
     const others = g.tabs.filter(x => x !== id)
     if (others.length) place(id, others)
   }, [groups, place])
+  // a whole group, dragged: its tabs move together, next to `target` (after it
+  // when the pointer is on its right half) but never into another group
+  const moveGroup = useCallback((gid: string, target: string, after: boolean) => setTabs(t => {
+    const g = groups.find(x => x.id === gid)
+    if (!g) return t
+    const members = t.filter(x => g.tabs.includes(x))
+    if (!members.length || members.includes(target)) return t
+    const rest = t.filter(x => !members.includes(x))
+    let i = rest.indexOf(target)
+    if (i < 0) return t
+    const other = groups.find(x => x.id !== gid && x.tabs.includes(target))
+    if (other) {
+      const at = other.tabs.map(x => rest.indexOf(x)).filter(n => n >= 0)
+      i = after ? Math.max(...at) + 1 : Math.min(...at)
+    } else if (after) i++
+    rest.splice(i, 0, ...members)
+    return rest.join() === t.join() ? t : rest
+  }), [groups])
   const editGroup = useCallback((gid: string, p: Partial<Omit<TabGroup, 'id' | 'tabs'>>) => setGroups(gs => gs.map(g => g.id === gid ? { ...g, ...p } : g)), [])
   const ungroup = useCallback((gid: string) => setGroups(gs => gs.filter(g => g.id !== gid)), [])
   // A conversation a Projects issue started joins that issue's group (made on
@@ -122,16 +140,17 @@ export function useTabs(enabled: boolean) {
     if (!ref || groupOf(id)) return
     const g = groups.find(x => x.auto === 'projects:' + ref)
     if (g) joinGroup(id, g.id); else newGroup([id], ref, 'projects:' + ref)
-  }, [enabled, threads, proj?.on, tabs, autoDone, groups, groupOf, joinGroup, newGroup])
-  return { tabs, active, close, move, closed: reopenable, reopen, step, groups, issues: proj?.on ? proj.issues : {}, groupOf, joinGroup, newGroup, leaveGroup, editGroup, ungroup }
+  }, [enabled, threads, proj?.on, proj?.threads, tabs, autoDone, groups, groupOf, joinGroup, newGroup])
+  return { tabs, active, close, move, moveGroup, closed: reopenable, reopen, step, groups, issues: proj?.on ? proj.issues : {}, groupOf, joinGroup, newGroup, leaveGroup, editGroup, ungroup }
 }
 
-export function TabBar({ tabs, active, close, move, closed, reopen, issues, groups, groupOf, joinGroup, newGroup, leaveGroup, editGroup, ungroup }: ReturnType<typeof useTabs>) {
+export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, issues, groups, groupOf, joinGroup, newGroup, leaveGroup, editGroup, ungroup }: ReturnType<typeof useTabs>) {
   const [naming, setNaming] = useState('') // group whose label is being renamed
   const { threads, running, user } = useApp()
   const keys = useShortcuts()
   const navigate = useNavigate()
   const [drag, setDrag] = useState('')
+  const [dragGroup, setDragGroup] = useState('') // a group label being dragged
   const ctx = useContextMenu()
   const tm = useThreadMenu()
   const byId = new Map((threads || []).map(t => [t.id, t] as [string, Thread]))
@@ -189,13 +208,18 @@ export function TabBar({ tabs, active, close, move, closed, reopen, issues, grou
                   onFocus={e => e.currentTarget.select()}
                   onBlur={e => { editGroup(g.id, { name: e.currentTarget.value.trim() }); setNaming('') }}
                   onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { e.currentTarget.value = g.name; e.currentTarget.blur() } }} />
-              : <button key={'g-' + g.id} type="button" className={`tg-label tg-${g.color} ${g.collapsed ? 'collapsed' : ''} ${g.name ? '' : 'empty'}`}
+              : <button key={'g-' + g.id} type="button" draggable className={`tg-label tg-${g.color} ${g.collapsed ? 'collapsed' : ''} ${g.name ? '' : 'empty'} ${dragGroup === g.id ? 'dragging' : ''}`}
+                  onDragStart={e => { setDragGroup(g.id); e.dataTransfer.effectAllowed = 'move' }}
+                  onDragEnd={() => setDragGroup('')}
                   title={`${g.name || 'Unnamed group'}${g.auto?.startsWith('projects:') && issues[g.auto.slice(9)] ? ` · ${issues[g.auto.slice(9)].title}` : ''} · ${n} ${n === 1 ? 'tab' : 'tabs'} — click to ${g.collapsed ? 'expand' : 'collapse'}, double-click to rename`}
                   aria-expanded={!g.collapsed}
                   onClick={() => editGroup(g.id, { collapsed: !g.collapsed })}
                   onDoubleClick={() => setNaming(g.id)}
                   onContextMenu={e => ctx.open(e, () => groupMenu(g))}
-                  onDragOver={e => { if (drag) { e.preventDefault(); joinGroup(drag, g.id) } }}>
+                  onDragOver={e => {
+                    if (drag) { e.preventDefault(); joinGroup(drag, g.id) }
+                    else if (dragGroup && dragGroup !== g.id) { e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); moveGroup(dragGroup, shown.find(x => g.tabs.includes(x)) || '', e.clientX > r.left + r.width / 2) }
+                  }}>
                   {g.name || <span className="tg-dot" />}{g.collapsed && <span className="tg-count tnum">{n}</span>}
                 </button>
           }
@@ -215,6 +239,7 @@ export function TabBar({ tabs, active, close, move, closed, reopen, issues, grou
               onDragStart={e => { setDrag(id); e.dataTransfer.effectAllowed = 'move' }}
               onDragEnd={() => setDrag('')}
               onDragOver={e => {
+                if (dragGroup) { e.preventDefault(); const b = e.currentTarget.getBoundingClientRect(); if (r.group?.id !== dragGroup) moveGroup(dragGroup, id, e.clientX > b.left + b.width / 2); return }
                 if (!drag) return
                 e.preventDefault()
                 if (drag === id) return
