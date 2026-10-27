@@ -107,3 +107,15 @@ func TestDeployHelpers(t *testing.T) {
 		t.Fatal("lastURL")
 	}
 }
+
+func TestDeployCheck(t *testing.T) {
+	s, _, _ := testServer(t)
+	cfg := deployConfig{Run: []string{"true"}, Check: `echo "! Resets the database: $POCKET_BRANCH"; echo; echo "Adds 1 migration(s): 0042_x"`}
+	v := s.deployCheck(context.Background(), "github.com/o/r", cfg, "as-8")
+	if v.Error != "" || len(v.Lines) != 2 || !v.Lines[0].Warn || v.Lines[0].Text != "Resets the database: as-8" || v.Lines[1].Warn || v.Lines[1].Text != "Adds 1 migration(s): 0042_x" {
+		t.Fatalf("check: %+v", v)
+	}
+	if v := s.deployCheck(context.Background(), "github.com/o/r", deployConfig{Run: []string{"true"}}, "as-8"); len(v.Lines) != 0 || v.Error != "" {
+		t.Fatalf("no check: %+v", v)
+	}
+}
