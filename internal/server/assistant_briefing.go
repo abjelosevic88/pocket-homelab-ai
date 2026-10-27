@@ -166,7 +166,7 @@ func (s *Server) briefing(ctx context.Context, uid int64, tid string, cat map[st
 	now := time.Now().In(s.loc(ctx, uid))
 	day := now.Format("2006-01-02")
 	next := now.AddDate(0, 0, 1).Format("2006-01-02")
-	planned := []appRead{{Name: "pocket_calendar_events", Args: map[string]any{"query": map[string]any{"from": day, "to": next, "tz": now.Location().String()}}}, {Name: "pocket_tasks_summary", Args: map[string]any{}}, {Name: "pocket_money_bills", Args: map[string]any{}}, {Name: "pocket_collaborator_summary", Args: map[string]any{}}, {Name: "pocket_garage_reminders", Args: map[string]any{}}, {Name: "pocket_bookshelf_reading", Args: map[string]any{}}}
+	planned := []appRead{{Name: "pocket_calendar_events", Args: map[string]any{"query": map[string]any{"from": day, "to": next, "tz": now.Location().String()}}}, {Name: "pocket_tasks_summary", Args: map[string]any{}}, {Name: "pocket_money_bills", Args: map[string]any{}}, {Name: "pocket_review_summary", Args: map[string]any{}}, {Name: "pocket_garage_reminders", Args: map[string]any{}}, {Name: "pocket_bookshelf_reading", Args: map[string]any{}}}
 	reads := []appRead{}
 	unavailable := []string{}
 	for _, r := range planned {
