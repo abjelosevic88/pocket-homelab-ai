@@ -18,7 +18,7 @@ import (
 
 func (s *Server) mobileRoutes(r chi.Router) {
 	r.Get("/mobile", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]bool{"idempotency": true, "push": s.apns.Configured() && s.cfg.BaseURL != "", "notification_preferences": true, "deferred_prompts": true})
+		writeJSON(w, 200, map[string]bool{"idempotency": true, "push": s.apns.Configured() && s.cfg.BaseURL != "", "notification_preferences": true, "deferred_prompts": true, "latest_clip": true})
 	})
 	r.Get("/mobile/attention", s.handleAttention)
 	r.Get("/mobile/badge", func(w http.ResponseWriter, r *http.Request) {
@@ -34,6 +34,7 @@ func (s *Server) mobileRoutes(r chi.Router) {
 	r.Put("/mobile/devices", s.handleMobileDevice)
 	r.Delete("/mobile/devices/{device}", s.handleDeleteMobileDevice)
 	r.Post("/mobile/push/test", s.handleMobilePushTest)
+	r.Get("/mobile/clips/latest", s.handleLatestClip)
 }
 
 type mobileNotificationPreferences struct {
