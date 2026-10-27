@@ -246,6 +246,10 @@ export interface AgentRequest {
   /** A Pocket app change in a shared chat: whose apps (only they answer it). */
   for_id?: number
   for?: string
+  /** A Pocket app change: its app and kind (add | change), and the rule that allowed it automatically. */
+  app?: string
+  kind?: 'add' | 'change'
+  auto?: string
 }
 
 export interface TurnInfo { ok: boolean; duration_ms: number; cost_usd: number; input_tokens: number; output_tokens: number; error?: string
@@ -375,6 +379,8 @@ export interface Run {
   follow_ups?: number
   output_tokens?: number
   thread_id?: string
+  /** The login it ran on (0 = the server's own), from the folder its session file is in. */
+  account_id: number
   /** Its Pocket AI thread is shared with these people (absent = private). */
   shared_with?: string[]
 }

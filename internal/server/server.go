@@ -219,6 +219,10 @@ func (s *Server) Router() http.Handler {
 		r.Get("/link/active", s.handleLinkActive)
 		r.Get("/link/prs", s.handleLinkPRs)
 		r.Get("/link/worktrees", s.handleLinkWorktrees)
+		r.Get("/link/deploy", s.handleLinkDeploy)
+		r.Put("/link/deploy/config", s.handleLinkDeployConfig)
+		r.Post("/link/deploys", s.handleLinkStartDeploy)
+		r.Get("/link/deploys/{id}", s.handleLinkGetDeploy)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
@@ -257,6 +261,10 @@ func (s *Server) Router() http.Handler {
 			r.Post("/remembered-folders", s.handleRememberedFolders)
 			r.Delete("/remembered-folders", s.handleRememberedFolders)
 			r.Get("/settings/app-models", s.handleAppModels)
+			r.Get("/projects-link", s.handleProjectsLink)
+			r.Get("/pocket-tools/auto-approve", s.handleGetAppAuto)
+			r.Put("/pocket-tools/auto-approve", s.handlePutAppAuto)
+			r.Post("/pocket-tools/auto-approve", s.handleAddAppAuto)
 			r.Put("/settings", s.handlePutSettings)
 			r.Get("/settings/system", s.handleSystemInfo)
 			r.Post("/notify/test", s.handleTestNotify)
@@ -403,6 +411,7 @@ func (s *Server) registerWithCore(ctx context.Context) error {
 		Icon:        "/favicon.svg", Version: Version,
 		URL: s.cfg.CoreAppURL, PublicURL: s.cfg.BaseURL, HealthPath: "/healthz", EnvPrefix: "AI",
 		Publishes: []string{"ai.turn_finished", "ai.needs_input", "ai.schedule_attention"},
+		Uses:      []core.Use{projectsUse},
 		Offers: []core.Offer{{Scope: core.InferenceScope, Name: "Generate text", Description: "Text-only generation with your Pocket AI account; no tools or conversation access"},
 			{Scope: ThreadsScope, Name: "Start coding conversations", Description: "Prepare a conversation with Claude Code or Codex in a folder on this server; you read the prompt and press send yourself"}},
 	}

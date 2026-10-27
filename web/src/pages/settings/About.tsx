@@ -6,6 +6,7 @@ import type { SystemInfo } from '../../lib/types'
 import { Icon } from '../../components/icons'
 import { Loading, useAsync } from '../../components/ui'
 import { fmtBytes, Section, StatusDot } from './common'
+import { useProjectsLink } from '../../lib/projects'
 
 /** Anything else the server reports (binaries, roots, live processes), shown as-is. */
 function extraRows(d: SystemInfo): [string, React.ReactNode][] {
@@ -23,6 +24,7 @@ export function AboutTab() {
   const { user } = useApp()
   const navigate = useNavigate()
   const info = useAsync(() => api.get<SystemInfo>(`${V1}/settings/system`), [])
+  const projects = useProjectsLink()
   const d = info.data
   if (info.error) return <div className="callout danger"><Icon name="alert" size={15} /><span>{info.error}</span></div>
   if (!d) return <Loading />
@@ -66,6 +68,15 @@ export function AboutTab() {
         </div>
         {core.error && <div className="callout danger mt-s"><Icon name="alert" size={15} /><span>{core.error}</span></div>}
       </Section>
+      {core.configured && <Section title="Connected apps" sub="What Pocket AI reads from your other Pocket apps, through Pocket Core links. Switch them in Core.">
+        <div className="row wrap">
+          <StatusDot status={!projects ? 'off' : projects.on ? 'ok' : 'off'} />
+          <span className="grow"><b>Pocket Projects</b> · see your issues <span className="muted small">— groups the conversations your issues started, by issue, in the sidebar and the tab bar</span></span>
+          <span className="muted small">{!projects ? 'Checking…' : projects.on ? 'On' : 'Off'}</span>
+          {projects?.core_links_url && <a className="btn sm" href={projects.core_links_url} target="_blank" rel="noreferrer"><Icon name="external" size={13} />Manage in Core</a>}
+        </div>
+        {projects && !projects.on && projects.reason && <p className="muted small mt-s">{projects.reason}</p>}
+      </Section>}
       <Section title="This server">
         <dl className="set-dl">
           {rows.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}

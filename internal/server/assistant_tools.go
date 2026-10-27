@@ -279,15 +279,23 @@ func (s *Server) callPocketTool(ctx, session context.Context, t *store.Thread, s
 		S          *Server
 		Thread, ID string
 	}{s, t.ID, id}
-	askApprovals.Store(key, askApproval{Thread: t.ID, Answer: answer, UserID: uid})
-	defer askApprovals.Delete(key)
-	sink.Request(agent.Request{ID: id, Type: "permission", ToolName: call.Name, Title: askActionTitle(call.Name), Input: preview, Status: "pending", ForID: uid, For: byName})
+	req := agent.Request{ID: id, Type: "permission", ToolName: call.Name, Title: askActionTitle(call.Name), Input: preview, Status: "pending", ForID: uid, For: byName, App: tool.Meta.App, Kind: tool.Meta.Kind}
 	approved := false
-	select {
-	case approved = <-answer:
-	case <-ctx.Done():
-	case <-session.Done():
-	case <-time.After(10 * time.Minute):
+	if why := s.appAutoRules(ctx, uid).allows(tool); why != "" {
+		// the person's own rule: shown in the timeline as allowed, nobody waits
+		req.Status, req.Auto = "allowed", why
+		sink.rt.saveItem(sink.r.threadID, agent.Item{Key: "req-" + id, Kind: "request", Request: &req})
+		approved = true
+	} else {
+		askApprovals.Store(key, askApproval{Thread: t.ID, Answer: answer, UserID: uid})
+		defer askApprovals.Delete(key)
+		sink.Request(req)
+		select {
+		case approved = <-answer:
+		case <-ctx.Done():
+		case <-session.Done():
+		case <-time.After(10 * time.Minute):
+		}
 	}
 	if !approved {
 		_ = s.rt.respond(t, id, agent.Response{Decision: "deny"})

@@ -15,6 +15,7 @@ import { type Option, Select } from './Select'
 import { Avatar, Kbd, Spinner, useContextMenu } from './ui'
 import { useThreadMenu } from './ThreadMenu'
 import { PrivacyChip } from './ShareDialog'
+import { projectsRef, useProjectsLink } from '../lib/projects'
 
 function groupOf(t: Thread): string {
   if (t.pinned) return 'Pinned'
@@ -63,7 +64,7 @@ export function ThreadRow({ t, active, onOpen, onContextMenu }: { t: Thread; act
 }
 
 export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onPalette: () => void }) {
-  const { threads, workspaces, worktrees, user, settings, live, status } = useApp()
+  const { threads, workspaces, worktrees, user, settings, live, status, updateReady } = useApp()
   const navigate = useNavigate()
   const loc = useLocation()
   const [q, setQ] = useState('')
@@ -93,15 +94,32 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
     if (n) list = list.filter(t => `${t.title} ${t.preview} ${t.cwd}`.toLowerCase().includes(n))
     return list
   }, [base, ws, q])
+  // Projects conversations, by issue — only while the Core link to Pocket Projects is on
+  const projRefs = useMemo(() => (base || []).map(projectsRef).filter(Boolean), [base])
+  const proj = useProjectsLink(projRefs)
+  const projIssues = useMemo(() => {
+    if (!proj?.on || showArchive) return []
+    const out: { ref: string; items: Thread[] }[] = []
+    for (const t of shown) {
+      const ref = projectsRef(t)
+      if (!ref) continue
+      const g = out.find(x => x.ref === ref)
+      if (g) g.items.push(t); else out.push({ ref, items: [t] })
+    }
+    return out
+  }, [proj?.on, proj?.threads, showArchive, shown])
+  const [projOpen, setProjOpen] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('pai-sb-projects') || '[]') } catch { return [] } })
+  useEffect(() => { localStorage.setItem('pai-sb-projects', JSON.stringify(projOpen)) }, [projOpen])
   const groups = useMemo(() => {
     const out: { name: string; items: Thread[] }[] = []
     for (const t of shown) {
+      if (projIssues.length && projectsRef(t)) continue // listed under Projects
       const g = showArchive ? 'Archived' : groupOf(t)
       const last = out[out.length - 1]
       if (last && last.name === g) last.items.push(t); else out.push({ name: g, items: [t] })
     }
     return out
-  }, [shown, showArchive])
+  }, [shown, showArchive, projIssues])
   const sharedN = (threads || []).filter(t => !mine(t) || !!t.shares?.length).length
   const activeWt = worktrees.filter(w => w.status === 'active').length
   const needYou = (base || []).filter(t => t.status === 'waiting' || t.pending > 0).length
@@ -124,7 +142,8 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
           <img src="/favicon.svg" alt="" className="sb-logo" />
           <span className="sb-title"><b>{settings?.title && settings.title !== 'Pocket AI' ? settings.title : <>Pocket <span className="accent-text">AI</span></>}</b></span>
         </button>
-        {status?.version && <span className="sb-version" title={`Version ${status.version}`}>{/^\d/.test(status.version) ? 'v' + status.version : status.version}</span>}
+        {updateReady ? <button type="button" className="sb-version update" onClick={() => location.reload()} title={`Pocket AI was updated to ${status?.version} — reload to use it`}>Reload</button>
+        : status?.version && <span className="sb-version" title={`Version ${status.version}`}>{/^v?\d+\.\d+/.test(status.version) ? 'v' + status.version.replace(/^v/, '').replace(/[-+].*$/, '') : status.version}</span>}
         {!live && <span className="live-off" title="Live updates dropped — reconnecting; lists may be out of date"><span className="live-dot" />Reconnecting…</span>}
         <button type="button" className="btn ghost icon-only sm" aria-label="Search and commands" title="Search and commands (⌘K)" onClick={onPalette}><Icon name="search" size={16} /></button>
       </div>
@@ -181,6 +200,32 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
           {needYou > 0 && !showArchive && <div className="sb-needyou"><Icon name="help-circle" size={13} />{needYou === 1 ? '1 thread needs you' : `${needYou} threads need you`}</div>}
           {base === null && <div className="sb-empty"><Spinner /></div>}
           {base && shown.length === 0 && !(shared.length && !q && !ws) && <div className="sb-empty">{q || ws ? 'No threads match.' : showArchive ? 'Nothing archived.' : 'No threads yet — start one above.'}</div>}
+          {projIssues.length > 0 && (
+            <div className="sb-group">
+              <div className="sb-h"><span>Projects</span>{proj?.projects_url && <a className="btn ghost icon-only xs" href={proj.projects_url} target="_blank" rel="noreferrer" title="Open Pocket Projects" aria-label="Open Pocket Projects"><Icon name="external" size={12} /></a>}</div>
+              {projIssues.map(g => {
+                const is = proj?.issues[g.ref]
+                const open = projOpen.includes(g.ref) || g.items.some(t => t.id === activeId)
+                const issueUrl = is?.url || (proj?.projects_url ? `${proj.projects_url}/issue/${g.ref}` : '')
+                return (
+                  <div key={g.ref} className="sb-issue-wrap">
+                    <div className="sb-issue-row" onContextMenu={e => { if (issueUrl) ctx.open(e, () => [{ label: `Open ${g.ref} in Pocket Projects`, icon: 'external', onSelect: () => window.open(issueUrl, '_blank', 'noopener') }]) }}>
+                      <button type="button" className={`sb-issue grow ${open ? 'open' : ''} ${is?.state_type === 'completed' || is?.state_type === 'canceled' ? 'closed' : ''}`} aria-expanded={open}
+                        title={is ? `${g.ref} · ${is.title}` : g.ref}
+                        onClick={() => setProjOpen(o => o.includes(g.ref) ? o.filter(x => x !== g.ref) : [...o, g.ref])}>
+                        <Icon name="chevron-right" size={12} className="sb-issue-caret" />
+                        <span className="sb-issue-ref tnum">{g.ref}</span>
+                        <span className="sb-issue-title ellipsis">{is?.title || ''}</span>
+                        <span className="sb-issue-n tnum">{g.items.length}</span>
+                      </button>
+                      {issueUrl && <a className="sb-issue-open" href={issueUrl} target="_blank" rel="noreferrer" title={`Open ${g.ref} in Pocket Projects`} aria-label={`Open ${g.ref} in Pocket Projects`}><Icon name="external" size={13} /></a>}
+                    </div>
+                    {open && g.items.map(t => <ThreadRow key={t.id} t={t} active={t.id === activeId} onOpen={() => go(`/t/${t.id}`)} onContextMenu={e => ctx.open(e, () => tm.items(t))} />)}
+                  </div>
+                )
+              })}
+            </div>
+          )}
           {groups.map(g => (
             <div key={g.name} className="sb-group">
               <div className="sb-h"><span>{g.name}</span></div>
