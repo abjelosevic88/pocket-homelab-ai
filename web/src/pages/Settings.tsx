@@ -8,6 +8,7 @@ import { Tabs, useIsMobile } from '../components/ui'
 import { GeneralTab } from './settings/General'
 import { AgentsTab } from './settings/Agents'
 import { AppDefaultsTab } from './settings/AppDefaults'
+import { AppChangesTab } from './settings/AppChanges'
 import { NotificationsTab } from './settings/Notifications'
 import { WorkspacesTab } from './settings/Workspaces'
 import { ProfileTab } from './settings/Profile'
@@ -15,11 +16,12 @@ import { TokensTab } from './settings/Tokens'
 import { PeopleTab } from './settings/People'
 import { AboutTab } from './settings/About'
 
-type TabId = 'general' | 'app-defaults' | 'agents' | 'notifications' | 'workspaces' | 'profile' | 'tokens' | 'users' | 'about'
+type TabId = 'general' | 'app-defaults' | 'app-changes' | 'agents' | 'notifications' | 'workspaces' | 'profile' | 'tokens' | 'users' | 'about'
 
 const TABS: { id: TabId; label: string; icon: string; sub: string; admin?: boolean }[] = [
   { id: 'general', label: 'General', icon: 'settings', sub: 'How the app looks and how the composer behaves.' },
   { id: 'app-defaults', label: 'App defaults', icon: 'sparkles', sub: 'Your default model for text generation across connected Pocket apps.' },
+  { id: 'app-changes', label: 'App changes', icon: 'shield', sub: 'Which changes to your Pocket apps run without waiting for your Allow.' },
   { id: 'agents', label: 'Agents', icon: 'bot', sub: 'Which agent, model, effort and permissions new threads start with — and what the server has installed.' },
   { id: 'notifications', label: 'Notifications', icon: 'bell', sub: 'A push when an agent finishes, gets stuck or needs your answer.' },
   { id: 'workspaces', label: 'Folders', icon: 'folder', sub: 'Folders on the server agents start in, one tap away.' },
@@ -73,6 +75,7 @@ export default function Settings() {
               {tab === 'general' && <GeneralTab />}
               {tab === 'agents' && <AgentsTab />}
               {tab === 'app-defaults' && <AppDefaultsTab />}
+              {tab === 'app-changes' && <AppChangesTab />}
               {tab === 'notifications' && <NotificationsTab />}
               {tab === 'workspaces' && <WorkspacesTab />}
               {tab === 'profile' && <ProfileTab />}

@@ -185,7 +185,7 @@ func (s *Server) runWorkflow(ctx context.Context, x *workflow, key, extra string
 	if n == 0 {
 		return nil, badRequest("This occurrence has already run")
 	}
-	t, err := s.createAsk(ctx, u, askCreate{Text: x.Prompt + extra + "\n\nThis is a saved Pocket workflow. Fetch fresh app data. Any change still requires the user's approval. If a source is unavailable, report that explicitly.", Model: x.Model})
+	t, err := s.createAsk(ctx, u, askCreate{Text: x.Prompt + extra + "\n\nThis is a saved Pocket workflow. Fetch fresh app data. Changes need the user's approval unless they have set them to run automatically. If a source is unavailable, report that explicitly.", Model: x.Model})
 	status := "running"
 	tid := ""
 	if t != nil {
