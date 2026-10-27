@@ -183,14 +183,26 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
     return () => window.removeEventListener('keydown', h)
   }, [interrupt, keys])
 
+  // what the server has: a send that errors may still have arrived (the
+  // connection dropped, Pocket AI restarted, it failed after saving)
+  const itemsRef = useRef(items)
+  itemsRef.current = items
+  const userCount = (text: string) => (itemsRef.current || []).filter(i => i.kind === 'user' && (i.text || '').trim() === text).length
   const send = async (text: string, uploadIds: string[], sendNow = false) => {
+    const before = userCount(text)
     try {
       const r = await api.post<{ queued: boolean; thread: Thread }>(`${V1}/threads/${id}/messages`, { text, upload_ids: uploadIds, send_now: sendNow })
       if (r?.thread) { setThread(r.thread); upsertThread(r.thread) }
       atBottomRef.current = true
       setTimeout(() => toBottom(true), 50)
       return true
-    } catch (e) { toast(errMsg(e), 'err'); return false }
+    } catch (e) {
+      if (!(e instanceof ApiError) || e.status >= 500) {
+        await new Promise(r => setTimeout(r, 2000))
+        if (userCount(text) > before) return true
+      }
+      toast(errMsg(e), 'err'); return false
+    }
   }
   const fork = async () => {
     try {
