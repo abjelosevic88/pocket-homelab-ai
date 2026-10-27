@@ -11,14 +11,17 @@ export interface ProjectsLink {
   on: boolean
   reason?: string
   issues: Record<string, ProjectsIssue>
+  /** thread id → issue key, forks and rewinds of Projects conversations included */
+  threads?: Record<string, string>
   core_links_url?: string
   projects_url?: string
 }
 
-/** A conversation a Projects issue started: its issue key (AS-7), else ''. */
-export const projectsRef = (t?: Thread) => t && (t.source as string) === 'link:projects' ? (t.source_ref || '').toUpperCase() : ''
-
 let state: ProjectsLink | null = null
+
+/** A conversation a Projects issue started: its issue key (AS-7), else ''. */
+export const projectsRef = (t?: Thread) => !t ? '' : state?.threads?.[t.id] || ((t.source as string) === 'link:projects' ? (t.source_ref || '').toUpperCase() : '')
+
 let asked = ''
 let inflight: Promise<void> | null = null
 let at = 0

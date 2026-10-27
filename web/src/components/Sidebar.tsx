@@ -107,7 +107,7 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
       if (g) g.items.push(t); else out.push({ ref, items: [t] })
     }
     return out
-  }, [proj?.on, showArchive, shown])
+  }, [proj?.on, proj?.threads, showArchive, shown])
   const [projOpen, setProjOpen] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('pai-sb-projects') || '[]') } catch { return [] } })
   useEffect(() => { localStorage.setItem('pai-sb-projects', JSON.stringify(projOpen)) }, [projOpen])
   const groups = useMemo(() => {

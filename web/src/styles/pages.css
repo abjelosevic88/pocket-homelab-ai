@@ -416,3 +416,4 @@
 .tg-count { padding: 0 6px; border-radius: 999px; background: rgba(255,255,255,.25); font-size: 11px; }
 .tab.grouped::after { content: ''; position: absolute; left: 8px; right: 8px; bottom: 0; height: 2px; border-radius: 2px; background: var(--tg); }
 .tab.grouped.on::after { bottom: 1px; }
+.tg-label.dragging { opacity: .5; }
