@@ -650,3 +650,9 @@ button.privacy-badge:disabled { cursor: default; }
 .sb-issue-title { flex: 1; min-width: 0; color: var(--muted); }
 .sb-issue-n { flex-shrink: 0; min-width: 18px; padding: 0 6px; border-radius: 999px; background: var(--surface-2); color: var(--muted); font-size: 11px; text-align: center; }
 .sb-issue-wrap > .th-row { padding-left: 24px; }
+.sb-issue-row { position: relative; display: flex; align-items: center; }
+.sb-issue-row .sb-issue { flex: 1; min-width: 0; }
+.sb-issue-open { position: absolute; right: 4px; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; color: var(--muted); background: var(--sidebar, var(--bg)); opacity: 0; }
+.sb-issue-row:hover .sb-issue-open, .sb-issue-open:focus-visible { opacity: 1; }
+.sb-issue-open:hover { background: var(--surface-2); color: var(--text); }
+@media (hover: none) { .sb-issue-open { opacity: 1; position: static; } .sb-issue-row:has(.sb-issue-open) .sb-issue-n { display: none; } }
