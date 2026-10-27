@@ -42,6 +42,9 @@ func (s *Server) assistantRoutes(r chi.Router) {
 	r.Get("/app-calls/{cid}", s.handleAppCall)
 	r.Get("/briefing", s.handleBriefing)
 	r.Get("/app-search", s.handleAppSearch)
+	// Mentions and attachments from other Pocket apps: pocket_items.go.
+	r.Get("/pocket/items", s.handlePocketItems)
+	r.Get("/pocket/text", s.handlePocketText)
 	s.workflowRoutes(r)
 }
 func (s *Server) handleAssistantStatus(w http.ResponseWriter, r *http.Request) {
