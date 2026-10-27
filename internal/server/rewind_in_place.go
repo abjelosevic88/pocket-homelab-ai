@@ -88,13 +88,6 @@ func (s *Server) rewindInPlace(w http.ResponseWriter, r *http.Request, t *store.
 		}
 		return
 	}
-	cut := false
-	for _, row := range rows {
-		cut = cut || row.Key == target.Key
-		if cut {
-			s.rt.toThread(t.ID, sseEvent{Name: "item_removed", Data: map[string]string{"key": row.Key}})
-		}
-	}
 	fresh, err := s.store.GetThreadAny(ctx, t.ID)
 	if err != nil {
 		s.fail(w, err, "read rewound thread")
@@ -108,6 +101,8 @@ func (s *Server) rewindInPlace(w http.ResponseWriter, r *http.Request, t *store.
 		}
 		retained = append(retained, itemJSON(row))
 	}
+	// Publish once: hundreds of item_removed events repeatedly rebuild phone
+	// timelines and can fill the SSE buffer before the final reset arrives.
 	s.rt.toThread(t.ID, sseEvent{Name: "history_reset", Data: retained})
 	writeJSON(w, http.StatusOK, map[string]any{"thread": fresh, "items": retained, "draft": map[string]any{"text": target.Text, "uploads": uploads}})
 }
@@ -134,10 +129,18 @@ func (rt *engine) retireForRewind(id string) {
 	}
 	r.eventMu.Lock()
 	defer r.eventMu.Unlock()
-	rt.stop(id)
 	r.mu.Lock()
 	r.retired = true
 	r.live = map[string]*agent.Item{}
 	r.dirty = map[string]bool{}
 	r.mu.Unlock()
+	rt.mu.Lock()
+	if rt.runs[id] == r {
+		delete(rt.runs, id)
+	}
+	rt.mu.Unlock()
+	// Retired callbacks cannot publish. Do not hold up the response while the
+	// idle provider and its child processes finish shutting down.
+	r.cancel()
+	go r.sess.Close()
 }

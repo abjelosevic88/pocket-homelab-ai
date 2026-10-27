@@ -117,7 +117,7 @@ func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.T
 		return
 	}
 	var sid, sessionPath string
-	checkpoint := codexReplyCheckpoint(rows, key)
+	checkpoint := agent.RewindCheckpoint{TurnID: codexReplyCheckpoint(rows, key), UnconfirmedPrompts: codexUnconfirmedPrompts(prefix)}
 	if len(users) > 1 || wholeFork {
 		if t.ProviderSessionID == "" {
 			writeErr(w, 409, "the agent history is unavailable for this message")
@@ -132,7 +132,7 @@ func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.T
 				h, err = s.host(ctx, t.HostID)
 				if err == nil {
 					o := codexRewindOptions(t, hostBin(h, "codex"), nil, remoteOf(h))
-					if wholeFork && checkpoint == "" {
+					if wholeFork && checkpoint.TurnID == "" {
 						sid, err = agent.ForkCodex(ctx, o)
 					} else {
 						sid, err = agent.RewindCodex(ctx, o, users, checkpoint)
@@ -152,7 +152,7 @@ func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.T
 				}
 			case "codex":
 				o := codexRewindOptions(t, s.cfg.CodexBin, env, nil)
-				if wholeFork && checkpoint == "" {
+				if wholeFork && checkpoint.TurnID == "" {
 					sid, err = agent.ForkCodex(ctx, o)
 				} else {
 					sid, err = agent.RewindCodex(ctx, o, users, checkpoint)
@@ -253,6 +253,25 @@ func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.T
 func codexRewindOptions(t *store.Thread, bin string, env []string, remote *agent.Remote) agent.Options {
 	return agent.Options{Bin: bin, Cwd: t.Cwd, Env: env, Remote: remote, ResumeID: t.ProviderSessionID,
 		Model: t.Model, Effort: t.Effort, Mode: t.Mode, Speed: t.Speed}
+}
+
+// A synthetic exit footer has no provider turn ID. Its preceding send may
+// have failed before Codex recorded it; matching must allow either outcome.
+func codexUnconfirmedPrompts(items []agent.Item) map[string]bool {
+	unconfirmed := map[string]bool{}
+	prompt := ""
+	for _, it := range items {
+		if it.Kind == "user" && !it.Queued && !it.Unsent {
+			prompt = it.Key
+		}
+		if it.Kind == "turn" && it.Turn != nil {
+			if prompt != "" && it.Turn.ID == "" && !it.Turn.OK && !it.Turn.Interrupted && it.Turn.Error != "" {
+				unconfirmed[prompt] = true
+			}
+			prompt = ""
+		}
+	}
+	return unconfirmed
 }
 
 // A prompt immediately following a completed reply can be cut at that reply's

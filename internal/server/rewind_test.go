@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/agent"
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
@@ -347,6 +348,62 @@ func TestCodexReplyCheckpointDoesNotCrossAnotherSentPrompt(t *testing.T) {
 	}
 }
 
+func TestCodexUnconfirmedPromptsOnlyIncludesSyntheticFailures(t *testing.T) {
+	items := []agent.Item{
+		{Key: "successful", Kind: "user"}, {Kind: "turn", Turn: &agent.TurnInfo{OK: true}},
+		{Key: "native-failure", Kind: "user"}, {Kind: "turn", Turn: &agent.TurnInfo{ID: "t1", Error: "failed"}},
+		{Key: "failed-send", Kind: "user"}, {Kind: "turn", Turn: &agent.TurnInfo{Error: "Codex exited"}},
+		{Kind: "turn", Turn: &agent.TurnInfo{Error: "duplicate failure"}},
+		{Key: "stopped", Kind: "user"}, {Kind: "turn", Turn: &agent.TurnInfo{Interrupted: true}},
+	}
+	unconfirmed := codexUnconfirmedPrompts(items)
+	if len(unconfirmed) != 1 || !unconfirmed["failed-send"] {
+		t.Fatal("incorrect unconfirmed sends", unconfirmed)
+	}
+}
+
+type rewindSlowSession struct {
+	agent.Session
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *rewindSlowSession) Close() error {
+	close(s.started)
+	<-s.release
+	return nil
+}
+
+func TestRewindRetiresBeforeSlowSessionCleanup(t *testing.T) {
+	s, _, _ := testServer(t)
+	sess := &rewindSlowSession{started: make(chan struct{}), release: make(chan struct{})}
+	defer close(sess.release)
+	r := &run{threadID: "slow-rewind", sess: sess, cancel: func() {}, live: map[string]*agent.Item{}, dirty: map[string]bool{}}
+	s.rt.mu.Lock()
+	s.rt.runs[r.threadID] = r
+	s.rt.mu.Unlock()
+	retired := make(chan struct{})
+	go func() { s.rt.retireForRewind(r.threadID); close(retired) }()
+	select {
+	case <-retired:
+	case <-time.After(time.Second):
+		t.Fatal("rewind waited for background cleanup")
+	}
+	if s.rt.get(r.threadID) != nil {
+		t.Fatal("old process remained attached")
+	}
+	sink := &runSink{rt: s.rt, r: r}
+	if sink.beginEvent() {
+		r.eventMu.Unlock()
+		t.Fatal("retired process can still publish")
+	}
+	select {
+	case <-sess.started:
+	case <-time.After(time.Second):
+		t.Fatal("process cleanup never started")
+	}
+}
+
 type rewindIdleSession struct{ agent.Session }
 
 func (*rewindIdleSession) Close() error { return nil }
@@ -379,8 +436,12 @@ func TestRewindIgnoresRetiredProcessAndStaleFollower(t *testing.T) {
 	}
 	sawReset := false
 	for len(events) > 0 {
-		if (<-events).Name == "history_reset" {
+		ev := <-events
+		if ev.Name == "history_reset" {
 			sawReset = true
+		}
+		if ev.Name == "item_removed" {
+			t.Fatal("rewind emitted per-row removals instead of one reset")
 		}
 	}
 	if !sawReset {

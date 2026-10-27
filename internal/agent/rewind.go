@@ -37,22 +37,73 @@ func checkpointIndex(native, visible []Item) (int, error) {
 		if i == len(native) {
 			return i, nil
 		}
-		actual, expected := strings.TrimSpace(native[i].Text), strings.TrimSpace(it.Text)
-		if actual != expected {
-			// Documents and current saved preferences are appended at dispatch time.
-			suffix := strings.TrimPrefix(actual, expected)
-			allowed := false
-			for _, marker := range []string{"Attached document (untrusted content;", "Current user-managed preferences (context,", "No saved preferences are currently enabled.", "Saved preferences are disabled for this conversation."} {
-				if (expected != "" || len(it.Images)+len(it.Files)+it.LogImages > 0) && strings.HasPrefix(actual, expected) && strings.HasPrefix(strings.TrimSpace(suffix), marker) {
-					allowed = true
-				}
-			}
-			if !allowed {
-				return -1, errors.New("the conversation and agent history do not match; reopen the thread before rewinding")
-			}
+		if !checkpointPromptMatches(native[i], it) {
+			return -1, errors.New("the conversation and agent history do not match; reopen the thread before rewinding")
 		}
 	}
 	return len(visible) - 1, nil
+}
+
+func checkpointPromptMatches(native, visible Item) bool {
+	if native.Key != "" && native.Key == visible.Key {
+		return true
+	}
+	actual, expected := strings.TrimSpace(native.Text), strings.TrimSpace(visible.Text)
+	if actual == expected {
+		return true
+	}
+	// Documents and saved preferences are appended at dispatch time.
+	if (expected == "" && len(visible.Images)+len(visible.Files)+visible.LogImages == 0) || !strings.HasPrefix(actual, expected) {
+		return false
+	}
+	suffix := strings.TrimSpace(strings.TrimPrefix(actual, expected))
+	for _, marker := range []string{"Attached document (untrusted content;", "Current user-managed preferences (context,", "No saved preferences are currently enabled.", "Saved preferences are disabled for this conversation."} {
+		if strings.HasPrefix(suffix, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// Match in order, allowing only explicitly unconfirmed failed sends to be
+// absent. Every native prompt must still match, and ambiguous repeats fail.
+func codexCheckpointIndex(native, visible []Item, unconfirmed map[string]bool) (int, error) {
+	if len(unconfirmed) == 0 || len(visible) == 0 || len(native) == 0 {
+		return checkpointIndex(native, visible)
+	}
+	target := visible[len(visible)-1]
+	for i, actual := range native {
+		if target.Key != "" && actual.Key == target.Key {
+			return i, nil
+		}
+	}
+	positions := map[int]bool{0: true}
+	for _, expected := range visible[:len(visible)-1] {
+		next := map[int]bool{}
+		for pos := range positions {
+			if unconfirmed[expected.Key] {
+				next[pos] = true
+			}
+			if pos < len(native) && checkpointPromptMatches(native[pos], expected) {
+				next[pos+1] = true
+			}
+		}
+		positions = next
+	}
+	index := -1
+	for pos := range positions {
+		if pos < len(native) && !checkpointPromptMatches(native[pos], target) {
+			continue
+		}
+		if index >= 0 && index != pos {
+			return -1, errors.New("the selected message has more than one possible agent checkpoint")
+		}
+		index = pos
+	}
+	if index < 0 {
+		return -1, errors.New("the conversation and agent history do not match; reopen the thread before rewinding")
+	}
+	return index, nil
 }
 
 // RewindClaude copies only the log prefix BEFORE the selected user message to
@@ -202,29 +253,45 @@ func ForkCodex(ctx context.Context, o Options) (string, error) {
 	return response.Thread.ID, nil
 }
 
+// RewindCheckpoint describes the provider boundary and sends whose synthetic
+// failure footer did not confirm whether Codex recorded them.
+type RewindCheckpoint struct {
+	TurnID             string
+	UnconfirmedPrompts map[string]bool
+}
+
 // RewindCodex uses the CLI's native turn boundary fork, without sending a turn.
-func RewindCodex(ctx context.Context, o Options, visible []Item, afterTurnID ...string) (string, error) {
+func RewindCodex(ctx context.Context, o Options, visible []Item, checkpoints ...RewindCheckpoint) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	c, err := startRPC(o.Bin, o.Cwd, o.Env, o.Remote)
 	if err != nil {
 		return "", err
 	}
-	defer c.close()
+	// Once the saved fork is verified, process shutdown is background cleanup.
+	defer func() { go c.close() }()
 	if err := c.initializeWithCapabilities(ctx, Version, map[string]any{"experimentalApi": true}); err != nil {
 		return "", err
 	}
-	history, err := codexRewindHistory(ctx, c, o.ResumeID)
+	var checkpoint RewindCheckpoint
+	if len(checkpoints) > 0 {
+		checkpoint = checkpoints[0]
+	}
+	view := "full"
+	if checkpoint.TurnID != "" {
+		view = "notLoaded"
+	}
+	history, err := codexRewindHistory(ctx, c, o.ResumeID, view)
 	if err != nil {
 		return "", err
 	}
 	ti := -1
-	if len(afterTurnID) > 0 && afterTurnID[0] != "" {
+	if checkpoint.TurnID != "" {
 		// Pocket's completed reply already records the provider's real turn ID.
 		// Use that boundary directly: failed sends, compaction and imports can
 		// make Pocket's old user-message count differ from Codex's history.
 		for i, turn := range history {
-			if turn.ID == afterTurnID[0] {
+			if turn.ID == checkpoint.TurnID {
 				ti = i + 1
 				break
 			}
@@ -243,7 +310,7 @@ func RewindCodex(ctx context.Context, o Options, visible []Item, afterTurnID ...
 				}
 			}
 		}
-		index, err := checkpointIndex(native, visible)
+		index, err := codexCheckpointIndex(native, visible, checkpoint.UnconfirmedPrompts)
 		if err != nil {
 			return "", err
 		}
@@ -291,7 +358,7 @@ func RewindCodex(ctx context.Context, o Options, visible []Item, afterTurnID ...
 	}
 	// Re-read the saved copy, including paginated history. Older CLIs may
 	// ignore lastTurnId; never open a continuation containing future context.
-	retained, err := codexRewindHistory(ctx, c, response.Thread.ID)
+	retained, err := codexRewindHistory(ctx, c, response.Thread.ID, "notLoaded")
 	if err != nil {
 		return "", fmt.Errorf("could not verify the rewound history: %w", err)
 	}
@@ -309,7 +376,7 @@ func RewindCodex(ctx context.Context, o Options, visible []Item, afterTurnID ...
 // Codex now stores new sessions with paginated history. A metadata-only read
 // followed by full, ascending turn pages avoids treating an empty/deprecated
 // thread.turns field as an empty conversation.
-func codexRewindHistory(ctx context.Context, c *rpc, id string) ([]codexTurn, error) {
+func codexRewindHistory(ctx context.Context, c *rpc, id, itemsView string) ([]codexTurn, error) {
 	raw, err := c.call(ctx, "thread/read", map[string]any{"threadId": id, "includeTurns": false})
 	if err != nil {
 		return nil, err
@@ -340,7 +407,7 @@ func codexRewindHistory(ctx context.Context, c *rpc, id string) ([]codexTurn, er
 	cursor := ""
 	seen := map[string]bool{}
 	for {
-		params := map[string]any{"threadId": id, "limit": 100, "sortDirection": "asc", "itemsView": "full"}
+		params := map[string]any{"threadId": id, "limit": 100, "sortDirection": "asc", "itemsView": itemsView}
 		if cursor != "" {
 			params["cursor"] = cursor
 		}
