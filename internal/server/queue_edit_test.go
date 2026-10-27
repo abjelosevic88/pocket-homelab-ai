@@ -179,3 +179,40 @@ func TestSendBehaviorSettingIsPersonal(t *testing.T) {
 		t.Fatal("preference could not be switched back")
 	}
 }
+
+// startingSession behaves like the Claude session: Send reports TurnStarted to
+// the sink before writing, so a queued message sent from TurnDone re-enters it.
+type startingSession struct {
+	agent.Session
+	sink agent.Sink
+	sent chan agent.Input
+}
+
+func (s *startingSession) Send(in agent.Input) error {
+	s.sink.TurnStarted()
+	s.sent <- in
+	return nil
+}
+func TestQueuedMessageGoesOutWhenTurnEnds(t *testing.T) {
+	s, c, th, r, _ := queueFixture(t)
+	sess := &startingSession{sink: &runSink{rt: s.rt, r: r}, sent: make(chan agent.Input, 1)}
+	r.mu.Lock()
+	r.sess = sess
+	r.mu.Unlock()
+	c.want("POST", "/api/v1/threads/"+th.ID+"/messages", map[string]any{"text": "follow-up"}, 200, nil)
+	done := make(chan struct{})
+	go func() { sess.sink.TurnDone(agent.TurnInfo{Interrupted: true}); close(done) }()
+	select {
+	case in := <-sess.sent:
+		if !strings.HasPrefix(in.Text, "follow-up") {
+			t.Fatalf("sent %q", in.Text)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("queued message was never sent after the turn ended")
+	}
+	<-done
+	got, _ := s.store.GetThreadAny(context.Background(), th.ID)
+	if got.Status != "running" {
+		t.Fatalf("status %q, want running", got.Status)
+	}
+}

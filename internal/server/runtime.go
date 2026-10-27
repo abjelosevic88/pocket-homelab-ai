@@ -1581,7 +1581,9 @@ func (k *runSink) TurnDone(ti agent.TurnInfo) {
 		"provider": t.Provider, "cost_usd": ti.CostUSD, "duration_ms": ti.DurationMS})
 
 	if queuedN > 0 {
-		rt.next(r)
+		// next() starts a turn and TurnStarted takes eventMu, which this event
+		// still holds: send once it has been released.
+		go rt.next(r)
 		return
 	}
 	if stale {
