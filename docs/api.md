@@ -131,7 +131,7 @@ only their own calls.
 | POST | `/threads/{id}/interrupt` | | 204 — stop the current turn |
 | POST | `/threads/{id}/requests/{requestId}` | `{decision: "allow"\|"allow_session"\|"deny", message?: string, answers?: {[questionId]: string[]}}` | 204 |
 | POST | `/threads/{id}/read` | | 204 — clears `unread` |
-| POST | `/threads/{id}/fork` | | `Thread` — a new thread continuing from the same agent session (Claude: `--fork-session`; Codex: `thread/fork`) |
+| POST | `/threads/{id}/fork` | | `Thread` — an immediately frozen, independent agent session and attachment copy; active chats branch at their last finished reply, without inheriting live work, approvals or queued prompts |
 | GET | `/threads/{id}/export.md` | | Markdown transcript (download) |
 | GET | `/threads/{id}/shares` | | owner only: `{shares: ThreadShare[], people: [{id, name, email, can_run}]}` |
 | PUT | `/threads/{id}/shares` | `{shares: [{user_id, role: "view"\|"chat"}]}` (the full list; `[]` = private again) | `Thread` — people removed lose it at once, open views included |

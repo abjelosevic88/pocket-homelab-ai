@@ -67,8 +67,20 @@ func TestAPNSHTTP2PayloadJWTAndErrors(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Error(err)
 		}
+		if sendCount == 3 {
+			aps := payload["aps"].(map[string]any)
+			if aps["badge"] != float64(0) || aps["alert"] != nil || aps["sound"] != nil || payload["url"] != nil || r.Header.Get("apns-collapse-id") != "completion-badge" {
+				t.Error("badge reset must be silent and must explicitly include zero")
+			}
+			w.WriteHeader(200)
+			return
+		}
 		if payload["thread_id"] != "thread-1" || payload["server"] != "https://ai.example" {
 			t.Error("missing deep-link destination")
+		}
+		aps := payload["aps"].(map[string]any)
+		if aps["badge"] != float64(3) || payload["url"] != "pocketai://thread/thread-1?server=https%3A%2F%2Fai.example" {
+			t.Error("missing badge or app link")
 		}
 		if sendCount == 2 {
 			w.WriteHeader(410)
@@ -81,15 +93,18 @@ func TestAPNSHTTP2PayloadJWTAndErrors(t *testing.T) {
 	server.StartTLS()
 	defer server.Close()
 	apns := &APNS{TeamID: "TEAM", KeyID: "KEY", Topic: "org.bjelke.pocketai", KeyFile: path, endpoint: server.URL, client: server.Client()}
-	if err := apns.Send(context.Background(), token, "sandbox", "Done", "Finished", "https://ai.example", "thread-1"); err != nil {
+	if err := apns.Send(context.Background(), token, "sandbox", "Done", "Finished", "https://ai.example", "thread-1", 3); err != nil {
 		t.Fatal(err)
 	}
-	err := apns.Send(context.Background(), token, "sandbox", "Done", "Finished", "https://ai.example", "thread-1")
+	err := apns.Send(context.Background(), token, "sandbox", "Done", "Finished", "https://ai.example", "thread-1", 3)
 	var failure *APNSError
 	if !errors.As(err, &failure) || !failure.InvalidDevice() {
 		t.Fatalf("invalid token not identified: %v", err)
 	}
-	if err := apns.Send(context.Background(), token, "other", "Done", "body", "server", "thread-1"); err == nil {
+	if err := apns.Send(context.Background(), token, "sandbox", "", "", "https://ai.example", "", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := apns.Send(context.Background(), token, "other", "Done", "body", "server", "thread-1", 3); err == nil {
 		t.Fatal("invalid environment accepted")
 	}
 }

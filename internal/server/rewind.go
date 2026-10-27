@@ -69,11 +69,6 @@ func nextSentPrompt(rows []*store.Item, turnKey string) string {
 // the original keeps working: it never reads past an earlier, finished turn.
 func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.Thread, key string, fork bool) {
 	ctx := r.Context()
-	if t.HostID != 0 && t.Provider != "claude" {
-		// Codex cuts its copy with its own CLI, which would have to run over there
-		writeErr(w, 400, "Codex conversations on another server can only be forked at the latest response (for now)")
-		return
-	}
 	rows, err := s.store.ListItems(ctx, t.ID)
 	if err != nil {
 		s.fail(w, err, "read history")
@@ -97,7 +92,7 @@ func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.T
 			users = append(users, it)
 			break
 		}
-		if it.Queued || it.Unsent || it.Kind == "request" {
+		if it.Queued || it.Unsent || it.Kind == "request" || (fork && it.Tool != nil && it.Tool.Status == "running") {
 			continue
 		}
 		prefix = append(prefix, it)
@@ -105,7 +100,8 @@ func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.T
 			users = append(users, it)
 		}
 	}
-	if target == nil {
+	wholeFork := fork && key == ""
+	if target == nil && !wholeFork {
 		writeErr(w, 404, "no such message")
 		return
 	}
@@ -114,21 +110,46 @@ func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.T
 		return
 	}
 	var sid, sessionPath string
-	if len(users) > 1 {
+	checkpoint := codexReplyCheckpoint(rows, key)
+	if len(users) > 1 || wholeFork {
 		if t.ProviderSessionID == "" {
 			writeErr(w, 409, "the agent history is unavailable for this message")
 			return
 		}
 		if t.HostID != 0 {
-			// the session file is on the other machine: cut the copy here, put it back there
-			sid, err = s.rewindRemoteClaude(ctx, t, users)
+			switch t.Provider {
+			case "claude":
+				sid, err = s.copyRemoteClaude(ctx, t, users, wholeFork)
+			case "codex":
+				var h *store.Host
+				h, err = s.host(ctx, t.HostID)
+				if err == nil {
+					o := codexRewindOptions(t, hostBin(h, "codex"), nil, remoteOf(h))
+					if wholeFork && checkpoint == "" {
+						sid, err = agent.ForkCodex(ctx, o)
+					} else {
+						sid, err = agent.RewindCodex(ctx, o, users, checkpoint)
+					}
+				}
+			default:
+				err = fmt.Errorf("this provider does not support rewind")
+			}
 		} else if err = s.ensureSession(ctx, t, t.ProviderSessionID); err == nil {
 			home, env := s.accountHome(ctx, t.Provider, t.AccountID)
 			switch t.Provider {
 			case "claude":
-				sid, sessionPath, err = agent.RewindClaude(home, t.ProviderSessionID, users)
+				if wholeFork {
+					sid, sessionPath, err = agent.ForkClaude(home, t.ProviderSessionID)
+				} else {
+					sid, sessionPath, err = agent.RewindClaude(home, t.ProviderSessionID, users)
+				}
 			case "codex":
-				sid, err = agent.RewindCodex(ctx, s.cfg.CodexBin, t.Cwd, env, t.ProviderSessionID, users)
+				o := codexRewindOptions(t, s.cfg.CodexBin, env, nil)
+				if wholeFork && checkpoint == "" {
+					sid, err = agent.ForkCodex(ctx, o)
+				} else {
+					sid, err = agent.RewindCodex(ctx, o, users, checkpoint)
+				}
 			default:
 				err = fmt.Errorf("this provider does not support rewind")
 			}
@@ -141,7 +162,7 @@ func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.T
 	n := &store.Thread{ID: uuid.NewString(), UserID: t.UserID, Title: "Rewind · " + t.Title,
 		Provider: t.Provider, AccountID: t.AccountID, Model: t.Model, Effort: t.Effort, Mode: t.Mode, Speed: t.Speed,
 		Cwd: t.Cwd, WorkspaceID: t.WorkspaceID, WorktreeID: t.WorktreeID, NoMemory: t.NoMemory, ProviderSessionID: sid,
-		Source: "rewind", SourceRef: t.ID, HostID: t.HostID}
+		Source: "rewind", SourceRef: t.ID, HostID: t.HostID, LogOffset: -1}
 	if fork {
 		n.Title, n.Source = "Fork of "+t.Title, "fork"
 	}
@@ -266,6 +287,34 @@ func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.T
 	writeJSON(w, http.StatusCreated, map[string]any{"thread": n, "draft": map[string]any{"text": target.Text, "uploads": uploads}})
 }
 
+func codexRewindOptions(t *store.Thread, bin string, env []string, remote *agent.Remote) agent.Options {
+	return agent.Options{Bin: bin, Cwd: t.Cwd, Env: env, Remote: remote, ResumeID: t.ProviderSessionID,
+		Model: t.Model, Effort: t.Effort, Mode: t.Mode, Speed: t.Speed}
+}
+
+// A prompt immediately following a completed reply can be cut at that reply's
+// stable provider turn ID. Clear the anchor on every sent prompt so a message
+// steered into a turn cannot silently discard another prompt in the same turn.
+func codexReplyCheckpoint(rows []*store.Item, key string) string {
+	checkpoint := ""
+	for _, row := range rows {
+		if row.Key == key {
+			return checkpoint
+		}
+		var it agent.Item
+		if json.Unmarshal(row.Data, &it) != nil {
+			return ""
+		}
+		if it.Kind == "user" && !it.Queued && !it.Unsent {
+			checkpoint = ""
+		}
+		if it.Kind == "turn" && it.Turn != nil && it.Turn.ID != "" {
+			checkpoint = it.Turn.ID
+		}
+	}
+	return ""
+}
+
 func (s *Server) copyRewindUpload(ctx context.Context, t *store.Thread, original *store.Upload) (uploadOut, error) {
 	return s.writeRewindUpload(ctx, t, original.Name, original.Mime, original.ExtractedText, func(out *os.File) error {
 		in, err := os.Open(original.Path)
@@ -316,6 +365,10 @@ func (s *Server) writeRewindUpload(ctx context.Context, t *store.Thread, name, m
 // scratch folder, and the copy goes back next to the original. "" when the
 // copy starts with no earlier context (a fresh session).
 func (s *Server) rewindRemoteClaude(ctx context.Context, t *store.Thread, users []agent.Item) (string, error) {
+	return s.copyRemoteClaude(ctx, t, users, false)
+}
+
+func (s *Server) copyRemoteClaude(ctx context.Context, t *store.Thread, users []agent.Item, wholeFork bool) (string, error) {
 	h, err := s.host(ctx, t.HostID)
 	if err != nil || h == nil {
 		return "", fmt.Errorf("the server this conversation runs on is gone")
@@ -342,7 +395,12 @@ func (s *Server) rewindRemoteClaude(ctx context.Context, t *store.Thread, users 
 	if err := os.WriteFile(filepath.Join(dir, t.ProviderSessionID+".jsonl"), []byte(data), 0o600); err != nil {
 		return "", err
 	}
-	sid, cut, err := agent.RewindClaude(scratch, t.ProviderSessionID, users)
+	var sid, cut string
+	if wholeFork {
+		sid, cut, err = agent.ForkClaude(scratch, t.ProviderSessionID)
+	} else {
+		sid, cut, err = agent.RewindClaude(scratch, t.ProviderSessionID, users)
+	}
 	if err != nil || sid == "" {
 		return sid, err
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -93,6 +94,29 @@ func RewindClaude(home, sessionID string, visible []Item) (id, path string, err 
 	if index == 0 {
 		return "", "", nil
 	} // no earlier context: start a fresh session
+	return copyClaudeSession(f, src, offsets[index])
+}
+
+// ForkClaude freezes the log now, rather than deferring --fork-session until
+// the first prompt (which would include later changes to the original).
+func ForkClaude(home, sessionID string) (string, string, error) {
+	src, err := FindClaude(home, sessionID)
+	if err != nil {
+		return "", "", err
+	}
+	f, err := os.Open(src)
+	if err != nil {
+		return "", "", err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return "", "", err
+	}
+	return copyClaudeSession(f, src, info.Size())
+}
+
+func copyClaudeSession(f *os.File, src string, limit int64) (id, path string, err error) {
 	id = uuid.NewString()
 	path = filepath.Join(filepath.Dir(src), id+".jsonl")
 	out, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -108,12 +132,10 @@ func RewindClaude(home, sessionID string, visible []Item) (id, path string, err 
 	if _, err = f.Seek(0, 0); err != nil {
 		return "", path, err
 	}
-	sc = bufio.NewScanner(f)
+	sc := bufio.NewScanner(io.LimitReader(f, limit))
 	sc.Buffer(make([]byte, 64<<10), 64<<20)
-	offset = 0
-	for offset < offsets[index] && sc.Scan() {
+	for sc.Scan() {
 		line := sc.Bytes()
-		offset += int64(len(line) + 1)
 		var row map[string]json.RawMessage
 		if err = json.Unmarshal(line, &row); err != nil {
 			return "", path, err
@@ -137,72 +159,210 @@ func RewindClaude(home, sessionID string, visible []Item) (id, path string, err 
 	return id, path, nil
 }
 
-// RewindCodex uses the CLI's native turn boundary fork, without sending a turn.
-func RewindCodex(ctx context.Context, bin, cwd string, env []string, sessionID string, visible []Item) (string, error) {
+// ForkCodex creates the provider session immediately and starts no inference.
+// Goal continuation must be deferred so only the new chat's own prompt runs.
+func ForkCodex(ctx context.Context, o Options) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	c, err := startRPC(bin, cwd, env)
+	c, err := startRPC(o.Bin, o.Cwd, o.Env, o.Remote)
 	if err != nil {
 		return "", err
 	}
 	defer c.close()
-	if err := c.initialize(ctx, Version); err != nil {
+	if err := c.initializeWithCapabilities(ctx, Version, map[string]any{"experimentalApi": true}); err != nil {
 		return "", err
 	}
-	raw, err := c.call(ctx, "thread/read", map[string]any{"threadId": sessionID, "includeTurns": true})
+	approval, sandbox := codexPolicy(o.Mode)
+	params := map[string]any{"threadId": o.ResumeID, "cwd": o.Cwd, "approvalPolicy": approval,
+		"sandbox": sandbox, "excludeTurns": true, "deferGoalContinuation": true}
+	if o.Model != "" && o.Model != "default" {
+		params["model"] = o.Model
+	}
+	if o.Speed != "" {
+		params["serviceTier"] = o.Speed
+	}
+	if o.Effort != "" {
+		params["config"] = map[string]any{"model_reasoning_effort": o.Effort}
+	}
+	raw, err := c.call(ctx, "thread/fork", params)
 	if err != nil {
 		return "", err
 	}
 	var response struct {
 		Thread struct {
-			ID    string      `json:"id"`
-			Turns []codexTurn `json:"turns"`
+			ID string `json:"id"`
 		} `json:"thread"`
 	}
 	if err := json.Unmarshal(raw, &response); err != nil {
 		return "", err
 	}
-	var native []Item
-	var turns []int
-	for ti, turn := range response.Thread.Turns {
-		for _, raw := range turn.Items {
-			if it, ok := CodexItem(raw); ok && it.Kind == "user" {
-				native = append(native, it)
-				turns = append(turns, ti)
-			}
-		}
+	if response.Thread.ID == "" || response.Thread.ID == o.ResumeID {
+		return "", errors.New("the agent did not create a separate session")
 	}
-	index, err := checkpointIndex(native, visible)
+	return response.Thread.ID, nil
+}
+
+// RewindCodex uses the CLI's native turn boundary fork, without sending a turn.
+func RewindCodex(ctx context.Context, o Options, visible []Item, afterTurnID ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	c, err := startRPC(o.Bin, o.Cwd, o.Env, o.Remote)
 	if err != nil {
 		return "", err
 	}
-	turns = append(turns, len(response.Thread.Turns))
-	ti := turns[index]
-	if index > 0 && turns[index-1] == ti {
-		return "", errors.New("this message was sent during a turn; rewind to the first message of that turn")
+	defer c.close()
+	if err := c.initializeWithCapabilities(ctx, Version, map[string]any{"experimentalApi": true}); err != nil {
+		return "", err
+	}
+	history, err := codexRewindHistory(ctx, c, o.ResumeID)
+	if err != nil {
+		return "", err
+	}
+	ti := -1
+	if len(afterTurnID) > 0 && afterTurnID[0] != "" {
+		// Pocket's completed reply already records the provider's real turn ID.
+		// Use that boundary directly: failed sends, compaction and imports can
+		// make Pocket's old user-message count differ from Codex's history.
+		for i, turn := range history {
+			if turn.ID == afterTurnID[0] {
+				ti = i + 1
+				break
+			}
+		}
+		if ti < 0 {
+			return "", errors.New("the selected reply's Codex checkpoint is unavailable")
+		}
+	} else {
+		var native []Item
+		var turns []int
+		for ti, turn := range history {
+			for _, raw := range turn.Items {
+				if it, ok := CodexItem(raw); ok && it.Kind == "user" {
+					native = append(native, it)
+					turns = append(turns, ti)
+				}
+			}
+		}
+		index, err := checkpointIndex(native, visible)
+		if err != nil {
+			return "", err
+		}
+		turns = append(turns, len(history))
+		ti = turns[index]
+		if index > 0 && turns[index-1] == ti {
+			return "", errors.New("this message was sent during a turn; rewind to the first message of that turn")
+		}
 	}
 	if ti == 0 {
 		return "", nil
 	}
-	last := response.Thread.Turns[ti-1]
+	last := history[ti-1]
 	if last.Status == "inProgress" || last.ID == "" {
 		return "", errors.New("wait for the previous turn to finish")
 	}
-	raw, err = c.call(ctx, "thread/fork", map[string]any{"threadId": sessionID, "lastTurnId": last.ID, "cwd": cwd})
+	approval, sandbox := codexPolicy(o.Mode)
+	params := map[string]any{"threadId": o.ResumeID, "lastTurnId": last.ID, "cwd": o.Cwd,
+		"approvalPolicy": approval, "sandbox": sandbox, "excludeTurns": true,
+		// A rewind must not automatically continue an inherited active goal.
+		"deferGoalContinuation": true}
+	if o.Model != "" && o.Model != "default" {
+		params["model"] = o.Model
+	}
+	if o.Speed != "" {
+		params["serviceTier"] = o.Speed
+	}
+	if o.Effort != "" {
+		params["config"] = map[string]any{"model_reasoning_effort": o.Effort}
+	}
+	raw, err := c.call(ctx, "thread/fork", params)
 	if err != nil {
 		return "", err
 	}
-	response.Thread.ID = ""
-	response.Thread.Turns = nil
+	var response struct {
+		Thread struct {
+			ID string `json:"id"`
+		} `json:"thread"`
+	}
 	if err := json.Unmarshal(raw, &response); err != nil {
 		return "", err
 	}
-	if response.Thread.ID == "" || response.Thread.ID == sessionID {
+	if response.Thread.ID == "" || response.Thread.ID == o.ResumeID {
 		return "", errors.New("the agent did not create a separate session")
 	}
-	// Older CLIs may ignore lastTurnId. Fail closed rather than resume future context.
-	if len(response.Thread.Turns) != ti || response.Thread.Turns[ti-1].ID != last.ID {
+	// Re-read the saved copy, including paginated history. Older CLIs may
+	// ignore lastTurnId; never open a continuation containing future context.
+	retained, err := codexRewindHistory(ctx, c, response.Thread.ID)
+	if err != nil {
+		return "", fmt.Errorf("could not verify the rewound history: %w", err)
+	}
+	if len(retained) != ti {
 		return "", fmt.Errorf("this Codex version does not support rewinding to that turn")
 	}
+	for i := range retained {
+		if retained[i].ID == "" || retained[i].ID != history[i].ID {
+			return "", errors.New("the rewound history does not match the selected checkpoint")
+		}
+	}
 	return response.Thread.ID, nil
+}
+
+// Codex now stores new sessions with paginated history. A metadata-only read
+// followed by full, ascending turn pages avoids treating an empty/deprecated
+// thread.turns field as an empty conversation.
+func codexRewindHistory(ctx context.Context, c *rpc, id string) ([]codexTurn, error) {
+	raw, err := c.call(ctx, "thread/read", map[string]any{"threadId": id, "includeTurns": false})
+	if err != nil {
+		return nil, err
+	}
+	var response struct {
+		Thread struct {
+			HistoryMode string      `json:"historyMode"`
+			Turns       []codexTurn `json:"turns"`
+		} `json:"thread"`
+	}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		return nil, err
+	}
+	if response.Thread.HistoryMode == "" || response.Thread.HistoryMode == "legacy" {
+		raw, err = c.call(ctx, "thread/read", map[string]any{"threadId": id, "includeTurns": true})
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(raw, &response); err != nil {
+			return nil, err
+		}
+		return response.Thread.Turns, nil
+	}
+	if response.Thread.HistoryMode != "paginated" {
+		return nil, errors.New("this Codex history format is not supported")
+	}
+	var turns []codexTurn
+	cursor := ""
+	seen := map[string]bool{}
+	for {
+		params := map[string]any{"threadId": id, "limit": 100, "sortDirection": "asc", "itemsView": "full"}
+		if cursor != "" {
+			params["cursor"] = cursor
+		}
+		raw, err = c.call(ctx, "thread/turns/list", params)
+		if err != nil {
+			return nil, err
+		}
+		var page struct {
+			Data       []codexTurn `json:"data"`
+			NextCursor *string     `json:"nextCursor"`
+		}
+		if err := json.Unmarshal(raw, &page); err != nil {
+			return nil, err
+		}
+		turns = append(turns, page.Data...)
+		if page.NextCursor == nil || *page.NextCursor == "" {
+			return turns, nil
+		}
+		cursor = *page.NextCursor
+		if seen[cursor] {
+			return nil, errors.New("Codex returned a repeated history cursor")
+		}
+		seen[cursor] = true
+	}
 }
