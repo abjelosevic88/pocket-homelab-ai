@@ -145,7 +145,7 @@ function TurnFoot({ t, onFork, onRewindHere, rewindDisabled, text }: { t: TurnIn
       <span className="grow" />
       {bits.length > 0 && <span className="tnum turn-bits">{bits.join(' · ')}</span>}
       {text && <button type="button" className="btn ghost icon-only xs" onClick={() => { void copy() }} title={copied ? 'Copied' : 'Copy response'} aria-label="Copy response"><Icon name={copied ? 'check' : 'copy'} size={14} /></button>}
-      {onRewindHere && <button type="button" className="btn ghost icon-only xs" disabled={rewindDisabled} onClick={onRewindHere} title={rewindDisabled ? 'Stop the agent and clear its queue before rewinding' : 'Rewind to here: continue from this reply with a different message (the original stays)'} aria-label="Rewind to here"><Icon name="undo" size={14} /></button>}
+      {onRewindHere && <button type="button" className="btn ghost icon-only xs" disabled={rewindDisabled} onClick={onRewindHere} title={rewindDisabled ? 'Stop the agent and clear its queue before rewinding' : 'Rewind to here: remove all later messages from this chat'} aria-label="Rewind to here"><Icon name="undo" size={14} /></button>}
       {onFork && <button type="button" className="btn ghost icon-only xs" onClick={onFork} title="Fork from here into a new tab" aria-label="Fork from here into a new tab"><Icon name="fork" size={14} /></button>}
       <span className="run-time tnum" title="How long the agent worked on this">Worked for {fmtDuration(t.duration_ms)}</span>
     </div>
@@ -188,7 +188,7 @@ export function Timeline({ items, showThinking, streamingKey, onFork, threadId, 
             : <ItemView item={it} showThinking={showThinking} threadId={threadId} ownerId={owner?.id} ownerName={owner?.name} onMoveFolder={onMoveFolder} />}
           {it.kind === 'user' && !it.queued && !it.unsent && (onEdit || onRewind) && <div className="message-actions">
             {onEdit && <button type="button" className="btn ghost icon-only xs" disabled={rewindDisabled} onClick={() => onEdit(it)} title={rewindDisabled ? 'Stop the agent and clear its queue before editing' : 'Edit message'} aria-label="Edit message"><Icon name="edit" size={14} /></button>}
-            {onRewind && <button type="button" className="btn ghost icon-only xs" disabled={rewindDisabled} onClick={() => onRewind(it)} title={rewindDisabled ? 'Stop the agent and clear its queue before rewinding' : 'Rewind here (keeps the original conversation)'} aria-label="Rewind here"><Icon name="undo" size={14} /></button>}
+            {onRewind && <button type="button" className="btn ghost icon-only xs" disabled={rewindDisabled} onClick={() => onRewind(it)} title={rewindDisabled ? 'Stop the agent and clear its queue before rewinding' : 'Rewind here (removes this message and everything after it)'} aria-label="Rewind here"><Icon name="undo" size={14} /></button>}
           </div>}
           {it.kind === 'user' && it.unsent && (
             <div className="unsent-tag"><Icon name="alert" size={12} /><span>{it.unsent_why || 'Not sent — Pocket AI restarted before it went out.'}</span>

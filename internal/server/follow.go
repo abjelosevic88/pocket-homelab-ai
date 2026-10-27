@@ -121,6 +121,11 @@ func (rt *engine) followClaude(ctx context.Context, threadID string) {
 // background sub-agents, when its log stays quiet. Those sub-agents are read
 // from their own transcripts (every few seconds: scan).
 func (rt *engine) claudeElsewhere(t *store.Thread, path string, scan bool) {
+	unlock := rt.s.lockThreadEdit(t.ID)
+	defer unlock()
+	if !rt.sameSession(t) {
+		return
+	}
 	if rt.get(t.ID) != nil {
 		rt.setExtSubs(t.ID, nil) // Pocket AI drives it: its own events say it all
 		return
@@ -171,6 +176,11 @@ func (rt *engine) setExtSubs(threadID string, subs []agent.Subagent) {
 }
 
 func (rt *engine) claudeTick(ctx context.Context, t *store.Thread, path string, log *agent.ClaudeLog, lastLine *time.Time) {
+	unlock := rt.s.lockThreadEdit(t.ID)
+	defer unlock()
+	if !rt.sameSession(t) {
+		return
+	}
 	size := agent.FileSize(path)
 	if size < 0 {
 		return
@@ -239,7 +249,7 @@ func (rt *engine) followCodex(ctx context.Context, threadID string) {
 			reader.Close()
 		}
 	}()
-	var path string
+	var path, sid string
 	var lastSize int64 = -2
 	var lastChange time.Time
 	tick := time.NewTicker(1500 * time.Millisecond)
@@ -249,6 +259,13 @@ func (rt *engine) followCodex(ctx context.Context, threadID string) {
 		t, err := rt.s.store.GetThreadAny(ctx, threadID)
 		if err != nil {
 			return
+		}
+		if sid != t.ProviderSessionID {
+			sid, path, lastSize, first = t.ProviderSessionID, "", -2, true
+			if reader != nil {
+				reader.Close()
+				reader = nil
+			}
 		}
 		size := int64(-1)
 		if path != "" {
@@ -320,6 +337,11 @@ func (rt *engine) codexActivity(threadID, path string, from int64) {
 // last one Pocket AI already has are left alone (a thread Pocket AI drove
 // stores the user's messages under its own keys).
 func (rt *engine) reconcileCodex(ctx context.Context, t *store.Thread, items []agent.Item, announce bool) {
+	unlock := rt.s.lockThreadEdit(t.ID)
+	defer unlock()
+	if !rt.sameSession(t) {
+		return
+	}
 	have, err := rt.s.store.ListItems(ctx, t.ID)
 	if err != nil {
 		return

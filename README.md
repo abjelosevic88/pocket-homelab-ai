@@ -161,23 +161,21 @@ App defaults also include a personal **Effort level for apps**, with levels disc
 
 ### Edit and rewind messages
 
-Each sent user message has **Edit message** and **Rewind here** actions. Both open
-a continuation before that message and restore its text and attachments directly
-in the bottom composer. Modify the draft and send when ready. The original conversation stays
-in history. Files and Pocket app changes already made are not undone.
+Each sent user message has **Edit message** and **Rewind here** actions. Rewind
+removes that message and everything after it **from the same conversation** and
+restores its text and attachments in the composer. Rewind on a reply retains
+that reply and removes all later messages. Web and iPhone show a confirmation
+before deleting history; there is no new chat or Undo action. Files and Pocket
+app changes already made are not undone.
 
-Only the owner can rewind, after the agent and its queue have stopped. The new
-conversation is private and keeps its account, model, effort, workspace, memory
-preference, and Pocket Ask restrictions. Claude continues from an independent
-copy of the earlier session history; Codex uses its native turn-boundary fork.
-Codex uses the previous reply’s saved turn ID when available, so missing older
-user-message records or interrupted sends do not block a valid checkpoint.
-Both providers support connected machines: Codex forks and verifies the retained
-history on that machine over SSH, using its configured binary and login. Legacy
-and paginated Codex history are supported. No model turn is started by rewind.
-An unsupported Codex version or a history mismatch returns an error instead of
-continuing with later messages still in context.
-
+Only the owner can rewind, after the agent, subagents, pending approvals and queue
+have stopped. The chat keeps its ID, title, folder, sharing, links, account, model,
+effort, memory preference and Pocket Ask restrictions. Claude and Codex prepare a
+private provider history at the selected boundary and the existing chat switches
+to it atomically with timeline truncation. No model turn starts during rewind;
+the next message resumes only the retained context. Connected machines are
+supported over SSH using their configured binary and login. A history mismatch
+or unsupported provider boundary returns an error without deleting the timeline.
 
 Queued messages have **Edit in composer**: the message leaves the queue and its
 text and attachments return to the composer. Any existing draft is kept below it.

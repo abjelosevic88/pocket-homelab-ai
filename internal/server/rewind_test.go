@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +13,7 @@ import (
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
 )
 
-func TestRewindIsolationHistoryAndAttachments(t *testing.T) {
+func TestRewindKeepsConversationHistoryAndAttachments(t *testing.T) {
 	s, h, root := testServer(t)
 	owner, u := person(t, s, h, "rewind@example.test", "admin", true)
 	outsider, _ := person(t, s, h, "outside@example.test", "member", true)
@@ -30,7 +31,10 @@ func TestRewindIsolationHistoryAndAttachments(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.rt.loadShares()
-	uploadPath := filepath.Join(root, "attachment.txt")
+	uploadPath := filepath.Join(s.cfg.DataDir, "uploads", "attachment.txt")
+	if err := os.MkdirAll(filepath.Dir(uploadPath), 0700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(uploadPath, []byte("document body"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -81,10 +85,10 @@ func TestRewindIsolationHistoryAndAttachments(t *testing.T) {
 			Uploads []uploadOut `json:"uploads"`
 		} `json:"draft"`
 	}
-	owner.want("POST", endpoint, map[string]any{"key": "u2"}, 201, &result)
+	owner.want("POST", endpoint, map[string]any{"key": "u2"}, 200, &result)
 	n := result.Thread
-	if n.ID == th.ID || n.ProviderSessionID == th.ProviderSessionID || n.ProviderSessionID == "" || n.SourceRef != th.ID || !n.NoMemory || n.Model != "sonnet" || n.Effort != "high" || len(n.Shares) != 0 {
-		t.Fatalf("wrong new thread: %+v", n)
+	if n.ID != th.ID || n.Title != th.Title || n.Source != th.Source || n.SourceRef != th.SourceRef || n.ProviderSessionID == th.ProviderSessionID || n.ProviderSessionID == "" || !n.NoMemory || n.Model != "sonnet" || n.Effort != "high" || len(n.Shares) != 1 {
+		t.Fatalf("wrong rewound thread: %+v", n)
 	}
 	history, err := s.store.ListItems(ctx, n.ID)
 	if err != nil {
@@ -93,7 +97,7 @@ func TestRewindIsolationHistoryAndAttachments(t *testing.T) {
 	if len(history) != 2 || history[0].Key != "u1" || history[1].Key != "a1" {
 		t.Fatalf("wrong prefix: %+v", history)
 	}
-	if result.Draft.Text != "Fix this typo" || len(result.Draft.Uploads) != 1 || result.Draft.Uploads[0].ID == up.ID {
+	if result.Draft.Text != "Fix this typo" || len(result.Draft.Uploads) != 1 || result.Draft.Uploads[0].ID != up.ID {
 		t.Fatal("draft or attachments lost")
 	}
 	duplicate, err := s.store.GetUpload(ctx, u.ID, result.Draft.Uploads[0].ID)
@@ -120,19 +124,24 @@ func TestRewindIsolationHistoryAndAttachments(t *testing.T) {
 	if s.rt.get(n.ID) != nil {
 		t.Fatal("rewind ran a model")
 	}
-	viewer.want("GET", "/api/v1/threads/"+n.ID, nil, 404, nil)
+	viewer.want("GET", "/api/v1/threads/"+n.ID, nil, 200, nil)
+	var count int
+	_ = s.store.DB.QueryRow(`SELECT COUNT(*) FROM threads WHERE user_id=?`, u.ID).Scan(&count)
+	if count != 1 {
+		t.Fatal("rewind created another chat", count)
+	}
 	// First-message rewind works even when a failed send created no CLI session.
 	th.ProviderSessionID = ""
 	_ = s.store.UpdateThread(ctx, th)
-	owner.want("POST", endpoint, map[string]any{"key": "u1"}, 201, &result)
+	owner.want("POST", endpoint, map[string]any{"key": "u1"}, 200, &result)
 	first, _ := s.store.ListItems(ctx, result.Thread.ID)
 	if len(first) != 0 || result.Thread.ProviderSessionID != "" {
 		t.Fatal("first message retained context")
 	}
-	// Removing the source cannot remove the copied attachment.
+	// The attachment still belongs to this chat and is removed only when it is deleted.
 	owner.want("DELETE", "/api/v1/threads/"+th.ID, nil, 204, nil)
-	if _, err := os.Stat(duplicate.Path); err != nil {
-		t.Fatal("copy depended on source", err)
+	if _, err := os.Stat(duplicate.Path); !os.IsNotExist(err) {
+		t.Fatal("deleted chat kept its attachment", err)
 	}
 }
 
@@ -147,7 +156,7 @@ func TestRewindPreservesAskRestrictions(t *testing.T) {
 	var result struct {
 		Thread store.Thread `json:"thread"`
 	}
-	c.want("POST", "/api/v1/threads/"+th.ID+"/rewind", map[string]any{"key": "u1"}, 201, &result)
+	c.want("POST", "/api/v1/threads/"+th.ID+"/rewind", map[string]any{"key": "u1"}, 200, &result)
 	if result.Thread.Source != "ask" || result.Thread.SourceRef != "https://travel.example/trip/1" || !result.Thread.NoMemory {
 		t.Fatal("Ask restrictions lost")
 	}
@@ -209,7 +218,7 @@ func TestForkAtEarlierResponse(t *testing.T) {
 	}
 }
 
-func TestRemoteCodexRewindUsesHostAndKeepsOriginal(t *testing.T) {
+func TestRemoteCodexRewindUsesHostAndSameConversation(t *testing.T) {
 	s, h, root := testServer(t)
 	owner, u := person(t, s, h, "remote-rewind@example.test", "admin", true)
 	ctx := t.Context()
@@ -273,9 +282,9 @@ for line in sys.stdin:
 			Text string `json:"text"`
 		} `json:"draft"`
 	}
-	owner.want("POST", "/api/v1/threads/"+th.ID+"/rewind", map[string]any{"key": "u2"}, 201, &result)
+	owner.want("POST", "/api/v1/threads/"+th.ID+"/rewind", map[string]any{"key": "u2"}, 200, &result)
 	n := result.Thread
-	if n.ID == th.ID || n.HostID != box.ID || n.ProviderSessionID != "remote-copy" || n.Model != th.Model || n.Effort != th.Effort || n.Speed != th.Speed || n.Mode != th.Mode || n.Cwd != th.Cwd {
+	if n.ID != th.ID || n.HostID != box.ID || n.ProviderSessionID != "remote-copy" || n.Model != th.Model || n.Effort != th.Effort || n.Speed != th.Speed || n.Mode != th.Mode || n.Cwd != th.Cwd {
 		t.Fatalf("settings lost: %+v", n)
 	}
 	rows, err := s.store.ListItems(ctx, n.ID)
@@ -283,12 +292,12 @@ for line in sys.stdin:
 		t.Fatal("incorrect continuation", rows, result.Draft, err)
 	}
 	original, err := s.store.GetThread(ctx, u.ID, th.ID)
-	if err != nil || original.ProviderSessionID != th.ProviderSessionID {
-		t.Fatal("original session changed", err)
+	if err != nil || original.ProviderSessionID != "remote-copy" {
+		t.Fatal("rewound session not saved", err)
 	}
 	rows, err = s.store.ListItems(ctx, th.ID)
-	if err != nil || len(rows) != 5 {
-		t.Fatal("original messages changed", err)
+	if err != nil || len(rows) != 3 {
+		t.Fatal("later messages were not removed", err)
 	}
 	if s.rt.get(n.ID) != nil {
 		t.Fatal("rewind started a model")
@@ -306,7 +315,7 @@ for line in sys.stdin:
 		t.Fatalf("remote fork is not independent: %+v", fork)
 	}
 	// First prompt on a remote host also starts a fresh independent history.
-	owner.want("POST", "/api/v1/threads/"+th.ID+"/rewind", map[string]any{"key": "u1"}, 201, &result)
+	owner.want("POST", "/api/v1/threads/"+th.ID+"/rewind", map[string]any{"key": "u1"}, 200, &result)
 	if result.Thread.HostID != box.ID || result.Thread.ProviderSessionID != "" {
 		t.Fatal("first-message rewind retained a session")
 	}
@@ -333,6 +342,81 @@ func TestCodexReplyCheckpointDoesNotCrossAnotherSentPrompt(t *testing.T) {
 			}
 			if got := codexReplyCheckpoint(rows, "selected"); got != tc.want {
 				t.Fatal(got, tc.want)
+			}
+		})
+	}
+}
+
+type rewindIdleSession struct{ agent.Session }
+
+func (*rewindIdleSession) Close() error { return nil }
+
+func TestRewindIgnoresRetiredProcessAndStaleFollower(t *testing.T) {
+	s, h, root := testServer(t)
+	owner, u := person(t, s, h, "retired@example.test", "admin", true)
+	th := thread(t, s, u.ID, root)
+	events := s.rt.subscribeThread(th.ID, u.ID)
+	defer s.rt.unsubscribeThread(th.ID, events)
+	r := &run{threadID: th.ID, userID: u.ID, sess: &rewindIdleSession{}, cancel: func() {}, live: map[string]*agent.Item{}, dirty: map[string]bool{}, pending: map[string]bool{}}
+	s.rt.mu.Lock()
+	s.rt.runs[th.ID] = r
+	s.rt.mu.Unlock()
+	owner.want("POST", "/api/v1/threads/"+th.ID+"/rewind", map[string]any{"key": "u1"}, 200, nil)
+	sink := &runSink{rt: s.rt, r: r}
+	sink.Item(agent.Item{Key: "stale", Kind: "assistant", Text: "FUTURE"})
+	sink.Delta("stale", "text", "FUTURE")
+	sink.SessionID("old-session")
+	sink.Context(agent.Context{Tokens: 999})
+	sink.TurnStarted()
+	sink.TurnDone(agent.TurnInfo{OK: true})
+	sink.Exited(fmt.Errorf("late process exit"))
+	s.rt.flush(r)
+	s.rt.reconcileCodex(t.Context(), th, []agent.Item{{Key: "stale-follower", Kind: "assistant", Text: "FUTURE"}}, true)
+	rows, _ := s.store.ListItems(t.Context(), th.ID)
+	fresh, _ := s.store.GetThreadAny(t.Context(), th.ID)
+	if len(rows) != 0 || fresh.ProviderSessionID != "" || fresh.Status != "idle" || fresh.Error != "" {
+		t.Fatalf("retired context returned: %+v %+v", fresh, rows)
+	}
+	sawReset := false
+	for len(events) > 0 {
+		if (<-events).Name == "history_reset" {
+			sawReset = true
+		}
+	}
+	if !sawReset {
+		t.Fatal("connected viewers did not receive history replacement")
+	}
+}
+
+func TestRewindTransactionKeepsHistoryOnConcurrentChangeOrWriteFailure(t *testing.T) {
+	for _, failure := range []string{"concurrent append", "update fails after delete"} {
+		t.Run(failure, func(t *testing.T) {
+			s, h, root := testServer(t)
+			_, u := person(t, s, h, "atomic@example.test", "admin", true)
+			th := thread(t, s, u.ID, root)
+			rows, _ := s.store.ListItems(t.Context(), th.ID)
+			previous := th.ProviderSessionID
+			th.ProviderSessionID = "retained-context"
+			expected := len(rows)
+			if failure == "concurrent append" {
+				_, err := s.store.UpsertItem(t.Context(), th.ID, "late", "user", []byte(`{"key":"late","kind":"user","text":"Keep this concurrent message"}`), "Keep this concurrent message")
+				if err != nil {
+					t.Fatal(err)
+				}
+				expected++
+			} else {
+				_, err := s.store.DB.Exec(`CREATE TRIGGER fail_rewind BEFORE UPDATE ON threads BEGIN SELECT RAISE(ABORT,'test write failure'); END`)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := s.store.RewindThread(t.Context(), th, "u1", previous, rows[len(rows)-1].ID); err == nil {
+				t.Fatal("expected a failed rewind")
+			}
+			retained, _ := s.store.ListItems(t.Context(), th.ID)
+			fresh, _ := s.store.GetThreadAny(t.Context(), th.ID)
+			if len(retained) != expected || fresh.ProviderSessionID != previous {
+				t.Fatalf("failed rewind changed conversation: %+v %+v", fresh, retained)
 			}
 		})
 	}

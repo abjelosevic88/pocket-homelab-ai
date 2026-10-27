@@ -43,12 +43,13 @@ type Server struct {
 	errors   atomic.Int64
 	changed  atomic.Int64 // bumps on every write; GET /changes
 
-	core       *core.Client
-	coreMu     sync.Mutex
-	workflowMu sync.Mutex
-	deferredMu sync.Mutex
-	coreOK     bool
-	coreErr    string
+	core         *core.Client
+	coreMu       sync.Mutex
+	workflowMu   sync.Mutex
+	deferredMu   sync.Mutex
+	threadEditMu [64]sync.Mutex // serialize sends, rewinds and log reconciliation per thread
+	coreOK       bool
+	coreErr      string
 
 	oidc   *oidcProvider
 	oidcMu sync.Mutex
