@@ -401,3 +401,18 @@
 .wt-subgroups { display: grid; gap: 10px; }
 .wt-group.nested { margin: 0 0 0 6px; padding: 2px 2px 2px 12px; border-left: 2px solid var(--border); border-radius: 0 12px 12px 0; }
 .wt-group-h.drop-before { box-shadow: 0 -3px 0 0 var(--accent); }
+
+/* Tab groups: a coloured label, its tabs underlined in the same colour */
+.tg-grey { --tg: #6b7280; } .tg-blue { --tg: #2563eb; } .tg-red { --tg: #dc2626; } .tg-yellow { --tg: #ca8a04; } .tg-green { --tg: #16a34a; }
+.tg-pink { --tg: #db2777; } .tg-purple { --tg: #7c3aed; } .tg-cyan { --tg: #0891b2; } .tg-orange { --tg: #ea580c; }
+.tg-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--tg, currentColor); flex-shrink: 0; }
+.tg-label { display: inline-flex; align-items: center; gap: 6px; align-self: center; height: 24px; margin: 0 2px 4px 6px; padding: 0 10px; border: 0; border-radius: 7px;
+  background: var(--tg); color: #fff; font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; flex: 0 0 auto; max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tg-label.empty { padding: 0 8px; } .tg-label.empty .tg-dot { background: #fff; width: 8px; height: 8px; }
+.tg-label:hover { filter: brightness(1.08); }
+.tg-label:focus-visible { outline: 2px solid color-mix(in srgb, var(--tg) 45%, transparent); outline-offset: 2px; }
+.tg-label.editing { cursor: text; width: 150px; outline: 2px solid color-mix(in srgb, var(--tg) 45%, transparent); }
+.tg-label.editing::placeholder { color: rgba(255,255,255,.75); }
+.tg-count { padding: 0 6px; border-radius: 999px; background: rgba(255,255,255,.25); font-size: 11px; }
+.tab.grouped::after { content: ''; position: absolute; left: 8px; right: 8px; bottom: 0; height: 2px; border-radius: 2px; background: var(--tg); }
+.tab.grouped.on::after { bottom: 1px; }

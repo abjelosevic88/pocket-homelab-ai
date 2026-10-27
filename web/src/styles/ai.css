@@ -639,3 +639,14 @@ button.privacy-badge:disabled { cursor: default; }
 .at-menu .slash-row.muted { display: flex; align-items: center; gap: 8px; color: var(--muted); cursor: default; }
 .at-ico.note { color: #a16207; } .at-ico.file { color: #0284c7; } .at-ico.link { color: #7c3aed; }
 [data-theme="dark"] .at-ico.note { color: #facc15; } [data-theme="dark"] .at-ico.file { color: #38bdf8; } [data-theme="dark"] .at-ico.link { color: #a78bfa; }
+
+/* Sidebar: Projects conversations grouped by issue */
+.sb-issue { display: flex; align-items: center; gap: 7px; width: 100%; height: 32px; padding: 0 8px 0 8px; border: 0; border-radius: 8px; background: none; color: var(--text-2); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.sb-issue:hover { background: var(--hover); color: var(--text); }
+.sb-issue-caret { color: var(--faint); flex-shrink: 0; transition: transform .15s; }
+.sb-issue.open .sb-issue-caret { transform: rotate(90deg); }
+.sb-issue-ref { font-weight: 650; color: var(--text); flex-shrink: 0; font-size: 12.5px; }
+.sb-issue.closed .sb-issue-ref { text-decoration: line-through; color: var(--muted); }
+.sb-issue-title { flex: 1; min-width: 0; color: var(--muted); }
+.sb-issue-n { flex-shrink: 0; min-width: 18px; padding: 0 6px; border-radius: 999px; background: var(--surface-2); color: var(--muted); font-size: 11px; text-align: center; }
+.sb-issue-wrap > .th-row { padding-left: 24px; }

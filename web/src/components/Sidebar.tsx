@@ -15,6 +15,7 @@ import { type Option, Select } from './Select'
 import { Avatar, Kbd, Spinner, useContextMenu } from './ui'
 import { useThreadMenu } from './ThreadMenu'
 import { PrivacyChip } from './ShareDialog'
+import { projectsRef, useProjectsLink } from '../lib/projects'
 
 function groupOf(t: Thread): string {
   if (t.pinned) return 'Pinned'
@@ -93,15 +94,32 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
     if (n) list = list.filter(t => `${t.title} ${t.preview} ${t.cwd}`.toLowerCase().includes(n))
     return list
   }, [base, ws, q])
+  // Projects conversations, by issue — only while the Core link to Pocket Projects is on
+  const projRefs = useMemo(() => (base || []).map(projectsRef).filter(Boolean), [base])
+  const proj = useProjectsLink(projRefs)
+  const projIssues = useMemo(() => {
+    if (!proj?.on || showArchive) return []
+    const out: { ref: string; items: Thread[] }[] = []
+    for (const t of shown) {
+      const ref = projectsRef(t)
+      if (!ref) continue
+      const g = out.find(x => x.ref === ref)
+      if (g) g.items.push(t); else out.push({ ref, items: [t] })
+    }
+    return out
+  }, [proj?.on, showArchive, shown])
+  const [projOpen, setProjOpen] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('pai-sb-projects') || '[]') } catch { return [] } })
+  useEffect(() => { localStorage.setItem('pai-sb-projects', JSON.stringify(projOpen)) }, [projOpen])
   const groups = useMemo(() => {
     const out: { name: string; items: Thread[] }[] = []
     for (const t of shown) {
+      if (projIssues.length && projectsRef(t)) continue // listed under Projects
       const g = showArchive ? 'Archived' : groupOf(t)
       const last = out[out.length - 1]
       if (last && last.name === g) last.items.push(t); else out.push({ name: g, items: [t] })
     }
     return out
-  }, [shown, showArchive])
+  }, [shown, showArchive, projIssues])
   const sharedN = (threads || []).filter(t => !mine(t) || !!t.shares?.length).length
   const activeWt = worktrees.filter(w => w.status === 'active').length
   const needYou = (base || []).filter(t => t.status === 'waiting' || t.pending > 0).length
@@ -181,6 +199,28 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
           {needYou > 0 && !showArchive && <div className="sb-needyou"><Icon name="help-circle" size={13} />{needYou === 1 ? '1 thread needs you' : `${needYou} threads need you`}</div>}
           {base === null && <div className="sb-empty"><Spinner /></div>}
           {base && shown.length === 0 && !(shared.length && !q && !ws) && <div className="sb-empty">{q || ws ? 'No threads match.' : showArchive ? 'Nothing archived.' : 'No threads yet — start one above.'}</div>}
+          {projIssues.length > 0 && (
+            <div className="sb-group">
+              <div className="sb-h"><span>Projects</span>{proj?.projects_url && <a className="btn ghost icon-only xs" href={proj.projects_url} target="_blank" rel="noreferrer" title="Open Pocket Projects" aria-label="Open Pocket Projects"><Icon name="external" size={12} /></a>}</div>
+              {projIssues.map(g => {
+                const is = proj?.issues[g.ref]
+                const open = projOpen.includes(g.ref) || g.items.some(t => t.id === activeId)
+                return (
+                  <div key={g.ref} className="sb-issue-wrap">
+                    <button type="button" className={`sb-issue ${open ? 'open' : ''} ${is?.state_type === 'completed' || is?.state_type === 'canceled' ? 'closed' : ''}`} aria-expanded={open}
+                      title={is ? `${g.ref} · ${is.title}` : g.ref}
+                      onClick={() => setProjOpen(o => o.includes(g.ref) ? o.filter(x => x !== g.ref) : [...o, g.ref])}>
+                      <Icon name="chevron-right" size={12} className="sb-issue-caret" />
+                      <span className="sb-issue-ref tnum">{g.ref}</span>
+                      <span className="sb-issue-title ellipsis">{is?.title || ''}</span>
+                      <span className="sb-issue-n tnum">{g.items.length}</span>
+                    </button>
+                    {open && g.items.map(t => <ThreadRow key={t.id} t={t} active={t.id === activeId} onOpen={() => go(`/t/${t.id}`)} onContextMenu={e => ctx.open(e, () => tm.items(t))} />)}
+                  </div>
+                )
+              })}
+            </div>
+          )}
           {groups.map(g => (
             <div key={g.name} className="sb-group">
               <div className="sb-h"><span>{g.name}</span></div>
