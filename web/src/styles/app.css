@@ -107,3 +107,5 @@ html.pai-embedded pocket-ask-launcher { display: none !important; }
 /* Embedded: thin scrollbars that show only while the panel is hovered */
 .app.embedded { scrollbar-width: thin; scrollbar-color: transparent transparent; }
 .app.embedded:hover { scrollbar-color: color-mix(in srgb, var(--text) 22%, transparent) transparent; }
+.sb-version.update { border: 0; background: var(--accent); color: #fff; cursor: pointer; user-select: none; font: inherit; font-size: 10px; font-weight: 650; }
+.sb-version.update:hover { filter: brightness(1.1); }

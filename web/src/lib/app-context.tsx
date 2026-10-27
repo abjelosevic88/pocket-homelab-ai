@@ -7,6 +7,8 @@ export type ThemeMode = 'system' | 'light' | 'dark'
 
 interface AppState {
   status: AuthStatus | null
+  /** The server runs a newer version than this page. */
+  updateReady: boolean
   user: User | null
   sr: SettingsResponse | null
   settings: Settings | null
@@ -76,6 +78,22 @@ export function sortThreads(list: Thread[]): Thread[] {
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<AuthStatus | null>(null)
+  // the server was updated since this page loaded: reload while hidden, else offer it
+  const bootVersion = useRef('')
+  const [updateReady, setUpdateReady] = useState(false)
+  useEffect(() => {
+    const v = status?.version
+    if (!v) return
+    if (!bootVersion.current) bootVersion.current = v
+    else if (v !== bootVersion.current) setUpdateReady(true)
+  }, [status?.version])
+  useEffect(() => {
+    if (!updateReady) return
+    const h = () => { if (document.hidden) location.reload() }
+    h()
+    document.addEventListener('visibilitychange', h)
+    return () => document.removeEventListener('visibilitychange', h)
+  }, [updateReady])
   const [user, setUser] = useState<User | null>(null)
   const [sr, setSr] = useState<SettingsResponse | null>(null)
   const [providers, setProviders] = useState<Provider[]>([])
@@ -228,7 +246,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const value = useMemo<AppState>(() => ({
-    status, user, sr, settings, providers, providersReady, accounts, reloadAccounts, hosts, reloadHosts, worktrees, reloadWorktrees, threads, workspaces, recipes, limits, running, viewing, setViewing, live, themeMode, theme, setThemeMode, refresh,
+    updateReady, status, user, sr, settings, providers, providersReady, accounts, reloadAccounts, hosts, reloadHosts, worktrees, reloadWorktrees, threads, workspaces, recipes, limits, running, viewing, setViewing, live, themeMode, theme, setThemeMode, refresh,
     reloadThreads, reloadWorkspaces, reloadRecipes, reloadProviders, upsertThread, dropThread, saveSettings, setUser,
   }), [status, user, sr, settings, providers, providersReady, accounts, reloadAccounts, hosts, reloadHosts, worktrees, reloadWorktrees, threads, workspaces, recipes, limits, running, viewing, setViewing, live, themeMode, theme, setThemeMode, refresh, reloadThreads, reloadWorkspaces, reloadRecipes, reloadProviders, upsertThread, dropThread, saveSettings])
 
