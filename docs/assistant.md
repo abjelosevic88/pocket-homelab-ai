@@ -1,6 +1,6 @@
 # Personal assistant
 
-The home screen defaults to **Ask my apps**. **Work on the server** preserves the coding agents and their settings. A connected Pocket Ask account is required for app operations. App-only threads use restricted Claude with no shell/file tools; normal coding threads retain the model the user selected.
+The home screen defaults to **Work on the server**, which keeps the coding agents and their settings. **Ask my apps** is the second choice. A connected Pocket Ask account is required for app operations. App-only threads use restricted Claude with no shell/file tools; normal coding threads retain the model the user selected.
 
 ## Sources and performance
 

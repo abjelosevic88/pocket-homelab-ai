@@ -119,7 +119,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
   const [draftFiles, setDraftFiles] = useState<DraftFile[]>([])
   const draftApplied = useRef('')
   const serverComposer = useRef<ComposerHandle>(null)
-  const [picked, setMode] = useState<'apps' | 'server'>('apps')
+  const [picked, setMode] = useState<'apps' | 'server'>('server')
   // Ask my apps reads the person's Pocket apps through Pocket Core: without a Core it stays visible but greyed out
   const coreOn = !!status?.core_configured
   const mode = coreOn ? picked : 'server'
