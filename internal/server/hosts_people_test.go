@@ -25,7 +25,7 @@ func TestPeopleOwnServers(t *testing.T) {
 	// fake ssh: logs its arguments and HOME, answers the check like a shell
 	log := filepath.Join(t.TempDir(), "ssh.log")
 	fake := filepath.Join(t.TempDir(), "ssh")
-	script := "#!/bin/sh\nprintf 'HOME=%s ARGS=%s\\n' \"$HOME\" \"$*\" >> " + log + "\necho home=/home/them\necho version_claude=2.0\necho missing_codex=codex is not on the PATH\n"
+	script := "#!/bin/sh\nprintf 'HOME=%s ARGS=%s\\n' \"$HOME\" \"$*\" >> " + log + "\necho home=/home/them\necho path=/home/them\necho version_claude=2.0\necho missing_codex=codex is not on the PATH\n"
 	if err := os.WriteFile(fake, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -99,6 +99,16 @@ func TestPeopleOwnServers(t *testing.T) {
 	}
 	if hst, err := s.checkHostUse(ctx, su, made.ID); err != nil || remoteOf(hst).Home != home {
 		t.Fatalf("Sani runs on theirs from their folder: %v %+v", err, hst)
+	}
+	// and starts a conversation there on that machine's own login, not the
+	// server's (the fake ssh is no agent, so only the start is checked)
+	if _, err := s.createThread(ctx, su, newThread{Provider: "claude", HostID: made.ID, Text: "hello"}, "web", ""); err != nil &&
+		strings.Contains(err.Error(), "Sign in to") {
+		t.Fatalf("Sani is sent to sign in for their own server: %v", err)
+	}
+	threads, _ := s.store.ListThreads(ctx, su.ID, store.ThreadFilter{Limit: 5})
+	if len(threads) != 1 || threads[0].HostID != made.ID || threads[0].AccountID != 0 {
+		t.Fatalf("Sani's conversation on their server: %+v", threads)
 	}
 	if hst, _ := s.host(ctx, mine.ID); remoteOf(hst).Home != "" {
 		t.Fatal("the owner's server goes over the server's keys")

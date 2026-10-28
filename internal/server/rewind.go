@@ -112,9 +112,12 @@ func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.T
 		writeErr(w, 404, "no such message")
 		return
 	}
-	if err := s.checkAccount(ctx, userFrom(ctx), t.Provider, t.AccountID); err != nil {
-		s.fail(w, err, "account")
-		return
+	// a thread on another machine runs on that machine's own login (account 0)
+	if t.HostID == 0 {
+		if err := s.checkAccount(ctx, userFrom(ctx), t.Provider, t.AccountID); err != nil {
+			s.fail(w, err, "account")
+			return
+		}
 	}
 	var sid, sessionPath string
 	checkpoint := agent.RewindCheckpoint{TurnID: codexReplyCheckpoint(rows, key), UnconfirmedPrompts: codexUnconfirmedPrompts(prefix)}

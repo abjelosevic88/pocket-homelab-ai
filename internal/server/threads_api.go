@@ -190,8 +190,10 @@ func (s *Server) createThread(ctx context.Context, u *store.User, in newThread, 
 	if host != nil {
 		t.HostID, t.AccountID, in.AccountID = host.ID, 0, nil // the machine's own login
 	}
-	if err := s.checkAccount(ctx, u, t.Provider, t.AccountID); err != nil {
-		if in.AccountID != nil || host != nil {
+	// On another machine account 0 is that machine's login, not the server's:
+	// checkHostUse above already decided who may run there.
+	if err := s.checkAccount(ctx, u, t.Provider, t.AccountID); err != nil && host == nil {
+		if in.AccountID != nil {
 			return nil, err
 		}
 		// a saved default that is gone: their own login (the owner: the server's)
