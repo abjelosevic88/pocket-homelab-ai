@@ -341,6 +341,19 @@ func (s *Server) postMessage(ctx context.Context, u *store.User, t *store.Thread
 	if len(uploadIDs) > 10 {
 		return false, badRequest("Attach at most 10 files per message")
 	}
+	history, err := s.firstForkHistory(ctx, t)
+	if err != nil {
+		return false, err
+	}
+	if history != nil {
+		found := false
+		for _, id := range uploadIDs {
+			found = found || id == history.ID
+		}
+		if !found {
+			uploadIDs = append(append([]string{}, uploadIDs...), history.ID)
+		}
+	}
 	if t.Source == "ask" && u.ID != t.UserID {
 		if _, err := s.askToken(ctx, u.ID); err != nil {
 			return false, badRequest("Connect Ask first (Connect Ask on the start page): your questions here are answered from your own apps")
@@ -352,7 +365,13 @@ func (s *Server) postMessage(ctx context.Context, u *store.User, t *store.Thread
 		it.ByID, it.By = u.ID, displayName(u)
 	}
 	for _, id := range uploadIDs {
-		up, err := s.store.GetUpload(ctx, u.ID, id)
+		var up *store.Upload
+		var err error
+		if history != nil && id == history.ID {
+			up = history // shared-chat senders may read this thread-owned reference
+		} else {
+			up, err = s.store.GetUpload(ctx, u.ID, id)
+		}
 		if err != nil {
 			return false, badRequest("an attached file is gone; attach it again")
 		}
@@ -743,70 +762,6 @@ func (s *Server) handleMarkRead(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// handleFork freezes a private continuation now. Live work and queued prompts
-// belong to the original; a busy conversation branches at its last finished reply.
-func (s *Server) handleFork(w http.ResponseWriter, r *http.Request) {
-	if !s.requireRun(w, r) {
-		return
-	}
-	t := s.thread(w, r)
-	if t == nil {
-		return
-	}
-	if t.Source == "ask" {
-		writeErr(w, 400, "Start a new Ask conversation from the item")
-		return
-	}
-	if t.ProviderSessionID == "" {
-		writeErr(w, 400, "nothing to fork yet")
-		return
-	}
-	var in struct {
-		After string `json:"after"`
-	}
-	_ = decode(r, &in)
-	rows, err := s.store.ListItems(r.Context(), t.ID)
-	if err != nil {
-		s.fail(w, err, "read history")
-		return
-	}
-	if in.After != "" {
-		found := false
-		for _, row := range rows {
-			if row.Key == in.After && row.Kind == "turn" {
-				found = true
-				break
-			}
-		}
-		if !found {
-			writeErr(w, 400, "select a finished reply to fork")
-			return
-		}
-		if key := nextSentPrompt(rows, in.After); key != "" {
-			s.branchBefore(w, r, t, key, true)
-			return
-		}
-	}
-	s.rt.decorate(t)
-	if t.Status == "running" || t.Status == "waiting" || t.External {
-		last := ""
-		for _, row := range rows {
-			if row.Kind == "turn" {
-				last = row.Key
-			}
-		}
-		if last == "" {
-			writeErr(w, 409, "Wait for the first reply to finish before forking")
-			return
-		}
-		if key := nextSentPrompt(rows, last); key != "" {
-			s.branchBefore(w, r, t, key, true)
-			return
-		}
-	}
-	s.branchBefore(w, r, t, "", true)
 }
 
 // handleExport writes the thread as Markdown.
