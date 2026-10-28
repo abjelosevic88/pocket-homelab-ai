@@ -115,6 +115,7 @@ export function AccountsSection() {
       )}
       {list.error && <p className="danger-text small">{list.error}</p>}
       {(adding || edit) && <AccountDialog account={edit} provider={adding || 'claude'} people={people.data || []} isAdmin={isAdmin} own={!!pi?.jailed} onClose={() => { setAdding(null); setEdit(null) }}
+        machines={remote.data || []} onMachine={h => { setAdding(null); setSignIn(remoteSignIn(h)) }}
         onSaved={a => { const wasNew = !!adding; setAdding(null); setEdit(null); done(); if (wasNew && a) setSignIn(accountSignIn(a)) }} />}
       {signIn && <SignInDialog target={signIn} onClose={() => { setSignIn(null); done() }} />}
       {del && <Confirm title={`Remove ${del.label}?`} confirmLabel="Remove"
@@ -125,14 +126,19 @@ export function AccountsSection() {
   )
 }
 
-function AccountDialog({ account, provider: initial, people, isAdmin, own, onClose, onSaved }: { account: Account | null; provider: ProviderId; people: User[]; isAdmin: boolean; own: boolean; onClose: () => void; onSaved: (a?: Account) => void }) {
+function AccountDialog({ account, provider: initial, people, isAdmin, own, machines, onMachine, onClose, onSaved }: { account: Account | null; provider: ProviderId; people: User[]; isAdmin: boolean; own: boolean; machines: HostLogin[]; onMachine: (h: HostLogin) => void; onClose: () => void; onSaved: (a?: Account) => void }) {
   const { toast } = useToast()
   const [provider, setProvider] = useState<ProviderId>(account?.provider || initial)
   const [label, setLabel] = useState(account?.label || '')
   const [owner, setOwner] = useState<number>(account?.user_id ?? 0)
   const [busy, setBusy] = useState(false)
+  // Where the login lives: 0 = this server, else one of the machines (Settings → Servers).
+  const [where, setWhere] = useState(0)
+  const hosts = account ? [] : [...new Map(machines.map(h => [h.host_id, h.host])).entries()]
+  const machine = where ? machines.find(h => h.host_id === where && h.provider === provider) : undefined
   const runners = people.filter(p => p.role === 'admin' || p.can_run)
   const save = async () => {
+    if (machine) { onMachine(machine); return }
     setBusy(true)
     try {
       const body = isAdmin ? { label: label.trim(), user_id: owner || null } : { label: label.trim() }
@@ -144,10 +150,15 @@ function AccountDialog({ account, provider: initial, people, isAdmin, own, onClo
   return (
     <Modal title={account ? `Edit ${account.label}` : 'Add an account'} size="sm" onClose={onClose} footer={<>
       <button type="button" className="btn" onClick={onClose}>Cancel</button>
-      <button type="button" className="btn primary" disabled={busy || !label.trim()} onClick={save}>{account ? 'Save' : 'Add and sign in'}</button>
+      <button type="button" className="btn primary" disabled={busy || (machine ? !!machine.missing : !label.trim())} onClick={save}>{account ? 'Save' : machine ? (machine.signed_in ? 'Sign in again' : 'Sign in') : 'Add and sign in'}</button>
     </>}>
       <div className="stack">
         {!account && <Field label="Agent" group><ProviderToggle value={provider} onChange={v => v && setProvider(v)} /></Field>}
+        {hosts.length > 0 && <Field label="Where" help="This server, or one of your machines from Servers. Threads on a machine run on its login there.">
+          <Select label="Where" value={where} onChange={setWhere}
+            options={[{ value: 0, label: 'This server' }, ...hosts.map(([id, name]) => ({ value: id, label: name, description: machines.find(h => h.host_id === id)?.target }))]} />
+        </Field>}
+        {machine ? <MachineNote login={machine} /> : <>
         <Field label="Name" help="Shown in the account picker, e.g. “Work Max” or “Second Pro”.">
           <input value={label} onChange={e => setLabel(e.target.value)} autoFocus maxLength={60} placeholder={provider === 'codex' ? 'Second ChatGPT Pro' : 'Work Max'} />
         </Field>
@@ -158,9 +169,21 @@ function AccountDialog({ account, provider: initial, people, isAdmin, own, onClo
         {!account && (own || (isAdmin && owner !== 0 && owner !== Math.min(...people.map(p => p.id)))
           ? <p className="muted small" style={{ margin: 0 }}>Pocket AI makes a folder for it in {own ? 'your' : 'their'} own folder on the server. Sign in with {own ? 'your' : 'their'} own subscription: only {own ? 'you' : 'they'} can run on it, with {own ? 'your' : 'their'} own settings, history and limits.</p>
           : !account && <p className="muted small" style={{ margin: 0 }}>Pocket AI makes a new folder for it next to the server’s own login. Settings, skills, plugins{provider === 'claude' ? ' and MCP servers' : ' and config.toml'} are shared with the server login; the sign-in, history and limits are its own.</p>)}
+        </>}
       </div>
     </Modal>
   )
+}
+
+/** What adding a login on a machine does: it signs in that machine's own login. */
+function MachineNote({ login: h }: { login: HostLogin }) {
+  const name = h.provider === 'claude' ? 'Claude Code' : 'Codex'
+  if (h.missing) return <div className="callout warn"><Icon name="alert" size={15} /><span>{name} is not installed on <b>{h.host}</b> yet. Install it there, then press Check in Servers.</span></div>
+  if (h.error) return <div className="callout danger"><Icon name="alert" size={15} /><span>{h.host}: {h.error}</span></div>
+  return <p className="muted small" style={{ margin: 0 }}>
+    {h.signed_in ? <>{name} on <b>{h.host}</b> is already signed in{h.email ? <> as <b>{h.email}</b></> : null}. Signing in again replaces that login.</>
+      : <>Signs in {name} on <b>{h.host}</b> (<code>{h.home.replace(/^\/(home|Users)\/[^/]+/, '~')}</code> there) over ssh. Threads on {h.host} run on it.</>}
+  </p>
 }
 
 /** Another machine's own login: signed in over ssh from here. */
@@ -181,7 +204,7 @@ function MachineRow({ login: h, onSignIn, onSignOut }: { login: HostLogin; onSig
           {h.signed_in ? (h.plan && <span className="badge ok">{planName(h.plan)}</span>)
             : h.missing ? <span className="badge">Not installed</span>
             : h.error ? <span className="badge danger">Error</span> : <span className="badge">Not signed in</span>}
-          <span className="badge" title={`Threads on ${h.host} run on this login, on that machine.`}><Icon name="server" size={11} />Other machine</span>
+          <span className="badge" style={{ gap: 4 }} title={`Threads on ${h.host} run on this login, on that machine.`}><Icon name="server" size={11} />Other machine</span>
         </div>
         {h.email && <div className="acct-email ellipsis">{h.email}</div>}
         <div className="acct-meta"><code>{h.home.replace(/^\/(home|Users)\/[^/]+/, '~')}</code><span>on {h.target}</span></div>
