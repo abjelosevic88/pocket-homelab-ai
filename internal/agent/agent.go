@@ -128,6 +128,15 @@ type Subagent struct {
 	ToolUses    int    `json:"tool_uses,omitempty"`
 }
 
+// Task is background work of a session that is not a sub-agent: a shell
+// command put in the background, or a monitor waiting for something.
+type Task struct {
+	ID          string `json:"id"`
+	Kind        string `json:"kind"` // shell, monitor
+	Description string `json:"description"`
+	StartedAt   string `json:"started_at"`
+}
+
 // Context is how full the model's context window is.
 type Context struct {
 	Tokens int64
@@ -175,9 +184,10 @@ type Sink interface {
 	// Subagents is the full list of sub-agents working right now (Claude
 	// runs them in the background; they can outlive the turn that started them).
 	Subagents(list []Subagent)
-	// Shells is how many background shell commands are still running. They
-	// die with the process, so the thread must not be stopped while n > 0.
-	Shells(n int)
+	// Tasks is the full list of background work other than sub-agents (shell
+	// commands, monitors) running right now. It dies with the process, so the
+	// thread must not be stopped while the list is not empty.
+	Tasks(list []Task)
 	Exited(err error)
 }
 

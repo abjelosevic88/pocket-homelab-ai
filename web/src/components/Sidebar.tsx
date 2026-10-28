@@ -9,6 +9,7 @@ import { sortThreads, useApp } from '../lib/app-context'
 import { baseName, stamp, threadTitle } from '../lib/format'
 import { safeSnippet } from '../lib/markdown'
 import type { SearchHit, Thread } from '../lib/types'
+import { BgMark, backgroundSince, backgroundTitle, hasBackground } from './Background'
 import { ProviderBadge, ThreadStatus } from './bits'
 import { Icon } from './icons'
 import { type Option, Select } from './Select'
@@ -44,8 +45,10 @@ export function ThreadRow({ t, active, onOpen, onContextMenu }: { t: Thread; act
   const run = running.find(r => r.thread_id === t.id || (!!t.provider_session_id && r.session_id === t.provider_session_id))
   const waiting = t.status === 'waiting' || t.pending > 0 || run?.status === 'waiting'
   const working = waiting || t.status === 'running' || !!run
+  // the turn is over but commands, monitors or sub-agents still run
+  const bg = !working && hasBackground(t)
   return (
-    <button type="button" className={`th-row ${active ? 'active' : ''} ${t.unread ? 'unread' : ''} ${working ? 'is-working' : ''}`} onClick={onOpen} onContextMenu={onContextMenu} title={host ? `${host}: ${t.cwd}` : t.cwd}>
+    <button type="button" className={`th-row ${active ? 'active' : ''} ${t.unread ? 'unread' : ''} ${working ? 'is-working' : ''} ${bg ? 'is-background' : ''}`} onClick={onOpen} onContextMenu={onContextMenu} title={host ? `${host}: ${t.cwd}` : t.cwd}>
       <span className="th-main">
         <span className="th-title ellipsis">{threadTitle(t)}</span>
         <span className="th-meta">
@@ -56,8 +59,11 @@ export function ThreadRow({ t, active, onOpen, onContextMenu }: { t: Thread; act
         </span>
       </span>
       <span className="th-side">
-        {working ? <RowTimer since={run?.prompt_at || t.prompt_at || t.activity_at} /> : <span className="th-time">{stamp(t.activity_at)}</span>}
-        <ThreadStatus t={working ? { ...t, status: waiting ? 'waiting' : 'running' } : t} />
+        {working ? <RowTimer since={run?.prompt_at || t.prompt_at || t.activity_at} />
+          : bg ? <RowTimer since={backgroundSince(t) || t.activity_at} />
+          : <span className="th-time">{stamp(t.activity_at)}</span>}
+        {bg ? <span className="tstat bg" title={backgroundTitle(t)} aria-label="Still running in the background"><BgMark size={12} /></span>
+          : <ThreadStatus t={working ? { ...t, status: waiting ? 'waiting' : 'running' } : t} />}
       </span>
     </button>
   )

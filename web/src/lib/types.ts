@@ -207,6 +207,8 @@ export interface Thread {
   queued: number
   external?: boolean
   subagents?: Subagent[]
+  /** shell commands and monitors still running in the background */
+  background?: BackgroundTask[]
   last_prompt?: string
   prompt_at?: string
   /** Whose thread it is, and who else may open it (shared threads). */
@@ -460,6 +462,8 @@ export interface RunningItem {
   shared_with?: string[]
 }
 
+/** Background work of a live session that is not a sub-agent. */
+export interface BackgroundTask { id: string; kind: 'shell' | 'monitor'; description: string; started_at: string }
 export interface Subagent { id: string; description: string; activity?: string; type?: string; started_at: string; tool_uses?: number }
 /** A sub-agent of a Claude Code session, working or finished (GET /threads/{id}/subagents). */
 export interface SubagentInfo {

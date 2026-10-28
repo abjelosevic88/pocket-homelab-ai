@@ -173,7 +173,7 @@ function SubagentPanel({ threadId, id, initial, onClose }: { threadId: string; i
 
 /** Fixed position for a list that floats above the composer area, kept in
  * place as the keyboard and the layout move. */
-function useFloatAbove(open: boolean, anchor: React.RefObject<HTMLElement | null>) {
+export function useFloatAbove(open: boolean, anchor: React.RefObject<HTMLElement | null>) {
   const [position, setPosition] = useState<CSSProperties>({ visibility: 'hidden' })
   useLayoutEffect(() => {
     if (!open) return
