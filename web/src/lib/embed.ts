@@ -19,6 +19,12 @@ export const embedded = detect()
  *  a new conversation (a fork) opens there instead of in a new browser tab. */
 export const parentTabs = embedded && sessionStorage.getItem(TABS) === '1'
 
+/** Running as the installed app (Chrome/Edge "Install", iOS home screen):
+ *  window.open would leave the app for a browser tab, so new conversations
+ *  open inside it, in its own tab bar. */
+export const installedApp = () => ['standalone', 'window-controls-overlay', 'minimal-ui', 'fullscreen'].some(m => matchMedia(`(display-mode: ${m})`).matches)
+  || (navigator as unknown as { standalone?: boolean }).standalone === true
+
 /** Asks the framing page to open a conversation in a tab of its own. */
 export function openInParent(threadId: string, title: string) {
   window.parent.postMessage({ type: 'pocket-ai', open: { thread_id: threadId, url: `${location.origin}/t/${threadId}`, title } }, '*')
