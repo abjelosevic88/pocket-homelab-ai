@@ -55,6 +55,7 @@ type claudeSession struct {
 	lastUsage struct{ in, out, cached int64 }
 	cost      float64 // cumulative cost reported by this process
 	subs      []Subagent
+	shells    map[string]bool // background shell task ids still running
 }
 
 type claudePending struct {
@@ -962,7 +963,8 @@ func (s *claudeSession) handleControl(id string, raw json.RawMessage) {
 	s.sink.Request(r)
 }
 
-// handleTask keeps the list of background sub-agents up to date.
+// handleTask keeps the list of background sub-agents (and the count of
+// background shell commands) up to date.
 func (s *claudeSession) handleTask(m map[string]json.RawMessage) {
 	var ev struct {
 		Subtype     string `json:"subtype"`
@@ -979,8 +981,16 @@ func (s *claudeSession) handleTask(m map[string]json.RawMessage) {
 		} `json:"usage"`
 	}
 	raw, _ := json.Marshal(m)
-	if json.Unmarshal(raw, &ev) != nil || ev.TaskID == "" || ev.TaskType == "local_bash" {
-		return // a long shell command reports as a task too; it is not a sub-agent
+	if json.Unmarshal(raw, &ev) != nil || ev.TaskID == "" {
+		return
+	}
+	done := ev.Subtype == "task_notification"
+	switch ev.Patch.Status {
+	case "completed", "failed", "killed", "cancelled", "stopped":
+		done = true
+	}
+	if s.trackShell(ev.TaskID, ev.TaskType == "local_bash" && ev.Subtype == "task_started", done) || ev.TaskType == "local_bash" {
+		return // a shell command reports as a task too; it is not a sub-agent
 	}
 	s.mu.Lock()
 	idx := -1
@@ -988,11 +998,6 @@ func (s *claudeSession) handleTask(m map[string]json.RawMessage) {
 		if sa.ID == ev.TaskID {
 			idx = i
 		}
-	}
-	done := ev.Subtype == "task_notification"
-	switch ev.Patch.Status {
-	case "completed", "failed", "killed", "cancelled", "stopped":
-		done = true
 	}
 	switch {
 	case done:
@@ -1015,4 +1020,27 @@ func (s *claudeSession) handleTask(m map[string]json.RawMessage) {
 	list := append([]Subagent(nil), s.subs...)
 	s.mu.Unlock()
 	s.sink.Subagents(list)
+}
+
+// trackShell follows shell commands Claude Code runs as tasks (the ones put
+// in the background outlive the turn). It reports whether the event was
+// about a shell. Notifications carry no task type, so they match by id.
+func (s *claudeSession) trackShell(id string, started, done bool) bool {
+	s.mu.Lock()
+	switch {
+	case started && !done:
+		if s.shells == nil {
+			s.shells = map[string]bool{}
+		}
+		s.shells[id] = true
+	case done && s.shells[id]:
+		delete(s.shells, id)
+	default:
+		s.mu.Unlock()
+		return false
+	}
+	n := len(s.shells)
+	s.mu.Unlock()
+	s.sink.Shells(n)
+	return true
 }

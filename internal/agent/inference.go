@@ -63,6 +63,7 @@ func (*completionSink) Context(Context)              {}
 func (*completionSink) Limits(string, []Window)      {}
 func (*completionSink) TurnStarted()                 {}
 func (*completionSink) Subagents([]Subagent)         {}
+func (*completionSink) Shells(int)                   {}
 func (s *completionSink) Request(Request) {
 	s.finish(completion{err: errors.New("text generation requested an unavailable tool")})
 }
