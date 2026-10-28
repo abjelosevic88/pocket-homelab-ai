@@ -395,8 +395,8 @@ func (rt *engine) startRun(t *store.Thread) (*run, error) {
 		return nil, err
 	}
 	if h != nil {
-		if rt.s.jailed(rt.ctx, t.UserID) {
-			return nil, errForbidden("other servers are reached with the owner's ssh key, so only the owner can run agents there")
+		if !rt.s.mayUseHost(rt.ctx, t.UserID, h) {
+			return nil, errForbidden("that server belongs to someone else, so this conversation cannot run there")
 		}
 		return rt.startRemote(t, h)
 	}

@@ -10,9 +10,10 @@ package server
 //
 // Their agents, sign-ins and git run in a jail (agent/jail.go) that shows
 // them that folder and nothing else of the server's disk. They sign in to
-// Claude Code and Codex with their own subscription; the server's login,
-// remote servers (the owner's ssh key) and accounts in the owner's home
-// are the owner's alone.
+// Claude Code and Codex with their own subscription; the server's login
+// and accounts in the owner's home are the owner's alone. Other machines
+// are each person's own: theirs are reached with an ssh key in their
+// folder (hosts.go), the owner's with the server's.
 
 import (
 	"context"

@@ -1,7 +1,8 @@
 // Other machines agents run on, like Paseo's hosts: Pocket AI starts
-// claude / codex there over ssh with the server's own key, and the
-// conversation lives here as usual. Admins add them; everyone who may run
-// agents picks one next to the folder.
+// claude / codex there over ssh, and the conversation lives here as usual.
+// Each machine is its adder's: the owner's go over the server's own key
+// (admins manage them), everyone else's over a key of their own that
+// Pocket AI makes in their folder. Nobody sees anyone else's.
 import { useState } from 'react'
 import { api, V1 } from '../../lib/api'
 import { useApp } from '../../lib/app-context'
@@ -15,7 +16,10 @@ const provName = (p: string) => p === 'codex' ? 'Codex' : 'Claude Code'
 export function HostsSection() {
   const { user, hosts, reloadHosts } = useApp()
   const { toast } = useToast()
-  const isAdmin = user?.role === 'admin'
+  const own = useAsync(() => api.get<{ people?: { jailed?: boolean } }>(`${V1}/settings`).then(r => !!r.people?.jailed), [])
+  const jailed = !!own.data
+  // their own machines, or the server's for an admin
+  const isAdmin = jailed ? !!user?.can_run : user?.role === 'admin'
   const [edit, setEdit] = useState<Host | 'new' | null>(null)
   const [del, setDel] = useState<Host | null>(null)
   const [checking, setChecking] = useState<number | null>(null)
@@ -31,7 +35,9 @@ export function HostsSection() {
   }
 
   return (
-    <Section title="Servers" sub={<>Run agents on another machine, like Paseo does: pick it next to the folder when you start a thread. Pocket AI connects with ssh as <b>this server’s</b> user; the machine needs Claude Code and/or Codex installed and signed in.</>}
+    <Section title="Servers" sub={jailed
+      ? <>Run agents on a machine of yours: pick it next to the folder when you start a thread. Pocket AI connects with ssh using <b>your own key</b>, so only machines that let that key in are reachable; the machine needs Claude Code and/or Codex installed and signed in. Only you see your servers.</>
+      : <>Run agents on another machine, like Paseo does: pick it next to the folder when you start a thread. Pocket AI connects with ssh as <b>this server’s</b> user; the machine needs Claude Code and/or Codex installed and signed in.</>}
       actions={isAdmin && <button type="button" className="btn primary sm" onClick={() => setEdit('new')}><Icon name="plus" size={14} />Add server</button>}>
       {hosts.length === 0 ? (
         <p className="muted small" style={{ margin: 0 }}>Only this server so far.{isAdmin ? ' Add a machine you can reach with ssh (a tailnet name works).' : ''}</p>
@@ -78,7 +84,7 @@ export function HostsSection() {
           </div>
         </div>
       )}
-      {edit && <HostDialog host={edit === 'new' ? null : edit} onClose={() => setEdit(null)} onSaved={h => { setEdit(null); reloadHosts().catch(() => {}); toast(h.info.ok ? `${h.name} is ready` : `Saved — ${h.info.error || 'not ready yet'}`, h.info.ok ? undefined : 'err') }} />}
+      {edit && <HostDialog own={jailed} host={edit === 'new' ? null : edit} onClose={() => setEdit(null)} onSaved={h => { setEdit(null); reloadHosts().catch(() => {}); toast(h.info.ok ? `${h.name} is ready` : `Saved — ${h.info.error || 'not ready yet'}`, h.info.ok ? undefined : 'err') }} />}
       {del && <Confirm title={`Remove ${del.name}?`} confirmLabel="Remove"
         message={<>Agents running there are stopped. Its threads stay in your list but cannot continue until the server is added again. Nothing on the machine itself is touched.</>}
         onCancel={() => setDel(null)} onConfirm={async () => { const d = del; setDel(null); try { await api.del(`${V1}/hosts/${d.id}`); toast('Removed'); reloadHosts().catch(() => {}) } catch (e) { toast(errMsg(e), 'err') } }} />}
@@ -87,7 +93,7 @@ export function HostsSection() {
   )
 }
 
-function HostDialog({ host, onClose, onSaved }: { host: Host | null; onClose: () => void; onSaved: (h: Host) => void }) {
+function HostDialog({ own, host, onClose, onSaved }: { own: boolean; host: Host | null; onClose: () => void; onSaved: (h: Host) => void }) {
   const { toast } = useToast()
   const [name, setName] = useState(host?.name || '')
   const [target, setTarget] = useState(host?.target || '')
@@ -96,7 +102,7 @@ function HostDialog({ host, onClose, onSaved }: { host: Host | null; onClose: ()
   const [codexBin, setCodexBin] = useState(host?.codex_bin || '')
   const [more, setMore] = useState(!!(host?.claude_bin || host?.codex_bin || host?.port))
   const [busy, setBusy] = useState(false)
-  const key = useAsync(() => api.get<{ keys: { file: string; key: string }[]; user: string }>(`${V1}/hosts/key`), [])
+  const key = useAsync(() => api.get<{ keys: { file: string; key: string }[]; user: string; own?: boolean }>(`${V1}/hosts/key`), [])
   const save = async () => {
     setBusy(true)
     try {
@@ -110,7 +116,9 @@ function HostDialog({ host, onClose, onSaved }: { host: Host | null; onClose: ()
       <button type="button" className="btn primary" disabled={busy || !target.trim()} onClick={save}>{busy ? <><Spinner />Connecting…</> : host ? 'Save and check' : 'Add and check'}</button>
     </>}>
       <div className="stack">
-        <Field label="ssh destination" help={<>As you would type it after <code>ssh</code> on this server: <code>me@box.tailnet.ts.net</code>, or a Host name from its <code>~/.ssh/config</code>.</>}>
+        <Field label="ssh destination" help={own
+          ? <>The account and machine, as you would type them after <code>ssh</code>: <code>me@box.example.com</code> or <code>me@203.0.113.7</code>.</>
+          : <>As you would type it after <code>ssh</code> on this server: <code>me@box.tailnet.ts.net</code>, or a Host name from its <code>~/.ssh/config</code>.</>}>
           <input value={target} onChange={e => setTarget(e.target.value)} autoFocus={!host} placeholder="me@build-box" spellCheck={false} autoCapitalize="off" autoComplete="off" className="mono" />
         </Field>
         <Field label="Name" help="Shown in the picker, e.g. “Mac mini” or “Build box”.">
@@ -130,8 +138,11 @@ function HostDialog({ host, onClose, onSaved }: { host: Host | null; onClose: ()
         <div className="callout info host-key">
           <Icon name="key" size={15} />
           <div className="stack" style={{ gap: 6, minWidth: 0, flex: 1 }}>
-            <span>The machine has to let this server in without a password: add this line to <code>~/.ssh/authorized_keys</code> of the account there{key.data?.user ? <> (it is <b>{key.data.user}</b>’s key)</> : null}.</span>
+            {own || key.data?.own
+              ? <span>The machine has to let you in without a password: add this line to <code>~/.ssh/authorized_keys</code> of your account there. It is <b>your own key</b>, made for you by Pocket AI; only your agents use it.</span>
+              : <span>The machine has to let this server in without a password: add this line to <code>~/.ssh/authorized_keys</code> of the account there{key.data?.user ? <> (it is <b>{key.data.user}</b>’s key)</> : null}.</span>}
             {key.data?.keys?.length ? key.data.keys.slice(0, 1).map(k => <CopyField key={k.file} value={k.key} label={k.file} />)
+              : key.error ? <span className="danger-text small">{key.error}</span>
               : key.data ? <span className="muted small">This server has no ssh key yet: run <code>ssh-keygen -t ed25519</code> on it as the user Pocket AI runs as.</span>
               : <span className="muted small"><Spinner /> Reading the key…</span>}
           </div>

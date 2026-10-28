@@ -131,7 +131,7 @@ func (s *Server) handleLinkAgentOptions(w http.ResponseWriter, r *http.Request) 
 		Home            string          `json:"home"`
 		Roots           []string        `json:"roots"`
 	}{Providers: []linkProvider{}, Accounts: []linkAccount{}, Workspaces: []linkWorkspace{}, Hosts: []linkHost{}, DefaultProvider: st.DefaultProvider, Home: s.homeOf(ctx, u), Roots: s.pickerRoots(ctx, u)}
-	if hosts, err := s.store.ListHosts(ctx); err == nil && !s.jailed(ctx, u.ID) {
+	if hosts, err := s.hostsFor(ctx, u); err == nil {
 		for _, h := range hosts {
 			out.Hosts = append(out.Hosts, linkHost{ID: h.ID, Name: h.Name, OK: h.Info.OK})
 		}

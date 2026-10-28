@@ -83,7 +83,7 @@ sys.exit(3)
 	if len(list) != 0 {
 		t.Fatalf("member sees the owner's machines: %+v", list)
 	}
-	if code, _ := other.call("POST", base, nil); code != 403 {
+	if code, _ := other.call("POST", base, nil); code != 400 {
 		t.Fatalf("member started a sign-in there: %d", code)
 	}
 }
