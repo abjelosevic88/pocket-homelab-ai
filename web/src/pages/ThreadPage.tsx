@@ -252,7 +252,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const canSend = canRun && access !== 'view'
   const sharedOwner = t.shares?.length ? { id: t.owner_id, name: t.owner_name || 'Owner' } : undefined
   const running = t.status === 'running'
-  const rewindDisabled = rewinding || running || t.status === 'waiting' || !!t.external || t.queued > 0 || t.pending > 0 || !!t.subagents?.length
+  const rewindDisabled = rewinding || running || t.status === 'waiting' || !!t.external || t.queued > 0 || t.pending > 0 || !!t.subagents?.length || !!t.background?.length
   const lastItem = visible[visible.length - 1]
   // the text the agent is writing right now gets a blinking cursor
   const streamingKey = running && (lastItem?.kind === 'assistant' || lastItem?.kind === 'thinking') ? lastItem.key : undefined
@@ -298,7 +298,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
               {askSource(t.source_ref) && <a className="ask-source" href={t.source_ref} target="_blank" rel="noopener noreferrer" title="Open the item this chat started from">Source ↗</a>}</span>
               : <span className="ellipsis mono" title={t.cwd}>{shortPath(t.cwd)}</span>}
             {canRun && t.source !== 'ask' && t.cwd && !t.worktree_id && <BranchButton cwd={t.cwd} host={t.host_id} className="btn ghost" refreshKey={`${id}:${t.status}`}
-              lockedReason={running || t.status === 'waiting' || t.external || t.subagents?.length ? 'The agent is working in this folder — switch once it is done.' : undefined} />}
+              lockedReason={running || t.status === 'waiting' || t.external || t.subagents?.length || t.background?.length ? 'The agent is working in this folder — switch once it is done.' : undefined} />}
             {t.usage?.cost_usd > 0 && <span className="tnum" title="Cost so far">{fmtCost(t.usage.cost_usd)}</span>}
             <ContextMeter used={t.usage?.context_tokens || 0} window={t.usage?.context_window || 0} />
           </div>
@@ -331,7 +331,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
       <div className="thread-bottom">
         {newBelow && !atBottom && <button type="button" className="new-below" onClick={() => { toBottom(true); setNewBelow(false) }}><Icon name="arrow-down" size={13} />New messages</button>}
         <div className="thread-bottom-inner">
-          {(running || t.status === 'waiting' || !!t.subagents?.length) && items ? <RunBar t={t} items={items} />
+          {(running || t.status === 'waiting' || !!t.subagents?.length || !!t.background?.length) && items ? <RunBar t={t} items={items} />
             : t.provider === 'claude' && t.provider_session_id && <div className="sub-dock"><SubagentsChip t={t} /></div>}
           <QueueStrip threadId={id} queued={queuedItems} agent={t.provider === 'codex' ? 'Codex' : 'Claude'} onClearAll={canSend ? clearQueue : undefined} onEdit={canSend ? async it => {
             const draft = await api.post<{ text: string; uploads: Upload[] }>(`${V1}/threads/${id}/queue/${encodeURIComponent(it.key)}/edit`)

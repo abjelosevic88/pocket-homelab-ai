@@ -75,18 +75,18 @@ type run struct {
 	turnCount int
 	lastText  string // last assistant text of the current turn
 	subs      []agent.Subagent
-	shells    int // background shell commands still running
+	tasks     []agent.Task // background shell commands and monitors still running
 }
 
-// shellHold caps how long background shells keep an otherwise quiet agent
+// taskHold caps how long background tasks keep an otherwise quiet agent
 // alive, in case the CLI never reports one as finished.
-const shellHold = 24 * time.Hour
+const taskHold = 24 * time.Hour
 
 // working: a turn, queued messages or background work the process would take
-// down with it (sub-agents, shell commands). Callers hold r.mu.
+// down with it (sub-agents, shell commands, monitors). Callers hold r.mu.
 func (r *run) working() bool {
 	return r.running || len(r.queue) > 0 || len(r.subs) > 0 ||
-		(r.shells > 0 && time.Since(r.lastUsed) < shellHold)
+		(len(r.tasks) > 0 && time.Since(r.lastUsed) < taskHold)
 }
 
 type queued struct {
@@ -142,6 +142,9 @@ func (rt *engine) decorate(t *store.Thread) *store.Thread {
 		if len(r.subs) > 0 {
 			t.Subagents = append([]agent.Subagent(nil), r.subs...)
 			ownSubs = true
+		}
+		if len(r.tasks) > 0 {
+			t.Background = append([]agent.Task(nil), r.tasks...)
 		}
 		r.mu.Unlock()
 	}
@@ -1501,15 +1504,18 @@ func (k *runSink) Subagents(list []agent.Subagent) {
 	}
 }
 
-func (k *runSink) Shells(n int) {
+func (k *runSink) Tasks(list []agent.Task) {
 	if !k.beginEvent() {
 		return
 	}
 	defer k.r.eventMu.Unlock()
 	k.r.mu.Lock()
-	k.r.shells = n
+	k.r.tasks = list
 	k.r.lastUsed = time.Now() // the idle clock starts when the last one ends
 	k.r.mu.Unlock()
+	if t, err := k.rt.s.store.GetThreadAny(k.rt.ctx, k.r.threadID); err == nil {
+		k.rt.publishThread(t)
+	}
 }
 
 func (k *runSink) TurnStarted() {

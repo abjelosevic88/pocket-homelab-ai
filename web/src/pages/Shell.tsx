@@ -66,8 +66,8 @@ function ShellInner() {
   // embedded: the framing app hears the open thread's state as it changes
   const openId = loc.pathname.match(/^\/t\/([^/]+)/)?.[1]
   const open = openId ? (threads || []).find(t => t.id === openId) : undefined
-  // background sub-agents still at work after the turn: still working, for the app too
-  const openState = !open ? '' : open.status === 'waiting' || open.pending > 0 ? 'waiting' : open.subagents?.length ? 'running' : open.status
+  // background sub-agents or commands still at work after the turn: still working, for the app too
+  const openState = !open ? '' : open.status === 'waiting' || open.pending > 0 ? 'waiting' : open.subagents?.length || open.background?.length ? 'running' : open.status
   useEffect(() => tellParent(loc.pathname, openState), [loc.pathname, openState])
   // the framing page (Pocket Projects' panel tab menu) renames the conversation shown here
   useEffect(() => {

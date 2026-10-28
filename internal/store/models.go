@@ -102,6 +102,9 @@ type Thread struct {
 	External bool `json:"external"`
 	// Subagents at work right now (background sub-agents of a live session).
 	Subagents any `json:"subagents,omitempty"`
+	// Background work other than sub-agents (shell commands, monitors) a live
+	// session is running, even after its turn is over.
+	Background any `json:"background,omitempty"`
 	// Sharing: who else may open it, and whose it is.
 	Shares    []ThreadShare `json:"shares,omitempty"`
 	OwnerName string        `json:"owner_name,omitempty"`

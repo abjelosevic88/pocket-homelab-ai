@@ -55,7 +55,7 @@ type claudeSession struct {
 	lastUsage struct{ in, out, cached int64 }
 	cost      float64 // cumulative cost reported by this process
 	subs      []Subagent
-	shells    map[string]bool // background shell task ids still running
+	tasks     []Task // background shell commands and monitors still running
 }
 
 type claudePending struct {
@@ -383,6 +383,8 @@ func (s *claudeSession) handle(m map[string]json.RawMessage) {
 			s.notice("info", "Context compacted — older messages were summarised.")
 		case "task_started", "task_progress", "task_updated", "task_notification":
 			s.handleTask(m)
+		case "background_tasks_changed":
+			s.handleBackground(m)
 		}
 	case "stream_event":
 		if p := m["parent_tool_use_id"]; len(p) > 0 && string(p) != "null" {
@@ -989,8 +991,9 @@ func (s *claudeSession) handleTask(m map[string]json.RawMessage) {
 	case "completed", "failed", "killed", "cancelled", "stopped":
 		done = true
 	}
-	if s.trackShell(ev.TaskID, ev.TaskType == "local_bash" && ev.Subtype == "task_started", done) || ev.TaskType == "local_bash" {
-		return // a shell command reports as a task too; it is not a sub-agent
+	kind := taskKind(ev.TaskType)
+	if s.trackTask(ev.TaskID, kind, ev.Description, ev.Subtype == "task_started" && kind != "", done) || kind != "" {
+		return // shell commands and monitors report as tasks too; they are not sub-agents
 	}
 	s.mu.Lock()
 	idx := -1
@@ -1022,25 +1025,86 @@ func (s *claudeSession) handleTask(m map[string]json.RawMessage) {
 	s.sink.Subagents(list)
 }
 
-// trackShell follows shell commands Claude Code runs as tasks (the ones put
-// in the background outlive the turn). It reports whether the event was
-// about a shell. Notifications carry no task type, so they match by id.
-func (s *claudeSession) trackShell(id string, started, done bool) bool {
-	s.mu.Lock()
+// taskKind tells background work that is not a sub-agent ("" = a sub-agent).
+func taskKind(taskType string) string {
 	switch {
-	case started && !done:
-		if s.shells == nil {
-			s.shells = map[string]bool{}
+	case taskType == "local_bash":
+		return "shell"
+	case strings.HasPrefix(taskType, "monitor"):
+		return "monitor"
+	}
+	return ""
+}
+
+// trackTask follows shell commands and monitors Claude Code runs as tasks
+// (the ones put in the background outlive the turn). It reports whether the
+// event was about one. Notifications carry no task type, so they match by id.
+func (s *claudeSession) trackTask(id, kind, desc string, started, done bool) bool {
+	s.mu.Lock()
+	idx := -1
+	for i, t := range s.tasks {
+		if t.ID == id {
+			idx = i
 		}
-		s.shells[id] = true
-	case done && s.shells[id]:
-		delete(s.shells, id)
+	}
+	switch {
+	case started && !done && idx < 0:
+		s.tasks = append(s.tasks, Task{ID: id, Kind: kind, Description: desc, StartedAt: time.Now().UTC().Format(time.RFC3339)})
+	case done && idx >= 0:
+		s.tasks = append(s.tasks[:idx], s.tasks[idx+1:]...)
+	case idx >= 0 || started:
+		s.mu.Unlock()
+		return true // nothing changed
 	default:
 		s.mu.Unlock()
 		return false
 	}
-	n := len(s.shells)
+	list := append([]Task(nil), s.tasks...)
 	s.mu.Unlock()
-	s.sink.Shells(n)
+	s.sink.Tasks(list)
 	return true
+}
+
+// handleBackground takes the CLI's own list of background work as the truth
+// for shells and monitors: one it no longer lists has ended, even if its
+// notification never came.
+func (s *claudeSession) handleBackground(m map[string]json.RawMessage) {
+	var ev struct {
+		Tasks []struct {
+			TaskID      string `json:"task_id"`
+			TaskType    string `json:"task_type"`
+			Description string `json:"description"`
+		} `json:"tasks"`
+	}
+	raw, _ := json.Marshal(m)
+	if json.Unmarshal(raw, &ev) != nil {
+		return
+	}
+	s.mu.Lock()
+	next := []Task{}
+	for _, bt := range ev.Tasks {
+		kind := taskKind(bt.TaskType)
+		if kind == "" || bt.TaskID == "" {
+			continue
+		}
+		t := Task{ID: bt.TaskID, Kind: kind, Description: bt.Description, StartedAt: time.Now().UTC().Format(time.RFC3339)}
+		for _, old := range s.tasks {
+			if old.ID == t.ID {
+				t.StartedAt = old.StartedAt
+				if t.Description == "" {
+					t.Description = old.Description
+				}
+			}
+		}
+		next = append(next, t)
+	}
+	same := len(next) == len(s.tasks)
+	for i := 0; same && i < len(next); i++ {
+		same = next[i] == s.tasks[i]
+	}
+	s.tasks = next
+	s.mu.Unlock()
+	if !same {
+		s.sink.Tasks(append([]Task(nil), next...))
+	}
 }

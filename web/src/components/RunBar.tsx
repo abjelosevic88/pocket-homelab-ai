@@ -1,6 +1,9 @@
 // The bar under a working thread: who is working, for how long, sub-agents
-// on the go, and a fork button that opens the fork in a new tab.
+// and background commands on the go, and a fork button that opens the fork in
+// a new tab. Once the turn is over and only background work is left, it
+// switches to the calmer background look.
 import { api, V1 } from '../lib/api'
+import { BackgroundChip, BgMark, backgroundLabel, backgroundSince, backgroundTitle } from './Background'
 import { useApp } from '../lib/app-context'
 import { openInParent, parentTabs } from '../lib/embed'
 import type { Item, Thread } from '../lib/types'
@@ -40,16 +43,23 @@ export function RunBar({ t, items }: { t: Thread; items: Item[] }) {
   const tools = items.filter(it => it.kind === 'tool' && it.tool?.status === 'running' && it.tool.kind !== 'task')
   const waiting = t.status === 'waiting' || t.pending > 0
   const turnOver = t.status !== 'running' && !waiting
-  const since = t.prompt_at || t.activity_at
+  const since = turnOver ? backgroundSince(t) || t.activity_at : t.prompt_at || t.activity_at
   const origin = running.find(r => r.session_id === t.provider_session_id)?.origin || ''
-  const what = waiting ? 'Waiting for you' : turnOver ? 'Sub-agents working' : t.external ? `Working ${WHERE[origin] || 'elsewhere'}` : 'Working…'
+  const what = waiting ? 'Waiting for you' : t.external ? `Working ${WHERE[origin] || 'elsewhere'}` : 'Working…'
+  const tasks = t.background?.length || 0
 
   return (
-    <div className="run-bar">
+    <div className={`run-bar ${turnOver ? 'bg' : ''}`}>
       <div className="run-bar-row">
-        <RunDots waiting={waiting} size={14} />
-        <span className="run-bar-what ellipsis" title={!waiting && !turnOver ? tools[0]?.tool?.title : undefined}>{what}</span>
+        {turnOver ? <>
+          <BgMark size={14} />
+          <span className="run-bar-what ellipsis" title={backgroundTitle(t)}><span className="bg-word">In the background</span>{tasks < 2 && <> · {backgroundLabel(t)}</>}</span>
+        </> : <>
+          <RunDots waiting={waiting} size={14} />
+          <span className="run-bar-what ellipsis" title={!waiting ? tools[0]?.tool?.title : undefined}>{what}</span>
+        </>}
         <SubagentsChip t={t} />
+        {(!turnOver || tasks > 1) && <BackgroundChip t={t} label={turnOver ? backgroundLabel(t) : undefined} />}
         <span className="grow" />
         {t.provider_session_id && <button type="button" className="btn ghost icon-only xs" onClick={() => fork()} title="Fork into a new tab" aria-label="Fork into a new tab"><Icon name="fork" size={15} /></button>}
         <span className="run-time tnum" title={since ? `Since ${new Date(since).toLocaleTimeString()}` : ''}>{elapsed(since, now)}</span>

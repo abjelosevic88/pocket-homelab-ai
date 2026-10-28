@@ -3,6 +3,8 @@ package server
 import (
 	"testing"
 	"time"
+
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/agent"
 )
 
 // A background shell dies with the agent, so an agent whose turn is over but
@@ -11,8 +13,8 @@ func TestIdleSkipsRunsWithBackgroundShells(t *testing.T) {
 	rt := &engine{runs: map[string]*run{}}
 	old := time.Now().Add(-time.Hour)
 	rt.runs["quiet"] = &run{threadID: "quiet", lastUsed: old, pending: map[string]bool{}}
-	rt.runs["building"] = &run{threadID: "building", lastUsed: old, shells: 1, pending: map[string]bool{}}
-	rt.runs["stuck"] = &run{threadID: "stuck", lastUsed: time.Now().Add(-shellHold - time.Minute), shells: 1, pending: map[string]bool{}}
+	rt.runs["building"] = &run{threadID: "building", lastUsed: old, tasks: []agent.Task{{ID: "b1", Kind: "shell"}}, pending: map[string]bool{}}
+	rt.runs["stuck"] = &run{threadID: "stuck", lastUsed: time.Now().Add(-taskHold - time.Minute), tasks: []agent.Task{{ID: "b1", Kind: "shell"}}, pending: map[string]bool{}}
 
 	got := rt.idle(20 * time.Minute)
 	if len(got) != 2 || got[0] != "stuck" || got[1] != "quiet" {
