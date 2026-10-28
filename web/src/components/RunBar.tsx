@@ -1,9 +1,9 @@
 // The bar under a working thread: who is working, for how long, sub-agents
-// and background commands on the go, and a fork button that opens the fork in
+// on the go, and a fork button that opens the fork in
 // a new tab. Once the turn is over and only background work is left, it
 // switches to the calmer background look.
 import { api, V1 } from '../lib/api'
-import { BackgroundChip, BgMark, backgroundLabel, backgroundSince, backgroundTitle } from './Background'
+import { BgMark, backgroundLabel, backgroundSince, backgroundTitle } from './Background'
 import { useApp } from '../lib/app-context'
 import { openInParent, parentTabs } from '../lib/embed'
 import type { Item, Thread } from '../lib/types'
@@ -59,7 +59,6 @@ export function RunBar({ t, items }: { t: Thread; items: Item[] }) {
           <span className="run-bar-what ellipsis" title={!waiting ? tools[0]?.tool?.title : undefined}>{what}</span>
         </>}
         <SubagentsChip t={t} />
-        {(!turnOver || tasks > 1) && <BackgroundChip t={t} label={turnOver ? backgroundLabel(t) : undefined} />}
         <span className="grow" />
         {t.provider_session_id && <button type="button" className="btn ghost icon-only xs" onClick={() => fork()} title="Fork into a new tab" aria-label="Fork into a new tab"><Icon name="fork" size={15} /></button>}
         <span className="run-time tnum" title={since ? `Since ${new Date(since).toLocaleTimeString()}` : ''}>{elapsed(since, now)}</span>
