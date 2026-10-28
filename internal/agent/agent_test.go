@@ -21,6 +21,7 @@ type rec struct {
 	reqs    []Request
 	turns   []TurnInfo
 	exited  chan error
+	shells  []int
 }
 
 func newRec() *rec { return &rec{items: map[string]Item{}, exited: make(chan error, 1)} }
@@ -40,6 +41,7 @@ func (r *rec) Limits(string, []Window)       {}
 func (r *rec) Request(q Request)             { r.mu.Lock(); r.reqs = append(r.reqs, q); r.mu.Unlock() }
 func (r *rec) TurnStarted()                  {}
 func (r *rec) Subagents([]Subagent)          {}
+func (r *rec) Shells(n int)                  { r.mu.Lock(); r.shells = append(r.shells, n); r.mu.Unlock() }
 func (r *rec) TurnDone(t TurnInfo)           { r.mu.Lock(); r.turns = append(r.turns, t); r.mu.Unlock() }
 func (r *rec) Exited(err error)              { r.exited <- err }
 
@@ -387,5 +389,39 @@ func TestClaudeSelfStartedTurn(t *testing.T) {
 	<-r.exited
 	if tt := r.turns[1]; tt.DurationMS != 4000 || tt.CostUSD < 0.0199 || tt.CostUSD > 0.0201 { // cost is this turn's share of the running total
 		t.Fatalf("self-started turn: %+v", r.turns[1])
+	}
+}
+
+// A shell command put in the background reports as a task; its end comes as a
+// notification without a task type. Both must reach the sink as a count.
+const fakeClaudeBackgroundShell = `#!/bin/sh
+read init
+read msg
+printf '%s\n' '{"type":"system","subtype":"init","session_id":"sess-3","cwd":"/tmp"}'
+printf '%s\n' '{"type":"system","subtype":"task_started","task_id":"b1","task_type":"local_bash","description":"build the ISO","is_backgrounded":true}'
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"duration_ms":900,"total_cost_usd":0.01,"usage":{"input_tokens":1,"output_tokens":1}}'
+printf '%s\n' '{"type":"system","subtype":"task_notification","task_id":"b1","status":"completed"}'
+read more
+`
+
+func TestClaudeBackgroundShellsCounted(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "claude")
+	if err := os.WriteFile(bin, []byte(fakeClaudeBackgroundShell), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := newRec()
+	s, err := StartClaude(context.Background(), Options{Bin: bin, Cwd: dir, Mode: "default"}, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Send(Input{Text: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	r.wait(t, func() bool { return len(r.shells) == 2 })
+	_ = s.Close()
+	<-r.exited
+	if r.shells[0] != 1 || r.shells[1] != 0 {
+		t.Fatalf("shell counts: %v", r.shells)
 	}
 }

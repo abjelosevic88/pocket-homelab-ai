@@ -175,6 +175,9 @@ type Sink interface {
 	// Subagents is the full list of sub-agents working right now (Claude
 	// runs them in the background; they can outlive the turn that started them).
 	Subagents(list []Subagent)
+	// Shells is how many background shell commands are still running. They
+	// die with the process, so the thread must not be stopped while n > 0.
+	Shells(n int)
 	Exited(err error)
 }
 
