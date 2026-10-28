@@ -300,6 +300,12 @@ func parseClaudeStatus(out []byte, err error) acctStatus {
 	if plan == "" && r.AuthMethod != "claude.ai" {
 		plan = r.AuthMethod
 	}
+	if plan == "oauth_token" {
+		plan = "token" // CLAUDE_CODE_OAUTH_TOKEN (claude setup-token)
+	}
+	if !r.LoggedIn {
+		plan = ""
+	}
 	st := acctStatus{SignedIn: r.LoggedIn, Email: r.Email, Plan: plan, Org: r.OrgName}
 	if r.LoggedIn {
 		st.ident = loginIdent("claude", r.Email, r.OrgID)
