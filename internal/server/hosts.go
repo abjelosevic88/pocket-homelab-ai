@@ -201,10 +201,12 @@ func (s *Server) handleCheckHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.Info = s.checkHost(r.Context(), h)
+	s.dropHostStatus(h.ID) // Accounts asks the machine again too (a CLI may be new there)
 	if err := s.store.UpdateHost(r.Context(), h); err != nil {
 		s.fail(w, err, "host")
 		return
 	}
+	s.rt.publishAccounts()
 	writeJSON(w, http.StatusOK, h)
 }
 
