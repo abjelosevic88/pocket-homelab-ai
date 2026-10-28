@@ -325,8 +325,8 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
           )}
 
           <div className="home-mode" role="group" aria-label="Assistant mode">
-            <button type="button" aria-pressed={mode === 'apps'} aria-disabled={!coreOn || undefined} title={coreOn ? undefined : 'Needs Pocket Core'} onClick={() => coreOn && setMode('apps')}><Icon name="sparkles" size={15} />Ask my apps</button>
             <button type="button" aria-pressed={mode === 'server'} onClick={() => setMode('server')}><Icon name="terminal" size={15} />Work on the server</button>
+            <button type="button" aria-pressed={mode === 'apps'} aria-disabled={!coreOn || undefined} title={coreOn ? undefined : 'Needs Pocket Core'} onClick={() => coreOn && setMode('apps')}><Icon name="sparkles" size={15} />Ask my apps</button>
           </div>
           {!coreOn && <p className="core-hint">Ask my apps needs Pocket Core. Pocket Core connects your Pocket apps to each other and to your services: one sign-in for everyone, each person's own accounts, nothing to copy or paste. Set CORE_URL to connect this app. <a href="https://github.com/abjelosevic88/pocket-homelab-core" target="_blank" rel="noreferrer">Learn more</a></p>}
           {mode === 'apps' ? <>
