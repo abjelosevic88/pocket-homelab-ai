@@ -19,9 +19,14 @@ import (
 )
 
 // Other machines agents run on (like Paseo's hosts): the CLIs are started
-// there over ssh with this server's own keys, the conversation is driven and
-// stored here. The remote needs claude and/or codex installed and signed in;
-// Pocket AI only needs to be able to `ssh <target>` without a password.
+// there over ssh, the conversation is driven and stored here. The remote
+// needs claude and/or codex installed and signed in; Pocket AI only needs to
+// be able to `ssh <target>` without a password.
+//
+// A machine belongs to whoever added it. The owner's are reached with this
+// server's own keys (~/.ssh); everyone else's with a key of their own that
+// lives in their folder (home/.ssh, made by the server), ssh running in
+// their jail. Nobody sees or uses another person's machines.
 
 func (s *Server) hostRoutes(r chi.Router) {
 	r.Get("/hosts", s.handleListHosts)
@@ -35,19 +40,87 @@ func (s *Server) hostRoutes(r chi.Router) {
 }
 
 func remoteOf(h *store.Host) *agent.Remote {
-	return &agent.Remote{Target: h.Target, Port: h.Port}
+	return &agent.Remote{Target: h.Target, Port: h.Port, Home: h.Home}
 }
 
 // host loads a host for running or browsing; id 0 is this server (nil).
+// Callers check who may use it (checkHostUse, mayUseHost).
 func (s *Server) host(ctx context.Context, id int64) (*store.Host, error) {
 	if id == 0 {
 		return nil, nil
 	}
 	h, err := s.store.GetHost(ctx, id)
 	if err != nil {
-		return nil, badRequest("that server is not set up in Pocket AI (any more)")
+		return nil, errNoHost
 	}
+	s.fillHost(ctx, h)
 	return h, nil
+}
+
+var errNoHost = badRequest("that server is not set up in Pocket AI (any more)")
+
+// hostUser is the person a machine belongs to.
+func (s *Server) hostUser(ctx context.Context, h *store.Host) int64 {
+	if h.UserID > 0 {
+		return h.UserID
+	}
+	return s.store.OwnerID(ctx)
+}
+
+// fillHost sets how the machine is reached: from its person's own folder,
+// or with the server's keys.
+func (s *Server) fillHost(ctx context.Context, h *store.Host) {
+	if uid := s.hostUser(ctx, h); s.jailed(ctx, uid) {
+		h.Home = s.personHome(uid)
+	}
+}
+
+// mayUseHost: a person's own machines. Without folders of their own
+// (PEOPLE_DIR off) everyone shares the server's, as before.
+func (s *Server) mayUseHost(ctx context.Context, uid int64, h *store.Host) bool {
+	owner := s.hostUser(ctx, h)
+	return owner == uid || (!s.jailed(ctx, uid) && !s.jailed(ctx, owner))
+}
+
+// hostsFor lists the machines a person may use.
+func (s *Server) hostsFor(ctx context.Context, u *store.User) ([]*store.Host, error) {
+	list, err := s.store.ListHosts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := []*store.Host{}
+	if u == nil || !u.MayRun() {
+		return out, nil
+	}
+	for _, h := range list {
+		if s.mayUseHost(ctx, u.ID, h) {
+			s.fillHost(ctx, h)
+			out = append(out, h)
+		}
+	}
+	return out, nil
+}
+
+// manageHost loads a machine the person may change: their own, or for
+// the server's machines an admin.
+func (s *Server) manageHost(w http.ResponseWriter, r *http.Request) *store.Host {
+	u := userFrom(r.Context())
+	if !s.jailed(r.Context(), u.ID) && !s.requireAdmin(w, r) {
+		return nil
+	}
+	if !s.requireRun(w, r) {
+		return nil
+	}
+	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	h, err := s.host(r.Context(), id)
+	if err == nil && (h == nil || !s.mayUseHost(r.Context(), u.ID, h)) {
+		err = errNoHost
+	}
+	if err != nil {
+		s.fail(w, err, "host")
+		return nil
+	}
+	return h
 }
 
 // hostBin is the CLI to start on a host.
@@ -107,12 +180,7 @@ func (in hostIn) apply(h *store.Host) error {
 }
 
 func (s *Server) handleListHosts(w http.ResponseWriter, r *http.Request) {
-	u := userFrom(r.Context())
-	if !u.MayRun() || (s.jailed(r.Context(), u.ID) && u.Role != "admin") {
-		writeJSON(w, http.StatusOK, []*store.Host{}) // the owner's ssh key: theirs alone (people.go)
-		return
-	}
-	list, err := s.store.ListHosts(r.Context())
+	list, err := s.hostsFor(r.Context(), userFrom(r.Context()))
 	if err != nil {
 		s.fail(w, err, "hosts")
 		return
@@ -121,7 +189,9 @@ func (s *Server) handleListHosts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateHost(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	u := userFrom(r.Context())
+	jailed := s.jailed(r.Context(), u.ID)
+	if (!jailed && !s.requireAdmin(w, r)) || !s.requireRun(w, r) {
 		return
 	}
 	var in hostIn
@@ -134,6 +204,15 @@ func (s *Server) handleCreateHost(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "host")
 		return
 	}
+	if jailed {
+		// theirs: reached with their own key, which has to exist first
+		h.UserID = u.ID
+		if _, err := s.personKey(r.Context(), u); err != nil {
+			s.fail(w, err, "host")
+			return
+		}
+	}
+	s.fillHost(r.Context(), h)
 	h.Info = s.checkHost(r.Context(), h)
 	if err := s.store.CreateHost(r.Context(), h); err != nil {
 		s.fail(w, err, "host")
@@ -144,13 +223,8 @@ func (s *Server) handleCreateHost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	h, err := s.store.GetHost(r.Context(), id)
-	if err != nil {
-		s.fail(w, err, "host")
+	h := s.manageHost(w, r)
+	if h == nil {
 		return
 	}
 	var in hostIn
@@ -176,10 +250,11 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteHost(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	h := s.manageHost(w, r)
+	if h == nil {
 		return
 	}
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	id := h.ID
 	s.rt.stopHost(id)
 	s.forgetHostLogins(id)
 	if err := s.store.DeleteHost(r.Context(), id); err != nil {
@@ -195,7 +270,10 @@ func (s *Server) handleCheckHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	h, err := s.store.GetHost(r.Context(), id)
+	h, err := s.checkHostUse(r.Context(), userFrom(r.Context()), id)
+	if err == nil && h == nil {
+		err = errNoHost
+	}
 	if err != nil {
 		s.fail(w, err, "host")
 		return
@@ -210,9 +288,23 @@ func (s *Server) handleCheckHost(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h)
 }
 
-// handleHostKey shows this server's public ssh keys: one goes into
-// ~/.ssh/authorized_keys on the other machine.
+// handleHostKey shows the public ssh key(s) a person's machines are
+// reached with: one goes into ~/.ssh/authorized_keys on the other machine.
+// The owner's are this server's own; everyone else gets one of their own.
 func (s *Server) handleHostKey(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r.Context())
+	if s.jailed(r.Context(), u.ID) {
+		if !s.requireRun(w, r) {
+			return
+		}
+		key, err := s.personKey(r.Context(), u)
+		if err != nil {
+			s.fail(w, err, "key")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"keys": []map[string]string{{"file": "your own key", "key": key}}, "user": "", "own": true})
+		return
+	}
 	if !s.requireAdmin(w, r) {
 		return
 	}
@@ -253,6 +345,24 @@ probe() {
 probe claude "$1"
 probe codex "$2"
 `
+
+// personKey is the public half of a person's own ssh key, made the first
+// time (named after them and this box, so it is recognisable in
+// authorized_keys).
+func (s *Server) personKey(ctx context.Context, u *store.User) (string, error) {
+	if err := s.ensurePerson(u.ID); err != nil {
+		return "", err
+	}
+	name := strings.ToLower(keyNameRe.ReplaceAllString(firstNonEmpty(u.Name, "person"), "-"))
+	name = strings.Trim(name, "-")
+	if name == "" {
+		name = "person-" + strconv.FormatInt(u.ID, 10)
+	}
+	host, _ := os.Hostname()
+	return agent.SSHKey(s.personHome(u.ID), "pocket-ai-"+name+"@"+firstNonEmpty(host, "server"))
+}
+
+var keyNameRe = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 
 // checkHost connects and looks at the CLIs.
 func (s *Server) checkHost(ctx context.Context, h *store.Host) store.HostInfo {
@@ -301,9 +411,9 @@ func sshError(stderr string, err error) string {
 	msg := oneLine(firstNonEmpty(stderr, err.Error()), 300)
 	switch {
 	case strings.Contains(stderr, "Permission denied"):
-		return "ssh was refused (" + msg + "). Add this server's public key to ~/.ssh/authorized_keys there."
+		return "ssh was refused (" + msg + "). Add the key shown under Servers (Key) to ~/.ssh/authorized_keys there."
 	case strings.Contains(stderr, "Host key verification failed"), strings.Contains(stderr, "REMOTE HOST IDENTIFICATION HAS CHANGED"):
-		return "the machine's host key changed (" + msg + "). If that is expected, remove the old line from ~/.ssh/known_hosts on this server."
+		return "the machine's host key changed (" + msg + "). If that is expected, remove the old line from known_hosts (~/.ssh on this server, or .ssh in your own folder)."
 	case strings.Contains(stderr, "Could not resolve"), strings.Contains(stderr, "timed out"), strings.Contains(stderr, "No route"), strings.Contains(stderr, "Connection refused"):
 		return "could not reach it: " + msg
 	case strings.Contains(err.Error(), "deadline exceeded") || strings.Contains(err.Error(), "killed"):
@@ -321,11 +431,14 @@ func (s *Server) checkHostUse(ctx context.Context, u *store.User, id int64) (*st
 	if !u.MayRun() {
 		return nil, errForbidden("an admin has to allow you to run agents first")
 	}
-	if s.jailed(ctx, u.ID) {
-		// they run over the owner's ssh key, as the owner's account there
-		return nil, errForbidden("other servers are reached with the owner's ssh key, so only the owner can run agents there")
+	h, err := s.host(ctx, id)
+	if err != nil {
+		return nil, err
 	}
-	return s.host(ctx, id)
+	if !s.mayUseHost(ctx, u.ID, h) {
+		return nil, errNoHost // someone else's: not there for them
+	}
+	return h, nil
 }
 
 // ---------- folders on a host ----------

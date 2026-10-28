@@ -24,7 +24,14 @@ type Remote struct {
 	// connection carries: the Pocket app tools, whose endpoint is on this
 	// server's loopback, reached from the remote machine's loopback.
 	Forwards []string
+	// Home is a person's home (PEOPLE_DIR/<id>/home) when the machine is
+	// theirs: ssh then runs in their jail with their own key, config and
+	// known hosts (home/.ssh), never the server's.
+	Home string
 }
+
+// PersonKey is a person's ssh key, made by the server (SSHKey).
+const PersonKey = "id_ed25519"
 
 // sshArgs are the options of every connection: never prompt, learn a new
 // host key once, notice a dead link.
@@ -34,7 +41,44 @@ func (r *Remote) sshArgs() []string {
 	if r.Port > 0 {
 		a = append(a, "-p", strconv.Itoa(r.Port))
 	}
+	if r.Home != "" {
+		// only what is in their folder: ssh would read the server account's
+		// ~/.ssh (its home comes from passwd, not $HOME) with SANDBOX=off
+		dot := filepath.Join(r.Home, ".ssh")
+		conf := filepath.Join(dot, "config")
+		if _, err := os.Stat(conf); err != nil {
+			conf = "none"
+		}
+		a = append([]string{"-F", conf}, a...)
+		a = append(a, "-i", filepath.Join(dot, PersonKey), "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none",
+			"-o", "UserKnownHostsFile="+filepath.Join(dot, "known_hosts"))
+	}
 	return append(a, r.Target, "--")
+}
+
+// ssh makes the ssh command: here for the server's machines, in the
+// person's jail for theirs. ctx may be nil.
+func (r *Remote) ssh(ctx context.Context, argv []string) (*exec.Cmd, error) {
+	if r.Home != "" {
+		return LocalCmd(ctx, r.Home, []string{"HOME=" + r.Home}, "ssh", argv...)
+	}
+	var cmd *exec.Cmd
+	if ctx != nil {
+		cmd = exec.CommandContext(ctx, "ssh", argv...)
+	} else {
+		cmd = exec.Command("ssh", argv...)
+	}
+	cmd.Env = os.Environ()
+	return cmd, nil
+}
+
+// mux: a person's ssh runs in a jail that ends with it, so a shared
+// connection would not outlive the command anyway.
+func (r *Remote) mux() []string {
+	if r.Home != "" {
+		return nil
+	}
+	return muxArgs()
 }
 
 // remotePath: the login shell over ssh is not interactive, so rc files that
@@ -99,9 +143,7 @@ func Command(r *Remote, dir string, env []string, bin string, args ...string) (*
 		}
 	}
 	argv = append(argv, r.sshArgs()...)
-	cmd := exec.Command("ssh", append(argv, remoteCommand(remoteScript(dir, env, bin, args)))...)
-	cmd.Env = os.Environ()
-	return cmd, nil
+	return r.ssh(nil, append(argv, remoteCommand(remoteScript(dir, env, bin, args))))
 }
 
 // Run runs a short sh script on the remote machine (the same profile and
@@ -120,13 +162,16 @@ func (r *Remote) Run(ctx context.Context, timeout time.Duration, script string, 
 		full += " " + shq(a)
 	}
 	full += "\n" + script
-	argv := append(muxArgs(), r.sshArgs()...)
+	argv := append(r.mux(), r.sshArgs()...)
 	argv = append(argv, remoteCommand(full))
 	for try := 0; ; try++ {
-		cmd := exec.CommandContext(ctx, "ssh", argv...)
+		cmd, err := r.ssh(ctx, argv)
+		if err != nil {
+			return "", "", err
+		}
 		var out, errb bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &out, &errb
-		err := cmd.Run()
+		err = cmd.Run()
 		stderr := strings.TrimSpace(errb.String())
 		if err == nil || try >= 2 || !notConnected(err, stderr) {
 			return out.String(), stderr, err
@@ -163,9 +208,12 @@ func (r *Remote) Put(ctx context.Context, timeout time.Duration, path string, da
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	script := "set -e; umask 077; t=\"$1.part.$$\"; cat > \"$t\"; mv -f -- \"$t\" \"$1\""
-	argv := append(muxArgs(), r.sshArgs()...)
+	argv := append(r.mux(), r.sshArgs()...)
 	argv = append(argv, remoteCommand("set -- "+shq(path)+"\n"+script))
-	cmd := exec.CommandContext(ctx, "ssh", argv...)
+	cmd, err := r.ssh(ctx, argv)
+	if err != nil {
+		return err
+	}
 	cmd.Stdin = bytes.NewReader(data)
 	var errb bytes.Buffer
 	cmd.Stderr = &errb

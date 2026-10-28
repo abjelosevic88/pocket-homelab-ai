@@ -57,8 +57,13 @@ When the ssh link closes the CLI sees EOF and exits.
   following the session from other tools, "On this server", log images, rewind/edit and fork at an earlier
   turn (all read the CLI's session file, which is over there). Forking the latest turn works (`--fork-session`).
 - `POST /hosts/{id}/check` runs a probe: home, OS, hostname, `claude --version` + `claude auth status`,
-  `codex --version` + `codex login status`. `GET /hosts/key` shows this server's public key for
-  `authorized_keys`. Hosts are admin-managed; anyone who may run agents can use them.
+  `codex --version` + `codex login status`. `GET /hosts/key` shows the public key for `authorized_keys`.
+- Hosts belong to whoever added them (`hosts.user_id`, NULL = the box owner; deleted with their person). The
+  owner's use this server's own keys and are managed by admins. Everyone else's (PEOPLE_DIR on) use a key
+  Pocket AI makes in their folder (`home/.ssh/id_ed25519`; `GET /hosts/key` returns it with `own: true`), and
+  ssh runs in their jail with `-F none` (or their `home/.ssh/config`), `-i` that key, `IdentitiesOnly`,
+  no agent, their `known_hosts`, and no shared connection. List, edit, check, run and sign-in only ever reach
+  the person's own hosts. Without PEOPLE_DIR everyone shares the admins' hosts, as before.
 
 ## Worktrees
 

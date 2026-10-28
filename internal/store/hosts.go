@@ -1,6 +1,9 @@
 package store
 
-import "context"
+import (
+	"context"
+	"database/sql"
+)
 
 // Host is another machine agents run on over ssh (host 0, this server, has
 // no row).
@@ -13,6 +16,12 @@ type Host struct {
 	CodexBin  string   `json:"codex_bin"`
 	Info      HostInfo `json:"info"`
 	CreatedAt string   `json:"created_at"`
+	// UserID is who added it (0 = the box owner): it is reached with their
+	// ssh key, and only they see and use it.
+	UserID int64 `json:"user_id,omitempty"`
+	// Home is set by the server when the machine is reached from a
+	// person's own folder (their key, in their jail).
+	Home string `json:"-"`
 }
 
 // HostInfo is what the last check found on the machine.
@@ -30,14 +39,16 @@ type HostInfo struct {
 func scanHost(row interface{ Scan(...any) error }) (*Host, error) {
 	var h Host
 	var info string
-	if err := row.Scan(&h.ID, &h.Name, &h.Target, &h.Port, &h.ClaudeBin, &h.CodexBin, &info, &h.CreatedAt); err != nil {
+	var uid sql.NullInt64
+	if err := row.Scan(&h.ID, &h.Name, &h.Target, &h.Port, &h.ClaudeBin, &h.CodexBin, &info, &h.CreatedAt, &uid); err != nil {
 		return nil, notFound(err)
 	}
+	h.UserID = uid.Int64
 	_ = jsonUnmarshal(info, &h.Info)
 	return &h, nil
 }
 
-const hostCols = `id, name, target, port, claude_bin, codex_bin, info, created_at`
+const hostCols = `id, name, target, port, claude_bin, codex_bin, info, created_at, user_id`
 
 // ListHosts returns every host, oldest first.
 func (s *Store) ListHosts(ctx context.Context) ([]*Host, error) {
@@ -65,8 +76,8 @@ func (s *Store) GetHost(ctx context.Context, id int64) (*Host, error) {
 // CreateHost inserts a host.
 func (s *Store) CreateHost(ctx context.Context, h *Host) error {
 	h.CreatedAt = Now()
-	res, err := s.DB.ExecContext(ctx, `INSERT INTO hosts (name, target, port, claude_bin, codex_bin, info, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		h.Name, h.Target, h.Port, h.ClaudeBin, h.CodexBin, jsonMarshal(h.Info), h.CreatedAt)
+	res, err := s.DB.ExecContext(ctx, `INSERT INTO hosts (name, target, port, claude_bin, codex_bin, info, created_at, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		h.Name, h.Target, h.Port, h.ClaudeBin, h.CodexBin, jsonMarshal(h.Info), h.CreatedAt, sql.NullInt64{Int64: h.UserID, Valid: h.UserID > 0})
 	if err != nil {
 		return conflict(err)
 	}

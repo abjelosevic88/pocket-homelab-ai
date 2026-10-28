@@ -129,6 +129,10 @@ Servers. Everybody else:
   only root);
 - adds their own logins (Settings → Agents → Accounts → Add) and signs in with their own subscription — the
   server's login, the owner's accounts and the owner's ssh key are not theirs to use;
+- adds servers of their own (Settings → Agents → Servers): Pocket AI makes them an ssh key in
+  `home/.ssh/id_ed25519` to put in `authorized_keys` there, and ssh runs in their sandbox with only that key,
+  their own `known_hosts` and (if they write one) `home/.ssh/config`. Their servers are invisible to everyone
+  else, and the owner's to them;
 - runs every agent, sign-in, git command and worktree script inside bubblewrap: their folder read-write at its
   own path, the system read-only, a fresh `/tmp`, `/dev` and `/proc`, their own process space, and none of the
   server's environment. A folder another app shares for a whole team (Pocket Projects) maps to their own clone

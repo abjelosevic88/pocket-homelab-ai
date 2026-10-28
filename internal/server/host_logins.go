@@ -156,16 +156,10 @@ func (s *Server) dropHostStatus(id int64) {
 	}
 }
 
-// handleHostLogins lists the logins of every machine (the owner's alone:
-// they are reached with the owner's ssh key).
+// handleHostLogins lists the logins of the person's machines.
 func (s *Server) handleHostLogins(w http.ResponseWriter, r *http.Request) {
-	u := userFrom(r.Context())
 	out := []hostLoginView{}
-	if !u.MayRun() || s.jailed(r.Context(), u.ID) {
-		writeJSON(w, http.StatusOK, out)
-		return
-	}
-	list, err := s.store.ListHosts(r.Context())
+	list, err := s.hostsFor(r.Context(), userFrom(r.Context()))
 	if err != nil {
 		s.fail(w, err, "hosts")
 		return
@@ -246,8 +240,8 @@ func (s *Server) handleHostLoginStart(w http.ResponseWriter, r *http.Request) {
 // check, which says "not signed in" until now.
 func (s *Server) afterHostLogin(id int64) {
 	ctx := s.rt.ctx
-	h, err := s.store.GetHost(ctx, id)
-	if err != nil {
+	h, err := s.host(ctx, id)
+	if err != nil || h == nil {
 		return
 	}
 	s.hostLogins(ctx, h, true)
