@@ -395,10 +395,16 @@ func (rt *engine) startRun(t *store.Thread) (*run, error) {
 		return nil, err
 	}
 	if h != nil {
+		if rt.s.jailed(rt.ctx, t.UserID) {
+			return nil, errForbidden("other servers are reached with the owner's ssh key, so only the owner can run agents there")
+		}
 		return rt.startRemote(t, h)
 	}
 	if fi, err := os.Stat(t.Cwd); err != nil || !fi.IsDir() {
 		return nil, &folderGoneError{dir: t.Cwd}
+	}
+	if err := rt.s.checkRunFor(rt.ctx, t); err != nil {
+		return nil, err
 	}
 	ctx, cancel := context.WithCancel(rt.ctx)
 	r := &run{threadID: t.ID, userID: t.UserID, provider: t.Provider, account: t.AccountID, cancel: cancel, pending: map[string]bool{},
@@ -1339,10 +1345,13 @@ func (rt *engine) limitsSnapshot(uid int64) map[string]any {
 		mine  bool // the person may see who it is signed in as
 	}
 	admin := u != nil && u.Role == "admin"
-	srcs := map[string]src{"claude": {"", admin}, "codex": {"", admin}}
+	srcs := map[string]src{}
+	if rt.s.mayUseServerLogin(rt.ctx, u) {
+		srcs["claude"], srcs["codex"] = src{"", admin}, src{"", admin}
+	}
 	if list, err := rt.s.store.ListAccounts(rt.ctx); err == nil {
 		for _, a := range list {
-			if mayUseAccount(u, a) {
+			if rt.s.mayUseAccount(rt.ctx, u, a) {
 				srcs[limitsKey(a.Provider, a.ID)] = src{a.Label, admin || (a.UserID != nil && u != nil && *a.UserID == u.ID)}
 			}
 		}

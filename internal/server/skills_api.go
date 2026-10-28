@@ -41,7 +41,7 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 	}
 	cwd := s.cfg.Home
 	if p := q.Get("cwd"); p != "" {
-		clean, err := s.checkDir(p)
+		clean, err := s.checkDir(ctx, p)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return

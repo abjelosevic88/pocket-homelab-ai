@@ -433,7 +433,7 @@ func (s *Server) handleSaveSchedule(w http.ResponseWriter, r *http.Request) {
 // here it only has to be absolute; the machine's own login is used.
 func (s *Server) checkScheduleAgent(ctx context.Context, u *store.User, sc *store.Schedule) error {
 	if sc.HostID == 0 {
-		return s.checkAgentFields(&sc.Provider, &sc.Mode, &sc.Cwd)
+		return s.checkAgentFields(ctx, &sc.Provider, &sc.Mode, &sc.Cwd)
 	}
 	if _, err := s.checkHostUse(ctx, u, sc.HostID); err != nil {
 		return err
@@ -443,7 +443,7 @@ func (s *Server) checkScheduleAgent(ctx context.Context, u *store.User, sc *stor
 		return badRequest("the folder on another machine must be absolute (or ~/…)")
 	}
 	none := ""
-	if err := s.checkAgentFields(&sc.Provider, &sc.Mode, &none); err != nil {
+	if err := s.checkAgentFields(ctx, &sc.Provider, &sc.Mode, &none); err != nil {
 		return err
 	}
 	sc.Cwd = cwd

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/agent"
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
 )
 
@@ -39,13 +41,20 @@ func (s *Server) libraryRoutes(r chi.Router) {
 
 // ---------- folders ----------
 
-func (s *Server) expand(p string) string {
+// expand resolves ~ for the person asking (their projects folder when they
+// have a folder of their own: people.go).
+func (s *Server) expand(ctx context.Context, p string) string {
+	return s.expandFor(ctx, userFrom(ctx), p)
+}
+
+func (s *Server) expandFor(ctx context.Context, u *store.User, p string) string {
 	p = strings.TrimSpace(p)
+	home := s.homeOf(ctx, u)
 	if p == "~" {
-		return s.cfg.Home
+		return home
 	}
 	if strings.HasPrefix(p, "~/") {
-		return filepath.Join(s.cfg.Home, p[2:])
+		return filepath.Join(home, p[2:])
 	}
 	return p
 }
@@ -54,9 +63,15 @@ func within(p, root string) bool {
 	return p == root || root == "/" || strings.HasPrefix(p, root+string(os.PathSeparator))
 }
 
-// checkDir resolves a folder and makes sure it exists inside the allowed roots.
-func (s *Server) checkDir(p string) (string, error) {
-	p = s.expand(p)
+// checkDir resolves a folder and makes sure it exists inside the roots of
+// the person asking (the server's roots for background work).
+func (s *Server) checkDir(ctx context.Context, p string) (string, error) {
+	return s.checkDirFor(ctx, userFrom(ctx), p)
+}
+
+// checkDirFor is checkDir for a given person (nil = the server).
+func (s *Server) checkDirFor(ctx context.Context, u *store.User, p string) (string, error) {
+	p = s.expandFor(ctx, u, p)
 	if !filepath.IsAbs(p) {
 		return "", badRequest("use an absolute folder path (or ~/…)")
 	}
@@ -69,7 +84,8 @@ func (s *Server) checkDir(p string) (string, error) {
 	if err != nil || !fi.IsDir() {
 		return "", badRequest(p + " is not a folder")
 	}
-	for _, root := range s.cfg.Roots {
+	roots := s.rootsOf(ctx, u)
+	for _, root := range roots {
 		rr, err := filepath.EvalSymlinks(root)
 		if err != nil {
 			rr = root
@@ -78,7 +94,7 @@ func (s *Server) checkDir(p string) (string, error) {
 			return p, nil
 		}
 	}
-	return "", badRequest(p + " is outside the folders agents may use (" + strings.Join(s.cfg.Roots, ", ") + ")")
+	return "", badRequest(p + " is outside the folders agents may use (" + strings.Join(s.pickerRoots(ctx, u), ", ") + ")")
 }
 
 func (s *Server) handleDirs(w http.ResponseWriter, r *http.Request) {
@@ -94,7 +110,7 @@ func (s *Server) handleDirs(w http.ResponseWriter, r *http.Request) {
 	if h != nil {
 		out, err = s.listRemoteDirs(r.Context(), h, r.URL.Query().Get("path"), queryBool(r, "hidden"))
 	} else {
-		out, err = s.listDirsNear(r.URL.Query().Get("path"), queryBool(r, "hidden"))
+		out, err = s.listDirsNear(r.Context(), r.URL.Query().Get("path"), queryBool(r, "hidden"))
 	}
 	if err != nil {
 		s.fail(w, err, "dirs")
@@ -122,11 +138,12 @@ type dirListing struct {
 }
 
 // listDirs lists the sub-folders of p (home when empty) inside the roots.
-func (s *Server) listDirs(p string, hidden bool) (*dirListing, error) {
+func (s *Server) listDirs(ctx context.Context, p string, hidden bool) (*dirListing, error) {
+	u := userFrom(ctx)
 	if p == "" {
-		p = s.cfg.Home
+		p = s.homeOf(ctx, u)
 	}
-	clean, err := s.checkDir(p)
+	clean, err := s.checkDir(ctx, p)
 	if err != nil {
 		return nil, err
 	}
@@ -143,6 +160,9 @@ func (s *Server) listDirs(p string, hidden bool) (*dirListing, error) {
 		full := filepath.Join(clean, name)
 		isDir := e.IsDir()
 		if e.Type()&os.ModeSymlink != 0 {
+			if !agent.Confined(full) {
+				continue // a person's link out of their folder
+			}
 			if fi, err := os.Stat(full); err == nil {
 				isDir = fi.IsDir()
 			}
@@ -155,10 +175,10 @@ func (s *Server) listDirs(p string, hidden bool) (*dirListing, error) {
 	}
 	sort.Slice(dirs, func(i, j int) bool { return strings.ToLower(dirs[i].Name) < strings.ToLower(dirs[j].Name) })
 	parent := filepath.Dir(clean)
-	if _, err := s.checkDir(parent); err != nil || parent == clean {
+	if _, err := s.checkDir(ctx, parent); err != nil || parent == clean {
 		parent = ""
 	}
-	return &dirListing{Path: clean, Parent: parent, Dirs: dirs, Roots: s.cfg.Roots, Home: s.cfg.Home}, nil
+	return &dirListing{Path: clean, Parent: parent, Dirs: dirs, Roots: s.pickerRoots(ctx, u), Home: s.homeOf(ctx, u)}, nil
 }
 
 // ---------- workspaces ----------
@@ -197,7 +217,7 @@ func (s *Server) handleSaveWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Path != nil {
-		p, err := s.checkDir(*in.Path)
+		p, err := s.checkDir(ctx, *in.Path)
 		if err != nil {
 			s.fail(w, err, "workspace")
 			return
@@ -275,7 +295,7 @@ func (s *Server) handleSaveRecipe(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "a recipe needs a name and a prompt")
 		return
 	}
-	if err := s.checkAgentFields(&in.Provider, &in.Mode, &in.Cwd); err != nil {
+	if err := s.checkAgentFields(ctx, &in.Provider, &in.Mode, &in.Cwd); err != nil {
 		s.fail(w, err, "recipe")
 		return
 	}
@@ -292,7 +312,7 @@ func (s *Server) handleSaveRecipe(w http.ResponseWriter, r *http.Request) {
 }
 
 // checkAgentFields validates the optional provider/mode/folder of a recipe or schedule.
-func (s *Server) checkAgentFields(provider, mode, cwd *string) error {
+func (s *Server) checkAgentFields(ctx context.Context, provider, mode, cwd *string) error {
 	switch *provider {
 	case "", "claude", "codex":
 	default:
@@ -302,7 +322,7 @@ func (s *Server) checkAgentFields(provider, mode, cwd *string) error {
 		return badRequest("unknown mode " + *mode)
 	}
 	if strings.TrimSpace(*cwd) != "" {
-		p, err := s.checkDir(*cwd)
+		p, err := s.checkDir(ctx, *cwd)
 		if err != nil {
 			return err
 		}

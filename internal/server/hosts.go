@@ -108,8 +108,8 @@ func (in hostIn) apply(h *store.Host) error {
 
 func (s *Server) handleListHosts(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r.Context())
-	if !u.MayRun() {
-		writeJSON(w, http.StatusOK, []*store.Host{})
+	if !u.MayRun() || (s.jailed(r.Context(), u.ID) && u.Role != "admin") {
+		writeJSON(w, http.StatusOK, []*store.Host{}) // the owner's ssh key: theirs alone (people.go)
 		return
 	}
 	list, err := s.store.ListHosts(r.Context())
@@ -316,6 +316,10 @@ func (s *Server) checkHostUse(ctx context.Context, u *store.User, id int64) (*st
 	}
 	if !u.MayRun() {
 		return nil, errForbidden("an admin has to allow you to run agents first")
+	}
+	if s.jailed(ctx, u.ID) {
+		// they run over the owner's ssh key, as the owner's account there
+		return nil, errForbidden("other servers are reached with the owner's ssh key, so only the owner can run agents there")
 	}
 	return s.host(ctx, id)
 }

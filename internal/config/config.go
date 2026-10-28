@@ -69,6 +69,13 @@ type Config struct {
 	IdleTimeout time.Duration // stop a CLI process after this long without a turn
 	MaxLive     int           // most CLI processes alive at once (oldest idle ones are stopped)
 	UploadMax   int64         // bytes per uploaded image
+
+	// People other than the owner: a folder each here, their agents in a
+	// bubblewrap jail (agent/jail.go); SandboxOff keeps the folders but
+	// runs them without bubblewrap.
+	PeopleDir  string
+	SandboxOff bool
+	BwrapBin   string
 }
 
 func env(key, def string) string {
@@ -161,6 +168,20 @@ func Load() (*Config, error) {
 	c.ClaudeHome = env("CLAUDE_HOME", filepath.Join(c.Home, ".claude"))
 	c.CodexHome = env("CODEX_HOME", filepath.Join(c.Home, ".codex"))
 	c.PaseoHome = env("PASEO_HOME", filepath.Join(c.Home, ".paseo"))
+	c.PeopleDir = env("PEOPLE_DIR", filepath.Join(dataDir, "people"))
+	if c.PeopleDir != "" {
+		if abs, err := filepath.Abs(c.PeopleDir); err == nil {
+			c.PeopleDir = abs
+		}
+	}
+	switch v := strings.ToLower(env("SANDBOX", "on")); v {
+	case "on", "auto", "true", "1":
+	case "off", "false", "0":
+		c.SandboxOff = true
+	default:
+		return nil, fmt.Errorf("SANDBOX must be on or off (got %q)", v)
+	}
+	c.BwrapBin = env("BWRAP_BIN", "")
 	for _, r := range strings.Split(env("ROOTS", c.Home), ",") {
 		r = strings.TrimSpace(r)
 		if strings.HasPrefix(r, "~") {

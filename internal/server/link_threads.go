@@ -130,8 +130,8 @@ func (s *Server) handleLinkAgentOptions(w http.ResponseWriter, r *http.Request) 
 		DefaultProvider string          `json:"default_provider"`
 		Home            string          `json:"home"`
 		Roots           []string        `json:"roots"`
-	}{Providers: []linkProvider{}, Accounts: []linkAccount{}, Workspaces: []linkWorkspace{}, Hosts: []linkHost{}, DefaultProvider: st.DefaultProvider, Home: s.cfg.Home, Roots: s.cfg.Roots}
-	if hosts, err := s.store.ListHosts(ctx); err == nil {
+	}{Providers: []linkProvider{}, Accounts: []linkAccount{}, Workspaces: []linkWorkspace{}, Hosts: []linkHost{}, DefaultProvider: st.DefaultProvider, Home: s.homeOf(ctx, u), Roots: s.pickerRoots(ctx, u)}
+	if hosts, err := s.store.ListHosts(ctx); err == nil && !s.jailed(ctx, u.ID) {
 		for _, h := range hosts {
 			out.Hosts = append(out.Hosts, linkHost{ID: h.ID, Name: h.Name, OK: h.Info.OK})
 		}
@@ -305,10 +305,17 @@ func (s *Server) validDraft(ctx context.Context, u *store.User, d *store.LinkDra
 	} else {
 		if d.AccountID != nil {
 			if err := s.checkAccount(ctx, u, prov, *d.AccountID); err != nil {
-				return nil, err
+				if !s.jailed(ctx, u.ID) {
+					return nil, err
+				}
+				d.AccountID = nil // a team's login (the owner's): they run on their own
 			}
 		}
-		clean, err := s.checkDir(d.Cwd)
+		cwd, err := s.ownCopy(ctx, u, d.Cwd)
+		if err != nil {
+			return nil, err
+		}
+		clean, err := s.checkDirFor(ctx, u, cwd)
 		if err != nil {
 			return nil, err
 		}
@@ -612,7 +619,7 @@ func (s *Server) handleLinkDirs(w http.ResponseWriter, r *http.Request) {
 	if h != nil {
 		out, err = s.listRemoteDirs(r.Context(), h, r.URL.Query().Get("path"), queryBool(r, "hidden"))
 	} else {
-		out, err = s.listDirs(r.URL.Query().Get("path"), queryBool(r, "hidden"))
+		out, err = s.listDirs(withUser(r.Context(), u), r.URL.Query().Get("path"), queryBool(r, "hidden")) // their roots (people.go)
 	}
 	if err != nil {
 		s.fail(w, err, "dirs")

@@ -220,10 +220,10 @@ func (s *Server) importSession(ctx context.Context, u *store.User, provider, ses
 	if provider == "codex" {
 		def = st.Codex
 	}
-	if clean, err := s.checkDir(cwd); err == nil {
+	if clean, err := s.checkDir(ctx, cwd); err == nil {
 		cwd = clean
 	} else {
-		cwd = s.cfg.Home
+		cwd = s.homeOf(ctx, u)
 	}
 	t := &store.Thread{ID: uuid.NewString(), UserID: u.ID, Provider: provider, AccountID: account, ProviderSessionID: sessionID, Cwd: cwd,
 		Model: def.Model, Effort: def.Effort, Mode: def.Mode, Source: "import", Title: titleFrom(title), LogOffset: logOffset}

@@ -116,10 +116,13 @@ func CopySession(provider, sessionID, fromDir, toDir string) (string, error) {
 }
 
 func copyFile(src, dst string) error {
+	if !Confined(src) || !Confined(dst) {
+		return &os.PathError{Op: "copy", Path: dst, Err: errOutside}
+	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return err
 	}
-	in, err := os.Open(src)
+	in, err := OpenConfined(src)
 	if err != nil {
 		return err
 	}

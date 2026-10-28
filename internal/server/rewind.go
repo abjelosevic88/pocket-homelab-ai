@@ -299,7 +299,7 @@ func codexReplyCheckpoint(rows []*store.Item, key string) string {
 
 func (s *Server) copyRewindUpload(ctx context.Context, t *store.Thread, original *store.Upload) (uploadOut, error) {
 	return s.writeRewindUpload(ctx, t, original.Name, original.Mime, original.ExtractedText, func(out *os.File) error {
-		in, err := os.Open(original.Path)
+		in, err := agent.OpenConfined(original.Path)
 		if err != nil {
 			return err
 		}
@@ -374,7 +374,7 @@ func (s *Server) copyRemoteClaude(ctx context.Context, t *store.Thread, users []
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(dir, t.ProviderSessionID+".jsonl"), []byte(data), 0o600); err != nil {
+	if err := agent.WriteConfined(filepath.Join(dir, t.ProviderSessionID+".jsonl"), []byte(data), 0o600); err != nil {
 		return "", err
 	}
 	var sid, cut string
@@ -386,7 +386,7 @@ func (s *Server) copyRemoteClaude(ctx context.Context, t *store.Thread, users []
 	if err != nil || sid == "" {
 		return sid, err
 	}
-	copied, err := os.ReadFile(cut)
+	copied, err := agent.ReadConfined(cut)
 	if err != nil {
 		return "", err
 	}

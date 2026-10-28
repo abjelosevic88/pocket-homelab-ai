@@ -56,7 +56,7 @@ func ActiveSessions(h Homes, paseoHome string) []ActiveSession {
 }
 
 func readTail(path string, n int64) []byte {
-	fh, err := os.Open(path)
+	fh, err := OpenConfined(path)
 	if err != nil {
 		return nil
 	}
@@ -261,7 +261,7 @@ func activeCodex(home string, paseo map[string]paseoAgent) []ActiveSession {
 func codexState(path string) (ActiveSession, bool) {
 	var s ActiveSession
 	// session_meta is the first line
-	if fh, err := os.Open(path); err == nil {
+	if fh, err := OpenConfined(path); err == nil {
 		r := bufio.NewReaderSize(fh, 1<<16)
 		line, _ := r.ReadBytes('\n')
 		fh.Close()
@@ -392,7 +392,7 @@ func paseoSessionsWithin(home string, maxAge time.Duration) map[string]paseoAgen
 					SessionID string `json:"sessionId"`
 				} `json:"persistence"`
 			}
-			b, err := os.ReadFile(path)
+			b, err := ReadConfined(path)
 			if err != nil || json.Unmarshal(b, &a) != nil {
 				continue
 			}

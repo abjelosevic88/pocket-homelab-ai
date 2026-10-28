@@ -93,7 +93,7 @@ func claudePast(path string, info os.FileInfo) Past {
 	pastMu.Unlock()
 	p := Past{Provider: "claude", SessionID: strings.TrimSuffix(filepath.Base(path), ".jsonl"), Path: path,
 		UpdatedAt: info.ModTime().UTC().Format(time.RFC3339)}
-	fh, err := os.Open(path)
+	fh, err := OpenConfined(path)
 	if err != nil {
 		return p
 	}
@@ -355,7 +355,7 @@ func ReadClaudeSubagent(path string) ([]Item, error) {
 }
 
 func readClaude(path string, sidechain bool) (items []Item, cwd string, size int64, err error) {
-	fh, err := os.Open(path)
+	fh, err := OpenConfined(path)
 	if err != nil {
 		return nil, "", 0, err
 	}
@@ -406,7 +406,7 @@ func readClaude(path string, sidechain bool) (items []Item, cwd string, size int
 // ClaudeTail reads complete lines appended to a session file after offset.
 // It returns the lines and the new offset (a partial last line stays unread).
 func ClaudeTail(path string, offset int64) ([][]byte, int64, error) {
-	fh, err := os.Open(path)
+	fh, err := OpenConfined(path)
 	if err != nil {
 		return nil, offset, err
 	}

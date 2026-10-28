@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"sort"
 	"strings"
 	"syscall"
@@ -24,10 +23,11 @@ func ClaudeLimits(ctx context.Context, bin, cwd string, env []string) ([]Window,
 	}
 	ctx, cancel := context.WithTimeout(ctx, 40*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+	cmd, err := LocalCmd(ctx, cwd, env, bin, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
 		"--permission-prompt-tool", "stdio", "--no-session-persistence")
-	cmd.Dir = cwd
-	cmd.Env = append(os.Environ(), env...)
+	if err != nil {
+		return nil, "", err
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, _ := cmd.StdinPipe()
 	stdout, _ := cmd.StdoutPipe()

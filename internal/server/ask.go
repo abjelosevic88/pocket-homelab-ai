@@ -158,7 +158,7 @@ func (s *Server) createAsk(ctx context.Context, u *store.User, in askCreate) (*s
 	if in.Model != "sonnet" && in.Model != "opus" && in.Model != "haiku" {
 		return nil, badRequest("Choose Sonnet, Opus or Haiku")
 	}
-	cwd := filepath.Join(s.cfg.DataDir, "ask-workspace")
+	cwd := filepath.Join(s.askBase(ctx, u.ID), "ask-workspace")
 	if err := os.MkdirAll(cwd, 0700); err != nil {
 		return nil, err
 	}
@@ -174,7 +174,10 @@ func (s *Server) createAsk(ctx context.Context, u *store.User, in askCreate) (*s
 		if in.AccountID != nil {
 			return nil, err
 		}
-		t.AccountID = 0
+		// their own login (the owner: the server's)
+		if t.AccountID, err = s.usableAccount(ctx, u, "claude", t.AccountID); err != nil {
+			return nil, err
+		}
 	}
 	if err := s.store.CreateThread(ctx, t); err != nil {
 		return nil, err
@@ -314,7 +317,7 @@ func (s *Server) preparePocketTools(ctx context.Context, t *store.Thread, sink *
 		writeJSON(w, 200, map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": result})
 	})
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	f, err := os.CreateTemp(s.cfg.DataDir, "ask-mcp-*.json")
+	f, err := os.CreateTemp(s.runDir(ctx, t.UserID), "ask-mcp-*.json") // readable in their jail
 	if err != nil {
 		listener.Close()
 		return err
@@ -349,7 +352,7 @@ func (s *Server) preparePocketTools(ctx context.Context, t *store.Thread, sink *
 		name += "-a" + strconv.FormatInt(t.AccountID, 10)
 		home, _ = s.accountHome(ctx, "claude", t.AccountID)
 	}
-	configDir, _ := filepath.Abs(filepath.Join(s.cfg.DataDir, "ask-claude", name))
+	configDir, _ := filepath.Abs(filepath.Join(s.askBase(ctx, t.UserID), "ask-claude", name))
 	if err := os.MkdirAll(configDir, 0700); err != nil {
 		return err
 	}

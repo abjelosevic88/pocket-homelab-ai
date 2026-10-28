@@ -13,6 +13,7 @@ import (
 // once, under the named account, with the freshest numbers.
 func TestLimitsSameAccountShowOnce(t *testing.T) {
 	s, h, root := testServer(t)
+	s.cfg.PeopleDir = "" // the shared-login model: everyone may use the server login (people.go is off)
 	_, admin := person(t, s, h, "admin@example.test", "admin", true)
 	_, bob := person(t, s, h, "bob@example.test", "member", true)
 	team := &store.Account{Provider: "claude", Label: "Team", Home: filepath.Join(root, ".claude-team")}

@@ -114,7 +114,7 @@ func RewindClaude(home, sessionID string, visible []Item) (id, path string, err 
 	if err != nil {
 		return "", "", err
 	}
-	f, err := os.Open(src)
+	f, err := OpenConfined(src)
 	if err != nil {
 		return "", "", err
 	}
@@ -155,7 +155,7 @@ func ForkClaude(home, sessionID string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	f, err := os.Open(src)
+	f, err := OpenConfined(src)
 	if err != nil {
 		return "", "", err
 	}
@@ -170,6 +170,9 @@ func ForkClaude(home, sessionID string) (string, string, error) {
 func copyClaudeSession(f *os.File, src string, limit int64) (id, path string, err error) {
 	id = uuid.NewString()
 	path = filepath.Join(filepath.Dir(src), id+".jsonl")
+	if !Confined(path) {
+		return "", "", &os.PathError{Op: "write", Path: path, Err: errOutside}
+	}
 	out, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return "", "", err

@@ -16,6 +16,9 @@ Everything is an environment variable (the systemd unit reads `~/.config/pocket-
 | `CORE_URL`, `CORE_REGISTRATION_KEY`, `CORE_APP_URL` | | Pocket Core: register, publish events, accept paired-phone tokens, Sign in with Pocket Core. |
 | `NOTIFY_URL`, `NOTIFY_KIND` | | Box notification route (`apprise` / `ntfy` / `webhook`), used for the owner unless they set their own. |
 | `ROOTS` | your home | Folders agents may start in and the folder picker shows, comma-separated, `~` allowed. Symlinks are resolved: a link out of a root is outside. |
+| `PEOPLE_DIR` | `DATA_DIR/people` | A folder per person other than the owner (their home with their CLI logins, and their projects); their agents run jailed there. See README → People and the sandbox. |
+| `SANDBOX` | `on` | `on`: people's agents run in bubblewrap (only the owner can run agents while it does not work). `off`: their own folders and logins, but no bubblewrap. |
+| `BWRAP_BIN` | `bwrap` on `PATH` | The bubblewrap binary. |
 | `AGENT_HOME` | your home | What `~` means, and the default folder. |
 | `CLAUDE_BIN`, `CODEX_BIN` | `claude`, `codex` | The CLIs. Use absolute paths when the service PATH differs from your shell's. |
 | `CLAUDE_HOME`, `CODEX_HOME` | `~/.claude`, `~/.codex` | The server's own login (account 0): where its sessions are read from. More logins are added in Settings → Agents → Accounts, each in its own folder next to these. |

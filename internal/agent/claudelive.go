@@ -34,7 +34,7 @@ func ClaudeProcs(claudeHome string) (procs map[string]ClaudeProc, ok bool) {
 	}
 	procs = map[string]ClaudeProc{}
 	for _, f := range files {
-		b, err := os.ReadFile(f)
+		b, err := ReadConfined(f)
 		if err != nil {
 			continue
 		}
@@ -53,7 +53,7 @@ func ClaudeProcs(claudeHome string) (procs map[string]ClaudeProc, ok bool) {
 // procAlive: the pid exists and (when known) is the same process that wrote
 // the file, not a later one that got the pid again.
 func procAlive(pid int, start string) bool {
-	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	b, err := ReadConfined("/proc/" + strconv.Itoa(pid) + "/stat")
 	if err != nil {
 		return false
 	}
