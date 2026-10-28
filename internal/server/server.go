@@ -79,7 +79,7 @@ type Server struct {
 func New(cfg *config.Config, st *store.Store, log *slog.Logger, webFS fs.FS) *Server {
 	ua := "PocketAI/" + Version + " (+https://github.com/abjelosevic88/pocket-homelab-ai)"
 	s := &Server{cfg: cfg, store: st, log: log, webFS: webFS, started: time.Now(),
-		accts: accountState{status: map[string]acctStatus{}, logins: map[int64]*loginRun{}}}
+		accts: accountState{status: map[string]acctStatus{}, logins: map[string]*loginRun{}}}
 	s.inferenceSlots = make(chan struct{}, 4)
 	s.rt = newRuntime(s)
 	s.apns = &notify.APNS{TeamID: cfg.APNSTeamID, KeyID: cfg.APNSKeyID, KeyFile: cfg.APNSKeyFile, Topic: cfg.APNSTopic}
@@ -265,6 +265,7 @@ func (s *Server) Router() http.Handler {
 			s.accountRoutes(r)
 			// Other machines agents run on over ssh: hosts.go.
 			s.hostRoutes(r)
+			s.hostLoginRoutes(r) // their own Claude Code / Codex logins: host_logins.go
 			// Git worktrees for threads: worktrees.go (+ worktree_git.go).
 			s.worktreeRoutes(r)
 			// Drafts other Pocket apps prepared: link_threads.go.
