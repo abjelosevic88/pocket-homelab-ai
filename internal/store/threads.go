@@ -249,6 +249,13 @@ func (s *Store) GetItem(ctx context.Context, threadID, key string) (*Item, error
 	return &it, nil
 }
 
+// HasUserItems reports whether a user message has been saved in this chat.
+func (s *Store) HasUserItems(ctx context.Context, threadID string) (bool, error) {
+	var exists bool
+	err := s.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM items WHERE thread_id=? AND kind='user')`, threadID).Scan(&exists)
+	return exists, err
+}
+
 // ListItems returns a thread's timeline in order.
 func (s *Store) ListItems(ctx context.Context, threadID string) ([]*Item, error) {
 	// "acct-" notices ("From here on this conversation runs on …") were left

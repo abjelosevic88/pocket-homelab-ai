@@ -89,7 +89,7 @@ Personal app assistance: [Briefing, workflows, memory, sources and document uplo
 **And**
 - Full-text search over everything said, usage per day and per provider (cost for Claude, tokens for both) and the
   live 5-hour / weekly limit windows both CLIs report.
-- Fork a thread (the agent session is forked too), export it as Markdown, pin, archive, workspaces for the folders
+- Fork into a fresh agent session with earlier chat attached as reference, export as Markdown, pin, archive, workspaces for the folders
   you use most, a folder picker limited to the folders you allow.
 - Per person, like every Pocket app: nobody sees anyone else's threads, admins included. Members may only run
   agents when an admin allows it. Sign in with Pocket Core, API tokens, Pocket Core events

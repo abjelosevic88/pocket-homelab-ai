@@ -179,43 +179,26 @@ func TestForkAtEarlierResponse(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	path := filepath.Join(s.cfg.ClaudeHome, "projects", "-tmp", th.ProviderSessionID+".jsonl")
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		t.Fatal(err)
-	}
-	log := `{"type":"user","uuid":"one","message":{"content":"how full is the zpool"}}
-{"type":"assistant","uuid":"a1","parentUuid":"one","message":{"content":[{"type":"text","text":"The zpool is 61% full."}]}}
-{"type":"user","uuid":"two","parentUuid":"a1","message":{"content":"now delete the snapshots"}}
-{"type":"assistant","uuid":"a2","parentUuid":"two","message":{"content":[{"type":"text","text":"FUTURE RESPONSE"}]}}
-`
-	if err := os.WriteFile(path, []byte(log), 0600); err != nil {
-		t.Fatal(err)
-	}
 	// The original keeps working: forking an earlier, finished turn is still fine.
 	th.Status = "running"
 	_ = s.store.UpdateThread(ctx, th)
 	endpoint := "/api/v1/threads/" + th.ID + "/fork"
 	var n store.Thread
 	owner.want("POST", endpoint, map[string]any{"after": "t1"}, 201, &n)
-	if n.Source != "fork" || n.SourceRef != th.ID || n.ProviderSessionID == "" || n.ProviderSessionID == th.ProviderSessionID || !strings.HasPrefix(n.Title, "Fork of ") {
+	if n.Source != "fork" || n.SourceRef != th.ID || n.ProviderSessionID != "" || !strings.HasPrefix(n.Title, "Fork of ") {
 		t.Fatalf("wrong fork: %+v", n)
 	}
 	history, _ := s.store.ListItems(ctx, n.ID)
-	if len(history) != 3 || history[2].Key != "t1" {
-		t.Fatalf("wrong prefix: %+v", history)
+	if len(history) != 1 || history[0].Kind != "notice" {
+		t.Fatalf("fork should contain only reference metadata: %+v", history)
 	}
-	copied, err := agent.FindClaude(s.cfg.ClaudeHome, n.ProviderSessionID)
-	if err != nil {
-		t.Fatal(err)
+	text := historyOfFork(t, s, n).ExtractedText
+	if strings.Contains(text, "FUTURE") || strings.Contains(text, "snapshots") || !strings.Contains(text, "61% full") {
+		t.Fatal("wrong reference boundary", text)
 	}
-	data, _ := os.ReadFile(copied)
-	if strings.Contains(string(data), "FUTURE") || strings.Contains(string(data), "snapshots") {
-		t.Fatal("later context leaked into the fork")
-	}
-	// The latest response also freezes a private provider session immediately.
 	owner.want("POST", endpoint, map[string]any{"after": "t2"}, 201, &n)
-	if n.SourceRef != th.ID || n.ProviderSessionID == "" || n.ProviderSessionID == th.ProviderSessionID {
-		t.Fatalf("latest turn should freeze an independent session: %+v", n)
+	if n.SourceRef != th.ID || n.ProviderSessionID != "" || !strings.Contains(historyOfFork(t, s, n).ExtractedText, "FUTURE RESPONSE") {
+		t.Fatalf("latest turn should create a fresh chat with reference context: %+v", n)
 	}
 }
 
@@ -303,16 +286,13 @@ for line in sys.stdin:
 	if s.rt.get(n.ID) != nil {
 		t.Fatal("rewind started a model")
 	}
-	// Latest-history forks also create their own session on the selected host
-	// immediately, without waiting for the first prompt or starting inference.
-	forkScript := strings.ReplaceAll(script, "remote-copy", "remote-fork-copy")
-	forkScript = strings.ReplaceAll(forkScript, "assert p['lastTurnId']=='t1' and p['model']=='test-model'", "assert 'lastTurnId' not in p and p['model']=='test-model'\n  assert p['deferGoalContinuation'] is True")
-	if err := os.WriteFile(fake, []byte(forkScript), 0700); err != nil {
+	// Forks use saved text, even if ssh/provider access is unavailable now.
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nexit 99\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	var fork store.Thread
 	owner.want("POST", "/api/v1/threads/"+th.ID+"/fork", map[string]any{}, 201, &fork)
-	if fork.HostID != box.ID || fork.ProviderSessionID != "remote-fork-copy" || fork.SourceRef != th.ID || fork.Status != "idle" {
+	if fork.HostID != box.ID || fork.ProviderSessionID != "" || fork.SourceRef != th.ID || fork.Status != "idle" || !strings.Contains(historyOfFork(t, s, fork).ExtractedText, "61% full") {
 		t.Fatalf("remote fork is not independent: %+v", fork)
 	}
 	// First prompt on a remote host also starts a fresh independent history.

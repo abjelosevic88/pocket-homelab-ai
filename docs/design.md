@@ -36,11 +36,21 @@ queued turn from `turn/completed`).
 History: Claude Code sessions are read from `~/.claude/projects/*/*.jsonl`; Codex threads come from
 `thread/list` and `thread/read`.
 
-Forks have independent provider sessions and receive a work-scope instruction on every start/resume
-(local or remote, including forks created before the server update). Copied history provides context;
-unfinished work and task notifications from the original do not authorize continuing its jobs in the fork.
-The user can explicitly ask to continue earlier work. This is an instruction boundary, not filesystem or
-process isolation: forks keep the selected folder/worktree, which can still be shared with the original.
+Forks start fresh provider sessions; creating a fork never runs a CLI, reads its native session, or contacts
+the remote host. `POST /threads/{id}/fork {after?: turnKey}` freezes curated text through the selected reply
+(or the current timeline, including a partially streamed response). The new chat has a notice and its own
+`Chat history.md` upload, not copied user/assistant/turn records. The first new user message automatically
+includes that document as untrusted reference context. The upload survives restarts and deletion of the
+original, and first-message rewind restores it without duplicating it. History retains the most recent
+120 KB of chat text, document excerpts and finished-tool labels, with an omission marker when truncated;
+raw tool output, thinking, queued/unsent prompts, todos, approvals and usage are excluded. Pictures are
+represented by filenames/counts, not copied image data.
+
+Forks also receive a work-scope instruction on every start/resume (local or remote). The user can explicitly
+ask to continue earlier work; an unrelated question does not authorize resuming the original's jobs. Older
+forks retain their existing native session and receive these scope instructions; they are not rewritten.
+Forks keep the selected folder/worktree, which can still be shared with the original: this does not create
+filesystem or process isolation.
 
 ## Other machines (hosts)
 
@@ -59,9 +69,9 @@ When the ssh link closes the CLI sees EOF and exits.
   git info is one round trip. Agents may start in any folder the ssh account can open (its permissions are the
   boundary); the listing also offers "places" — top-level folders the account owns or may write, such as
   `/work`, `/srv/<x>`, `/opt/<x>`, `/mnt/<x>` — as one-tap chips next to Home.
-- Not available for remote threads: Pocket app tools (their MCP endpoint is on this server's loopback),
-  following the session from other tools, "On this server", log images, rewind/edit and fork at an earlier
-  turn (all read the CLI's session file, which is over there). Forking the latest turn works (`--fork-session`).
+- Forking remote threads uses the same saved text snapshot as local threads, including forks at an earlier
+  turn; it does not require ssh or a provider session. Rewind still uses the provider's native history on
+  that machine. Log images and following the session from other tools depend on its remote session files.
 - `POST /hosts/{id}/check` runs a probe: home, OS, hostname, `claude --version` + `claude auth status`,
   `codex --version` + `codex login status`. `GET /hosts/key` shows the public key for `authorized_keys`.
 - Hosts belong to whoever added them (`hosts.user_id`, NULL = the box owner; deleted with their person). The

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path"
@@ -48,33 +47,11 @@ func (s *Server) handleRewind(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 409, "stop the agent and clear queued messages before rewinding")
 		return
 	}
-	s.branchBefore(w, r, t, in.Key, false)
-}
-
-// nextSentPrompt is the first sent user message after a turn footer: forking
-// at that turn is a branch before it. "" = the turn is the latest one.
-func nextSentPrompt(rows []*store.Item, turnKey string) string {
-	seen := false
-	for _, row := range rows {
-		if !seen {
-			seen = row.Key == turnKey && row.Kind == "turn"
-			continue
-		}
-		if row.Kind != "user" {
-			continue
-		}
-		var it agent.Item
-		if json.Unmarshal(row.Data, &it) == nil && !it.Queued && !it.Unsent {
-			return it.Key
-		}
-	}
-	return ""
+	s.branchBefore(w, r, t, in.Key)
 }
 
 // branchBefore prepares provider context before the selected user message.
-// Rewind replaces the existing conversation; fork copies the prefix into a
-// private chat and can run while the original continues working.
-func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.Thread, key string, fork bool) {
+func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.Thread, key string) {
 	ctx := r.Context()
 	rows, err := s.store.ListItems(ctx, t.ID)
 	if err != nil {
@@ -99,7 +76,7 @@ func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.T
 			users = append(users, it)
 			break
 		}
-		if it.Queued || it.Unsent || it.Kind == "request" || (fork && it.Tool != nil && it.Tool.Status == "running") {
+		if it.Queued || it.Unsent || it.Kind == "request" {
 			continue
 		}
 		prefix = append(prefix, it)
@@ -107,8 +84,7 @@ func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.T
 			users = append(users, it)
 		}
 	}
-	wholeFork := fork && key == ""
-	if target == nil && !wholeFork {
+	if target == nil {
 		writeErr(w, 404, "no such message")
 		return
 	}
@@ -121,7 +97,7 @@ func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.T
 	}
 	var sid, sessionPath string
 	checkpoint := agent.RewindCheckpoint{TurnID: codexReplyCheckpoint(rows, key), UnconfirmedPrompts: codexUnconfirmedPrompts(prefix)}
-	if len(users) > 1 || wholeFork {
+	if len(users) > 1 {
 		if t.ProviderSessionID == "" {
 			writeErr(w, 409, "the agent history is unavailable for this message")
 			return
@@ -129,17 +105,13 @@ func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.T
 		if t.HostID != 0 {
 			switch t.Provider {
 			case "claude":
-				sid, err = s.copyRemoteClaude(ctx, t, users, wholeFork)
+				sid, err = s.rewindRemoteClaude(ctx, t, users)
 			case "codex":
 				var h *store.Host
 				h, err = s.host(ctx, t.HostID)
 				if err == nil {
 					o := codexRewindOptions(t, hostBin(h, "codex"), nil, remoteOf(h))
-					if wholeFork && checkpoint.TurnID == "" {
-						sid, err = agent.ForkCodex(ctx, o)
-					} else {
-						sid, err = agent.RewindCodex(ctx, o, users, checkpoint)
-					}
+					sid, err = agent.RewindCodex(ctx, o, users, checkpoint)
 				}
 			default:
 				err = fmt.Errorf("this provider does not support rewind")
@@ -148,109 +120,20 @@ func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.T
 			home, env := s.accountHome(ctx, t.Provider, t.AccountID)
 			switch t.Provider {
 			case "claude":
-				if wholeFork {
-					sid, sessionPath, err = agent.ForkClaude(home, t.ProviderSessionID)
-				} else {
-					sid, sessionPath, err = agent.RewindClaude(home, t.ProviderSessionID, users)
-				}
+				sid, sessionPath, err = agent.RewindClaude(home, t.ProviderSessionID, users)
 			case "codex":
 				o := codexRewindOptions(t, s.cfg.CodexBin, env, nil)
-				if wholeFork && checkpoint.TurnID == "" {
-					sid, err = agent.ForkCodex(ctx, o)
-				} else {
-					sid, err = agent.RewindCodex(ctx, o, users, checkpoint)
-				}
+				sid, err = agent.RewindCodex(ctx, o, users, checkpoint)
 			default:
 				err = fmt.Errorf("this provider does not support rewind")
 			}
 		}
 		if err != nil {
-			writeErr(w, 409, map[bool]string{false: "Cannot rewind: ", true: "Cannot fork here: "}[fork]+err.Error())
+			writeErr(w, 409, "Cannot rewind: "+err.Error())
 			return
 		}
 	}
-	if !fork {
-		s.rewindInPlace(w, r, t, rows, prefix, target, sid, sessionPath)
-		return
-	}
-	n := &store.Thread{ID: uuid.NewString(), UserID: t.UserID, Title: "Fork of " + t.Title,
-		Provider: t.Provider, AccountID: t.AccountID, Model: t.Model, Effort: t.Effort, Mode: t.Mode, Speed: t.Speed,
-		Cwd: t.Cwd, WorkspaceID: t.WorkspaceID, WorktreeID: t.WorktreeID, NoMemory: t.NoMemory, ProviderSessionID: sid,
-		Source: "fork", SourceRef: t.ID, HostID: t.HostID, LogOffset: -1}
-	if t.Source == "ask" {
-		n.Source, n.SourceRef = t.Source, t.SourceRef
-	}
-	if sessionPath != "" {
-		n.LogOffset = agent.FileSize(sessionPath)
-	}
-	complete := false
-	defer func() {
-		if complete {
-			return
-		}
-		cleanup := context.WithoutCancel(ctx)
-		for _, up := range s.store.UploadsOfThread(cleanup, n.ID) {
-			s.removeUploadFile(up.Path)
-			_ = s.store.DeleteUpload(cleanup, n.UserID, up.ID)
-		}
-		_ = s.store.DeleteThread(cleanup, n.UserID, n.ID)
-		if sessionPath != "" {
-			_ = os.Remove(sessionPath)
-		}
-	}()
-	if err := s.store.CreateThread(ctx, n); err != nil {
-		s.fail(w, err, "rewind")
-		return
-	}
-	// Make independent attachment files: deleting either conversation must not
-	// break the other. Re-map URLs in the copied timeline and in the draft.
-	copied := map[string]uploadOut{}
-	copyItem := func(it *agent.Item) error {
-		for _, images := range [][]agent.Image{it.Images, it.Files} {
-			for i := range images {
-				old := images[i].ID
-				up, ok := copied[old]
-				if !ok {
-					original, err := s.store.GetUploadAny(ctx, old)
-					if err != nil || original.ThreadID == nil || *original.ThreadID != t.ID {
-						return fmt.Errorf("an attachment is unavailable")
-					}
-					up, err = s.copyRewindUpload(ctx, n, original)
-					if err != nil {
-						return err
-					}
-					copied[old] = up
-				}
-				images[i] = agent.Image{ID: up.ID, Name: up.Name, URL: up.URL}
-			}
-		}
-		return nil
-	}
-	for _, it := range prefix {
-		if err := copyItem(&it); err != nil {
-			s.fail(w, err, "copy attachment")
-			return
-		}
-		data, _ := json.Marshal(it)
-		if _, err := s.store.UpsertItem(ctx, n.ID, it.Key, it.Kind, data, itemBody(it)); err != nil {
-			s.fail(w, err, "copy history")
-			return
-		}
-		if it.Kind == "assistant" {
-			n.Preview = oneLine(it.Text, 200)
-		}
-		if it.Kind == "user" {
-			n.LastPrompt = promptLine(it.Text, len(it.Images))
-		}
-	}
-	if err := s.store.UpdateThread(ctx, n); err != nil {
-		s.fail(w, err, "fork")
-		return
-	}
-	complete = true
-	s.inheritLink(ctx, t, n)
-	s.rt.publishThread(n)
-	writeJSON(w, http.StatusCreated, n)
+	s.rewindInPlace(w, r, t, rows, prefix, target, sid, sessionPath)
 }
 
 func codexRewindOptions(t *store.Thread, bin string, env []string, remote *agent.Remote) agent.Options {
@@ -300,18 +183,6 @@ func codexReplyCheckpoint(rows []*store.Item, key string) string {
 	return ""
 }
 
-func (s *Server) copyRewindUpload(ctx context.Context, t *store.Thread, original *store.Upload) (uploadOut, error) {
-	return s.writeRewindUpload(ctx, t, original.Name, original.Mime, original.ExtractedText, func(out *os.File) error {
-		in, err := agent.OpenConfined(original.Path)
-		if err != nil {
-			return err
-		}
-		defer in.Close()
-		_, err = io.Copy(out, in)
-		return err
-	})
-}
-
 func (s *Server) writeRewindUpload(ctx context.Context, t *store.Thread, name, mime, extracted string, write func(*os.File) error) (uploadOut, error) {
 	id := uuid.NewString()
 	dir := filepath.Join(s.cfg.DataDir, "uploads", fmt.Sprint(t.UserID))
@@ -350,10 +221,6 @@ func (s *Server) writeRewindUpload(ctx context.Context, t *store.Thread, name, m
 // scratch folder, and the copy goes back next to the original. "" when the
 // copy starts with no earlier context (a fresh session).
 func (s *Server) rewindRemoteClaude(ctx context.Context, t *store.Thread, users []agent.Item) (string, error) {
-	return s.copyRemoteClaude(ctx, t, users, false)
-}
-
-func (s *Server) copyRemoteClaude(ctx context.Context, t *store.Thread, users []agent.Item, wholeFork bool) (string, error) {
 	h, err := s.host(ctx, t.HostID)
 	if err != nil || h == nil {
 		return "", fmt.Errorf("the server this conversation runs on is gone")
@@ -380,12 +247,7 @@ func (s *Server) copyRemoteClaude(ctx context.Context, t *store.Thread, users []
 	if err := agent.WriteConfined(filepath.Join(dir, t.ProviderSessionID+".jsonl"), []byte(data), 0o600); err != nil {
 		return "", err
 	}
-	var sid, cut string
-	if wholeFork {
-		sid, cut, err = agent.ForkClaude(scratch, t.ProviderSessionID)
-	} else {
-		sid, cut, err = agent.RewindClaude(scratch, t.ProviderSessionID, users)
-	}
+	sid, cut, err := agent.RewindClaude(scratch, t.ProviderSessionID, users)
 	if err != nil || sid == "" {
 		return sid, err
 	}
