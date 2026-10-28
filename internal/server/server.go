@@ -10,6 +10,8 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -120,6 +122,22 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		s.log.Info("admin user created from environment", "email", u.Email)
 	}
 	_ = s.store.PurgeSessions(ctx)
+	if s.cfg.PeopleDir != "" {
+		// everyone but the owner in a folder of their own, their agents jailed (people.go)
+		uploads, _ := filepath.Abs(filepath.Join(s.cfg.DataDir, "uploads"))
+		if err := os.MkdirAll(s.cfg.PeopleDir, 0o700); err != nil {
+			return err
+		}
+		agent.SetJail(agent.JailConfig{People: s.cfg.PeopleDir, Uploads: uploads, Off: s.cfg.SandboxOff, Bin: s.cfg.BwrapBin})
+		if on, off, why := agent.JailStatus(); on {
+			s.log.Info("people's agents run sandboxed", "people", s.cfg.PeopleDir)
+		} else if off {
+			s.log.Warn("SANDBOX=off: people's agents run WITHOUT a sandbox", "people", s.cfg.PeopleDir)
+		} else {
+			s.log.Warn("sandbox unavailable: only the owner can run agents until it works", "why", why)
+		}
+		s.migratePeople(ctx)
+	}
 	cut := s.store.ResetRunning(ctx)
 	_ = s.store.FailRunningSetups(ctx) // their output is in the thread; "Run setup again" is in the panel
 	s.changed.Store(time.Now().UnixNano())

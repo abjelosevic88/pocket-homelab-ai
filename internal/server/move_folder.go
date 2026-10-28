@@ -105,14 +105,14 @@ func moveClaudeSession(home, sessionID, cwd string) error {
 }
 
 func copyPath(src, dst string) error {
-	b, err := os.ReadFile(src)
+	b, err := agent.ReadConfined(src)
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(dst, b, 0o600)
+	return agent.WriteConfined(dst, b, 0o600)
 }
 
 // remoteMoveSession is moveClaudeSession on another machine (its own login).
@@ -218,7 +218,7 @@ func (s *Server) moveSessionTo(ctx context.Context, t *store.Thread, h *store.Ho
 		}
 		return l.Path, nil
 	}
-	dir, err := s.checkDir(cwd)
+	dir, err := s.checkDir(ctx, cwd)
 	if err != nil {
 		return "", err
 	}

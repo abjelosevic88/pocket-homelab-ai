@@ -203,7 +203,7 @@ func (s *Server) inferenceHome(ctx context.Context, u *store.User, st store.Sett
 	home := s.defaultHome("claude")
 	if id != 0 {
 		a, err := s.store.GetAccount(ctx, id)
-		if err != nil || !mayUseAccount(u, a) || a.Provider != "claude" {
+		if err != nil || !s.mayUseAccount(ctx, u, a) || a.Provider != "claude" {
 			return "", errors.New("Claude account unavailable")
 		}
 		home = a.Home

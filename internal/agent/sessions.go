@@ -337,7 +337,7 @@ func scanSession(provider, path string, info os.FileInfo) *sessionScan {
 	} else {
 		sc = sc.clone()
 	}
-	fh, err := os.Open(path)
+	fh, err := OpenConfined(path)
 	if err != nil {
 		return sc
 	}

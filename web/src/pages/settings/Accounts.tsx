@@ -1,10 +1,14 @@
-// More than one Claude Code / Codex login on the server. Admins add an
-// account (its own CLI folder), sign it in from here and choose who may use
-// it; everyone picks the account per thread in the composer.
+// More than one Claude Code / Codex login on the server. The server login
+// is the owner's; everyone else adds their own (in their own folder on the
+// server, their agents sandboxed there), signs it in from here and picks the
+// account per thread in the composer. Admins see and manage every login.
 import { useEffect, useRef, useState } from 'react'
 import { api, V1 } from '../../lib/api'
 import { useApp } from '../../lib/app-context'
 import type { Account, LoginState, ProviderId, User } from '../../lib/types'
+
+/** How people are kept apart (GET /settings → people; server people.go). */
+interface PeopleInfo { jailed: boolean; sandbox: boolean; sandbox_off: boolean; sandbox_error?: string; folder?: string; projects?: string; owner?: string }
 import { ProviderToggle } from '../../components/AgentPicker'
 import { planName } from '../../lib/format'
 import { Select } from '../../components/Select'
@@ -18,7 +22,10 @@ export function AccountsSection() {
   const { user, reloadAccounts } = useApp()
   const { toast } = useToast()
   const isAdmin = user?.role === 'admin'
+  const mayAdd = isAdmin || !!user?.can_run
   const [refresh, setRefresh] = useState(0)
+  const info = useAsync(() => api.get<{ people?: PeopleInfo }>(`${V1}/settings`).then(r => r.people || null), [])
+  const pi = info.data
   const list = useAsync(() => api.get<Account[]>(`${V1}/accounts?manage=${isAdmin ? 1 : 0}${refresh ? '&refresh=1' : ''}`), [refresh, isAdmin])
   const people = useAsync(() => isAdmin ? api.get<User[]>(`${V1}/users`) : Promise.resolve([] as User[]), [isAdmin])
   const [adding, setAdding] = useState<ProviderId | null>(null)
@@ -27,7 +34,9 @@ export function AccountsSection() {
   const [del, setDel] = useState<Account | null>(null)
   const ctx = useContextMenu()
   const done = () => { list.reload(); reloadAccounts().catch(() => {}) }
-  const who = (a: Account) => a.default ? 'Everyone' : a.user_id == null ? 'Everyone who may run agents' : 'Only ' + (people.data?.find(p => p.id === a.user_id)?.name || 'One person')
+  const mine = (a: Account) => !a.default && a.user_id != null && a.user_id === user?.id
+  const canManage = (a: Account) => !a.default && (isAdmin || mine(a))
+  const who = (a: Account) => a.default || a.user_id == null ? `Only ${pi?.owner || 'the server owner'}` : mine(a) ? 'Only you' : 'Only ' + (people.data?.find(p => p.id === a.user_id)?.name || 'one person')
 
   const signOut = async (a: Account) => {
     try { await api.post(`${V1}/accounts/${a.id}/logout`); toast('Signed out'); done() } catch (e) { toast(errMsg(e), 'err') }
@@ -38,8 +47,14 @@ export function AccountsSection() {
       actions={<>
         <button type="button" className="btn sm ghost icon-only" aria-label="Check the accounts again" title="Check again" disabled={list.loading} onClick={() => setRefresh(n => n + 1)}>
           <Icon name="refresh" size={14} className={list.loading ? 'spin' : ''} /></button>
-        {isAdmin && <button type="button" className="btn primary sm" onClick={() => setAdding('claude')}><Icon name="plus" size={14} />Add account</button>}
+        {mayAdd && <button type="button" className="btn primary sm" onClick={() => setAdding('claude')}><Icon name="plus" size={14} />Add account</button>}
       </>}>
+      {pi && <PeopleNotice info={pi} isAdmin={isAdmin} />}
+      {list.data && !list.data.length && mayAdd && (
+        <div className="callout info"><Icon name="key" size={15} /><span>Agents here run on <b>your own</b> Claude Code or Codex subscription. Add a login and sign in with it:{' '}
+          <button type="button" className="btn sm" onClick={() => setAdding('claude')}><Icon name="claude" size={13} />Claude Code</button>{' '}
+          <button type="button" className="btn sm" onClick={() => setAdding('codex')}><Icon name="codex" size={13} />Codex</button></span></div>
+      )}
       {!list.data ? <div className="loading"><Spinner /> Checking the logins…</div> : (
         <div className="acct-groups">
           {(['claude', 'codex'] as ProviderId[]).map(pid => {
@@ -51,7 +66,7 @@ export function AccountsSection() {
                   <span className={`acct-group-ico ${pid}`}><Icon name={pid} size={16} /></span>
                   <span className="acct-group-name">{pid === 'claude' ? 'Claude Code' : 'Codex'}</span>
                   <span className="acct-group-n">{rows.length} {rows.length === 1 ? 'login' : 'logins'}</span>
-                  {isAdmin && <button type="button" className="btn sm ghost acct-group-add" onClick={() => setAdding(pid)}><Icon name="plus" size={13} />Add</button>}
+                  {mayAdd && <button type="button" className="btn sm ghost acct-group-add" onClick={() => setAdding(pid)}><Icon name="plus" size={13} />Add</button>}
                 </div>
                 {rows.map(a => {
                   const more: MenuItem[] = [
@@ -62,7 +77,7 @@ export function AccountsSection() {
                     { label: 'Remove…', icon: 'trash', danger: true, onSelect: () => setDel(a) },
                   ]
                   return (
-                  <div key={a.id} className="acct-row" onContextMenu={isAdmin && !a.default ? e => ctx.open(e, more) : undefined}>
+                  <div key={a.id} className="acct-row" onContextMenu={canManage(a) ? e => ctx.open(e, more) : undefined}>
                     <StatusDot status={a.signed_in ? 'ok' : a.error ? 'error' : 'off'}
                       title={(a.signed_in ? 'Signed in' : a.error ? 'Error' : 'Not signed in') + (a.checked_at ? ` · checked ${ago(a.checked_at)}` : '')} />
                     <div className="acct-main">
@@ -73,11 +88,11 @@ export function AccountsSection() {
                         {a.same_as && <span className="badge" title={`${a.label} and ${a.same_as} are signed in to the same account, so they share one set of plan limits.`}>Same account as {a.same_as}</span>}
                       </div>
                       {a.email && <div className="acct-email ellipsis">{a.email}</div>}
-                      <div className="acct-meta"><code>{a.home.replace(/^\/home\/[^/]+/, '~')}</code>{!a.default && <span>{who(a)}</span>}</div>
+                      <div className="acct-meta"><code>{a.home.replace(/^\/home\/[^/]+/, '~')}</code><span>{who(a)}</span></div>
                       {a.error && <div className="danger-text xsmall" title={a.error}>{a.error}</div>}
                     </div>
                     <div className="acct-actions">
-                      {isAdmin && !a.default && (
+                      {canManage(a) && (
                         <MenuButton label={`More for ${a.label}`} align="right" items={more}><Icon name="more" size={16} /></MenuButton>
                       )}
                     </div>
@@ -89,18 +104,18 @@ export function AccountsSection() {
         </div>
       )}
       {list.error && <p className="danger-text small">{list.error}</p>}
-      {(adding || edit) && <AccountDialog account={edit} provider={adding || 'claude'} people={people.data || []} onClose={() => { setAdding(null); setEdit(null) }}
+      {(adding || edit) && <AccountDialog account={edit} provider={adding || 'claude'} people={people.data || []} isAdmin={isAdmin} own={!!pi?.jailed} onClose={() => { setAdding(null); setEdit(null) }}
         onSaved={a => { const wasNew = !!adding; setAdding(null); setEdit(null); done(); if (wasNew && a) setSignIn(a) }} />}
       {signIn && <SignInDialog account={signIn} onClose={() => { setSignIn(null); done() }} />}
       {del && <Confirm title={`Remove ${del.label}?`} confirmLabel="Remove"
-        message={<>Its threads continue on the server login (the conversation is copied over on their next message). The folder <code>{del.home}</code> with the login and session files stays on the server.</>}
+        message={<>Its threads continue on {pi?.jailed ? 'your other login' : 'the server login'} (the conversation is copied over on their next message). The folder <code>{del.home}</code> with the login and session files stays on the server.</>}
         onCancel={() => setDel(null)} onConfirm={async () => { const d = del; setDel(null); try { await api.del(`${V1}/accounts/${d.id}`); toast('Removed'); done() } catch (e) { toast(errMsg(e), 'err') } }} />}
       {ctx.menu}
     </Section>
   )
 }
 
-function AccountDialog({ account, provider: initial, people, onClose, onSaved }: { account: Account | null; provider: ProviderId; people: User[]; onClose: () => void; onSaved: (a?: Account) => void }) {
+function AccountDialog({ account, provider: initial, people, isAdmin, own, onClose, onSaved }: { account: Account | null; provider: ProviderId; people: User[]; isAdmin: boolean; own: boolean; onClose: () => void; onSaved: (a?: Account) => void }) {
   const { toast } = useToast()
   const [provider, setProvider] = useState<ProviderId>(account?.provider || initial)
   const [label, setLabel] = useState(account?.label || '')
@@ -110,7 +125,7 @@ function AccountDialog({ account, provider: initial, people, onClose, onSaved }:
   const save = async () => {
     setBusy(true)
     try {
-      const body = { label: label.trim(), user_id: owner || null }
+      const body = isAdmin ? { label: label.trim(), user_id: owner || null } : { label: label.trim() }
       const a = account ? await api.patch<Account>(`${V1}/accounts/${account.id}`, body) : await api.post<Account>(`${V1}/accounts`, { ...body, provider })
       toast(account ? 'Saved' : 'Account added — sign it in')
       onSaved(a)
@@ -126,11 +141,13 @@ function AccountDialog({ account, provider: initial, people, onClose, onSaved }:
         <Field label="Name" help="Shown in the account picker, e.g. “Work Max” or “Second Pro”.">
           <input value={label} onChange={e => setLabel(e.target.value)} autoFocus maxLength={60} placeholder={provider === 'codex' ? 'Second ChatGPT Pro' : 'Work Max'} />
         </Field>
-        <Field label="Who may use it" help="A login belongs to one person; share it only if that is allowed by its plan.">
-          <Select label="Who may use it" value={owner} onChange={setOwner}
-            options={[{ value: 0, label: 'Everyone who may run agents' }, ...runners.map(p => ({ value: p.id, label: p.name || p.email, description: p.email }))]} />
-        </Field>
-        {!account && <p className="muted small" style={{ margin: 0 }}>Pocket AI makes a new folder for it next to the server’s own login. Settings, skills, plugins{provider === 'claude' ? ' and MCP servers' : ' and config.toml'} are shared with the server login; the sign-in, history and limits are its own.</p>}
+        {isAdmin && <Field label="Whose login" help="A login belongs to one person. Anyone but the server owner keeps theirs in their own folder, and their agents run sandboxed there.">
+          <Select label="Whose login" value={owner} onChange={setOwner}
+            options={[{ value: 0, label: 'The server owner' }, ...runners.map(p => ({ value: p.id, label: p.name || p.email, description: p.email }))]} />
+        </Field>}
+        {!account && (own || (isAdmin && owner !== 0 && owner !== Math.min(...people.map(p => p.id)))
+          ? <p className="muted small" style={{ margin: 0 }}>Pocket AI makes a folder for it in {own ? 'your' : 'their'} own folder on the server. Sign in with {own ? 'your' : 'their'} own subscription: only {own ? 'you' : 'they'} can run on it, with {own ? 'your' : 'their'} own settings, history and limits.</p>
+          : !account && <p className="muted small" style={{ margin: 0 }}>Pocket AI makes a new folder for it next to the server’s own login. Settings, skills, plugins{provider === 'claude' ? ' and MCP servers' : ' and config.toml'} are shared with the server login; the sign-in, history and limits are its own.</p>)}
       </div>
     </Modal>
   )
@@ -207,4 +224,18 @@ function SignInDialog({ account, onClose }: { account: Account; onClose: () => v
         )}
     </Modal>
   )
+}
+
+/** Where this person's agents run and whether the sandbox works. */
+function PeopleNotice({ info, isAdmin }: { info: PeopleInfo; isAdmin: boolean }) {
+  if (info.jailed) {
+    if (!info.sandbox && !info.sandbox_off) {
+      return <div className="callout warn"><Icon name="alert" size={15} /><span>Your agents run in a sandbox that does not work on this server yet{info.sandbox_error ? ` (${info.sandbox_error})` : ''}, so they cannot start. Ask {info.owner || 'the server owner'} to set it up.</span></div>
+    }
+    return <div className="callout info"><Icon name="lock" size={15} /><span>Your agents work in your own folder <code>{info.projects}</code>, on your own logins. They cannot see anyone else's files, logins or chats{info.sandbox_off ? ' (the sandbox is switched off on this server, so this is not enforced)' : ''}.</span></div>
+  }
+  if (!isAdmin) return null
+  if (info.sandbox_off) return <div className="callout warn"><Icon name="alert" size={15} /><span>SANDBOX=off: other people's agents run in their own folders but <b>without</b> a sandbox.</span></div>
+  if (!info.sandbox) return <div className="callout warn"><Icon name="alert" size={15} /><span>Other people's agents run sandboxed, and the sandbox does not work here: {info.sandbox_error}. Until it does, only you can run agents. Install it with <code>sudo apt install bubblewrap</code> (Pocket AI notices within a few minutes).</span></div>
+  return <div className="callout info"><Icon name="lock" size={15} /><span>The server login is yours alone. Everyone else signs in with their own subscription; their agents run sandboxed in their own folder and see nothing of yours.</span></div>
 }

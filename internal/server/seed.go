@@ -10,7 +10,11 @@ import (
 // pinned starter recipes, so the first screen has something to tap.
 func (s *Server) seedUser(ctx context.Context, u *store.User) {
 	if list, err := s.store.ListWorkspaces(ctx, u.ID); err == nil && len(list) == 0 && s.cfg.Home != "" {
-		ws := &store.Workspace{UserID: u.ID, Name: "Home", Path: s.cfg.Home}
+		name, home := "Home", s.homeOf(ctx, u) // anyone but the owner: their own projects folder (people.go)
+		if s.jailed(ctx, u.ID) {
+			name = "Projects"
+		}
+		ws := &store.Workspace{UserID: u.ID, Name: name, Path: home}
 		if err := s.store.SaveWorkspace(ctx, ws); err != nil {
 			s.log.Warn("seed workspace", "user", u.Email, "err", err)
 		}

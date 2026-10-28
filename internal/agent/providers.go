@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"os"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -60,9 +59,11 @@ func probeClaude(ctx context.Context, bin, cwd string, env []string, isolated bo
 	} else {
 		args = append(args, "--settings", `{"fastMode":true}`)
 	}
-	cmd := exec.CommandContext(ctx, bin, args...)
-	cmd.Dir = cwd
-	cmd.Env = append(os.Environ(), env...)
+	cmd, err := LocalCmd(ctx, cwd, env, bin, args...)
+	if err != nil {
+		p.Error = err.Error()
+		return p
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, _ := cmd.StdinPipe()
 	stdout, _ := cmd.StdoutPipe()

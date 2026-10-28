@@ -4,12 +4,11 @@ import (
 	"bytes"
 	"context"
 	"net/url"
-	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/agent"
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
 )
 
@@ -29,11 +28,14 @@ func shOn(ctx context.Context, h *store.Host, timeout time.Duration, script stri
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", script, "sh"}, args...)...)
-	cmd.Env = os.Environ()
+	// on a person's repos: in their jail (git hooks are theirs to write)
+	cmd, err := agent.LocalCmd(ctx, agent.PersonHome(args...), nil, "sh", append([]string{"-c", script, "sh"}, args...)...)
+	if err != nil {
+		return "", err.Error(), err
+	}
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
-	err := cmd.Run()
+	err = cmd.Run()
 	return out.String(), strings.TrimSpace(errb.String()), err
 }
 

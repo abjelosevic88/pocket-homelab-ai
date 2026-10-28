@@ -123,32 +123,81 @@ func (s *Server) accountEnv(ctx context.Context, provider string, id int64) []st
 	return env
 }
 
-func mayUseAccount(u *store.User, a *store.Account) bool {
-	return a.UserID == nil || (u != nil && *a.UserID == u.ID)
+// mayUseAccount: the owner runs on accounts nobody owns and their own;
+// anyone else only on their own, in their own folder (people.go).
+func (s *Server) mayUseAccount(ctx context.Context, u *store.User, a *store.Account) bool {
+	if u == nil {
+		return false
+	}
+	if s.jailed(ctx, u.ID) {
+		return a.UserID != nil && *a.UserID == u.ID && s.ownFolder(ctx, u.ID, a.Home)
+	}
+	if agent.IsPersonPath(a.Home) {
+		return false // someone else's folder
+	}
+	return a.UserID == nil || *a.UserID == u.ID
 }
 
-// checkAccount accepts account 0 or an account of the provider the person may use.
+// mayUseServerLogin: the server's own login (account 0) is the owner's.
+func (s *Server) mayUseServerLogin(ctx context.Context, u *store.User) bool {
+	return u != nil && !s.jailed(ctx, u.ID)
+}
+
+// checkAccount accepts an account of the provider the person may use (0 =
+// the server's login, the owner's alone).
 func (s *Server) checkAccount(ctx context.Context, u *store.User, provider string, id int64) error {
 	if id == 0 {
+		if !s.mayUseServerLogin(ctx, u) {
+			return badRequest(signInFirst(provider))
+		}
 		return nil
 	}
 	a, err := s.store.GetAccount(ctx, id)
-	if err != nil || a.Provider != provider || !mayUseAccount(u, a) {
+	if err != nil || a.Provider != provider || !s.mayUseAccount(ctx, u, a) {
 		return badRequest("that account is not available")
 	}
 	return nil
 }
 
-// accountsFor lists the logins a person may run on (admins also see the
-// ones that belong to someone else when manage is set, to manage them).
-func (s *Server) accountsFor(ctx context.Context, u *store.User, manage, refresh bool) []accountView {
-	out := []accountView{
-		{Provider: "claude", Label: "Server login", Home: s.cfg.ClaudeHome, Default: true},
-		{Provider: "codex", Label: "Server login", Home: s.cfg.CodexHome, Default: true},
+func signInFirst(provider string) string {
+	name := "Claude Code"
+	if provider == "codex" {
+		name = "Codex"
+	}
+	return "Sign in to " + name + " with your own account first: Settings → Agents → Accounts → Add " + name + " login."
+}
+
+// usableAccount is the account a person runs on when theirs is not given or
+// gone: their saved default if they may still use it, else their first own
+// login of the provider (anyone but the owner), else the server's login
+// (the owner). err when they have none.
+func (s *Server) usableAccount(ctx context.Context, u *store.User, provider string, saved int64) (int64, error) {
+	if s.checkAccount(ctx, u, provider, saved) == nil {
+		return saved, nil
+	}
+	if s.mayUseServerLogin(ctx, u) {
+		return 0, nil
 	}
 	list, _ := s.store.ListAccounts(ctx)
 	for _, a := range list {
-		if mayUseAccount(u, a) || (manage && u.Role == "admin") {
+		if a.Provider == provider && s.mayUseAccount(ctx, u, a) {
+			return a.ID, nil
+		}
+	}
+	return 0, badRequest(signInFirst(provider))
+}
+
+// accountsFor lists the logins a person may run on (admins also see the
+// ones that belong to someone else when manage is set, to manage them).
+func (s *Server) accountsFor(ctx context.Context, u *store.User, manage, refresh bool) []accountView {
+	var out []accountView
+	if s.mayUseServerLogin(ctx, u) || (manage && u.Role == "admin") {
+		out = append(out, accountView{Provider: "claude", Label: "Server login", Home: s.cfg.ClaudeHome, Default: true},
+			accountView{Provider: "codex", Label: "Server login", Home: s.cfg.CodexHome, Default: true})
+	}
+	list, _ := s.store.ListAccounts(ctx)
+	for _, a := range list {
+		if s.mayUseAccount(ctx, u, a) || (manage && u.Role == "admin") {
 			out = append(out, accountView{ID: a.ID, Provider: a.Provider, Label: a.Label, Home: a.Home, UserID: a.UserID})
 		}
 	}
@@ -219,9 +268,10 @@ func loginChanged(provider, home string, t time.Time) bool {
 }
 
 func (s *Server) claudeStatus(ctx context.Context, env []string) acctStatus {
-	cmd := exec.CommandContext(ctx, s.cfg.ClaudeBin, "auth", "status")
-	cmd.Dir = s.cfg.Home
-	cmd.Env = append(os.Environ(), env...)
+	cmd, err := agent.LocalCmd(ctx, s.cfg.Home, env, s.cfg.ClaudeBin, "auth", "status")
+	if err != nil {
+		return acctStatus{Error: err.Error(), at: time.Now()}
+	}
 	out, err := cmd.Output()
 	var r struct {
 		LoggedIn         bool   `json:"loggedIn"`
@@ -274,7 +324,9 @@ var slugRe = regexp.MustCompile(`[^a-z0-9]+`)
 // handleCreateAccount adds a login: a new config folder next to the
 // server's own, sharing its settings, skills and plugins (symlinks).
 func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	u := userFrom(r.Context())
+	if !u.MayRun() {
+		writeErr(w, http.StatusForbidden, "an admin has to allow you to run agents first")
 		return
 	}
 	var in struct {
@@ -295,6 +347,9 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "give the account a name")
 		return
 	}
+	if u.Role != "admin" || (in.UserID == nil && s.jailed(r.Context(), u.ID)) {
+		in.UserID = &u.ID // people add logins for themselves
+	}
 	if err := s.checkOwner(r.Context(), in.UserID); err != nil {
 		s.fail(w, err, "account")
 		return
@@ -303,21 +358,34 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 	if slug == "" {
 		slug = "account"
 	}
-	base := filepath.Join(s.cfg.Home, "."+in.Provider+"-"+slug)
-	home := base
-	for i := 2; ; i++ {
-		if _, err := os.Lstat(home); os.IsNotExist(err) {
-			break
+	var home string
+	person := in.UserID != nil && s.jailed(r.Context(), *in.UserID)
+	if person {
+		// in their own folder, with their own settings (people.go)
+		if err := s.ensurePerson(*in.UserID); err != nil {
+			s.fail(w, err, "create account folder")
+			return
 		}
-		home = fmt.Sprintf("%s-%d", base, i)
+		home = s.newAccountHome(*in.UserID, in.Provider, slug)
+	} else {
+		base := filepath.Join(s.cfg.Home, "."+in.Provider+"-"+slug)
+		home = base
+		for i := 2; ; i++ {
+			if _, err := os.Lstat(home); os.IsNotExist(err) {
+				break
+			}
+			home = fmt.Sprintf("%s-%d", base, i)
+		}
 	}
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		s.fail(w, err, "create account folder")
 		return
 	}
-	agent.ShareSetup(in.Provider, s.defaultHome(in.Provider), home)
-	if in.Provider == "claude" {
-		s.copyClaudeMCP(home)
+	if !person {
+		agent.ShareSetup(in.Provider, s.defaultHome(in.Provider), home)
+		if in.Provider == "claude" {
+			s.copyClaudeMCP(home)
+		}
 	}
 	a := &store.Account{Provider: in.Provider, Label: in.Label, Home: home, UserID: in.UserID}
 	if err := s.store.CreateAccount(r.Context(), a); err != nil {
@@ -351,6 +419,38 @@ func (s *Server) copyClaudeMCP(home string) {
 	}
 }
 
+// giveAccount checks (and does) what handing a login to someone else needs:
+// a login in a person's folder stays theirs (its settings are theirs), one
+// in the owner's home moves into the new person's folder.
+func (s *Server) giveAccount(ctx context.Context, a *store.Account, uid *int64) error {
+	if agent.IsPersonPath(a.Home) {
+		if uid == nil || !s.jailed(ctx, *uid) || !s.ownFolder(ctx, *uid, a.Home) {
+			return badRequest("this login lives in its person's own folder and stays theirs; add a new login instead")
+		}
+		return nil
+	}
+	if uid == nil || !s.jailed(ctx, *uid) {
+		return nil
+	}
+	if err := s.ensurePerson(*uid); err != nil {
+		return err
+	}
+	s.rt.stopAccount(a.ID)
+	dst := s.newAccountHome(*uid, a.Provider, filepath.Base(a.Home))
+	if err := os.Rename(a.Home, dst); err != nil {
+		return fmt.Errorf("move the login into their folder: %w", err)
+	}
+	unshareSetup(dst)
+	a.Home = dst
+	if _, err := s.store.DB.ExecContext(ctx, `UPDATE accounts SET home=? WHERE id=?`, dst, a.ID); err != nil {
+		return err
+	}
+	s.accts.mu.Lock()
+	delete(s.accts.status, acctKey(a.Provider, a.ID))
+	s.accts.mu.Unlock()
+	return nil
+}
+
 func (s *Server) checkOwner(ctx context.Context, uid *int64) error {
 	if uid == nil {
 		return nil
@@ -361,16 +461,24 @@ func (s *Server) checkOwner(ctx context.Context, uid *int64) error {
 	return nil
 }
 
+// adminAccount is the account of the request for someone who may manage
+// it: an admin, or the person it belongs to.
 func (s *Server) adminAccount(w http.ResponseWriter, r *http.Request) *store.Account {
-	if !s.requireAdmin(w, r) {
-		return nil
-	}
+	u := userFrom(r.Context())
 	a, err := s.store.GetAccount(r.Context(), idParam(r, "id"))
 	if err != nil {
+		if u.Role != "admin" && !u.MayRun() {
+			writeErr(w, http.StatusForbidden, "forbidden")
+			return nil
+		}
 		s.fail(w, err, "account")
 		return nil
 	}
-	return a
+	if u.Role == "admin" || (u.MayRun() && a.UserID != nil && *a.UserID == u.ID) {
+		return a
+	}
+	writeErr(w, http.StatusNotFound, "account not found")
+	return nil
 }
 
 func (s *Server) handlePatchAccount(w http.ResponseWriter, r *http.Request) {
@@ -392,12 +500,19 @@ func (s *Server) handlePatchAccount(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if in.UserID != nil {
+		if !s.requireAdmin(w, r) {
+			return
+		}
 		var uid *int64
 		if err := json.Unmarshal(*in.UserID, &uid); err != nil {
 			writeErr(w, http.StatusBadRequest, "user_id must be a number or null")
 			return
 		}
 		if err := s.checkOwner(r.Context(), uid); err != nil {
+			s.fail(w, err, "account")
+			return
+		}
+		if err := s.giveAccount(r.Context(), a, uid); err != nil {
 			s.fail(w, err, "account")
 			return
 		}
@@ -439,14 +554,15 @@ func (s *Server) handleAccountLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	var cmd *exec.Cmd
+	bin, args := s.cfg.ClaudeBin, []string{"auth", "logout"}
 	if a.Provider == "codex" {
-		cmd = exec.CommandContext(ctx, s.cfg.CodexBin, "logout")
-	} else {
-		cmd = exec.CommandContext(ctx, s.cfg.ClaudeBin, "auth", "logout")
+		bin, args = s.cfg.CodexBin, []string{"logout"}
 	}
-	cmd.Dir = s.cfg.Home
-	cmd.Env = append(os.Environ(), agent.AccountEnv(a.Provider, a.Home)...)
+	cmd, err := agent.LocalCmd(ctx, s.cfg.Home, agent.AccountEnv(a.Provider, a.Home), bin, args...)
+	if err != nil {
+		s.fail(w, err, "sign out")
+		return
+	}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		writeErr(w, http.StatusBadGateway, "sign out failed: "+oneLine(stripANSI(string(out)), 300))
 		return
@@ -501,15 +617,17 @@ func (s *Server) handleStartLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	s.cancelLogin(a.ID)
 	ctx, cancel := context.WithTimeout(s.rt.ctx, loginExpiry)
-	var cmd *exec.Cmd
+	bin, args := s.cfg.ClaudeBin, []string{"auth", "login", "--claudeai"}
 	if a.Provider == "codex" {
-		cmd = exec.CommandContext(ctx, s.cfg.CodexBin, "login", "--device-auth")
-	} else {
-		cmd = exec.CommandContext(ctx, s.cfg.ClaudeBin, "auth", "login", "--claudeai")
+		bin, args = s.cfg.CodexBin, []string{"login", "--device-auth"}
 	}
-	cmd.Dir = a.Home
-	cmd.Env = append(os.Environ(), agent.AccountEnv(a.Provider, a.Home)...)
-	cmd.Env = append(cmd.Env, "BROWSER=true", "NO_COLOR=1") // nothing to open on a server
+	// nothing to open on a server
+	cmd, err := agent.LocalCmd(ctx, a.Home, append(agent.AccountEnv(a.Provider, a.Home), "BROWSER=true", "NO_COLOR=1"), bin, args...)
+	if err != nil {
+		cancel()
+		s.fail(w, err, "login")
+		return
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
 	l := &loginRun{provider: a.Provider, cmd: cmd, State: "starting", done: make(chan struct{})}
@@ -783,10 +901,13 @@ func (s *Server) accountLabel(ctx context.Context, provider string, id int64) st
 // homesFor lists the folders of the logins a person may use (what "On this
 // server" and Today read).
 func (s *Server) homesFor(ctx context.Context, u *store.User) agent.Homes {
-	h := agent.Homes{Claude: []agent.AccountHome{{Dir: s.cfg.ClaudeHome}}, Codex: []agent.AccountHome{{Dir: s.cfg.CodexHome}}}
+	var h agent.Homes
+	if s.mayUseServerLogin(ctx, u) {
+		h = agent.Homes{Claude: []agent.AccountHome{{Dir: s.cfg.ClaudeHome}}, Codex: []agent.AccountHome{{Dir: s.cfg.CodexHome}}}
+	}
 	list, _ := s.store.ListAccounts(ctx)
 	for _, a := range list {
-		if !mayUseAccount(u, a) {
+		if !s.mayUseAccount(ctx, u, a) {
 			continue
 		}
 		if a.Provider == "codex" {
@@ -813,7 +934,7 @@ func (s *Server) accountIDsFor(ctx context.Context, u *store.User) map[string]bo
 
 // askHomes are the Claude folders Pocket Ask keeps per person (one per login).
 func (s *Server) askHomes(uid int64) agent.Homes {
-	base := filepath.Join(s.cfg.DataDir, "ask-claude", strconv.FormatInt(uid, 10))
+	base := filepath.Join(s.askBase(context.Background(), uid), "ask-claude", strconv.FormatInt(uid, 10))
 	h := agent.Homes{Claude: []agent.AccountHome{{Dir: base}}}
 	more, _ := filepath.Glob(base + "-a*")
 	for _, dir := range more {
@@ -828,6 +949,9 @@ func (s *Server) askHomes(uid int64) agent.Homes {
 // folder with the latest copy of its file, among those the person may use.
 func (s *Server) sessionAccount(ctx context.Context, u *store.User, provider, sessionID string) (int64, string) {
 	id, dir, best := int64(0), s.defaultHome(provider), int64(-1)
+	if !s.mayUseServerLogin(ctx, u) {
+		dir = filepath.Join(s.personHome(u.ID), "."+provider) // never the server's folder
+	}
 	for _, h := range s.homesFor(ctx, u).Of(provider) {
 		if p, err := agent.SessionPath(provider, h.Dir, sessionID); err == nil {
 			if n := agent.FileSize(p); n > best {

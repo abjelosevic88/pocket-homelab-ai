@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"os"
 	"strings"
 )
 
@@ -28,7 +27,7 @@ type imageBlock struct {
 // otherwise key is a tool_use id and the images are in its result (Read of
 // a picture). The CLI keeps them there as base64, so Pocket AI stores no copy.
 func LogImage(path, key string, n int) ([]byte, string, error) {
-	fh, err := os.Open(path)
+	fh, err := OpenConfined(path)
 	if err != nil {
 		return nil, "", err
 	}

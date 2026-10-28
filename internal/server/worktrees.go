@@ -181,6 +181,9 @@ func (s *Server) worktreesDir(h *store.Host, repo string) string {
 	if root == "" {
 		root = filepath.Join(s.cfg.Home, ".pocket-ai", "worktrees")
 	}
+	if home := agent.PersonHome(repo); home != "" {
+		root = filepath.Join(home, ".pocket-ai", "worktrees") // a person's repo: in their own folder
+	}
 	return filepath.Join(root, name)
 }
 
@@ -388,7 +391,10 @@ func (s *Server) runCommands(ctx context.Context, h *store.Host, w *store.Worktr
 		remote = remoteOf(h)
 	}
 	script := "set -e\n" + strings.Join(cmds, "\n")
-	cmd := agent.Command(remote, w.Path, wtEnv(w, 20000+rand.Intn(30000)), "sh", "-c", script)
+	cmd, err := agent.Command(remote, w.Path, wtEnv(w, 20000+rand.Intn(30000)), "sh", "-c", script)
+	if err != nil {
+		return err
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	pr, pw := io.Pipe()
 	cmd.Stdout, cmd.Stderr = pw, pw
@@ -423,7 +429,6 @@ func (s *Server) runCommands(ctx context.Context, h *store.Host, w *store.Worktr
 	exited := make(chan error, 1)
 	go func() { exited <- cmd.Wait(); _ = pw.Close() }()
 	deadline := time.After(timeout)
-	var err error
 loop:
 	for {
 		select {
@@ -1119,7 +1124,7 @@ func (s *Server) repoAt(r *http.Request, hostID int64, p string) (*store.Host, r
 		return nil, repoInfo{}, err
 	}
 	if h == nil {
-		if p, err = s.checkDir(p); err != nil {
+		if p, err = s.checkDir(r.Context(), p); err != nil {
 			return nil, repoInfo{}, err
 		}
 	}

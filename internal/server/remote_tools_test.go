@@ -36,7 +36,7 @@ func TestRemotePocketTools(t *testing.T) {
 	if p.URL != "http://127.0.0.1:"+port+"/mcp" || p.Type != "http" || p.Headers["Authorization"] != "Bearer cap" {
 		t.Fatalf("pocket: %+v", p)
 	}
-	cmd := agent.Command(o.Remote, "/work", nil, "claude", "-p")
+	cmd, _ := agent.Command(o.Remote, "/work", nil, "claude", "-p")
 	args := strings.Join(cmd.Args, " ")
 	if !strings.Contains(args, "-o ExitOnForwardFailure=yes -R "+o.Remote.Forwards[0]) || strings.Index(args, "-R") > strings.Index(args, "ubuntu@box") {
 		t.Fatalf("ssh args: %s", args)

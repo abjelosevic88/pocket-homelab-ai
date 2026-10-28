@@ -31,7 +31,7 @@ func ExternalSubagents(sessionPath string) []Subagent {
 			AgentType   string `json:"agentType"`
 			Description string `json:"description"`
 		}
-		if b, err := os.ReadFile(mp); err != nil || json.Unmarshal(b, &meta) != nil {
+		if b, err := ReadConfined(mp); err != nil || json.Unmarshal(b, &meta) != nil {
 			continue
 		}
 		done, activity, tools := subagentTail(jp)
@@ -89,7 +89,7 @@ func subagentTail(path string) (done bool, activity string, tools int) {
 }
 
 func firstTimestamp(path string) string {
-	fh, err := os.Open(path)
+	fh, err := OpenConfined(path)
 	if err != nil {
 		return ""
 	}
@@ -176,7 +176,7 @@ func subagentInfo(metaPath string) (SubagentInfo, bool) {
 		Model       string `json:"model"`
 		Finished    bool   `json:"finished"`
 	}
-	if b, err := os.ReadFile(metaPath); err != nil || json.Unmarshal(b, &meta) != nil {
+	if b, err := ReadConfined(metaPath); err != nil || json.Unmarshal(b, &meta) != nil {
 		return SubagentInfo{}, false
 	}
 	subagentCache.Lock()
@@ -212,7 +212,7 @@ func subagentInfo(metaPath string) (SubagentInfo, bool) {
 // scanSubagent reads a whole sub-agent transcript: model, tool calls, how
 // full its context got, whether it finished and what it answered.
 func scanSubagent(path string) (info SubagentInfo) {
-	fh, err := os.Open(path)
+	fh, err := OpenConfined(path)
 	if err != nil {
 		return info
 	}

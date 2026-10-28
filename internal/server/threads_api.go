@@ -70,7 +70,7 @@ func (s *Server) thread(w http.ResponseWriter, r *http.Request) *store.Thread {
 }
 
 func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.providers(r.Context(), queryBool(r, "refresh")))
+	writeJSON(w, http.StatusOK, s.providersFor(r.Context(), userFrom(r.Context()), queryBool(r, "refresh")))
 }
 
 // providers probes both CLIs (cached for 30 minutes).
@@ -191,10 +191,13 @@ func (s *Server) createThread(ctx context.Context, u *store.User, in newThread, 
 		t.HostID, t.AccountID, in.AccountID = host.ID, 0, nil // the machine's own login
 	}
 	if err := s.checkAccount(ctx, u, t.Provider, t.AccountID); err != nil {
-		if in.AccountID != nil {
+		if in.AccountID != nil || host != nil {
 			return nil, err
 		}
-		t.AccountID = 0 // a saved default that is gone: the server login
+		// a saved default that is gone: their own login (the owner: the server's)
+		if t.AccountID, err = s.usableAccount(ctx, u, t.Provider, t.AccountID); err != nil {
+			return nil, err
+		}
 	}
 	t.Speed = def.Speed
 	if in.Speed != nil {
@@ -224,8 +227,8 @@ func (s *Server) createThread(ctx context.Context, u *store.User, in newThread, 
 		}
 	}
 	if host == nil {
-		cwd := firstNonEmpty(in.Cwd, st.DefaultCwd, s.cfg.Home)
-		clean, err := s.checkDir(cwd)
+		cwd := firstNonEmpty(in.Cwd, st.DefaultCwd, s.homeOf(ctx, u))
+		clean, err := s.checkDirFor(ctx, u, cwd)
 		if err != nil {
 			return nil, err
 		}

@@ -35,7 +35,8 @@ func (s *Server) publicSettings(ctx context.Context, u *store.User, st store.Set
 	out["notify_has_token"] = st.NotifyToken != ""
 	out["notify_box_route"] = s.cfg.NotifyURL != "" && s.isOwner(ctx, u.ID)
 	out["box_tz"] = s.cfg.Timezone
-	out["home"] = s.cfg.Home
+	out["home"] = s.homeOf(ctx, u)
+	out["people"] = s.sandboxInfo(ctx, u) // own folder, sandbox (people.go)
 	out["core"] = s.coreStatus()
 	return out
 }
@@ -89,7 +90,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	if in.DefaultCwd != nil {
 		p := strings.TrimSpace(*in.DefaultCwd)
 		if p != "" {
-			clean, err := s.checkDir(p)
+			clean, err := s.checkDir(ctx, p)
 			if err != nil {
 				writeErr(w, http.StatusBadRequest, err.Error())
 				return
@@ -280,10 +281,11 @@ func (s *Server) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
 		"base_url": s.cfg.BaseURL, "timezone": s.cfg.Timezone,
 	}
 	if u.MayRun() {
-		info["roots"] = s.cfg.Roots
+		info["roots"] = s.pickerRoots(ctx, u)
+		info["people"] = s.sandboxInfo(ctx, u)
 		info["claude_bin"], info["codex_bin"] = s.cfg.ClaudeBin, s.cfg.CodexBin
 		info["live"] = s.rt.liveCount()
-		info["providers"] = s.providers(ctx, false)
+		info["providers"] = s.providersFor(ctx, u, false)
 	}
 	if u.Role == "admin" {
 		if fi, err := os.Stat(s.cfg.DBPath); err == nil {

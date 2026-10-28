@@ -123,7 +123,10 @@ func startRPC(bin, cwd string, env []string, remote ...*Remote) (*rpc, error) {
 	if len(remote) > 0 {
 		r = remote[0]
 	}
-	cmd := Command(r, cwd, env, bin, "app-server")
+	cmd, err := Command(r, cwd, env, bin, "app-server")
+	if err != nil {
+		return nil, err
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	c := &rpc{cmd: cmd, calls: map[int64]chan rpcReply{}, done: make(chan struct{}), errb: &tail{n: 8 << 10}}
 	c.qcond = sync.NewCond(&c.qmu)
@@ -982,7 +985,7 @@ func codexPocketConfig(path string) (map[string]any, error) {
 	raw := []byte(path)
 	if !strings.HasPrefix(strings.TrimSpace(path), "{") {
 		var err error
-		if raw, err = os.ReadFile(path); err != nil {
+		if raw, err = ReadConfined(path); err != nil {
 			return nil, err
 		}
 	}

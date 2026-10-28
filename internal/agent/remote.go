@@ -83,14 +83,12 @@ func remoteScript(dir string, env []string, bin string, args []string) string {
 	return b.String()
 }
 
-// Command runs bin in dir: here (r nil) or on the remote machine over ssh.
-// env is added to the local environment; on a remote only env itself is set.
-func Command(r *Remote, dir string, env []string, bin string, args ...string) *exec.Cmd {
+// Command runs bin in dir: here (r nil; a person's things in their jail,
+// jail.go) or on the remote machine over ssh. env is added to the local
+// environment; on a remote only env itself is set.
+func Command(r *Remote, dir string, env []string, bin string, args ...string) (*exec.Cmd, error) {
 	if r == nil {
-		cmd := exec.Command(bin, args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), env...)
-		return cmd
+		return LocalCmd(nil, dir, env, bin, args...)
 	}
 	var argv []string
 	if len(r.Forwards) > 0 {
@@ -103,7 +101,7 @@ func Command(r *Remote, dir string, env []string, bin string, args ...string) *e
 	argv = append(argv, r.sshArgs()...)
 	cmd := exec.Command("ssh", append(argv, remoteCommand(remoteScript(dir, env, bin, args)))...)
 	cmd.Env = os.Environ()
-	return cmd
+	return cmd, nil
 }
 
 // Run runs a short sh script on the remote machine (the same profile and

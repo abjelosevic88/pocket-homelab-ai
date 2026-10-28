@@ -16,16 +16,18 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/agent"
 )
 
 // listDirsNear is listDirs, but a folder that does not exist lists the
 // nearest parent that does (inside the roots) with Missing set.
-func (s *Server) listDirsNear(p string, hidden bool) (*dirListing, error) {
-	l, err := s.listDirs(p, hidden)
+func (s *Server) listDirsNear(ctx context.Context, p string, hidden bool) (*dirListing, error) {
+	l, err := s.listDirs(ctx, p, hidden)
 	if err == nil || p == "" {
 		return l, err
 	}
-	want := filepath.Clean(s.expand(p))
+	want := filepath.Clean(s.expand(ctx, p))
 	if !filepath.IsAbs(want) {
 		return nil, err
 	}
@@ -33,7 +35,7 @@ func (s *Server) listDirsNear(p string, hidden bool) (*dirListing, error) {
 		return nil, err // there, but not allowed or not a folder
 	}
 	for q := filepath.Dir(want); ; q = filepath.Dir(q) {
-		if near, nerr := s.listDirs(q, hidden); nerr == nil {
+		if near, nerr := s.listDirs(ctx, q, hidden); nerr == nil {
 			near.Missing = want
 			return near, nil
 		}
@@ -45,8 +47,8 @@ func (s *Server) listDirsNear(p string, hidden bool) (*dirListing, error) {
 
 // newFolderPath checks a folder about to be made on this server: absolute,
 // and its nearest existing parent inside the roots (no symlink out).
-func (s *Server) newFolderPath(p string) (string, error) {
-	p = filepath.Clean(s.expand(p))
+func (s *Server) newFolderPath(ctx context.Context, p string) (string, error) {
+	p = filepath.Clean(s.expand(ctx, p))
 	if !filepath.IsAbs(p) {
 		return "", badRequest("use an absolute folder path (or ~/…)")
 	}
@@ -60,7 +62,7 @@ func (s *Server) newFolderPath(p string) (string, error) {
 		}
 		q = filepath.Dir(q)
 	}
-	if _, err := s.checkDir(q); err != nil {
+	if _, err := s.checkDir(ctx, q); err != nil {
 		return "", err
 	}
 	return p, nil
@@ -122,7 +124,7 @@ mkdir -p -- "$p" || exit 3`, target)
 		}
 		out, err = s.listRemoteDirs(r.Context(), h, target, false)
 	} else {
-		p, perr := s.newFolderPath(target)
+		p, perr := s.newFolderPath(r.Context(), target)
 		if perr != nil {
 			s.fail(w, perr, "mkdir")
 			return
@@ -131,7 +133,7 @@ mkdir -p -- "$p" || exit 3`, target)
 			s.fail(w, badRequest("could not make "+p+": "+err.Error()), "mkdir")
 			return
 		}
-		out, err = s.listDirs(p, false)
+		out, err = s.listDirs(r.Context(), p, false)
 	}
 	if err != nil {
 		s.fail(w, err, "mkdir")
@@ -197,7 +199,7 @@ GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="ssh -o BatchMode=yes -o StrictHostKeyChec
 		}
 		out, err = s.listRemoteDirs(ctx, h, path.Join(in.Path, name), false)
 	} else {
-		dir, derr := s.checkDir(in.Path)
+		dir, derr := s.checkDir(ctx, in.Path)
 		if derr != nil {
 			s.fail(w, derr, "clone")
 			return
@@ -207,14 +209,17 @@ GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="ssh -o BatchMode=yes -o StrictHostKeyChec
 			s.fail(w, badRequest(name+" is already there"), "clone")
 			return
 		}
-		cmd := exec.CommandContext(ctx, "git", "clone", "--quiet", "--", in.URL, name)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new")
+		// into a person's folder: in their jail (a file:// URL must not copy the server's repos)
+		cmd, cerr := agent.LocalCmd(ctx, dir, []string{"GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new"}, "git", "clone", "--quiet", "--", in.URL, name)
+		if cerr != nil {
+			s.fail(w, cerr, "clone")
+			return
+		}
 		if b, cerr := cmd.CombinedOutput(); cerr != nil {
 			s.fail(w, badRequest("the clone failed: "+oneLine(firstNonEmpty(string(b), cerr.Error()), 300)), "clone")
 			return
 		}
-		out, err = s.listDirs(dest, false)
+		out, err = s.listDirs(ctx, dest, false)
 	}
 	if err != nil {
 		s.fail(w, err, "clone")

@@ -239,18 +239,18 @@ func TestFoldersStayInsideRoots(t *testing.T) {
 	if err := os.Mkdir(inside, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.checkDir(inside); err != nil {
+	if _, err := s.checkDir(context.Background(), inside); err != nil {
 		t.Fatalf("inside: %v", err)
 	}
 	for _, p := range []string{"/etc", root + "/../", "relative/path", filepath.Join(root, "missing")} {
-		if _, err := s.checkDir(p); err == nil {
+		if _, err := s.checkDir(context.Background(), p); err == nil {
 			t.Errorf("%s was allowed", p)
 		}
 	}
 	// a symlink out of the root does not count as inside
 	link := filepath.Join(root, "out")
 	if err := os.Symlink("/etc", link); err == nil {
-		if _, err := s.checkDir(link); err == nil {
+		if _, err := s.checkDir(context.Background(), link); err == nil {
 			t.Error("symlink to /etc was allowed")
 		}
 	}
@@ -316,6 +316,7 @@ func itoa(n int64) string {
 // unclaimed ones (terminal, Paseo) only admins.
 func TestServerSessionsArePerPerson(t *testing.T) {
 	s, h, root := testServer(t)
+	s.cfg.PeopleDir = "" // the shared-login model: everyone may use the server login (people.go is off)
 	admin, au := person(t, s, h, "admin@example.com", "admin", false)
 	alice, alu := person(t, s, h, "alice@example.com", "member", true)
 	bob, _ := person(t, s, h, "bob@example.com", "member", true)

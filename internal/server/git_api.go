@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"net/http"
-	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -45,9 +43,12 @@ const gitMaxBranches = 300
 func runGit(ctx context.Context, dir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-	// never prompt for credentials; don't take index.lock for status (an agent may be committing)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "LC_ALL=C")
+	// never prompt for credentials; don't take index.lock for status (an agent may be committing);
+	// a person's repo (and its hooks) only in their jail
+	cmd, err := agent.LocalCmd(ctx, dir, []string{"GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "LC_ALL=C"}, "git", append([]string{"-C", dir}, args...)...)
+	if err != nil {
+		return "", err
+	}
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {
@@ -161,7 +162,7 @@ func (s *Server) gitDir(ctx context.Context, u *store.User, hostID int64, p stri
 		dir, err := s.checkRemoteDir(ctx, h, p)
 		return h, dir, err
 	}
-	dir, err := s.checkDir(p)
+	dir, err := s.checkDir(ctx, p)
 	return nil, dir, err
 }
 

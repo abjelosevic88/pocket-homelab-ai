@@ -92,8 +92,14 @@ Personal app assistance: [Briefing, workflows, memory, sources and document uplo
 - Fork a thread (the agent session is forked too), export it as Markdown, pin, archive, workspaces for the folders
   you use most, a folder picker limited to the folders you allow.
 - Per person, like every Pocket app: nobody sees anyone else's threads, admins included. Members may only run
-  agents when an admin allows it (agents run as the server's Unix user). Sign in with Pocket Core, API tokens,
-  Pocket Core events (`ai.turn_finished`, `ai.needs_input`, `ai.schedule_attention`).
+  agents when an admin allows it. Sign in with Pocket Core, API tokens, Pocket Core events
+  (`ai.turn_finished`, `ai.needs_input`, `ai.schedule_attention`).
+- Everyone on their own Claude Code and Codex: the server's login is the owner's (the first person). Everyone
+  else signs in with their own subscription in Settings → Agents → Accounts, and works in a folder of their own
+  (`PEOPLE_DIR/<id>`: `home/` with their logins, `projects/` for their code). Their agents, sign-ins and git run
+  in a [bubblewrap](https://github.com/containers/bubblewrap) jail that shows them that folder and nothing else
+  of the server — not its files, not its environment, not other people's agents. See
+  [People and the sandbox](#people-and-the-sandbox).
 
 ## Compared with Paseo
 
@@ -105,12 +111,35 @@ narrower and lives with the other Pocket apps:
 - Pocket accounts and Sign in with Pocket Core, per-person data, an admin switch for who may run agents;
   chats are private until you share one (per person: can view, or can chat in it too), and
   the server-wide lists (On this server, Today, Running now) show each person only their own chats, and
-  terminal / Paseo sessions only to admins. (Agents still run as the server's user, so whoever may run
-  agents can read its files: give that switch only to people you trust with a shell.)
+  terminal / Paseo sessions only to admins. Everyone but the owner runs sandboxed in their own folder, on
+  their own Claude / Codex login.
 - built around looking after a server: recipes with placeholders on the start screen, schedules that answer
   OK / ATTENTION and only notify on attention, pushes through the Apprise / ntfy route the box already uses;
 - every Claude Code and Codex session on the server listed and resumable, full-text search, usage per day;
 - only Claude Code and Codex.
+
+## People and the sandbox
+
+The first person on the server is its **owner**: their agents run as the server's user, in the folders `ROOTS`
+allows, on the server's own CLI logins (`~/.claude`, `~/.codex`) and on any remote server under Settings →
+Servers. Everybody else:
+
+- gets `PEOPLE_DIR/<id>` (default `DATA_DIR/people`): `home/` is their agents' `$HOME` with their Claude Code
+  and Codex logins, worktrees and Pocket Ask's folder; `projects/` is where they work (their folder picker's
+  only root);
+- adds their own logins (Settings → Agents → Accounts → Add) and signs in with their own subscription — the
+  server's login, the owner's accounts and the owner's ssh key are not theirs to use;
+- runs every agent, sign-in, git command and worktree script inside bubblewrap: their folder read-write at its
+  own path, the system read-only, a fresh `/tmp`, `/dev` and `/proc`, their own process space, and none of the
+  server's environment. A folder another app shares for a whole team (Pocket Projects) maps to their own clone
+  of the same name in `projects/`.
+
+Install bubblewrap on the server (`apt install bubblewrap`; Ubuntu's AppArmor profile for `/usr/bin/bwrap` is
+what lets it make namespaces). Until it works, only the owner can run agents, and Settings says why. In a
+systemd service, `ProtectKernelTunables=` must be off (the jail mounts its own `/proc`). `SANDBOX=off` keeps the
+folders and logins apart but runs people's agents without bubblewrap. Existing people are moved over at
+start: their saved folders point at their projects, their Pocket Ask chats move into their folder, and
+accounts nobody owned become the owner's.
 
 ## Run it
 

@@ -5,8 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
-	"os/exec"
 	"sort"
 	"strings"
 	"syscall"
@@ -32,10 +30,11 @@ func ListClaudeSkills(ctx context.Context, bin, cwd string, env []string) ([]Ski
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+	cmd, err := LocalCmd(ctx, cwd, env, bin, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
 		"--no-session-persistence", "--permission-prompt-tool", "stdio", "--settings", `{"disableAllHooks":true}`)
-	cmd.Dir = cwd
-	cmd.Env = append(os.Environ(), env...)
+	if err != nil {
+		return nil, err
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, _ := cmd.StdinPipe()
 	stdout, _ := cmd.StdoutPipe()

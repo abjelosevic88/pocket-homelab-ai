@@ -60,7 +60,10 @@ func (s *Server) deployRepo(ctx context.Context, u *store.User, hostID int64, cw
 		return nil, repoInfo{}, err
 	}
 	if h == nil {
-		if cwd, err = s.checkDir(cwd); err != nil {
+		if cwd, err = s.ownCopy(ctx, u, cwd); err != nil {
+			return nil, repoInfo{}, err
+		}
+		if cwd, err = s.checkDirFor(ctx, u, cwd); err != nil {
 			return nil, repoInfo{}, err
 		}
 	}
