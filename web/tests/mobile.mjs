@@ -56,7 +56,8 @@ try {
    })
    const p = await c.newPage(), errors = []; p.on('pageerror', e => errors.push(e.message))
    async function overflow() { assert.equal(await p.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, `Overflow at ${width}: ${p.url()}`) }
-   await p.goto(base + '/'); await p.getByRole('button', { name: 'Ask my apps', exact: true }).waitFor(); assert.equal(await p.getByRole('button', { name: 'Ask my apps', exact: true }).getAttribute('aria-pressed'), 'true')
+   await p.goto(base + '/'); await p.getByRole('button', { name: 'Work on the server', exact: true }).waitFor(); assert.equal(await p.getByRole('button', { name: 'Work on the server', exact: true }).getAttribute('aria-pressed'), 'true')
+   await p.getByRole('button', { name: 'Ask my apps', exact: true }).click(); assert.equal(await p.getByRole('button', { name: 'Ask my apps', exact: true }).getAttribute('aria-pressed'), 'true')
    const memoryChoice = p.getByRole('button', { name: 'Use saved memory', exact: true })
    assert.equal(await memoryChoice.getAttribute('aria-pressed'), 'true'); await memoryChoice.click(); assert.equal(await memoryChoice.getAttribute('aria-pressed'), 'false'); await memoryChoice.click()
    await p.getByRole('button', { name: 'Car expenses', exact: true }).click(); assert.equal(await p.locator('.composer textarea').inputValue(), 'Find my car expenses without counting duplicates')
