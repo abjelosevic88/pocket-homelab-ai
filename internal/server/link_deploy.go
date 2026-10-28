@@ -89,14 +89,19 @@ type deployBranch struct {
 	Committed string `json:"committed_at"`
 }
 
-// wtDeployBranches: $1 repo, then b:<branch> or d:<folder> (its branch).
+// wtDeployBranches: $1 repo, then b:<branch>, p:<pull request branch> (fetched
+// when this repository has never seen it) or d:<folder> (its branch).
 const wtDeployBranches = gitEnv + `cd -- "$1" || exit 3
 shift
 for a in "$@"; do
-  case "$a" in d:*) b=$(git -C "${a#d:}" branch --show-current 2>/dev/null) ;; *) b=${a#b:} ;; esac
+  case "$a" in d:*) b=$(git -C "${a#d:}" branch --show-current 2>/dev/null) ;; *) b=${a#?:} ;; esac
   [ -n "$b" ] || continue
   l=$(git rev-parse -q --verify "refs/heads/$b^{commit}" 2>/dev/null)
   o=$(git rev-parse -q --verify "refs/remotes/origin/$b^{commit}" 2>/dev/null)
+  if [ -z "$l$o" ] && [ "${a%%:*}" = p ]; then
+    timeout 15 git fetch -q origin "+refs/heads/$b:refs/remotes/origin/$b" 2>/dev/null
+    o=$(git rev-parse -q --verify "refs/remotes/origin/$b^{commit}" 2>/dev/null)
+  fi
   [ -n "$l$o" ] || continue
   ahead=0
   if [ -n "$l" ]; then if [ -n "$o" ]; then ahead=$(git rev-list --count "$o..$l"); else ahead=-1; fi; fi
@@ -108,8 +113,12 @@ for a in "$@"; do
 done
 `
 
-// itemBranches are the branches an item's work is on, newest first.
-func (s *Server) itemBranches(ctx context.Context, u *store.User, h *store.Host, info repoInfo, source, ref, named string) []deployBranch {
+// itemBranches are the branches an item's work is on: its open pull requests'
+// branches first (newest first), then its conversations' worktrees and
+// folders, then branches named after it. A conversation that worked in the
+// main folder says only what that folder has checked out now — often another
+// item's branch — so that guess is left out once the item has pull requests.
+func (s *Server) itemBranches(ctx context.Context, u *store.User, h *store.Host, info repoInfo, source, ref, named string, prs []string) []deployBranch {
 	hostID := int64(0)
 	if h != nil {
 		hostID = h.ID
@@ -120,6 +129,11 @@ func (s *Server) itemBranches(ctx context.Context, u *store.User, h *store.Host,
 		if a != "" && !seen[a] {
 			seen[a] = true
 			args = append(args, a)
+		}
+	}
+	for _, b := range prs {
+		if b = strings.TrimPrefix(strings.TrimSpace(b), "origin/"); branchNameOK(b) {
+			add("p:" + b)
 		}
 	}
 	if drafts, err := s.store.LinkDrafts(ctx, u.ID, source, ref); err == nil {
@@ -137,7 +151,9 @@ func (s *Server) itemBranches(ctx context.Context, u *store.User, h *store.Host,
 				}
 				continue
 			}
-			add("d:" + t.Cwd)
+			if len(prs) == 0 {
+				add("d:" + t.Cwd)
+			}
 		}
 	}
 	add("b:" + named)
@@ -338,7 +354,7 @@ func (s *Server) handleLinkDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	source, ref := strings.ToLower(q.Get("source")), strings.TrimSpace(q.Get("ref"))
 	if ref != "" {
-		out["branches"] = s.itemBranches(ctx, u, h, info, source, ref, strings.TrimSpace(q.Get("branch")))
+		out["branches"] = s.itemBranches(ctx, u, h, info, source, ref, strings.TrimSpace(q.Get("branch")), q["pr_branch"])
 	}
 	latest, _ := s.store.LatestDeploy(ctx, info.ProjectID)
 	good, _ := s.store.LastGoodDeploy(ctx, info.ProjectID)
