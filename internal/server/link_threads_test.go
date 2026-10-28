@@ -636,6 +636,9 @@ func TestForkInheritsLink(t *testing.T) {
 	if got := s.threadContextPrompt(ctx, n); !strings.Contains(got, "be brief") {
 		t.Fatalf("fork context: %q", got)
 	}
+	if got := s.rt.baseOptions(ctx, n).SystemPrompt; !strings.Contains(got, "be brief") || !strings.Contains(got, forkScopePrompt) {
+		t.Fatal("fork must keep both linked app context and its independent work scope")
+	}
 	// a thread no app prepared: nothing happens
 	plain := &store.Thread{ID: uuid.NewString(), UserID: user.ID, Title: "x", Provider: "claude", Cwd: repo}
 	_ = s.store.CreateThread(ctx, plain)

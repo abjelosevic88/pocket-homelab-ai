@@ -86,6 +86,9 @@ func TestForkFreezesHistoryRuntimeSettingsAndAttachments(t *testing.T) {
 			if options.Fork || options.ResumeID != fork.ProviderSessionID {
 				t.Fatal("first send would fork parent again")
 			}
+			if !strings.Contains(options.SystemPrompt, forkScopePrompt) {
+				t.Fatal("fork would resume without an independent work scope")
+			}
 			rows, err := s.store.ListItems(ctx, fork.ID)
 			if err != nil || len(rows) != 3 {
 				t.Fatal("copied active/queued state", rows, err)
@@ -123,6 +126,50 @@ func TestForkFreezesHistoryRuntimeSettingsAndAttachments(t *testing.T) {
 			}
 			owner.want("POST", "/api/v1/threads/"+fork.ID+"/fork", map[string]any{"after": "not-a-reply"}, 400, nil)
 		})
+	}
+}
+
+func TestForkScopeSurvivesResumeForBothProviders(t *testing.T) {
+	s, h, root := testServer(t)
+	_, u := person(t, s, h, "fork-scope@example.test", "admin", true)
+	for _, provider := range []string{"claude", "codex"} {
+		for _, resumed := range []bool{false, true} {
+			name := provider + "/fresh"
+			sid := ""
+			if resumed {
+				name, sid = provider+"/resumed", "independent-child-session"
+			}
+			t.Run(name, func(t *testing.T) {
+				child := &store.Thread{ID: name, UserID: u.ID, Provider: provider,
+					Source: "fork", SourceRef: "parent-thread", ProviderSessionID: sid,
+					Cwd: root, Model: "selected-model", Effort: "high", Mode: "auto", Speed: "fast"}
+				if err := s.store.CreateThread(t.Context(), child); err != nil {
+					t.Fatal(err)
+				}
+				// Reload the persisted metadata, as a server restart does. No live
+				// in-memory fork marker or first-message flag should be required.
+				loaded, err := s.store.GetThread(t.Context(), u.ID, child.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				o := s.rt.baseOptions(t.Context(), loaded)
+				if !strings.Contains(o.SystemPrompt, forkScopePrompt) {
+					t.Fatal("persisted fork lost its work scope")
+				}
+				if o.ResumeID != sid || o.Fork || o.Model != child.Model || o.Effort != child.Effort || o.Mode != child.Mode || o.Speed != child.Speed || o.Cwd != root {
+					t.Fatalf("fork scope changed session or user settings: %+v", o)
+				}
+			})
+		}
+	}
+	parent := &store.Thread{UserID: u.ID, Source: "web", ProviderSessionID: "parent-session"}
+	if strings.Contains(s.rt.baseOptions(t.Context(), parent).SystemPrompt, forkScopePrompt) {
+		t.Fatal("original conversation was given fork instructions")
+	}
+	legacy := &store.Thread{UserID: u.ID, SourceRef: "fork:legacy-parent-session"}
+	o := s.rt.baseOptions(t.Context(), legacy)
+	if !strings.Contains(o.SystemPrompt, forkScopePrompt) || o.ResumeID != "legacy-parent-session" || !o.Fork {
+		t.Fatal("legacy fork lost its work scope or native fork options")
 	}
 }
 
