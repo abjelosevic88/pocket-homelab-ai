@@ -181,10 +181,5 @@
 .run-bar.bg .run-bar-row { color: var(--muted); }
 .run-bar.bg .bg-word { color: var(--bg-work); font-weight: 550; }
 .run-bar.bg .run-time { color: var(--bg-work); }
-.sub-chip.bg-chip { border-color: color-mix(in srgb, var(--bg-work) 35%, var(--border)); color: var(--bg-work); background: var(--bg-work-soft); }
-.bg-pop-h { padding: 6px 8px 4px; font-size: 11.5px; color: var(--muted); }
-.bg-row { cursor: default; }
-.bg-row:hover { background: none; }
-.bg-ico { width: 20px; height: 20px; flex-shrink: 0; display: grid; place-items: center; border-radius: 50%; color: var(--bg-work); background: var(--bg-work-soft); }
 .tstat.bg { color: var(--bg-work); }
 .th-row.is-background .th-time { color: var(--bg-work); }
