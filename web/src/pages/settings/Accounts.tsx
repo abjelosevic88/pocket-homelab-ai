@@ -135,7 +135,10 @@ function AccountDialog({ account, provider: initial, people, isAdmin, own, machi
   // Where the login lives: 0 = this server, else one of the machines (Settings → Servers).
   const [where, setWhere] = useState(0)
   const hosts = account ? [] : [...new Map(machines.map(h => [h.host_id, h.host])).entries()]
-  const machine = where ? machines.find(h => h.host_id === where && h.provider === provider) : undefined
+  // Ask the picked machine afresh: the list may be minutes old (a CLI just installed there).
+  const fresh = useAsync(() => where ? api.get<HostLogin[]>(`${V1}/hosts/logins?host=${where}&refresh=1`) : Promise.resolve([] as HostLogin[]), [where])
+  const checking = !!where && fresh.loading
+  const machine = where ? (fresh.data?.length ? fresh.data : machines).find(h => h.host_id === where && h.provider === provider) : undefined
   const runners = people.filter(p => p.role === 'admin' || p.can_run)
   const save = async () => {
     if (machine) { onMachine(machine); return }
@@ -150,7 +153,7 @@ function AccountDialog({ account, provider: initial, people, isAdmin, own, machi
   return (
     <Modal title={account ? `Edit ${account.label}` : 'Add an account'} size="sm" onClose={onClose} footer={<>
       <button type="button" className="btn" onClick={onClose}>Cancel</button>
-      <button type="button" className="btn primary" disabled={busy || (machine ? !!machine.missing : !label.trim())} onClick={save}>{account ? 'Save' : machine ? (machine.signed_in ? 'Sign in again' : 'Sign in') : 'Add and sign in'}</button>
+      <button type="button" className="btn primary" disabled={busy || checking || (machine ? !!machine.missing || !!machine.error : !label.trim())} onClick={save}>{account ? 'Save' : machine ? (machine.signed_in ? 'Sign in again' : 'Sign in') : 'Add and sign in'}</button>
     </>}>
       <div className="stack">
         {!account && <Field label="Agent" group><ProviderToggle value={provider} onChange={v => v && setProvider(v)} /></Field>}
@@ -158,7 +161,8 @@ function AccountDialog({ account, provider: initial, people, isAdmin, own, machi
           <Select label="Where" value={where} onChange={setWhere}
             options={[{ value: 0, label: 'This server' }, ...hosts.map(([id, name]) => ({ value: id, label: name, description: machines.find(h => h.host_id === id)?.target }))]} />
         </Field>}
-        {machine ? <MachineNote login={machine} /> : <>
+        {checking ? <div className="loading"><Spinner /> Checking {hosts.find(([id]) => id === where)?.[1]}…</div>
+          : machine ? <MachineNote login={machine} onRecheck={fresh.reload} /> : <>
         <Field label="Name" help="Shown in the account picker, e.g. “Work Max” or “Second Pro”.">
           <input value={label} onChange={e => setLabel(e.target.value)} autoFocus maxLength={60} placeholder={provider === 'codex' ? 'Second ChatGPT Pro' : 'Work Max'} />
         </Field>
@@ -176,10 +180,11 @@ function AccountDialog({ account, provider: initial, people, isAdmin, own, machi
 }
 
 /** What adding a login on a machine does: it signs in that machine's own login. */
-function MachineNote({ login: h }: { login: HostLogin }) {
+function MachineNote({ login: h, onRecheck }: { login: HostLogin; onRecheck: () => void }) {
   const name = h.provider === 'claude' ? 'Claude Code' : 'Codex'
-  if (h.missing) return <div className="callout warn"><Icon name="alert" size={15} /><span>{name} is not installed on <b>{h.host}</b> yet. Install it there, then press Check in Servers.</span></div>
-  if (h.error) return <div className="callout danger"><Icon name="alert" size={15} /><span>{h.host}: {h.error}</span></div>
+  const again = <button type="button" className="btn sm" onClick={onRecheck}><Icon name="refresh" size={13} />Check again</button>
+  if (h.missing) return <div className="callout warn"><Icon name="alert" size={15} /><span>{name} is not installed on <b>{h.host}</b> yet. Install it there, then {again}</span></div>
+  if (h.error) return <div className="callout danger"><Icon name="alert" size={15} /><span>{h.host}: {h.error} {again}</span></div>
   return <p className="muted small" style={{ margin: 0 }}>
     {h.signed_in ? <>{name} on <b>{h.host}</b> is already signed in{h.email ? <> as <b>{h.email}</b></> : null}. Signing in again replaces that login.</>
       : <>Signs in {name} on <b>{h.host}</b> (<code>{h.home.replace(/^\/(home|Users)\/[^/]+/, '~')}</code> there) over ssh. Threads on {h.host} run on it.</>}

@@ -170,6 +170,15 @@ func (s *Server) handleHostLogins(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "hosts")
 		return
 	}
+	if only := r.URL.Query().Get("host"); only != "" { // one machine (the Add dialog asks fresh)
+		var keep []*store.Host
+		for _, h := range list {
+			if strconv.FormatInt(h.ID, 10) == only {
+				keep = append(keep, h)
+			}
+		}
+		list = keep
+	}
 	res := make([][]hostLoginView, len(list))
 	var wg sync.WaitGroup
 	for i, h := range list {
