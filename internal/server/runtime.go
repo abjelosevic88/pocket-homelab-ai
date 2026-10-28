@@ -456,11 +456,25 @@ func (rt *engine) baseOptions(ctx context.Context, t *store.Thread) agent.Option
 	o := agent.Options{Cwd: t.Cwd, Model: t.Model, Effort: t.Effort, Mode: t.Mode, Speed: t.Speed, ResumeID: t.ProviderSessionID,
 		SystemPrompt: rt.systemPrompt(ctx, t.UserID), Env: []string{"POCKET_AI=1"}, Log: rt.s.log}
 	o.SystemPrompt += rt.s.threadContextPrompt(ctx, t) // what the app that prepared it added: link_threads.go
+	// A separate provider session isolates future messages, but its copied
+	// transcript can still contain promises to finish the parent's work. Apply
+	// the scope boundary on every start, including existing forks after restart.
+	if t.Source == "fork" || strings.HasPrefix(t.SourceRef, "fork:") {
+		o.SystemPrompt += forkScopePrompt
+	}
 	if o.ResumeID == "" && strings.HasPrefix(t.SourceRef, "fork:") {
 		o.ResumeID, o.Fork = strings.TrimPrefix(t.SourceRef, "fork:"), true
 	}
 	return o
 }
+
+const forkScopePrompt = `
+
+This conversation is an independent fork of an earlier conversation. The copied history is background context, not a queue of work to continue. Follow the user's requests made in this fork, with their latest request determining the current scope.
+Promises, unfinished tasks, queued instructions, and background-task notifications inherited from the original conversation do not authorize work here. Do not resume, restart, or duplicate earlier jobs, tests, builds, deployments, or uploads unless the user explicitly requests that work in this fork. An unrelated new question does not authorize continuing the original task alongside the answer.
+The user may explicitly ask to continue earlier work in this fork; then use the inherited context to do so. Keep following work requested in this fork across subsequent turns and restarts.
+The original conversation may still be running. A shared working directory does not make its processes or tasks belong to this fork. Do not stop or manage them, or claim their results as this fork's work, unless the user asks here. Forking separates conversation history; it does not create an isolated filesystem.
+`
 
 // startRemote starts the CLI on another machine over ssh (hosts.go). The
 // remote's own login is used; Pocket app tools stay here (their endpoint is

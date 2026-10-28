@@ -36,6 +36,12 @@ queued turn from `turn/completed`).
 History: Claude Code sessions are read from `~/.claude/projects/*/*.jsonl`; Codex threads come from
 `thread/list` and `thread/read`.
 
+Forks have independent provider sessions and receive a work-scope instruction on every start/resume
+(local or remote, including forks created before the server update). Copied history provides context;
+unfinished work and task notifications from the original do not authorize continuing its jobs in the fork.
+The user can explicitly ask to continue earlier work. This is an instruction boundary, not filesystem or
+process isolation: forks keep the selected folder/worktree, which can still be shared with the original.
+
 ## Other machines (hosts)
 
 A thread can run on another machine (`threads.host_id`, table `hosts`; 0 = this server). Pocket AI starts the
