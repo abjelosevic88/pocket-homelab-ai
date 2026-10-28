@@ -36,6 +36,8 @@
   --success-soft: rgba(22, 163, 74, .1);
   --warning: #d97706;
   --warning-soft: rgba(217, 119, 6, .12);
+  --bg-work: #0284c7;
+  --bg-work-soft: rgba(2, 132, 199, .1);
   --offhours: rgba(20, 20, 30, .022);
   --busy-hatch: rgba(20, 20, 30, .07);
   --mix-bg: 15%;
@@ -90,6 +92,8 @@
   --success-soft: rgba(74, 222, 128, .12);
   --warning: #fbbf24;
   --warning-soft: rgba(251, 191, 36, .13);
+  --bg-work: #38bdf8;
+  --bg-work-soft: rgba(56, 189, 248, .13);
   --offhours: rgba(0, 0, 0, .22);
   --busy-hatch: rgba(255, 255, 255, .08);
   --mix-bg: 24%;
