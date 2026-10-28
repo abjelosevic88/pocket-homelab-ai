@@ -40,8 +40,10 @@ func (s *Server) handleEditQueued(w http.ResponseWriter, req *http.Request) {
 	}
 	uploads := []uploadOut{}
 	for _, im := range append(append([]agent.Image{}, it.Images...), it.Files...) {
-		up, err := s.store.GetUpload(req.Context(), sender, im.ID)
-		if err != nil {
+		// A fork's history file belongs to the thread owner, including when a
+		// shared-chat participant typed the first message carrying it.
+		up, err := s.store.GetUploadAny(req.Context(), im.ID)
+		if err != nil || up.ThreadID == nil || *up.ThreadID != t.ID {
 			writeErr(w, http.StatusConflict, "An attachment is no longer available; the message is still queued")
 			return
 		}
