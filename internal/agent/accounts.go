@@ -168,9 +168,14 @@ func ShareSetup(provider, defDir, dir string) {
 	}
 }
 
-// CodexAccount asks Codex who is signed in (env points it at an account folder).
-func CodexAccount(ctx context.Context, bin string, env []string) (email, plan string, signedIn bool, err error) {
-	c, err := startRPC(bin, os.TempDir(), env)
+// CodexAccount asks Codex who is signed in (env points it at an account
+// folder; on another machine when remote is given).
+func CodexAccount(ctx context.Context, bin string, env []string, remote ...*Remote) (email, plan string, signedIn bool, err error) {
+	dir := os.TempDir()
+	if len(remote) > 0 && remote[0] != nil {
+		dir = "" // its home
+	}
+	c, err := startRPC(bin, dir, env, remote...)
 	if err != nil {
 		return "", "", false, err
 	}

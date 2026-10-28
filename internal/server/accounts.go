@@ -63,6 +63,7 @@ type acctStatus struct {
 	// SameAs names another login that is signed in to the same account.
 	SameAs string `json:"same_as,omitempty"`
 	ident  string // who the login really is ("" = unknown)
+	home   string // another machine's login folder (host_logins.go)
 	at     time.Time
 }
 
@@ -78,10 +79,13 @@ func loginIdent(provider, email, org string) string {
 type accountState struct {
 	mu     sync.Mutex
 	status map[string]acctStatus // provider/id
-	logins map[int64]*loginRun
+	logins map[string]*loginRun  // loginKey(account) | hostLoginKey(host, provider)
 }
 
 func acctKey(provider string, id int64) string { return provider + "/" + strconv.FormatInt(id, 10) }
+
+// loginKey names the sign-in of an account.
+func loginKey(id int64) string { return "a" + strconv.FormatInt(id, 10) }
 
 // defaultHome is the folder of the server's own login.
 func (s *Server) defaultHome(provider string) string {
@@ -273,6 +277,11 @@ func (s *Server) claudeStatus(ctx context.Context, env []string) acctStatus {
 		return acctStatus{Error: err.Error(), at: time.Now()}
 	}
 	out, err := cmd.Output()
+	return parseClaudeStatus(out, err)
+}
+
+// parseClaudeStatus reads the JSON of `claude auth status`.
+func parseClaudeStatus(out []byte, err error) acctStatus {
 	var r struct {
 		LoggedIn         bool   `json:"loggedIn"`
 		Email            string `json:"email"`
@@ -533,7 +542,7 @@ func (s *Server) handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
 	if a == nil {
 		return
 	}
-	s.cancelLogin(a.ID)
+	s.cancelLogin(loginKey(a.ID))
 	if err := s.store.DeleteAccount(r.Context(), a.ID); err != nil {
 		s.fail(w, err, "delete account")
 		return
@@ -615,39 +624,71 @@ func (s *Server) handleStartLogin(w http.ResponseWriter, r *http.Request) {
 	if a == nil {
 		return
 	}
-	s.cancelLogin(a.ID)
+	key := loginKey(a.ID)
+	s.cancelLogin(key)
 	ctx, cancel := context.WithTimeout(s.rt.ctx, loginExpiry)
-	bin, args := s.cfg.ClaudeBin, []string{"auth", "login", "--claudeai"}
-	if a.Provider == "codex" {
-		bin, args = s.cfg.CodexBin, []string{"login", "--device-auth"}
-	}
+	bin, args := loginArgs(a.Provider, s.cfg.ClaudeBin, s.cfg.CodexBin)
 	// nothing to open on a server
-	cmd, err := agent.LocalCmd(ctx, a.Home, append(agent.AccountEnv(a.Provider, a.Home), "BROWSER=true", "NO_COLOR=1"), bin, args...)
+	cmd, err := agent.LocalCmd(ctx, a.Home, append(agent.AccountEnv(a.Provider, a.Home), loginEnv...), bin, args...)
 	if err != nil {
 		cancel()
 		s.fail(w, err, "login")
 		return
 	}
+	l, err := s.beginLogin(ctx, cancel, key, a.Provider, cmd, func(ok bool) {
+		s.accountStatus(s.rt.ctx, a.Provider, a.ID, a.Home, true)
+		s.rt.publishAccounts()
+		if ok {
+			s.rt.refreshLimitsNow()
+		}
+	})
+	if err != nil {
+		s.fail(w, err, "login")
+		return
+	}
+	writeJSON(w, http.StatusOK, l.waitStarted())
+}
+
+// loginEnv: a server (or another machine over ssh) has no browser to open.
+var loginEnv = []string{"BROWSER=true", "NO_COLOR=1"}
+
+// loginArgs is the sign-in command of a CLI.
+func loginArgs(provider, claudeBin, codexBin string) (string, []string) {
+	if provider == "codex" {
+		return codexBin, []string{"login", "--device-auth"}
+	}
+	return claudeBin, []string{"auth", "login", "--claudeai"}
+}
+
+// beginLogin starts a sign-in command (here, or ssh to another machine) and
+// follows its output for the URL and code. after runs once it has ended,
+// before anyone waiting is told.
+// The command is stopped when ctx ends (cancel is called when it exits).
+func (s *Server) beginLogin(ctx context.Context, cancel context.CancelFunc, key, provider string, cmd *exec.Cmd, after func(ok bool)) (*loginRun, error) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
-	l := &loginRun{provider: a.Provider, cmd: cmd, State: "starting", done: make(chan struct{})}
+	l := &loginRun{provider: provider, cmd: cmd, State: "starting", done: make(chan struct{})}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		cancel()
-		s.fail(w, err, "login")
-		return
+		return nil, err
 	}
 	l.stdin = stdin
 	pr, pw := io.Pipe()
 	cmd.Stdout, cmd.Stderr = pw, pw
 	if err := cmd.Start(); err != nil {
 		cancel()
-		s.fail(w, err, "login")
-		return
+		return nil, err
 	}
 	s.accts.mu.Lock()
-	s.accts.logins[a.ID] = l
+	s.accts.logins[key] = l
 	s.accts.mu.Unlock()
+	go func() { // the whole group (ssh commands are not tied to ctx at all)
+		select {
+		case <-ctx.Done():
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		case <-l.done:
+		}
+	}()
 	go func() {
 		sc := bufio.NewScanner(pr)
 		sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
@@ -659,30 +700,31 @@ func (s *Server) handleStartLogin(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		err := cmd.Wait()
 		_ = pw.Close()
+		expired := ctx.Err() == context.DeadlineExceeded
 		cancel()
 		l.mu.Lock()
 		switch {
 		case err == nil:
 			l.State = "done"
-		case ctx.Err() == context.DeadlineExceeded:
+		case expired:
 			l.State, l.Error = "failed", "The sign-in expired. Start again."
 		case l.State == "cancelled":
 		default:
 			l.State, l.Error = "failed", firstNonEmpty(lastLines(l.out.String(), 3), err.Error())
 		}
 		l.mu.Unlock()
+		after(err == nil) // first: whoever waits for "done" then sees the new login
 		close(l.done)
-		s.accountStatus(s.rt.ctx, a.Provider, a.ID, a.Home, true)
-		s.rt.publishAccounts()
-		if err == nil {
-			s.rt.refreshLimitsNow()
-		}
 	}()
-	// Wait (briefly) for the URL so the first answer can show it.
+	return l, nil
+}
+
+// waitStarted waits (briefly) for the URL so the first answer can show it.
+func (l *loginRun) waitStarted() map[string]any {
 	deadline := time.After(20 * time.Second)
 	for {
 		l.mu.Lock()
-		ready := l.URL != "" && (a.Provider != "codex" || l.Code != "")
+		ready := l.URL != "" && (l.provider != "codex" || l.Code != "")
 		l.mu.Unlock()
 		if ready {
 			break
@@ -695,7 +737,7 @@ func (s *Server) handleStartLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		break
 	}
-	writeJSON(w, http.StatusOK, l.snapshot())
+	return l.snapshot()
 }
 
 // scanChunks splits on newlines but also hands over a trailing prompt that
@@ -754,23 +796,25 @@ func lastLines(s string, n int) string {
 	return strings.Join(keep, " · ")
 }
 
-func (s *Server) login(id int64) *loginRun {
+func (s *Server) login(key string) *loginRun {
 	s.accts.mu.Lock()
 	defer s.accts.mu.Unlock()
-	return s.accts.logins[id]
+	return s.accts.logins[key]
 }
 
 func (s *Server) handleLoginState(w http.ResponseWriter, r *http.Request) {
-	a := s.adminAccount(w, r)
-	if a == nil {
-		return
+	if a := s.adminAccount(w, r); a != nil {
+		writeLoginState(w, r, s.login(loginKey(a.ID)))
 	}
-	l := s.login(a.ID)
+}
+
+// writeLoginState answers where a sign-in is (nil = none). With ?wait=1 it
+// long-polls: answers when the sign-in ends or after 25 s.
+func writeLoginState(w http.ResponseWriter, r *http.Request, l *loginRun) {
 	if l == nil {
 		writeJSON(w, http.StatusOK, map[string]any{"state": "idle"})
 		return
 	}
-	// Long poll: answer when the sign-in ends or after 25 s.
 	if queryBool(r, "wait") {
 		select {
 		case <-l.done:
@@ -783,11 +827,12 @@ func (s *Server) handleLoginState(w http.ResponseWriter, r *http.Request) {
 
 // handleLoginCode hands the code shown after a Claude sign-in to the CLI.
 func (s *Server) handleLoginCode(w http.ResponseWriter, r *http.Request) {
-	a := s.adminAccount(w, r)
-	if a == nil {
-		return
+	if a := s.adminAccount(w, r); a != nil {
+		sendLoginCode(w, r, s.login(loginKey(a.ID)))
 	}
-	l := s.login(a.ID)
+}
+
+func sendLoginCode(w http.ResponseWriter, r *http.Request, l *loginRun) {
 	if l == nil {
 		writeErr(w, http.StatusConflict, "start the sign-in first")
 		return
@@ -829,14 +874,14 @@ func (s *Server) handleCancelLogin(w http.ResponseWriter, r *http.Request) {
 	if a == nil {
 		return
 	}
-	s.cancelLogin(a.ID)
+	s.cancelLogin(loginKey(a.ID))
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) cancelLogin(id int64) {
+func (s *Server) cancelLogin(key string) {
 	s.accts.mu.Lock()
-	l := s.accts.logins[id]
-	delete(s.accts.logins, id)
+	l := s.accts.logins[key]
+	delete(s.accts.logins, key)
 	s.accts.mu.Unlock()
 	if l == nil {
 		return

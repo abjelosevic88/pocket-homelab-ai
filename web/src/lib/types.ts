@@ -69,6 +69,24 @@ export interface Account {
 }
 
 /** A sign-in started from Settings (Claude: paste the code; Codex: type the code on the page). */
+/** Another machine's own login of one CLI (Settings → Servers; server host_logins.go). */
+export interface HostLogin {
+  host_id: number
+  host: string
+  target: string
+  provider: ProviderId
+  /** Its folder over there. */
+  home: string
+  /** The CLI is not installed there. */
+  missing?: boolean
+  signed_in: boolean
+  email?: string
+  plan?: string
+  org?: string
+  error?: string
+  checked_at?: string
+}
+
 export interface LoginState { state: 'idle' | 'starting' | 'waiting' | 'checking' | 'done' | 'failed' | 'cancelled'; url?: string; code?: string; need_code?: boolean; error?: string; code_sent?: boolean }
 
 export interface Settings {

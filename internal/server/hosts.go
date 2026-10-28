@@ -165,6 +165,7 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.Target != before.Target || h.Port != before.Port || h.ClaudeBin != before.ClaudeBin || h.CodexBin != before.CodexBin {
 		h.Info = s.checkHost(r.Context(), h)
+		s.forgetHostLogins(h.ID) // another machine (or CLI) now
 	}
 	if err := s.store.UpdateHost(r.Context(), h); err != nil {
 		s.fail(w, err, "host")
@@ -180,6 +181,7 @@ func (s *Server) handleDeleteHost(w http.ResponseWriter, r *http.Request) {
 	}
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	s.rt.stopHost(id)
+	s.forgetHostLogins(id)
 	if err := s.store.DeleteHost(r.Context(), id); err != nil {
 		s.fail(w, err, "host")
 		return
