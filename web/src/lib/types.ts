@@ -77,6 +77,10 @@ export interface HostLogin {
   provider: ProviderId
   /** Its folder over there. */
   home: string
+  /** The login folder threads name to run on it ('' = the machine's default login). */
+  dir: string
+  /** "claude-max" for ~/.claude-max; absent for the default login. */
+  label?: string
   /** The CLI is not installed there. */
   missing?: boolean
   signed_in: boolean
@@ -181,6 +185,8 @@ export interface Thread {
   account_id: number
   /** The machine it runs on (0 = this server, else a Host). */
   host_id: number
+  /** On a machine: the login folder there it runs on ('' = the machine's default login). */
+  host_home: string
   /** Its own git worktree (0 = none). */
   worktree_id: number
   model: string
@@ -381,6 +387,8 @@ export interface ServerSession {
   /** On another machine (Settings → Servers); absent = this server. */
   host_id?: number
   host?: string
+  /** Its login folder there (absent = the machine's default login). */
+  host_home?: string
 }
 
 /** One prompt and the agent's work on it (the Today page). */
@@ -409,6 +417,8 @@ export interface Run {
   /** Ran on another machine (Settings → Servers); absent = this server. */
   host_id?: number
   host?: string
+  /** Its login folder there (absent = the machine's default login). */
+  host_home?: string
 }
 
 export interface SearchHit { thread_id: string; title: string; provider: ProviderId; snippet: string; item_key: string; activity_at: string }

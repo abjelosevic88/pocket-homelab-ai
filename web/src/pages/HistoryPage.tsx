@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { api, qs, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { fmtDuration, shortPath, stamp } from '../lib/format'
-import { dayLabel, ORIGINS, originLabel, shortModel, useOpenSession } from '../lib/sessions'
+import { dayLabel, loginLabel, ORIGINS, originLabel, shortModel, useOpenSession } from '../lib/sessions'
 import type { Origin, ProviderId, ServerSession } from '../lib/types'
 import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
@@ -110,7 +110,7 @@ function SessionRow({ s, busy, onOpen }: { s: ServerSession; busy: boolean; onOp
         {showLast && <span className="srv-last"><Icon name="message" size={11} />{s.last_prompt}</span>}
         <span className="srv-meta">
           <span className={`origin-chip o-${s.origin}`}>{originLabel(s.origin)}</span>
-          {s.host && <span className="badge" style={{ gap: 4 }} title={`On ${s.host} (Settings → Servers)`}><Icon name="server" size={11} />{s.host}</span>}
+          {s.host && <span className="badge" style={{ gap: 4 }} title={`On ${s.host} (Settings → Servers)${s.host_home ? `, login ${s.host_home}` : ''}`}><Icon name="server" size={11} />{s.host}{s.host_home && ` · ${loginLabel(s.host_home)}`}</span>}
           <PrivacyChip sharedWith={s.shared_with} />
           <span className="mono ellipsis">{shortPath(s.cwd)}</span>
           <span>{s.runs} {s.runs === 1 ? 'run' : 'runs'}</span>
