@@ -151,6 +151,7 @@ func serve() {
 		"auth_mode", cfg.AuthMode, "roots", cfg.Roots)
 	<-ctx.Done()
 	log.Info("shutting down")
+	srv.CloseTerminals()
 	shutdownCtx, c2 := context.WithTimeout(context.Background(), 15*time.Second)
 	defer c2()
 	for _, hs := range servers {

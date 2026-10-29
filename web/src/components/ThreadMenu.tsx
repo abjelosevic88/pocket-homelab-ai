@@ -51,6 +51,7 @@ export function useThreadMenu() {
       'sep',
       { label: 'Copy link', icon: 'link', onSelect: link },
       exp,
+      ...(t.cwd && t.source !== 'ask' && (user?.role === 'admin' || user?.can_run) ? [{ label: 'Open a terminal here', icon: 'terminal', onSelect: () => navigate(`/terminal?host=${t.host_id || 0}&cwd=${encodeURIComponent(t.cwd)}`) }] : []),
       'sep',
       { label: t.archived ? 'Move out of archive' : 'Archive', icon: 'archive', onSelect: async () => { const th = await patch(t, { archived: !t.archived }); if (th?.archived) toast('Archived') } },
       { label: 'Delete…', icon: 'trash', danger: true, onSelect: () => setDeleting(t) },

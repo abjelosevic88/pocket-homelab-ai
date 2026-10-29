@@ -248,3 +248,27 @@ var muxDirOnce = sync.OnceValue(func() string {
 })
 
 func muxDir() string { return muxDirOnce() }
+
+// Shell is an interactive login shell on the remote machine for a terminal:
+// ssh with a tty, in dir when one is given. TERM travels with the tty.
+func (r *Remote) Shell(dir string) (*exec.Cmd, error) {
+	a := r.sshArgs()
+	for i, o := range a {
+		if o == "-T" {
+			a[i] = "-tt"
+			break
+		}
+	}
+	if dir != "" {
+		a = append(a, remoteCommand(`[ -r /etc/profile ] && . /etc/profile >/dev/null 2>&1 </dev/null; `+remotePath+"; cd -- "+shq(dir)+` || cd; exec "${SHELL:-/bin/sh}" -l`))
+	} else {
+		a = a[:len(a)-1] // no command: sshd starts the account's login shell itself
+	}
+	term := []string{"TERM=xterm-256color", "COLORTERM=truecolor"}
+	if r.Home != "" {
+		return LocalCmd(nil, r.Home, append([]string{"HOME=" + r.Home}, term...), "ssh", a...)
+	}
+	cmd := exec.Command("ssh", a...)
+	cmd.Env = append(os.Environ(), term...)
+	return cmd, nil
+}
