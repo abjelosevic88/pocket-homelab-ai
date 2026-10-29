@@ -77,7 +77,7 @@ func (s *Server) handleFork(w http.ResponseWriter, r *http.Request) {
 	n := &store.Thread{ID: uuid.NewString(), UserID: t.UserID, Title: "Fork of " + t.Title,
 		Provider: t.Provider, AccountID: t.AccountID, Model: t.Model, Effort: t.Effort, Mode: t.Mode, Speed: t.Speed,
 		Cwd: t.Cwd, WorkspaceID: t.WorkspaceID, WorktreeID: t.WorktreeID, NoMemory: t.NoMemory,
-		Source: "fork", SourceRef: t.ID, HostID: t.HostID, LogOffset: -1}
+		Source: "fork", SourceRef: t.ID, HostID: t.HostID, HostHome: t.HostHome, LogOffset: -1}
 	if err := s.store.CreateThread(ctx, n); err != nil {
 		s.fail(w, err, "fork")
 		return

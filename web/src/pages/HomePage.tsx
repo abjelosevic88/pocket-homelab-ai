@@ -188,7 +188,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
   const pickHost = (id: number) => {
     const revision = ++folderRevision.current
     const fallback = id ? '' : settings?.default_cwd || ''
-    setChoice(c => c && { ...c, host_id: id, worktree: c.worktree?.mode === 'new' ? { mode: 'new' } : null, cwd: fallback })
+    setChoice(c => c && { ...c, host_id: id, host_home: '', worktree: c.worktree?.mode === 'new' ? { mode: 'new' } : null, cwd: fallback })
     folderHistory(id).then(h => {
       if (folderRevision.current !== revision) return
       setChoice(c => c && c.host_id === id ? { ...c, cwd: restoredFolder(h, fallback) } : c)
@@ -202,7 +202,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
     if (!w) return
     folderRevision.current++
     setMode('server')
-    setChoice(c => c && { ...c, host_id: w.host_id, cwd: w.path, worktree: { mode: 'existing', id: w.id, branch: w.branch } })
+    setChoice(c => c && { ...c, host_id: w.host_id, host_home: c.host_id === w.host_id ? c.host_home : '', cwd: w.path, worktree: { mode: 'existing', id: w.id, branch: w.branch } })
     setParams(p => { p.delete('worktree'); return p }, { replace: true })
   }, [wtParam, !!choice, worktrees]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -255,7 +255,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
         provider: choice.provider, model: choice.model || undefined, effort: choice.effort || undefined, mode: choice.mode || undefined,
         speed: choice.speed ?? undefined,
         account_id: !hostId && accounts.some(a => a.provider === choice.provider && a.id === choice.account_id && a.signed_in) ? choice.account_id : undefined,
-        cwd: choice.cwd || undefined, workspace_id: hostId ? undefined : ws?.id, host_id: hostId || undefined, text, upload_ids: uploadIds,
+        cwd: choice.cwd || undefined, workspace_id: hostId ? undefined : ws?.id, host_id: hostId || undefined, host_home: hostId ? choice.host_home || undefined : undefined, text, upload_ids: uploadIds,
         worktree: wtSpec,
         draft_uploads: draft ? draftFiles.map(f => f.id) : undefined,
       })
@@ -295,7 +295,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
         <DraftFiles files={draftFiles} source={draft.ref} onRemove={id => setDraftFiles(f => f.filter(x => x.id !== id))} />
         <Composer ref={serverComposer} big autoFocus draftKey={`link-${draft.id}`} onSend={send} skills={choice?.provider ? { provider: choice.provider, cwd: choice.cwd, account_id: choice.account_id, host_id: hostId } : undefined}
           placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} about ${draft.ref || 'this'}${hostId ? ` on ${hosts.find(h => h.id === hostId)?.name}` : ''}…`}
-          footer={<AgentPicker compact showProvider={false} noAccount={!!hostId} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} />} />
+          footer={<AgentPicker compact showProvider={false} host={hostId} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} />} />
         </>
       )}
     </div>
@@ -377,7 +377,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
               {draft && <DraftFiles files={draftFiles} source={draft.ref} onRemove={id => setDraftFiles(f => f.filter(x => x.id !== id))} />}
               <Composer ref={serverComposer} big autoFocus draftKey={draft ? `link-${draft.id}` : 'new'} onSend={send} skills={choice?.provider ? { provider: choice.provider, cwd: choice.cwd, account_id: choice.account_id, host_id: hostId } : undefined}
                 placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} anything${hostId ? ` on ${hosts.find(h => h.id === hostId)?.name}` : ''}${choice.cwd && !wtSpec ? ` in ${shortPath(choice.cwd)}` : ''}${wtWhere}… paste a screenshot, type / for recipes`}
-                footer={<AgentPicker compact showProvider={false} noAccount={!!hostId} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} />} />
+                footer={<AgentPicker compact showProvider={false} host={hostId} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} />} />
               {providers.length > 0 && !providers.some(p => p.available) && (
                 <div className="callout danger mt-s"><Icon name="alert" size={15} /><span>Neither Claude Code nor Codex is available on the server. {providers.map(p => p.error).filter(Boolean).join(' ')}</span></div>
               )}

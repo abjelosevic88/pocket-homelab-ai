@@ -110,7 +110,7 @@ func (s *Server) branchBefore(w http.ResponseWriter, r *http.Request, t *store.T
 				var h *store.Host
 				h, err = s.host(ctx, t.HostID)
 				if err == nil {
-					o := codexRewindOptions(t, hostBin(h, "codex"), nil, remoteOf(h))
+					o := codexRewindOptions(t, hostBin(h, "codex"), agent.HomeEnv("codex", t.HostHome), remoteOf(h))
 					sid, err = agent.RewindCodex(ctx, o, users, checkpoint)
 				}
 			default:
@@ -226,7 +226,7 @@ func (s *Server) rewindRemoteClaude(ctx context.Context, t *store.Thread, users 
 		return "", fmt.Errorf("the server this conversation runs on is gone")
 	}
 	rm := remoteOf(h)
-	out, errOut, err := rm.Run(ctx, 30*time.Second, `for f in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/"$1".jsonl; do [ -f "$f" ] && { printf '%s\n' "$f"; exit 0; }; done; exit 3`, t.ProviderSessionID)
+	out, errOut, err := rm.Run(ctx, 30*time.Second, inLogin("claude", t.HostHome, `for f in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/"$1".jsonl; do [ -f "$f" ] && { printf '%s\n' "$f"; exit 0; }; done; exit 3`), t.ProviderSessionID)
 	src := strings.TrimSpace(out)
 	if err != nil || src == "" {
 		return "", fmt.Errorf("the session file is not on %s (%s)", h.Name, sshError(errOut, err))

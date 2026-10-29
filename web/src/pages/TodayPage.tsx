@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { api, qs, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { fmtDuration, fmtTokens, shortPath } from '../lib/format'
-import { dayLabel, hhmm, hourLabel, ORIGINS, originLabel, shortModel, useOpenSession } from '../lib/sessions'
+import { dayLabel, hhmm, hourLabel, loginLabel, originLabel, ORIGINS, shortModel, useOpenSession } from '../lib/sessions'
 import type { Account, Origin, ProviderId, Run } from '../lib/types'
 import { accountName } from '../components/AgentPicker'
 import { Icon } from '../components/icons'
@@ -28,7 +28,7 @@ const STATUS: Record<Run['status'], { label: string; icon: string }> = {
 /** The login a run used, by name: the server's own login and a named login on
  * the same account read as one (accountName), so they filter together. */
 function runAccount(r: Run, accounts: Account[]) {
-  if (r.host) return r.host // that machine's own login
+  if (r.host) return r.host + (r.host_home ? ` · ${loginLabel(r.host_home)}` : '') // a login on that machine
   const a = accounts.find(x => x.provider === r.provider && x.id === (r.account_id || 0))
   return a ? accountName(a, accounts) : r.account_id ? `Login ${r.account_id}` : 'Server login'
 }

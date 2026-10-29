@@ -135,6 +135,7 @@ type newThread struct {
 	Provider  string `json:"provider"`
 	AccountID *int64 `json:"account_id"` // nil = the person's default for the provider
 	HostID    int64  `json:"host_id"`    // 0 = this server, else a machine from Settings → Servers
+	HostHome  string `json:"host_home"`  // on a machine: its login folder ("" = the default)
 	// Worktree: work in an isolated git worktree (a new one, or one of the person's).
 	Worktree    *newWorktree `json:"worktree"`
 	Model       string       `json:"model"`
@@ -164,7 +165,7 @@ func (s *Server) createThread(ctx context.Context, u *store.User, in newThread, 
 	prov, ok := s.agentProvider(ctx, in.Provider)
 	if host != nil {
 		// models and modes come from the CLI here; whether it runs is the host's business
-		if why := host.Info.Missing[in.Provider]; why != "" && host.Info.OK {
+		if why := hostMissing(host, in.Provider, in.HostHome); why != "" && host.Info.OK {
 			return nil, badRequest(host.Name + ": " + why)
 		}
 	} else if !ok {
@@ -189,6 +190,12 @@ func (s *Server) createThread(ctx context.Context, u *store.User, in newThread, 
 	}
 	if host != nil {
 		t.HostID, t.AccountID, in.AccountID = host.ID, 0, nil // the machine's own login
+		if in.HostHome != "" {
+			if !agent.ValidHostHome(in.Provider, host.Info.Home, in.HostHome) {
+				return nil, badRequest(host.Name + ": " + in.HostHome + " is not a " + in.Provider + " login folder there")
+			}
+			t.HostHome = in.HostHome
+		}
 	}
 	// On another machine account 0 is that machine's login, not the server's:
 	// checkHostUse above already decided who may run there.
@@ -457,6 +464,7 @@ func (s *Server) handlePatchThread(w http.ResponseWriter, r *http.Request) {
 		Mode     *string `json:"mode"`
 		Speed    *string `json:"speed"`
 		Account  *int64  `json:"account_id"`
+		HostHome *string `json:"host_home"` // on a machine: its login folder ("" = the default)
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
@@ -487,6 +495,23 @@ func (s *Server) handlePatchThread(w http.ResponseWriter, r *http.Request) {
 		}
 		t.AccountID = *in.Account
 		switched = s.accountLabel(r.Context(), t.Provider, t.AccountID)
+	}
+	if in.HostHome != nil && *in.HostHome != t.HostHome {
+		if t.HostID == 0 {
+			writeErr(w, 400, "this conversation runs on this server: pick one of its logins instead")
+			return
+		}
+		h, err := s.checkHostUse(r.Context(), userFrom(r.Context()), t.HostID)
+		if err != nil {
+			s.fail(w, err, "host")
+			return
+		}
+		if *in.HostHome != "" && !agent.ValidHostHome(t.Provider, h.Info.Home, *in.HostHome) {
+			writeErr(w, 400, h.Name+": "+*in.HostHome+" is not a "+t.Provider+" login folder there")
+			return
+		}
+		t.HostHome = *in.HostHome
+		switched = h.Name + " · " + firstNonEmpty(agent.HomeLabel(t.HostHome), "default login")
 	}
 	if in.NoMemory != nil {
 		t.NoMemory = *in.NoMemory

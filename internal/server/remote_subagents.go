@@ -59,19 +59,19 @@ func (s *Server) threadSessionPath(r *http.Request, t *store.Thread) string {
 	}
 	base := filepath.Join(s.cfg.DataDir, "remote-sessions", strconv.FormatInt(h.ID, 10))
 	session := filepath.Join(base, t.ProviderSessionID+".jsonl") // never written: only its folder is
-	if err := s.mirrorRemoteSubagents(r.Context(), h, t.ProviderSessionID, filepath.Join(base, t.ProviderSessionID, "subagents")); err != nil {
+	if err := s.mirrorRemoteSubagents(r.Context(), h, t.HostHome, t.ProviderSessionID, filepath.Join(base, t.ProviderSessionID, "subagents")); err != nil {
 		s.log.Info("remote sub-agents not copied", "host", h.Name, "session", t.ProviderSessionID, "err", err)
 	}
 	return session
 }
 
-func (s *Server) mirrorRemoteSubagents(ctx context.Context, h *store.Host, sid, dir string) error {
+func (s *Server) mirrorRemoteSubagents(ctx context.Context, h *store.Host, home, sid, dir string) error {
 	remoteSubagentMu.Lock()
 	defer remoteSubagentMu.Unlock()
 	if at, ok := remoteSubagentAt[dir]; ok && time.Since(at) < remoteSubagentsTTL {
 		return nil
 	}
-	out, errOut, err := shOn(ctx, h, 30*time.Second, remoteSubagentFiles, sid)
+	out, errOut, err := shOn(ctx, h, 30*time.Second, inLogin("claude", home, remoteSubagentFiles), sid)
 	if err != nil {
 		return scriptErr(errOut, err)
 	}

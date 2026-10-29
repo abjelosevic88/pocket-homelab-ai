@@ -38,6 +38,9 @@ export function useOpenSession() {
   }
 }
 
+/** "claude-max" for a machine's login folder /home/arno/.claude-max */
+export const loginLabel = (dir: string) => dir.replace(/^.*\/\./, '')
+
 /** "Today", "Yesterday", "Monday", "12 October" */
 export function dayLabel(d: Date, now = new Date()) {
   const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()

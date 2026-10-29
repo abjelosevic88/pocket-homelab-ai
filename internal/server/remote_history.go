@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -97,7 +98,8 @@ func (s *Server) remoteHomes(ctx context.Context, u *store.User) []hostHomes {
 	}
 	out := make([]hostHomes, 0, len(hosts))
 	for _, h := range hosts {
-		out = append(out, hostHomes{host: h, homes: agent.MirrorHomes(s.mirrorDir(h))})
+		homes, dirs := agent.MirrorHomes(s.mirrorDir(h), h.Info.Home)
+		out = append(out, hostHomes{host: h, homes: homes, dirs: dirs})
 	}
 	return out
 }
@@ -105,6 +107,7 @@ func (s *Server) remoteHomes(ctx context.Context, u *store.User) []hostHomes {
 type hostHomes struct {
 	host  *store.Host
 	homes agent.Homes
+	dirs  map[int64]string // home id → its login folder there ("" = the default)
 }
 
 // remoteFilter: a session one of Pocket AI's threads used is that thread's
@@ -129,7 +132,7 @@ func (s *Server) remoteSessions(ctx context.Context, u *store.User) []agent.Serv
 	for _, hh := range s.remoteHomes(ctx, u) {
 		for _, x := range agent.Sessions(hh.homes, "") {
 			if visible(hh.host, x.Provider, x.SessionID) {
-				x.HostID, x.Host, x.Account = hh.host.ID, hh.host.Name, 0
+				x.HostID, x.Host, x.HostHome, x.Account = hh.host.ID, hh.host.Name, hh.dirs[x.Account], 0
 				out = append(out, x)
 			}
 		}
@@ -143,7 +146,7 @@ func (s *Server) remoteRuns(ctx context.Context, u *store.User, from, to time.Ti
 	for _, hh := range s.remoteHomes(ctx, u) {
 		for _, x := range agent.Runs(hh.homes, "", from, to) {
 			if visible(hh.host, x.Provider, x.SessionID) {
-				x.HostID, x.Host, x.Account = hh.host.ID, hh.host.Name, 0
+				x.HostID, x.Host, x.HostHome, x.Account = hh.host.ID, hh.host.Name, hh.dirs[x.Account], 0
 				out = append(out, x)
 			}
 		}
@@ -157,26 +160,38 @@ func (s *Server) importRemoteSession(ctx context.Context, u *store.User, h *stor
 	if !s.remoteFilter(ctx, u)(h, provider, sessionID) {
 		return nil, errSessionGone
 	}
+	if provider != "claude" && provider != "codex" {
+		return nil, badRequest("provider must be claude or codex")
+	}
+	if !sessionIDRe.MatchString(sessionID) {
+		return nil, badRequest("bad session id")
+	}
+	// the latest of this one session (whichever login folder it is in),
+	// whatever the last full copy missed
+	dir := s.mirrorDir(h)
+	cctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	err := agent.MirrorSessions(cctx, remoteOf(h), dir, sessionID)
+	cancel()
+	homes, dirs := agent.MirrorHomes(dir, h.Info.Home)
+	var found *agent.ServerSession
+	for _, x := range agent.Sessions(homes, "") {
+		if x.Provider == provider && x.SessionID == sessionID {
+			found = &x
+			break
+		}
+	}
+	if found == nil {
+		if err != nil {
+			return nil, badRequest(h.Name + ": " + err.Error())
+		}
+		return nil, badRequest("that session is not on " + h.Name)
+	}
+	home := dirs[found.Account]
 	var items []agent.Item
 	var cwd, title string
 	switch provider {
 	case "claude":
-		if !sessionIDRe.MatchString(sessionID) {
-			return nil, badRequest("bad session id")
-		}
-		dir := s.mirrorDir(h)
-		// the latest of this one session, whatever the last full copy missed
-		cctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-		err := agent.MirrorSessions(cctx, remoteOf(h), dir, "/"+sessionID+".jsonl")
-		cancel()
-		path, ferr := agent.FindClaude(filepath.Join(dir, "claude"), sessionID)
-		if ferr != nil {
-			if err != nil {
-				return nil, badRequest(h.Name + ": " + err.Error())
-			}
-			return nil, badRequest("that Claude Code session is not on " + h.Name)
-		}
-		if items, cwd, _, err = agent.ReadClaude(path); err != nil {
+		if items, cwd, _, err = agent.ReadClaude(found.Path); err != nil {
 			return nil, err
 		}
 		for _, it := range items {
@@ -186,13 +201,10 @@ func (s *Server) importRemoteSession(ctx context.Context, u *store.User, h *stor
 			}
 		}
 	case "codex":
-		var err error
-		items, cwd, title, err = agent.ReadCodex(ctx, hostBin(h, "codex"), sessionID, nil, remoteOf(h))
+		items, cwd, title, err = agent.ReadCodex(ctx, hostBin(h, "codex"), sessionID, agent.HomeEnv("codex", home), remoteOf(h))
 		if err != nil {
 			return nil, badRequest(h.Name + ": " + err.Error())
 		}
-	default:
-		return nil, badRequest("provider must be claude or codex")
 	}
 	st, _ := s.store.GetSettings(ctx, u.ID)
 	def := st.Claude
@@ -200,7 +212,52 @@ func (s *Server) importRemoteSession(ctx context.Context, u *store.User, h *stor
 		def = st.Codex
 	}
 	// folders are the other machine's (one that is gone is caught on send)
-	t := &store.Thread{ID: uuid.NewString(), UserID: u.ID, Provider: provider, HostID: h.ID, ProviderSessionID: sessionID, Cwd: cwd,
+	t := &store.Thread{ID: uuid.NewString(), UserID: u.ID, Provider: provider, HostID: h.ID, HostHome: home, ProviderSessionID: sessionID, Cwd: cwd,
 		Model: def.Model, Effort: def.Effort, Mode: def.Mode, Source: "import", Title: titleFrom(title), LogOffset: -1}
 	return s.storeImported(ctx, t, items)
+}
+
+// inLogin runs a remote script on the login folder home ("" = the default
+// one): scripts find the CLI's files under ${CLAUDE_CONFIG_DIR:-…}.
+func inLogin(provider, home, script string) string {
+	if home == "" {
+		return script
+	}
+	v := "CLAUDE_CONFIG_DIR"
+	if provider == "codex" {
+		v = "CODEX_HOME"
+	}
+	return v + "=" + agent.ShellQuote(home) + "; export " + v + "\n" + script
+}
+
+// remoteEnsureSession copies a session into a login folder on the machine
+// when it is only in another one ($1 claude|codex, $2 folder or "" for the
+// default, $3 session id), like ensureSession does here.
+const remoteEnsureSession = agent.RemoteHomesSh + `kind=$1; to=$2; sid=$3
+if [ "$kind" = claude ]; then d0="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; else d0="${CODEX_HOME:-$HOME/.codex}"; fi
+[ -n "$to" ] || to=$d0
+find1() {
+  if [ "$kind" = claude ]; then ls -1t "$1"/projects/*/"$sid".jsonl 2>/dev/null | head -n 1
+  else find "$1/sessions" -type f -name "*$sid.jsonl" 2>/dev/null | head -n 1; fi
+}
+[ -n "$(find1 "$to")" ] && exit 0
+found=$(homes "$kind" | while IFS= read -r d; do [ "$d" = "$to" ] && continue; f=$(find1 "$d"); [ -n "$f" ] && { printf '%s\n%s\n' "$d" "$f"; break; }; done)
+[ -n "$found" ] || exit 0
+from=$(printf '%s\n' "$found" | sed -n 1p); src=$(printf '%s\n' "$found" | sed -n 2p)
+rel=${src#"$from"/}
+mkdir -p "$to/${rel%/*}" && cp -p "$src" "$to/$rel" || exit 3
+side=${src%.jsonl}
+[ -d "$side" ] && cp -Rp "$side" "$to/${rel%/*}/"
+exit 0
+`
+
+// hostMissing is why the CLI cannot run on the machine ("" = it can). The
+// check looks at the default login only, so on another login folder only
+// "not installed" counts: that login's own state shows when it runs.
+func hostMissing(h *store.Host, provider, home string) string {
+	why := h.Info.Missing[provider]
+	if home != "" && !strings.Contains(why, "not on the PATH") {
+		return ""
+	}
+	return why
 }

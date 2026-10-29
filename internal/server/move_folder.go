@@ -212,7 +212,7 @@ func (s *Server) moveSessionTo(ctx context.Context, t *store.Thread, h *store.Ho
 			return "", badRequest(l.Missing + " does not exist on " + h.Name)
 		}
 		if t.Provider == "claude" && sid != "" {
-			if _, errOut, err := remoteOf(h).Run(ctx, 2*time.Minute, remoteMoveSession, sid, claudeProjectName(l.Path)); err != nil {
+			if _, errOut, err := remoteOf(h).Run(ctx, 2*time.Minute, inLogin("claude", t.HostHome, remoteMoveSession), sid, claudeProjectName(l.Path)); err != nil {
 				return "", badRequest(h.Name + ": could not move the conversation's history: " + firstNonEmpty(remoteErr(errOut, err), err.Error()))
 			}
 		}

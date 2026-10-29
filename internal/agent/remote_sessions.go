@@ -14,34 +14,45 @@ import (
 )
 
 // Sessions on another machine: the CLIs keep them there (~/.claude/projects,
-// ~/.codex/sessions), so they are copied over ssh into a mirror folder here
-// and read like this server's own. Session files only grow, so a later copy
-// fetches just the bytes added since; a file that got shorter is copied anew.
+// ~/.codex/sessions, and the same in every other login folder), so they are
+// copied over ssh into a mirror folder here and read like this server's own.
+// Session files only grow, so a later copy fetches just the bytes added
+// since; a file that got shorter is copied anew.
 //
-// Mirror layout: <dir>/claude/projects/<folder>/<id>.jsonl and
-// <dir>/codex/sessions/.../<name>.jsonl, so MirrorHomes(dir) reads it.
+// Mirror layout: <dir>/claude/<login>/projects/<folder>/<id>.jsonl and
+// <dir>/codex/<login>/sessions/.../<name>.jsonl, <login> being "default"
+// or the folder's name (".claude-max"), so MirrorHomes(dir) reads it.
 
 // remoteSessionList prints "<rel>\t<size>\t<mtime>" per session file.
-const remoteSessionList = `c="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; x="${CODEX_HOME:-$HOME/.codex}"
-one() { printf '%s/%s\t%s\t%s\n' "$1" "$2" "$(wc -c <"$3" | tr -d ' ')" "$(date -r "$3" +%s 2>/dev/null || echo 0)"; }
-for f in "$c"/projects/*/*.jsonl; do [ -f "$f" ] && one claude "${f#"$c"/}" "$f"; done
-[ -d "$x/sessions" ] && find "$x/sessions" -type f -name '*.jsonl' 2>/dev/null | while IFS= read -r f; do one codex "${f#"$x"/}" "$f"; done
+const remoteSessionList = RemoteHomesSh + `one() { printf '%s\t%s\t%s\n' "$1" "$(wc -c <"$2" | tr -d ' ')" "$(date -r "$2" +%s 2>/dev/null || echo 0)"; }
+c0="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; x0="${CODEX_HOME:-$HOME/.codex}"
+homes claude | while IFS= read -r c; do
+  b=default; [ "$c" = "$c0" ] || b=${c##*/}
+  for f in "$c"/projects/*/*.jsonl; do [ -f "$f" ] && one "claude/$b/${f#"$c"/}" "$f"; done
+done
+homes codex | while IFS= read -r x; do
+  b=default; [ "$x" = "$x0" ] || b=${x##*/}
+  [ -d "$x/sessions" ] && find "$x/sessions" -type f -name '*.jsonl' 2>/dev/null | while IFS= read -r f; do one "codex/$b/${f#"$x"/}" "$f"; done
+done
 exit 0
 `
 
 // remoteSessionFetch prints "<rel>\t<base64 of the bytes from offset on>"
 // for each (rel, offset) pair in its arguments.
-const remoteSessionFetch = `c="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; x="${CODEX_HOME:-$HOME/.codex}"
+const remoteSessionFetch = `c0="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; x0="${CODEX_HOME:-$HOME/.codex}"
 while [ $# -ge 2 ]; do
   rel=$1; off=$2; shift 2
-  case $rel in claude/*) f="$c/${rel#claude/}" ;; codex/*) f="$x/${rel#codex/}" ;; *) continue ;; esac
+  kind=${rel%%/*}; r=${rel#*/}; b=${r%%/*}; rest=${r#*/}
+  case $kind in claude) d=$c0 ;; codex) d=$x0 ;; *) continue ;; esac
+  [ "$b" = default ] || d="$HOME/$b"
+  f="$d/$rest"
   [ -f "$f" ] || continue
   printf '%s\t' "$rel"; tail -c +$((off + 1)) "$f" | base64 | tr -d '\n'; printf '\n'
 done
 exit 0
 `
 
-var remoteSessionRel = regexp.MustCompile(`^(claude/projects/[^/]+/[A-Za-z0-9_-]{8,80}\.jsonl|codex/sessions(/[A-Za-z0-9_.-]+){1,6}\.jsonl)$`)
+var remoteSessionRel = regexp.MustCompile(`^(claude/(default|\.claude[-_][A-Za-z0-9._-]{1,60})/projects/[^/]+/[A-Za-z0-9_-]{8,80}\.jsonl|codex/(default|\.codex[-_][A-Za-z0-9._-]{1,60})/sessions(/[A-Za-z0-9_.-]+){1,6}\.jsonl)$`)
 
 // Per fetch: so the command line and the answer stay a sensible size. A
 // first copy of a busy machine takes a few rounds.
@@ -49,11 +60,6 @@ const (
 	mirrorBatchFiles = 60
 	mirrorBatchBytes = 24 << 20
 )
-
-// MirrorHomes are the CLI folders of a mirror.
-func MirrorHomes(dir string) Homes {
-	return Homes{Claude: []AccountHome{{Dir: filepath.Join(dir, "claude")}}, Codex: []AccountHome{{Dir: filepath.Join(dir, "codex")}}}
-}
 
 type remoteFile struct {
 	rel  string

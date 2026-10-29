@@ -9,7 +9,7 @@ import (
 )
 
 const threadCols = `id, user_id, title, provider, model, effort, mode, speed, cwd, workspace_id, provider_session_id, log_offset, status, error,
-	pinned, archived, unread, completed_unread, source, source_ref, preview, last_prompt, prompt_at, usage, created_at, updated_at, activity_at, no_memory, account_id, host_id, worktree_id`
+	pinned, archived, unread, completed_unread, source, source_ref, preview, last_prompt, prompt_at, usage, created_at, updated_at, activity_at, no_memory, account_id, host_id, worktree_id, host_home`
 
 func scanThread(row interface{ Scan(...any) error }) (*Thread, error) {
 	var t Thread
@@ -17,7 +17,7 @@ func scanThread(row interface{ Scan(...any) error }) (*Thread, error) {
 	var usage string
 	if err := row.Scan(&t.ID, &t.UserID, &t.Title, &t.Provider, &t.Model, &t.Effort, &t.Mode, &t.Speed, &t.Cwd, &ws, &t.ProviderSessionID, &t.LogOffset,
 		&t.Status, &t.Error, &t.Pinned, &t.Archived, &t.Unread, &t.CompletedUnread, &t.Source, &t.SourceRef, &t.Preview, &t.LastPrompt, &t.PromptAt, &usage,
-		&t.CreatedAt, &t.UpdatedAt, &t.ActivityAt, &t.NoMemory, &t.AccountID, &t.HostID, &t.WorktreeID); err != nil {
+		&t.CreatedAt, &t.UpdatedAt, &t.ActivityAt, &t.NoMemory, &t.AccountID, &t.HostID, &t.WorktreeID, &t.HostHome); err != nil {
 		return nil, notFound(err)
 	}
 	if ws.Valid {
@@ -38,10 +38,10 @@ func (s *Store) CreateThread(ctx context.Context, t *Thread) error {
 		t.Source = "web"
 	}
 	_, err := s.DB.ExecContext(ctx, `INSERT INTO threads (id, user_id, title, provider, model, effort, mode, speed, cwd, workspace_id,
-		provider_session_id, log_offset, status, source, source_ref, usage, created_at, updated_at, activity_at, no_memory, account_id, host_id, worktree_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		provider_session_id, log_offset, status, source, source_ref, usage, created_at, updated_at, activity_at, no_memory, account_id, host_id, worktree_id, host_home)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, t.UserID, t.Title, t.Provider, t.Model, t.Effort, t.Mode, t.Speed, t.Cwd, nullInt(t.WorkspaceID), t.ProviderSessionID, t.LogOffset,
-		t.Status, t.Source, t.SourceRef, jsonMarshal(t.Usage), now, now, now, t.NoMemory, t.AccountID, t.HostID, t.WorktreeID)
+		t.Status, t.Source, t.SourceRef, jsonMarshal(t.Usage), now, now, now, t.NoMemory, t.AccountID, t.HostID, t.WorktreeID, t.HostHome)
 	if err == nil {
 		s.claimSession(ctx, t)
 	}
@@ -106,9 +106,9 @@ func (s *Store) UpdateThread(ctx context.Context, t *Thread) error {
 	t.UpdatedAt = Now()
 	_, err := s.DB.ExecContext(ctx, `UPDATE threads SET title = ?, model = ?, effort = ?, mode = ?, speed = ?, cwd = ?, workspace_id = ?,
 		provider_session_id = ?, log_offset = ?, status = ?, error = ?, pinned = ?, archived = ?, unread = ?, completed_unread = ?, preview = ?, last_prompt = ?, prompt_at = ?, usage = ?,
-		updated_at = ?, activity_at = ?, account_id = ? WHERE id = ?`,
+		updated_at = ?, activity_at = ?, account_id = ?, host_home = ? WHERE id = ?`,
 		t.Title, t.Model, t.Effort, t.Mode, t.Speed, t.Cwd, nullInt(t.WorkspaceID), t.ProviderSessionID, t.LogOffset, t.Status, t.Error,
-		boolInt(t.Pinned), boolInt(t.Archived), boolInt(t.Unread), boolInt(t.CompletedUnread), t.Preview, t.LastPrompt, t.PromptAt, jsonMarshal(t.Usage), t.UpdatedAt, t.ActivityAt, t.AccountID, t.ID)
+		boolInt(t.Pinned), boolInt(t.Archived), boolInt(t.Unread), boolInt(t.CompletedUnread), t.Preview, t.LastPrompt, t.PromptAt, jsonMarshal(t.Usage), t.UpdatedAt, t.ActivityAt, t.AccountID, t.HostHome, t.ID)
 	if err == nil {
 		s.claimSession(ctx, t)
 	}

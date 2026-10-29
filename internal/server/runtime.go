@@ -495,7 +495,7 @@ The original conversation may still be running. A shared working directory does 
 // remote's own login is used; Pocket app tools stay here (their endpoint is
 // on this server's loopback), and the session file lives over there.
 func (rt *engine) startRemote(t *store.Thread, h *store.Host) (*run, error) {
-	if why := h.Info.Missing[t.Provider]; why != "" && h.Info.OK {
+	if why := hostMissing(h, t.Provider, t.HostHome); why != "" && h.Info.OK {
 		return nil, badRequest(h.Name + ": " + why + " — install it there and press Check in Settings → Agents → Servers")
 	}
 	// The folder may be gone there (moved, cleaned up): say so plainly
@@ -512,9 +512,22 @@ func (rt *engine) startRemote(t *store.Thread, h *store.Host) (*run, error) {
 	ctx, cancel := context.WithCancel(rt.ctx)
 	r := &run{threadID: t.ID, userID: t.UserID, provider: t.Provider, host: h.ID, cancel: cancel, pending: map[string]bool{},
 		live: map[string]*agent.Item{}, dirty: map[string]bool{}, lastUsed: time.Now()}
+	if t.HostHome != "" && !agent.ValidHostHome(t.Provider, h.Info.Home, t.HostHome) {
+		cancel()
+		return nil, badRequest(h.Name + ": " + t.HostHome + " is not a " + t.Provider + " login folder there")
+	}
 	o := rt.baseOptions(ctx, t)
 	o.Remote = remoteOf(h)
 	o.Bin = hostBin(h, t.Provider)
+	o.Env = append(o.Env, agent.HomeEnv(t.Provider, t.HostHome)...) // which login there
+	if o.ResumeID != "" {
+		// switched to another login there (or imported from one): its folder
+		// needs the session file to resume it
+		if _, errOut, err := remoteOf(h).Run(ctx, 2*time.Minute, remoteEnsureSession, t.Provider, t.HostHome, o.ResumeID); err != nil {
+			cancel()
+			return nil, badRequest(h.Name + ": could not bring the conversation to that login: " + sshError(errOut, err))
+		}
+	}
 	o.SystemPrompt = strings.Replace(o.SystemPrompt, "the coding-agent CLIs on this server", "the coding-agent CLIs on the person's machines", 1) +
 		"\nThis conversation runs on the machine \"" + h.Name + "\" (" + firstNonEmpty(h.Info.Hostname, h.Target) + "), reached over ssh from the Pocket AI server."
 	sink := &runSink{rt: rt, r: r}
@@ -549,7 +562,7 @@ func (rt *engine) startRemote(t *store.Thread, h *store.Host) (*run, error) {
 		cancel()
 		return nil, err
 	}
-	rt.s.log.Info("agent started", "thread", t.ID, "provider", t.Provider, "host", h.Name, "model", t.Model, "mode", t.Mode, "resume", o.ResumeID != "", "cwd", t.Cwd, "pocket_tools", tools)
+	rt.s.log.Info("agent started", "thread", t.ID, "provider", t.Provider, "host", h.Name, "login", firstNonEmpty(t.HostHome, "default"), "model", t.Model, "mode", t.Mode, "resume", o.ResumeID != "", "cwd", t.Cwd, "pocket_tools", tools)
 	return r, nil
 }
 
