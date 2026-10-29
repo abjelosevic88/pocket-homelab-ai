@@ -193,6 +193,7 @@ func (s *Server) itemBranches(ctx context.Context, u *store.User, h *store.Host,
 type deployView struct {
 	*store.Deploy
 	Mine     bool   `json:"mine"`
+	By       string `json:"by,omitempty"` // who deployed it
 	HostName string `json:"host_name,omitempty"`
 }
 
@@ -210,6 +211,9 @@ func (s *Server) viewDeploy(ctx context.Context, u *store.User, d *store.Deploy)
 	if h, _ := s.host(ctx, d.HostID); h != nil {
 		v.HostName = h.Name
 	}
+	if who, err := s.store.GetUser(ctx, d.UserID); err == nil {
+		v.By = firstNonEmpty(who.Name, who.Username, who.Email)
+	}
 	return v
 }
 
@@ -219,41 +223,90 @@ type deployLive struct {
 	Live    bool   `json:"live"`    // the last good deploy is what runs
 }
 
-var deployLiveCache sync.Map // project → deployLiveCached
+// deployNow is what the target says runs there: the first word of the
+// current command's first line (a commit or a branch), a later line that
+// names the branch, and a JSON object it may print with the details
+// (branch, sha, subject, deployed_at, by, ref, ref_title, ref_url).
+type deployNow struct {
+	Checked bool           `json:"checked"`
+	Now     string         `json:"now"`
+	Branch  string         `json:"branch,omitempty"`
+	Info    map[string]any `json:"info,omitempty"`
+	Error   string         `json:"error,omitempty"`
+}
 
-type deployLiveCached struct {
+var deployNowCache sync.Map // project + "|now" → deployNowCached
+
+type deployNowCached struct {
 	at time.Time
-	v  deployLive
+	v  deployNow
+}
+
+var shaRe = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+
+func (s *Server) deployNow(ctx context.Context, project string, cfg deployConfig) deployNow {
+	if cfg.Current == "" {
+		return deployNow{}
+	}
+	key := project + "|now"
+	if c, ok := deployNowCache.Load(key); ok && time.Since(c.(deployNowCached).at) < 15*time.Second {
+		return c.(deployNowCached).v
+	}
+	th, err := s.host(ctx, cfg.HostID)
+	if err != nil {
+		return deployNow{Error: err.Error()}
+	}
+	out, errOut, err := shOn(ctx, th, 20*time.Second, deployCdScript(cfg.Dir)+cfg.Current)
+	if err != nil {
+		return deployNow{Error: oneLine(firstNonEmpty(strings.TrimSpace(errOut), err.Error()), 300)}
+	}
+	v := parseDeployNow(out)
+	deployNowCache.Store(key, deployNowCached{time.Now(), v})
+	return v
+}
+
+// parseDeployNow reads the current command's output.
+func parseDeployNow(out string) deployNow {
+	v := deployNow{Checked: true}
+	if i, j := strings.Index(out, "{"), strings.LastIndex(out, "}"); i >= 0 && j > i {
+		var info map[string]any
+		if json.Unmarshal([]byte(out[i:j+1]), &info) == nil {
+			v.Info = info
+			out = out[:i] + out[j+1:]
+		}
+	}
+	for _, l := range splitLines(out) {
+		f := strings.Fields(l)
+		if len(f) == 0 {
+			continue
+		}
+		switch {
+		case v.Now == "":
+			v.Now = f[0]
+			if !shaRe.MatchString(v.Now) && branchNameOK(strings.TrimPrefix(v.Now, "origin/")) {
+				v.Branch = strings.TrimPrefix(v.Now, "origin/")
+			}
+		case v.Branch == "" && len(f) == 1 && branchNameOK(strings.TrimPrefix(f[0], "origin/")):
+			v.Branch = strings.TrimPrefix(f[0], "origin/")
+		}
+	}
+	if b, _ := v.Info["branch"].(string); v.Branch == "" && b != "" {
+		v.Branch = b
+	}
+	return v
 }
 
 func (s *Server) deployLive(ctx context.Context, project string, cfg deployConfig, good *store.Deploy) deployLive {
 	if cfg.Current == "" || good == nil {
 		return deployLive{Live: good != nil}
 	}
-	key := project + "|" + strconv.FormatInt(good.ID, 10)
-	if c, ok := deployLiveCache.Load(key); ok && time.Since(c.(deployLiveCached).at) < 15*time.Second {
-		return c.(deployLiveCached).v
-	}
-	th, err := s.host(ctx, cfg.HostID)
-	if err != nil {
+	n := s.deployNow(ctx, project, cfg)
+	if !n.Checked {
 		return deployLive{Live: true}
 	}
-	out, _, err := shOn(ctx, th, 20*time.Second, deployCdScript(cfg.Dir)+cfg.Current)
-	if err != nil {
-		return deployLive{Live: true}
-	}
-	now := ""
-	for _, l := range splitLines(out) {
-		if l = strings.TrimSpace(l); l != "" {
-			now = strings.Fields(l)[0]
-			break
-		}
-	}
-	v := deployLive{Checked: true, Now: now}
-	v.Live = now != "" && (now == good.Branch || now == "origin/"+good.Branch ||
-		len(now) >= 7 && strings.HasPrefix(good.SHA, now) || len(good.SHA) >= 7 && strings.HasPrefix(now, good.SHA))
-	deployLiveCache.Store(key, deployLiveCached{time.Now(), v})
-	return v
+	now := n.Now
+	return deployLive{Checked: true, Now: now, Live: now != "" && (now == good.Branch || now == "origin/"+good.Branch ||
+		len(now) >= 7 && strings.HasPrefix(good.SHA, now) || len(good.SHA) >= 7 && strings.HasPrefix(now, good.SHA))}
 }
 
 // ---------- before the click ----------
@@ -695,12 +748,7 @@ func (s *Server) watchDeploy(d *store.Deploy) {
 			if d.Status != "running" {
 				d.FinishedAt = store.Now()
 				_ = s.store.UpdateDeploy(ctx, d)
-				deployLiveCache.Range(func(k, _ any) bool {
-					if strings.HasPrefix(k.(string), d.Project+"|") {
-						deployLiveCache.Delete(k)
-					}
-					return true
-				})
+				deployNowCache.Delete(d.Project + "|now")
 				s.log.Info("deploy finished", "id", d.ID, "status", d.Status, "error", d.Error)
 				return
 			}

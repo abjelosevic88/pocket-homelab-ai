@@ -93,3 +93,21 @@ func (s *Store) RunningDeploys(ctx context.Context) ([]*Deploy, error) {
 	}
 	return out, rows.Err()
 }
+
+// RecentDeploys are a project's newest deploys, newest first.
+func (s *Store) RecentDeploys(ctx context.Context, project string, limit int) ([]*Deploy, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+deployCols+` FROM deploys WHERE project = ? ORDER BY id DESC LIMIT ?`, project, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*Deploy{}
+	for rows.Next() {
+		d, err := scanDeploy(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}

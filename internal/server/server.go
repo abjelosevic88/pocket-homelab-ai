@@ -242,6 +242,7 @@ func (s *Server) Router() http.Handler {
 		r.Put("/link/deploy/config", s.handleLinkDeployConfig)
 		r.Post("/link/deploys", s.handleLinkStartDeploy)
 		r.Get("/link/deploys/{id}", s.handleLinkGetDeploy)
+		r.Get("/link/deploy/server", s.handleLinkDeployServer)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
