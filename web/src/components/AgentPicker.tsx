@@ -1,13 +1,14 @@
 // Provider / model / effort / mode pickers, fed by GET /providers.
-import type { ReactNode } from 'react'
+import { type ReactNode, useEffect, useState } from 'react'
+import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { planName } from '../lib/format'
-import type { Account, Provider, ProviderId, Settings } from '../lib/types'
+import type { Account, HostLogin, Provider, ProviderId, Settings } from '../lib/types'
 import { type Option, Select } from './Select'
 import { Segmented } from './ui'
 import { Icon } from './icons'
 
-export interface AgentValue { provider: ProviderId | ''; model: string; effort: string; mode: string; speed?: string; account_id?: number }
+export interface AgentValue { provider: ProviderId | ''; model: string; effort: string; mode: string; speed?: string; account_id?: number; host_home?: string }
 
 const EFFORT_LABEL: Record<string, string> = { minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max', none: 'None' }
 export const effortLabel = (e: string) => EFFORT_LABEL[e] || e
@@ -125,17 +126,50 @@ const ASK_MODELS: Option<string>[] = [
   { value: 'opus', label: 'Opus', description: 'Most capable' },
 ]
 
-export function AgentPicker({ value, onChange, allowDefault = false, compact = false, showProvider = true, noAccount = false, ask = false }: {
+// A machine's logins (one per login folder there), shared by every picker
+// and asked again after a minute.
+const hostLoginCache = new Map<number, { at: number; list: Promise<HostLogin[]> }>()
+function useHostLogins(host: number) {
+  const [list, setList] = useState<HostLogin[]>([])
+  useEffect(() => {
+    if (!host) { setList([]); return }
+    let c = hostLoginCache.get(host)
+    if (!c || Date.now() - c.at > 60e3) {
+      c = { at: Date.now(), list: api.get<HostLogin[]>(`${V1}/hosts/logins?host=${host}`).catch(() => [] as HostLogin[]) }
+      hostLoginCache.set(host, c)
+    }
+    let live = true
+    c.list.then(l => { if (live) setList(l) })
+    return () => { live = false }
+  }, [host])
+  return list
+}
+
+/** The logins of one CLI on a machine, the default first. */
+export function machineLoginOptions(list: HostLogin[], pid: ProviderId, current: string): Option<string>[] {
+  const all = list.filter(h => h.provider === pid && !h.missing)
+  const opts: Option<string>[] = all.map(h => ({
+    value: h.dir || '', label: h.label || 'Default login', keywords: h.email,
+    description: [h.home.replace(/^\/(home|Users)\/[^/]+/, '~'), h.signed_in ? [h.plan && planName(h.plan), h.email].filter(Boolean).join(' · ') : 'not signed in'].filter(Boolean).join(' · '),
+  }))
+  if (current && !opts.some(o => o.value === current)) opts.push({ value: current, label: current.replace(/^.*\/\./, ''), description: 'not found there any more' })
+  return opts
+}
+
+export function AgentPicker({ value, onChange, allowDefault = false, compact = false, showProvider = true, noAccount = false, host = 0, ask = false }: {
   value: AgentValue; onChange: (patch: Partial<AgentValue>) => void; allowDefault?: boolean; compact?: boolean; showProvider?: boolean
-  /** runs on another machine, with that machine's own login */
+  /** no account to pick */
   noAccount?: boolean
+  /** runs on this machine (Settings → Servers): pick one of its logins instead of an account here */
+  host?: number
   /** an Ask my apps chat: account, model and effort only */
   ask?: boolean
 }) {
   const { providers, settings, accounts } = useApp()
   const pid = (value.provider || settings?.default_provider || 'claude') as ProviderId
   const p = providers.find(x => x.id === pid)
-  const accts = allowDefault || noAccount ? [] : accountOptions(accounts, pid, value.account_id || 0)
+  const accts = allowDefault || noAccount || host ? [] : accountOptions(accounts, pid, value.account_id || 0)
+  const machineLogins = machineLoginOptions(useHostLogins(allowDefault || noAccount ? 0 : host), pid, value.host_home || '')
   const models = ask ? ASK_MODELS : modelOptions(p, allowDefault)
   const efforts = effortOptions(p, value.model, allowDefault)
   const modes = ask ? [] : modeOptions(p, allowDefault)
@@ -148,6 +182,8 @@ export function AgentPicker({ value, onChange, allowDefault = false, compact = f
     <>
       {accts.length > 0 && named('Account', <Select size={size} className={cls} label="Account" value={value.account_id || 0} options={accts} onChange={v => onChange({ account_id: v })} width={compact ? 280 : 'trigger'}
         renderValue={o => <span className="ellipsis">{compact && <Icon name="user" size={12} className="inline-ico" />}{o?.label ?? 'Account'}</span>} />)}
+      {machineLogins.length > 1 && named('Login', <Select size={size} className={cls} label="Login on that machine" value={value.host_home || ''} options={machineLogins} onChange={v => onChange({ host_home: v })} width={compact ? 320 : 'trigger'}
+        renderValue={o => <span className="ellipsis">{compact && <Icon name="server" size={12} className="inline-ico" />}{o?.label ?? 'Login'}</span>} />)}
       {models.length > 0 && named('Model', <Select size={size} className={cls} label="Model" value={value.model} options={models} onChange={v => onChange({ model: v })} width={compact ? 280 : 'trigger'}
         renderValue={compact ? o => <span className="ellipsis"><Icon name={pid} size={14} className={`inline-ico prov-glyph ${pid}`} />{shortLabel(String(o?.label ?? 'Model'))}</span> : undefined} />)}
       {efforts.length > 0 && named('Effort', <Select size={size} className={cls} label="Effort" value={value.effort} options={efforts} onChange={v => onChange({ effort: v })} width={compact ? 180 : 'trigger'}

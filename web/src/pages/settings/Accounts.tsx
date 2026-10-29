@@ -45,10 +45,10 @@ export function AccountsSection() {
     try { await api.post(`${V1}/accounts/${a.id}/logout`); toast('Signed out'); done() } catch (e) { toast(errMsg(e), 'err') }
   }
   const signOutRemote = async (h: HostLogin) => {
-    try { await api.post(`${V1}/hosts/${h.host_id}/logout/${h.provider}`); toast(`Signed out on ${h.host}`); done() } catch (e) { toast(errMsg(e), 'err') }
+    try { await api.post(`${V1}/hosts/${h.host_id}/logout/${h.provider}${dirQuery(h)}`); toast(`Signed out on ${machineLabel(h)}`); done() } catch (e) { toast(errMsg(e), 'err') }
   }
   const accountSignIn = (a: Account): SignInTarget => ({ label: a.label, provider: a.provider, base: `${V1}/accounts/${a.id}/login` })
-  const remoteSignIn = (h: HostLogin): SignInTarget => ({ label: h.host, provider: h.provider, base: `${V1}/hosts/${h.host_id}/login/${h.provider}`, where: h.host })
+  const remoteSignIn = (h: HostLogin): SignInTarget => ({ label: machineLabel(h), provider: h.provider, base: `${V1}/hosts/${h.host_id}/login/${h.provider}`, query: h.dir ? { dir: h.dir } : undefined, where: machineLabel(h) })
 
   return (
     <Section title="Accounts" sub={<>Each Claude Code or Codex login lives in its own folder on the server. Pick the account per thread next to the model; a thread can switch accounts and carries on where it was. Your other machines run on their own login, signed in from here too.</>}
@@ -107,7 +107,7 @@ export function AccountsSection() {
                     </div>
                   </div>
                 )})}
-                {machines.map(h => <MachineRow key={h.host_id} login={h} onSignIn={() => setSignIn(remoteSignIn(h))} onSignOut={() => signOutRemote(h)} />)}
+                {machines.map(h => <MachineRow key={`${h.host_id}:${h.dir}`} login={h} onSignIn={() => setSignIn(remoteSignIn(h))} onSignOut={() => signOutRemote(h)} />)}
               </div>
             )
           })}
@@ -138,7 +138,7 @@ function AccountDialog({ account, provider: initial, people, isAdmin, own, machi
   // Ask the picked machine afresh: the list may be minutes old (a CLI just installed there).
   const fresh = useAsync(() => where ? api.get<HostLogin[]>(`${V1}/hosts/logins?host=${where}&refresh=1`) : Promise.resolve([] as HostLogin[]), [where])
   const checking = !!where && fresh.loading
-  const machine = where ? (fresh.data?.length ? fresh.data : machines).find(h => h.host_id === where && h.provider === provider) : undefined
+  const machine = where ? (fresh.data?.length ? fresh.data : machines).find(h => h.host_id === where && h.provider === provider && !h.dir) : undefined
   const runners = people.filter(p => p.role === 'admin' || p.can_run)
   const save = async () => {
     if (machine) { onMachine(machine); return }
@@ -191,6 +191,10 @@ function MachineNote({ login: h, onRecheck }: { login: HostLogin; onRecheck: () 
   </p>
 }
 
+/** "AB-128box" for a machine's default login, "AB-128box · claude-max" for another login folder there. */
+export const machineLabel = (h: { host: string; label?: string }) => h.label ? `${h.host} · ${h.label}` : h.host
+const dirQuery = (h: HostLogin) => h.dir ? `?dir=${encodeURIComponent(h.dir)}` : ''
+
 /** Another machine's own login: signed in over ssh from here. */
 function MachineRow({ login: h, onSignIn, onSignOut }: { login: HostLogin; onSignIn: () => void; onSignOut: () => void }) {
   const ctx = useContextMenu()
@@ -205,7 +209,7 @@ function MachineRow({ login: h, onSignIn, onSignOut }: { login: HostLogin; onSig
         title={(h.signed_in ? 'Signed in' : h.missing ? 'Not installed there' : h.error ? 'Error' : 'Not signed in') + (h.checked_at ? ` · checked ${ago(h.checked_at)}` : '')} />
       <div className="acct-main">
         <div className="acct-name">
-          <span className="ellipsis">{h.host}</span>
+          <span className="ellipsis">{machineLabel(h)}</span>
           {h.signed_in ? (h.plan && <span className="badge ok">{planName(h.plan)}</span>)
             : h.missing ? <span className="badge">Not installed</span>
             : h.error ? <span className="badge danger">Error</span> : <span className="badge">Not signed in</span>}
@@ -217,7 +221,7 @@ function MachineRow({ login: h, onSignIn, onSignOut }: { login: HostLogin; onSig
       </div>
       <div className="acct-actions">
         {!h.signed_in && !h.missing && !h.error && <button type="button" className="btn sm" onClick={onSignIn}><Icon name="key" size={13} />Sign in</button>}
-        {more.length > 0 && <MenuButton label={`More for ${h.host}`} align="right" items={more}><Icon name="more" size={16} /></MenuButton>}
+        {more.length > 0 && <MenuButton label={`More for ${machineLabel(h)}`} align="right" items={more}><Icon name="more" size={16} /></MenuButton>}
       </div>
       {ctx.menu}
     </div>
@@ -225,7 +229,7 @@ function MachineRow({ login: h, onSignIn, onSignOut }: { login: HostLogin; onSig
 }
 
 /** What a sign-in is for: an account here, or another machine's own login. */
-interface SignInTarget { label: string; provider: ProviderId; base: string; where?: string }
+interface SignInTarget { label: string; provider: ProviderId; base: string; query?: Record<string, string>; where?: string }
 
 function SignInDialog({ target, onClose }: { target: SignInTarget; onClose: () => void }) {
   const { toast } = useToast()
@@ -233,13 +237,17 @@ function SignInDialog({ target, onClose }: { target: SignInTarget; onClose: () =
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
   const alive = useRef(true)
-  const { base, label, where } = target
+  const { label, where } = target
+  // every request of the sign-in carries the query (a machine's login folder)
+  const extra = new URLSearchParams(target.query || {}).toString()
+  const base = target.base
+  const at = (path = '', q = '') => `${base}${path}${[q, extra].filter(Boolean).length ? '?' + [q, extra].filter(Boolean).join('&') : ''}`
 
   useEffect(() => {
     alive.current = true
-    api.post<LoginState>(base).then(s => alive.current && setSt(s)).catch(e => alive.current && setSt({ state: 'failed', error: errMsg(e) }))
+    api.post<LoginState>(at()).then(s => alive.current && setSt(s)).catch(e => alive.current && setSt({ state: 'failed', error: errMsg(e) }))
     return () => { alive.current = false }
-  }, [base])
+  }, [base, extra])
   // Codex finishes by itself once the code is entered on the page: wait for it.
   useEffect(() => {
     if (!st || (st.state !== 'waiting' && st.state !== 'starting') || st.need_code) return
@@ -247,7 +255,7 @@ function SignInDialog({ target, onClose }: { target: SignInTarget; onClose: () =
     const poll = async () => {
       while (!stop && alive.current) {
         try {
-          const s = await api.get<LoginState>(`${base}?wait=1`)
+          const s = await api.get<LoginState>(at('', 'wait=1'))
           if (stop || !alive.current) return
           setSt(s)
           if (s.state !== 'waiting' && s.state !== 'starting') return
@@ -256,15 +264,15 @@ function SignInDialog({ target, onClose }: { target: SignInTarget; onClose: () =
     }
     poll()
     return () => { stop = true }
-  }, [st?.state, st?.need_code, base]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [st?.state, st?.need_code, base, extra]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (st?.state === 'done') toast(`${label} is signed in`) }, [st?.state]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const sendCode = async () => {
     setBusy(true)
-    try { setSt(await api.post<LoginState>(`${base}/code`, { code: code.trim() })) } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
+    try { setSt(await api.post<LoginState>(at('/code'), { code: code.trim() })) } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
   }
   const close = () => {
-    if (st && (st.state === 'waiting' || st.state === 'starting' || st.state === 'checking')) api.del(base).catch(() => {})
+    if (st && (st.state === 'waiting' || st.state === 'starting' || st.state === 'checking')) api.del(at()).catch(() => {})
     onClose()
   }
   const isClaude = target.provider === 'claude'
@@ -274,7 +282,7 @@ function SignInDialog({ target, onClose }: { target: SignInTarget; onClose: () =
         : <>
           <button type="button" className="btn" onClick={close}>Cancel</button>
           {st?.need_code && st.state !== 'failed' && <button type="button" className="btn primary" disabled={busy || !code.trim() || st.state === 'checking'} onClick={sendCode}>{busy ? <Spinner /> : null}Sign in</button>}
-          {st?.state === 'failed' && <button type="button" className="btn primary" onClick={() => { setSt(null); setCode(''); api.post<LoginState>(base).then(setSt).catch(e => setSt({ state: 'failed', error: errMsg(e) })) }}>Try again</button>}
+          {st?.state === 'failed' && <button type="button" className="btn primary" onClick={() => { setSt(null); setCode(''); api.post<LoginState>(at()).then(setSt).catch(e => setSt({ state: 'failed', error: errMsg(e) })) }}>Try again</button>}
         </>}>
       {!st || st.state === 'starting' && !st.url ? <div className="loading"><Spinner /> Starting {isClaude ? 'claude auth login' : 'codex login'} {where ? `on ${where}` : 'on the server'}…</div>
         : st.state === 'done' ? <div className="callout success"><Icon name="check-circle" size={15} /><span>{where ? <>Signed in. Threads on <b>{where}</b> run on this login now.</> : <>Signed in. New threads can use <b>{label}</b> now.</>}</span></div>

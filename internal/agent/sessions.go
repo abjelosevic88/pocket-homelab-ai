@@ -37,6 +37,7 @@ type Run struct {
 	SharedWith   []string `json:"shared_with,omitempty"` // its Pocket AI thread is shared with them (server fills it)
 	HostID       int64    `json:"host_id,omitempty"`     // another machine it ran on (server fills it)
 	Host         string   `json:"host,omitempty"`
+	HostHome     string   `json:"host_home,omitempty"` // its login folder there, "" = the default
 }
 
 // ServerSession is what "On this server" shows about one CLI session.
@@ -59,6 +60,7 @@ type ServerSession struct {
 	SharedWith []string `json:"shared_with,omitempty"` // its Pocket AI thread is shared with them (server fills it)
 	HostID     int64    `json:"host_id,omitempty"`     // another machine it is on (server fills it)
 	Host       string   `json:"host,omitempty"`
+	HostHome   string   `json:"host_home,omitempty"` // its login folder there, "" = the default
 	Path       string   `json:"-"`
 }
 
