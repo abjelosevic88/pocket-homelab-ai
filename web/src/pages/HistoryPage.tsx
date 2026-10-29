@@ -57,7 +57,7 @@ export default function HistoryPage({ onMenu }: { onMenu?: () => void }) {
 
   return (
     <div className="page">
-      <PageHead title="On this server" icon="history" onMenu={onMenu} sub="Every Claude Code and Codex session on the server — from Pocket AI, Paseo, the terminal or any app. Open one to read it, follow it live and continue it here." />
+      <PageHead title="On this server" icon="history" onMenu={onMenu} sub="Every Claude Code and Codex session on the server and on your other machines — from Pocket AI, Paseo, the terminal or any app. Open one to read it and continue it here." />
       <div className="page-scroll">
         <div className="page-inner srv">
           <div className="srv-tools">
@@ -82,7 +82,7 @@ export default function HistoryPage({ onMenu }: { onMenu?: () => void }) {
                 <section key={g.name} className="srv-group">
                   <h3 className="srv-h">{g.name}<span className="muted">{g.items.length}</span></h3>
                   <div className="srv-list">
-                    {g.items.map(s => <SessionRow key={s.provider + s.session_id} s={s} busy={busy === s.session_id} onOpen={() => open(s)} />)}
+                    {g.items.map(s => <SessionRow key={(s.host_id || 0) + s.provider + s.session_id} s={s} busy={busy === s.session_id} onOpen={() => open(s)} />)}
                   </div>
                 </section>
               ))}
@@ -110,6 +110,7 @@ function SessionRow({ s, busy, onOpen }: { s: ServerSession; busy: boolean; onOp
         {showLast && <span className="srv-last"><Icon name="message" size={11} />{s.last_prompt}</span>}
         <span className="srv-meta">
           <span className={`origin-chip o-${s.origin}`}>{originLabel(s.origin)}</span>
+          {s.host && <span className="badge" style={{ gap: 4 }} title={`On ${s.host} (Settings → Servers)`}><Icon name="server" size={11} />{s.host}</span>}
           <PrivacyChip sharedWith={s.shared_with} />
           <span className="mono ellipsis">{shortPath(s.cwd)}</span>
           <span>{s.runs} {s.runs === 1 ? 'run' : 'runs'}</span>

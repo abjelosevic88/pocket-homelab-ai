@@ -21,8 +21,9 @@ func (s *Server) historyRoutes(r chi.Router) {
 	r.Post("/history/import", s.handleImport)
 }
 
-// handleHistory lists the sessions both CLIs keep on the server (read from
-// their session files: origin, runs, time worked, running now), newest first.
+// handleHistory lists the sessions both CLIs keep on the server and on the
+// person's other machines (read from their session files: origin, runs, time
+// worked, running now), newest first.
 // ?provider=claude|codex, ?origin=paseo|terminal|pocket-ai|schedule|app,
 // ?q= (title, folder, last prompt), ?limit= (default 300).
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
@@ -47,6 +48,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sessions = append(sessions, agent.Sessions(s.askHomes(me(r)), "")...)
+	sessions = append(sessions, s.remoteSessions(ctx, userFrom(ctx))...)
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].UpdatedAt > sessions[j].UpdatedAt })
 	for _, x := range sessions {
 		if th, ok := known[x.Provider+":"+x.SessionID]; ok {
@@ -141,6 +143,7 @@ func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	runs = append(runs, agent.Runs(s.askHomes(me(r)), "", from, to)...)
+	runs = append(runs, s.remoteRuns(r.Context(), userFrom(r.Context()), from, to)...)
 	sort.Slice(runs, func(i, j int) bool { return runs[i].StartedAt > runs[j].StartedAt })
 	for i := range runs {
 		if th, ok := known[runs[i].Provider+":"+runs[i].SessionID]; ok {
@@ -162,6 +165,7 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Provider  string `json:"provider"`
 		SessionID string `json:"session_id"`
+		HostID    int64  `json:"host_id"` // 0 = this server, else one of their machines
 	}
 	if err := decode(r, &in); err != nil || in.SessionID == "" {
 		writeErr(w, http.StatusBadRequest, "provider and session_id are required")
@@ -169,6 +173,20 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 	}
 	if t, err := s.store.ThreadBySession(ctx, me(r), in.Provider, in.SessionID); err == nil {
 		writeJSON(w, http.StatusOK, s.rt.decorate(t))
+		return
+	}
+	if in.HostID != 0 {
+		h, err := s.checkHostUse(ctx, userFrom(ctx), in.HostID)
+		if err != nil {
+			s.fail(w, err, "import")
+			return
+		}
+		t, err := s.importRemoteSession(ctx, userFrom(ctx), h, in.Provider, in.SessionID)
+		if err != nil {
+			s.fail(w, err, "import")
+			return
+		}
+		writeJSON(w, http.StatusCreated, t)
 		return
 	}
 	if account, _ := s.sessionAccount(ctx, userFrom(ctx), in.Provider, in.SessionID); !s.sessionFilter(ctx, userFrom(ctx))(in.Provider, in.SessionID, account) {
@@ -228,6 +246,13 @@ func (s *Server) importSession(ctx context.Context, u *store.User, provider, ses
 	t := &store.Thread{ID: uuid.NewString(), UserID: u.ID, Provider: provider, AccountID: account, ProviderSessionID: sessionID, Cwd: cwd,
 		Model: def.Model, Effort: def.Effort, Mode: def.Mode, Source: "import", Title: titleFrom(title), LogOffset: logOffset}
 	t.WorkspaceID = s.store.WorkspaceForPath(ctx, u.ID, cwd)
+	return s.storeImported(ctx, t, items)
+}
+
+var errSessionGone = store.ErrNotFound
+
+// storeImported saves a thread made of a session's transcript.
+func (s *Server) storeImported(ctx context.Context, t *store.Thread, items []agent.Item) (*store.Thread, error) {
 	if err := s.store.CreateThread(ctx, t); err != nil {
 		return nil, err
 	}
