@@ -525,8 +525,12 @@ func ListCodex(ctx context.Context, bin, q string, limit int, env []string) ([]P
 }
 
 // ReadCodex loads a Codex thread's turns as timeline items.
-func ReadCodex(ctx context.Context, bin, threadID string, env []string) (items []Item, cwd, title string, err error) {
-	c, err := startRPC(bin, os.TempDir(), env)
+func ReadCodex(ctx context.Context, bin, threadID string, env []string, remote ...*Remote) (items []Item, cwd, title string, err error) {
+	dir := os.TempDir()
+	if len(remote) > 0 && remote[0] != nil {
+		dir = "" // the machine's home
+	}
+	c, err := startRPC(bin, dir, env, remote...)
 	if err != nil {
 		return nil, "", "", err
 	}
