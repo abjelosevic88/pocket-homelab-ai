@@ -129,16 +129,12 @@ func (s *Server) handleLinkDeployServer(w http.ResponseWriter, r *http.Request) 
 		s.fail(w, err, "deploy")
 		return
 	}
-	cfg, ok := s.deployConfig(ctx, info.ProjectID)
-	if cfg.Run == nil {
-		cfg.Run = []string{}
-	}
-	out := map[string]any{"project": info.ProjectID, "repo": info.Main, "default": info.Default, "configured": ok, "config": cfg,
+	ds := s.deployFor(ctx, info.ProjectID, u)
+	cfg := ds.cfg
+	out := map[string]any{"project": info.ProjectID, "repo": info.Main, "default": info.Default, "configured": ds.ok,
 		"branches": []serverBranch{}, "history": []*deployView{}}
-	if th, _ := s.host(ctx, cfg.HostID); th != nil {
-		out["host_name"] = th.Name
-	}
-	if !ok {
+	s.describeDeploy(ctx, out, info.ProjectID, u, ds)
+	if !ds.ok {
 		writeJSON(w, http.StatusOK, out)
 		return
 	}
@@ -147,11 +143,11 @@ func (s *Server) handleLinkDeployServer(w http.ResponseWriter, r *http.Request) 
 	if fetchErr != "" {
 		out["fetch_error"] = fetchErr
 	}
-	latest, _ := s.store.LatestDeploy(ctx, info.ProjectID)
-	good, _ := s.store.LastGoodDeploy(ctx, info.ProjectID)
+	latest, _ := s.store.LatestDeploy(ctx, ds.slot)
+	good, _ := s.store.LastGoodDeploy(ctx, ds.slot)
 	out["latest"], out["current"] = s.viewDeploy(ctx, u, latest), s.viewDeploy(ctx, u, good)
-	out["live"] = s.deployLive(ctx, info.ProjectID, cfg, good)
-	now := s.deployNow(ctx, info.ProjectID, cfg)
+	out["live"] = s.deployLive(ctx, ds.slot, cfg, good)
+	now := s.deployNow(ctx, ds.slot, cfg)
 	if shaRe.MatchString(now.Now) {
 		// the commit's own words, from the repository
 		if c, _, err := shOn(ctx, h, 15*time.Second, wtCommitLine, info.Main, now.Now); err == nil {
@@ -161,7 +157,7 @@ func (s *Server) handleLinkDeployServer(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	out["now"] = now
-	if list, err := s.store.RecentDeploys(ctx, info.ProjectID, 25); err == nil {
+	if list, err := s.store.RecentDeploys(ctx, ds.slot, 25); err == nil {
 		hist := make([]*deployView, 0, len(list))
 		for _, d := range list {
 			v := s.viewDeploy(ctx, u, d)
