@@ -378,6 +378,9 @@ export interface ServerSession {
   thread_id: string
   /** Its Pocket AI thread is shared with these people (absent = private). */
   shared_with?: string[]
+  /** On another machine (Settings → Servers); absent = this server. */
+  host_id?: number
+  host?: string
 }
 
 /** One prompt and the agent's work on it (the Today page). */
@@ -403,6 +406,9 @@ export interface Run {
   account_id: number
   /** Its Pocket AI thread is shared with these people (absent = private). */
   shared_with?: string[]
+  /** Ran on another machine (Settings → Servers); absent = this server. */
+  host_id?: number
+  host?: string
 }
 
 export interface SearchHit { thread_id: string; title: string; provider: ProviderId; snippet: string; item_key: string; activity_at: string }

@@ -35,6 +35,8 @@ type Run struct {
 	ThreadID     string   `json:"thread_id,omitempty"`
 	Account      int64    `json:"account_id"`
 	SharedWith   []string `json:"shared_with,omitempty"` // its Pocket AI thread is shared with them (server fills it)
+	HostID       int64    `json:"host_id,omitempty"`     // another machine it ran on (server fills it)
+	Host         string   `json:"host,omitempty"`
 }
 
 // ServerSession is what "On this server" shows about one CLI session.
@@ -55,6 +57,8 @@ type ServerSession struct {
 	ThreadID   string   `json:"thread_id"`
 	Account    int64    `json:"account_id"`
 	SharedWith []string `json:"shared_with,omitempty"` // its Pocket AI thread is shared with them (server fills it)
+	HostID     int64    `json:"host_id,omitempty"`     // another machine it is on (server fills it)
+	Host       string   `json:"host,omitempty"`
 	Path       string   `json:"-"`
 }
 

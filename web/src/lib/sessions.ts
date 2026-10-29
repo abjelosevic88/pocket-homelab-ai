@@ -27,11 +27,11 @@ export function useOpenSession() {
   const { upsertThread } = useApp()
   const { toast } = useToast()
   const navigate = useNavigate()
-  return async (s: { provider: ProviderId; session_id: string; thread_id?: string }, itemKey?: string) => {
+  return async (s: { provider: ProviderId; session_id: string; thread_id?: string; host_id?: number }, itemKey?: string) => {
     const hash = itemKey ? `#item-${itemKey}` : ''
     if (s.thread_id) { navigate(`/t/${s.thread_id}${hash}`); return }
     try {
-      const t = await api.post<Thread>(`${V1}/history/import`, { provider: s.provider, session_id: s.session_id })
+      const t = await api.post<Thread>(`${V1}/history/import`, { provider: s.provider, session_id: s.session_id, host_id: s.host_id || 0 })
       upsertThread(t)
       navigate(`/t/${t.id}${hash}`)
     } catch (e) { toast(errMsg(e), 'err') }
