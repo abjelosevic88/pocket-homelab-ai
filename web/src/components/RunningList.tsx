@@ -1,15 +1,18 @@
 // "Running now": every prompt an agent is working on — in Pocket AI, Paseo,
-// a terminal or any other app — with how long it has been going.
+// a terminal or any other app — with how long it has been going. The sidebar
+// copy also lists threads whose turn is over but whose background work (shell
+// commands, monitors, sub-agents) still runs, with the calmer blue mark.
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
-import { baseName } from '../lib/format'
+import { baseName, threadTitle } from '../lib/format'
 import type { RunningItem, Thread } from '../lib/types'
 import { ProviderBadge } from './bits'
 import { Icon } from './icons'
 import { errMsg, useToast } from './ui'
 import { PrivacyChip } from './ShareDialog'
+import { BgMark, backgroundLabel, backgroundSince, backgroundTitle, hasBackground } from './Background'
 
 /** Four dots taking turns — the "working" mark used everywhere. */
 export function RunDots({ waiting = false, size = 14 }: { waiting?: boolean; size?: number }) {
@@ -60,13 +63,17 @@ export function RunningList({ compact = false, onOpened }: { compact?: boolean; 
     const t = r.thread_id ? threads?.find(x => x.id === r.thread_id) : undefined
     return t?.title ? { ...r, title: t.title } : r
   }), [raw, threads])
+  // threads left with only background work: not in `running` (the turn is over)
+  const bg = useMemo(() => compact ? (threads || []).filter(t => !t.archived && t.status !== 'running' && t.status !== 'waiting' && !t.pending && hasBackground(t)
+    && !raw.some(r => r.thread_id === t.id || (!!t.provider_session_id && r.session_id === t.provider_session_id))) : [], [compact, threads, raw])
   const now = useNow(1000)
   const open = useOpenRunning()
-  if (!running.length) return null
+  const navigate = useNavigate()
+  if (!running.length && !bg.length) return null
   if (compact) {
     return (
       <div className="run-side">
-        <div className="sb-h"><span>Running now</span><span className="run-count">{running.length}</span></div>
+        <div className="sb-h"><span>Running now</span><span className="run-count">{running.length + bg.length}</span></div>
         {running.map(r => (
           <button key={r.provider + r.session_id + r.thread_id} type="button" className="th-row run-row" onClick={() => { open(r); onOpened?.() }} title={r.prompt}>
             <RunDots waiting={r.status === 'waiting'} size={12} />
@@ -75,6 +82,16 @@ export function RunningList({ compact = false, onOpened }: { compact?: boolean; 
               <span className="th-meta"><PrivacyChip sharedWith={r.shared_with} iconOnly /><span className="ellipsis">{ORIGIN[r.origin] || r.origin} · {baseName(r.cwd)}{!!r.subagents && ` · ${r.subagents} sub-agent${r.subagents === 1 ? '' : 's'}`}</span></span>
             </span>
             <span className="run-time tnum">{elapsed(r.prompt_at, now)}</span>
+          </button>
+        ))}
+        {bg.map(t => (
+          <button key={t.id} type="button" className="th-row run-row is-background" onClick={() => { navigate(`/t/${t.id}`); onOpened?.() }} title={backgroundTitle(t)}>
+            <BgMark size={12} />
+            <span className="th-main">
+              <span className="th-title ellipsis">{threadTitle(t)}</span>
+              <span className="th-meta"><PrivacyChip sharedWith={t.shares?.map(s => s.name)} iconOnly /><span className="ellipsis"><span className="bg-word">In the background</span> · {backgroundLabel(t)}</span></span>
+            </span>
+            <span className="run-time tnum">{elapsed(backgroundSince(t) || t.activity_at, now)}</span>
           </button>
         ))}
       </div>

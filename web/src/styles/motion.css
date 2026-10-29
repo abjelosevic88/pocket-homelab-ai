@@ -183,3 +183,6 @@
 .run-bar.bg .run-time { color: var(--bg-work); }
 .tstat.bg { color: var(--bg-work); }
 .th-row.is-background .th-time { color: var(--bg-work); }
+.run-row.is-background .run-time, .run-row .bg-word { color: var(--bg-work); }
+.run-row .bg-word { font-weight: 550; }
+.tab-bg { display: grid; place-items: center; width: 13px; height: 13px; }
