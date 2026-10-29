@@ -30,6 +30,13 @@ import (
 // The commands get POCKET_BRANCH, POCKET_SHA, POCKET_REF, POCKET_SOURCE,
 // POCKET_PROJECT, POCKET_DEPLOY_ID, POCKET_DEPLOYED_BY, POCKET_REF_URL and
 // POCKET_REF_TITLE (the item's address and title, when the app sent them).
+//
+// A person may also set up a deploy of their own for a project (their own
+// staging box): it wins over the shared one for them and is a slot of its
+// own (deploys, the target's state folder, what runs there). Everyone else
+// keeps using the shared one, which anyone allowed to run agents may deploy
+// with — its commands are fixed by whoever saved it, and only someone who may
+// use its machine can save or remove it.
 
 type deployConfig struct {
 	HostID  int64    `json:"host_id"`           // where it runs (0 = this server)
@@ -44,13 +51,61 @@ type deployConfig struct {
 
 func deployKey(project string) string { return "deploy:" + project }
 
-func (s *Server) deployConfig(ctx context.Context, project string) (deployConfig, bool) {
+// mineSlot is a person's own deploy slot of a project.
+func mineSlot(project string, uid int64) string { return project + "@" + strconv.FormatInt(uid, 10) }
+
+func (s *Server) deployConfig(ctx context.Context, slot string) (deployConfig, bool) {
 	var c deployConfig
-	raw := s.store.ProjectSettings(ctx, deployKey(project))
+	raw := s.store.ProjectSettings(ctx, deployKey(slot))
 	if raw == "" || json.Unmarshal([]byte(raw), &c) != nil || len(c.Run) == 0 {
 		return deployConfig{}, false
 	}
 	return c, true
+}
+
+// deploySetup is the deploy a person gets for a project.
+type deploySetup struct {
+	cfg  deployConfig
+	ok   bool
+	slot string // what keys its deploys, caches and the target's state folder
+	mine bool   // the person's own, not the project's shared one
+}
+
+func (s *Server) deployFor(ctx context.Context, project string, u *store.User) deploySetup {
+	if c, ok := s.deployConfig(ctx, mineSlot(project, u.ID)); ok {
+		return deploySetup{cfg: c, ok: true, slot: mineSlot(project, u.ID), mine: true}
+	}
+	c, ok := s.deployConfig(ctx, project)
+	return deploySetup{cfg: c, ok: ok, slot: project}
+}
+
+// mayDeployOn: the person may set up deploy commands for this machine. Pocket
+// AI's own server runs them outside any sandbox, so only people who are not
+// sandboxed there (its owner) may; another machine, those who may use it.
+func (s *Server) mayDeployOn(ctx context.Context, u *store.User, hostID int64) (*store.Host, error) {
+	if hostID == 0 {
+		if !u.MayRun() {
+			return nil, errForbidden("an admin has to allow you to run agents first")
+		}
+		if s.jailed(ctx, u.ID) {
+			return nil, errForbidden("deploys on Pocket AI's own server are set up by its owner; pick one of your servers")
+		}
+		return nil, nil
+	}
+	return s.checkHostUse(ctx, u, hostID)
+}
+
+// deployTarget is the machine a deploy runs on. The person's own needs their
+// right to use it; the shared one runs on its machine for anyone who may run
+// agents (only its fixed commands, with the branch they picked).
+func (s *Server) deployTarget(ctx context.Context, u *store.User, d deploySetup) (*store.Host, error) {
+	if d.mine {
+		return s.mayDeployOn(ctx, u, d.cfg.HostID)
+	}
+	if !u.MayRun() {
+		return nil, errForbidden("an admin has to allow you to run agents first")
+	}
+	return s.host(ctx, d.cfg.HostID)
 }
 
 // deployRepo resolves the caller's machine + folder to the repository.
@@ -384,36 +439,57 @@ func (s *Server) handleLinkDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := map[string]any{"project": info.ProjectID, "repo": info.Main, "configured": false, "branches": []deployBranch{}}
-	cfg, ok := s.deployConfig(ctx, info.ProjectID)
-	if cfg.Run == nil {
-		cfg.Run = []string{}
-	}
-	out["config"] = cfg
-	if th, _ := s.host(ctx, cfg.HostID); th != nil {
-		out["host_name"] = th.Name
-	}
-	if !ok {
+	ds := s.deployFor(ctx, info.ProjectID, u)
+	s.describeDeploy(ctx, out, info.ProjectID, u, ds)
+	if !ds.ok {
 		writeJSON(w, http.StatusOK, out)
 		return
 	}
+	cfg := ds.cfg
 	out["configured"] = true
 	if b := strings.TrimPrefix(strings.TrimSpace(q.Get("check")), "origin/"); b != "" {
 		if !branchNameOK(b) {
 			writeErr(w, http.StatusBadRequest, "bad branch")
 			return
 		}
-		writeJSON(w, http.StatusOK, s.deployCheck(ctx, info.ProjectID, cfg, b))
+		writeJSON(w, http.StatusOK, s.deployCheck(ctx, ds.slot, cfg, b))
 		return
 	}
 	source, ref := strings.ToLower(q.Get("source")), strings.TrimSpace(q.Get("ref"))
 	if ref != "" {
 		out["branches"] = s.itemBranches(ctx, u, h, info, source, ref, strings.TrimSpace(q.Get("branch")), q["pr_branch"])
 	}
-	latest, _ := s.store.LatestDeploy(ctx, info.ProjectID)
-	good, _ := s.store.LastGoodDeploy(ctx, info.ProjectID)
+	latest, _ := s.store.LatestDeploy(ctx, ds.slot)
+	good, _ := s.store.LastGoodDeploy(ctx, ds.slot)
 	out["latest"], out["current"] = s.viewDeploy(ctx, u, latest), s.viewDeploy(ctx, u, good)
-	out["live"] = s.deployLive(ctx, info.ProjectID, cfg, good)
+	out["live"] = s.deployLive(ctx, ds.slot, cfg, good)
 	writeJSON(w, http.StatusOK, out)
+}
+
+// describeDeploy fills what every deploy answer says about the setup: the
+// config in use, whether it is the person's own, and both setups (for the
+// settings: "shared" and "own" are null when not set up).
+func (s *Server) describeDeploy(ctx context.Context, out map[string]any, project string, u *store.User, ds deploySetup) {
+	cfg := ds.cfg
+	if cfg.Run == nil {
+		cfg.Run = []string{}
+	}
+	out["config"], out["mine"] = cfg, ds.mine
+	if th, _ := s.host(ctx, cfg.HostID); th != nil {
+		out["host_name"] = th.Name
+	}
+	view := func(c deployConfig, ok bool) any {
+		if !ok {
+			return nil
+		}
+		v := map[string]any{"config": c}
+		if th, _ := s.host(ctx, c.HostID); th != nil {
+			v["host_name"] = th.Name
+		}
+		return v
+	}
+	out["shared"] = view(s.deployConfig(ctx, project))
+	out["own"] = view(s.deployConfig(ctx, mineSlot(project, u.ID)))
 }
 
 func (s *Server) handleLinkDeployConfig(w http.ResponseWriter, r *http.Request) {
@@ -426,6 +502,9 @@ func (s *Server) handleLinkDeployConfig(w http.ResponseWriter, r *http.Request) 
 		HostID int64         `json:"host_id"` // the caller's machine + folder: which project
 		Cwd    string        `json:"cwd"`
 		Config *deployConfig `json:"config"` // null = no deploys for the project
+		// Scope: "mine" = the caller's own deploy of the project (null config =
+		// back to the shared one); "" = the project's shared one
+		Scope string `json:"scope"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
@@ -436,12 +515,23 @@ func (s *Server) handleLinkDeployConfig(w http.ResponseWriter, r *http.Request) 
 		s.fail(w, err, "deploy")
 		return
 	}
+	mine := in.Scope == "mine"
+	slot := info.ProjectID
+	if mine {
+		slot = mineSlot(info.ProjectID, u.ID)
+	} else if old, ok := s.deployConfig(ctx, slot); ok {
+		// the shared one is changed or removed only by someone who may use its machine
+		if _, err := s.mayDeployOn(ctx, u, old.HostID); err != nil {
+			writeErr(w, http.StatusForbidden, "only someone who may use the machine it deploys to can change the shared deploy")
+			return
+		}
+	}
 	data := ""
 	if in.Config != nil {
 		c := in.Config
 		c.Run, c.Dir, c.URL, c.Current, c.Check = nonEmpty(c.Run), strings.TrimSpace(c.Dir), strings.TrimSpace(c.URL), strings.TrimSpace(c.Current), strings.TrimSpace(c.Check)
 		if len(c.Run) > 0 {
-			if _, err := s.checkHostUse(ctx, u, c.HostID); err != nil {
+			if _, err := s.mayDeployOn(ctx, u, c.HostID); err != nil {
 				s.fail(w, err, "deploy")
 				return
 			}
@@ -453,15 +543,14 @@ func (s *Server) handleLinkDeployConfig(w http.ResponseWriter, r *http.Request) 
 			data = string(b)
 		}
 	}
-	if err := s.store.SaveProjectSettings(ctx, deployKey(info.ProjectID), data); err != nil {
+	if err := s.store.SaveProjectSettings(ctx, deployKey(slot), data); err != nil {
 		s.fail(w, err, "deploy")
 		return
 	}
-	cfg, ok := s.deployConfig(ctx, info.ProjectID)
-	if cfg.Run == nil {
-		cfg.Run = []string{}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"project": info.ProjectID, "configured": ok, "config": cfg})
+	ds := s.deployFor(ctx, info.ProjectID, u)
+	out := map[string]any{"project": info.ProjectID, "configured": ds.ok}
+	s.describeDeploy(ctx, out, info.ProjectID, u, ds)
+	writeJSON(w, http.StatusOK, out)
 }
 
 var deployStarting sync.Map // project → *sync.Mutex
@@ -497,20 +586,21 @@ func (s *Server) handleLinkStartDeploy(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "deploy")
 		return
 	}
-	cfg, ok := s.deployConfig(ctx, info.ProjectID)
-	if !ok {
+	ds := s.deployFor(ctx, info.ProjectID, u)
+	if !ds.ok {
 		writeErr(w, http.StatusBadRequest, "this project has no deploy set up yet")
 		return
 	}
-	th, err := s.checkHostUse(ctx, u, cfg.HostID)
+	cfg := ds.cfg
+	th, err := s.deployTarget(ctx, u, ds)
 	if err != nil {
 		s.fail(w, err, "deploy")
 		return
 	}
-	mu, _ := deployStarting.LoadOrStore(info.ProjectID, &sync.Mutex{})
+	mu, _ := deployStarting.LoadOrStore(ds.slot, &sync.Mutex{})
 	mu.(*sync.Mutex).Lock()
 	defer mu.(*sync.Mutex).Unlock()
-	if d, _ := s.store.LatestDeploy(ctx, info.ProjectID); d != nil && d.Status == "running" {
+	if d, _ := s.store.LatestDeploy(ctx, ds.slot); d != nil && d.Status == "running" {
 		what := d.Branch
 		if d.Ref != "" {
 			what = d.Ref + " (" + d.Branch + ")"
@@ -529,7 +619,7 @@ func (s *Server) handleLinkStartDeploy(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, m["err"])
 		return
 	}
-	d := &store.Deploy{UserID: u.ID, Project: info.ProjectID, HostID: cfg.HostID, Branch: in.Branch, SHA: m["sha"],
+	d := &store.Deploy{UserID: u.ID, Project: ds.slot, HostID: cfg.HostID, Branch: in.Branch, SHA: m["sha"],
 		Source: firstNonEmpty(strings.ToLower(in.Source), app), Ref: strings.TrimSpace(in.Ref), Status: "running", URL: cfg.URL}
 	switch {
 	case m["pushed"] == "new":
@@ -545,7 +635,7 @@ func (s *Server) handleLinkStartDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	who := firstNonEmpty(u.Name, u.Username, u.Email)
 	env := [][2]string{{"POCKET_DEPLOY", "1"}, {"POCKET_DEPLOY_ID", strconv.FormatInt(d.ID, 10)}, {"POCKET_BRANCH", d.Branch}, {"POCKET_SHA", d.SHA},
-		{"POCKET_REF", d.Ref}, {"POCKET_SOURCE", d.Source}, {"POCKET_PROJECT", d.Project}, {"POCKET_DEPLOYED_BY", who},
+		{"POCKET_REF", d.Ref}, {"POCKET_SOURCE", d.Source}, {"POCKET_PROJECT", info.ProjectID}, {"POCKET_DEPLOYED_BY", who},
 		{"POCKET_REF_URL", oneLine(strings.TrimSpace(in.RefURL), 500)}, {"POCKET_REF_TITLE", oneLine(strings.TrimSpace(in.RefLabel), 200)}}
 	var run strings.Builder
 	for _, e := range env {

@@ -2,11 +2,15 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
 )
 
 func TestDeployScripts(t *testing.T) {
@@ -117,5 +121,70 @@ func TestDeployCheck(t *testing.T) {
 	}
 	if v := s.deployCheck(context.Background(), "github.com/o/r", deployConfig{Run: []string{"true"}}, "as-8"); len(v.Lines) != 0 || v.Error != "" {
 		t.Fatalf("no check: %+v", v)
+	}
+}
+
+// A person's own deploy wins for them (its own slot); everyone else keeps the
+// shared one, which runs on its machine for anyone who may run agents.
+func TestDeployPerPerson(t *testing.T) {
+	s, h, _ := testServer(t)
+	ctx := context.Background()
+	s.cfg.PeopleDir = t.TempDir()
+	_, owner := person(t, s, h, "owner@x", "admin", true)
+	_, ana := person(t, s, h, "ana@x", "member", true)
+	_, bo := person(t, s, h, "bo@x", "member", true)
+	_, cy := person(t, s, h, "cy@x", "member", false)
+	staging := &store.Host{Name: "staging", Target: "deploy@staging"} // the owner's machine
+	box := &store.Host{Name: "ana-box", Target: "ana@box", UserID: ana.ID}
+	for _, x := range []*store.Host{staging, box} {
+		if err := s.store.CreateHost(ctx, x); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save := func(slot string, c deployConfig) {
+		b, _ := json.Marshal(c)
+		if err := s.store.SaveProjectSettings(ctx, deployKey(slot), string(b)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const project = "github.com/o/r"
+	save(project, deployConfig{HostID: staging.ID, Run: []string{"deploy"}})
+	save(mineSlot(project, ana.ID), deployConfig{HostID: box.ID, Run: []string{"mine"}})
+
+	if d := s.deployFor(ctx, project, ana); !d.ok || !d.mine || d.slot != project+"@"+strconv.FormatInt(ana.ID, 10) || d.cfg.Run[0] != "mine" {
+		t.Fatalf("ana: %+v", d)
+	}
+	if th, err := s.deployTarget(ctx, ana, s.deployFor(ctx, project, ana)); err != nil || th.ID != box.ID {
+		t.Fatalf("ana's target: %v %v", th, err)
+	}
+	d := s.deployFor(ctx, project, bo)
+	if !d.ok || d.mine || d.slot != project || d.cfg.Run[0] != "deploy" {
+		t.Fatalf("bo: %+v", d)
+	}
+	if !s.jailed(ctx, bo.ID) || s.mayUseHost(ctx, bo.ID, staging) {
+		t.Fatal("bo should not run agents on the owner's machine")
+	}
+	if th, err := s.deployTarget(ctx, bo, d); err != nil || th.ID != staging.ID {
+		t.Fatalf("bo deploys with the shared one: %v %v", th, err)
+	}
+	if _, err := s.deployTarget(ctx, cy, s.deployFor(ctx, project, cy)); err == nil {
+		t.Fatal("cy may not run agents")
+	}
+	// someone's own deploy on a machine they no longer may use is refused
+	if _, err := s.deployTarget(ctx, bo, deploySetup{cfg: deployConfig{HostID: box.ID}, ok: true, mine: true}); err == nil {
+		t.Fatal("bo on ana's box")
+	}
+	// Pocket AI's own server runs deploys unsandboxed: only its owner sets them up
+	if _, err := s.mayDeployOn(ctx, bo, 0); err == nil {
+		t.Fatal("sandboxed person set up a deploy on Pocket AI's server")
+	}
+	if _, err := s.mayDeployOn(ctx, owner, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.deployTarget(ctx, bo, deploySetup{ok: true, mine: true}); err == nil {
+		t.Fatal("bo's own deploy on Pocket AI's server")
+	}
+	if deployDir(mineSlot(project, ana.ID)) == deployDir(project) {
+		t.Fatal("own slot shares the target's state folder")
 	}
 }
