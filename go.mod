@@ -4,6 +4,8 @@ go 1.26.5
 
 require (
 	github.com/abjelosevic88/pocket-homelab-core v0.18.5
+	github.com/coder/websocket v1.8.15
+	github.com/creack/pty v1.1.24
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/google/uuid v1.6.0
 	golang.org/x/crypto v0.58.0

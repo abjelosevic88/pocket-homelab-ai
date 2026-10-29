@@ -1,5 +1,5 @@
 // The app shell: thread sidebar (a drawer on phones) + the page; palette and shortcuts.
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { useApp } from '../lib/app-context'
 import { api, V1 } from '../lib/api'
@@ -12,7 +12,7 @@ import { Sidebar } from '../components/Sidebar'
 import { TabBar, useTabs } from '../components/TabBar'
 import { useBusyFavicon } from '../lib/favicon'
 import { embedded, tellParent } from '../lib/embed'
-import { modalOpen, useIsMobile, useMediaQuery } from '../components/ui'
+import { Loading, modalOpen, useIsMobile, useMediaQuery } from '../components/ui'
 import HomePage from './HomePage'
 import ThreadPage from './ThreadPage'
 import RecipesPage from './RecipesPage'
@@ -23,6 +23,8 @@ import TodayPage from './TodayPage'
 import UsagePage from './UsagePage'
 import SnippetsPage from './SnippetsPage'
 import WorktreesPage from './WorktreesPage'
+// xterm is big: only loaded when a terminal is opened
+const TerminalPage = lazy(() => import('./TerminalPage'))
 import { BriefingPage, MemoryPage, ActionsPage, WorkflowsPage } from './AssistantPages'
 import { actionFor, useShortcuts } from '../lib/shortcuts'
 
@@ -113,6 +115,7 @@ function ShellInner() {
     { id: 'schedules', label: 'Schedules', icon: 'clock', keywords: 'cron timer automatic', run: () => navigate('/schedules') },
     { id: 'history', label: 'On this server — CLI sessions', icon: 'history', keywords: 'import resume history claude codex', run: () => navigate('/history') },
     { id: 'snippets', label: 'Snippets', icon: 'bookmark', keywords: 'saved text prompts', run: () => navigate('/snippets') },
+    { id: 'terminal', label: 'Terminal', icon: 'terminal', keywords: 'shell ssh console bash zsh server machine', run: () => navigate('/terminal') },
     { id: 'usage', label: 'Usage & limits', icon: 'chart', keywords: 'cost tokens rate limit', run: () => navigate('/usage') },
     { id: 'settings', label: 'Settings', icon: 'settings', run: () => navigate('/settings') },
     { id: 'agents', label: 'Agent defaults', icon: 'bot', keywords: 'model effort settings', run: () => navigate('/settings/agents') },
@@ -148,6 +151,7 @@ function ShellInner() {
             <Route path="/usage" element={<UsagePage onMenu={onMenu} />} />
             <Route path="/snippets" element={<SnippetsPage onMenu={onMenu} />} />
             <Route path="/worktrees" element={<WorktreesPage onMenu={onMenu} />} />
+            <Route path="/terminal" element={<Suspense fallback={<Loading />}><TerminalPage onMenu={onMenu} /></Suspense>} />
             <Route path="*" element={<HomePage onMenu={onMenu} />} />
           </Routes>
         </ErrorBoundary>

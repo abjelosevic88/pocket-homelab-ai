@@ -73,6 +73,7 @@ type Server struct {
 	inferenceModelCache map[string]inferenceModelEntry
 
 	accts accountState // logins: status cache, sign-ins in progress (accounts.go)
+	terms termHub      // shells in the browser (terminals.go)
 }
 
 // New creates a server.
@@ -216,6 +217,7 @@ func (s *Server) Router() http.Handler {
 		r.Use(s.requireAuth)
 		r.Get("/api/v1/events", s.handleUserEvents)
 		r.Get("/api/v1/threads/{id}/events", s.handleThreadEvents)
+		r.Get("/api/v1/terminals/{tid}/ws", s.handleTerminalSocket)
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {
@@ -267,6 +269,8 @@ func (s *Server) Router() http.Handler {
 			// Other machines agents run on over ssh: hosts.go.
 			s.hostRoutes(r)
 			s.hostLoginRoutes(r) // their own Claude Code / Codex logins: host_logins.go
+			// Shells on this server and the other machines: terminals.go.
+			s.terminalRoutes(r)
 			// Git worktrees for threads: worktrees.go (+ worktree_git.go).
 			s.worktreeRoutes(r)
 			// Drafts other Pocket apps prepared: link_threads.go.

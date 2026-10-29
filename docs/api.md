@@ -334,3 +334,18 @@ States are `waiting`, `blocked`, `dispatching`, `uncertain`, `sent`, and `cancel
 Claiming a dispatch happens before sending; a process interrupted during dispatch becomes
 `uncertain` on startup, never automatically retried. Sent and cancelled records are omitted
 from the active list. Existing same-chat queue and message-receipt semantics are unchanged.
+
+## Terminals
+
+A shell on this server (the server account: box owner or admins only; people
+with a folder of their own get one in their jail) or on one of your machines
+(`ssh -tt`). Terminals keep running without a viewer (closed after 12 h
+unwatched) and end when Pocket AI restarts.
+
+| Method | Path | |
+|---|---|---|
+| GET | `/api/v1/terminals` | your terminals: `id, host_id, host_name, title, cwd, created_at, ended, exit_code, viewers` |
+| POST | `/api/v1/terminals` | `{host_id, cwd?}` opens one (max 16 per person) |
+| PATCH | `/api/v1/terminals/{id}` | `{title}` |
+| DELETE | `/api/v1/terminals/{id}` | hangs it up |
+| GET (WebSocket) | `/api/v1/terminals/{id}/ws` | same origin only. Server → binary output (first the last 512 KB it printed), text `{"type":"end","code"}`. Client → binary keystrokes, text `{"type":"resize","cols","rows"}` |

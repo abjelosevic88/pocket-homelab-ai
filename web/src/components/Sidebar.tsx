@@ -166,6 +166,7 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
         {nav('/schedules', 'clock', 'Schedules')}
         {(user?.role === 'admin' || user?.can_run) && nav('/history', 'history', 'On this server')}
         {(user?.role === 'admin' || user?.can_run) && nav('/worktrees', 'fork', 'Worktrees', activeWt > 0 ? <span className="badge">{activeWt}</span> : undefined)}
+        {(user?.role === 'admin' || user?.can_run) && nav('/terminal', 'terminal', 'Terminal')}
         {nav('/shared', 'users', 'Shared', sharedN > 0 ? <span className="badge">{sharedN}</span> : undefined)}
         {nav('/usage', 'chart', 'Usage')}
         {nav('/snippets', 'bookmark', 'Snippets')}
