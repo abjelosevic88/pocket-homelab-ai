@@ -1,12 +1,13 @@
 // The app shell: thread sidebar (a drawer on phones) + the page; palette and shortcuts.
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
-import { Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { useApp } from '../lib/app-context'
 import { api, V1 } from '../lib/api'
 import type { Thread } from '../lib/types'
 import { CommandPalette, type PaletteCommand } from '../components/CommandPalette'
 import { ErrorBoundary } from '../components/ErrorBoundary'
 import { RecipeRunnerProvider, useRunRecipe } from '../components/RecipeRunner'
+import { TerminalsProvider, useTerminals } from '../lib/terminals'
 import { ShortcutsSheet } from '../components/ShortcutsSheet'
 import { Sidebar } from '../components/Sidebar'
 import { TabBar, useTabs } from '../components/TabBar'
@@ -23,8 +24,8 @@ import TodayPage from './TodayPage'
 import UsagePage from './UsagePage'
 import SnippetsPage from './SnippetsPage'
 import WorktreesPage from './WorktreesPage'
-// xterm is big: only loaded when a terminal is opened
-const TerminalPage = lazy(() => import('./TerminalPage'))
+// xterm is big: only loaded once you have a terminal
+const TerminalArea = lazy(() => import('./TerminalArea'))
 import { BriefingPage, MemoryPage, ActionsPage, WorkflowsPage } from './AssistantPages'
 import { actionFor, useShortcuts } from '../lib/shortcuts'
 
@@ -68,6 +69,13 @@ function ShellInner() {
   // embedded: the framing app hears the open thread's state as it changes
   const openId = loc.pathname.match(/^\/t\/([^/]+)/)?.[1]
   const open = openId ? (threads || []).find(t => t.id === openId) : undefined
+  // terminal tabs live outside the routes: mounted once, kept while you are
+  // in a conversation, shown at /term/<tab>
+  const termShown = loc.pathname === '/term' || loc.pathname.startsWith('/term/')
+  const termGid = loc.pathname.match(/^\/term\/([^/]+)/)?.[1] || ''
+  const { groups: termGroups } = useTerminals()
+  const [termMounted, setTermMounted] = useState(false)
+  useEffect(() => { if (termShown || termGroups.length) setTermMounted(true) }, [termShown, termGroups.length])
   // background sub-agents or commands still at work after the turn: still working, for the app too
   const openState = !open ? '' : open.status === 'waiting' || open.pending > 0 ? 'waiting' : open.subagents?.length || open.background?.length ? 'running' : open.status
   useEffect(() => tellParent(loc.pathname, openState), [loc.pathname, openState])
@@ -115,7 +123,7 @@ function ShellInner() {
     { id: 'schedules', label: 'Schedules', icon: 'clock', keywords: 'cron timer automatic', run: () => navigate('/schedules') },
     { id: 'history', label: 'On this server — CLI sessions', icon: 'history', keywords: 'import resume history claude codex', run: () => navigate('/history') },
     { id: 'snippets', label: 'Snippets', icon: 'bookmark', keywords: 'saved text prompts', run: () => navigate('/snippets') },
-    { id: 'terminal', label: 'Terminal', icon: 'terminal', keywords: 'shell ssh console bash zsh server machine', run: () => navigate('/terminal') },
+    { id: 'terminal', label: 'Terminal', icon: 'terminal', keywords: 'shell ssh console bash zsh server machine', run: () => navigate('/term') },
     { id: 'usage', label: 'Usage & limits', icon: 'chart', keywords: 'cost tokens rate limit', run: () => navigate('/usage') },
     { id: 'settings', label: 'Settings', icon: 'settings', run: () => navigate('/settings') },
     { id: 'agents', label: 'Agent defaults', icon: 'bot', keywords: 'model effort settings', run: () => navigate('/settings/agents') },
@@ -151,10 +159,14 @@ function ShellInner() {
             <Route path="/usage" element={<UsagePage onMenu={onMenu} />} />
             <Route path="/snippets" element={<SnippetsPage onMenu={onMenu} />} />
             <Route path="/worktrees" element={<WorktreesPage onMenu={onMenu} />} />
-            <Route path="/terminal" element={<Suspense fallback={<Loading />}><TerminalPage onMenu={onMenu} /></Suspense>} />
+            <Route path="/terminal" element={<Navigate to={`/term${loc.search}`} replace />} />
+            <Route path="/term/*" element={null} />
             <Route path="*" element={<HomePage onMenu={onMenu} />} />
           </Routes>
         </ErrorBoundary>
+        {termMounted && <ErrorBoundary where="terminal">
+          <Suspense fallback={termShown ? <Loading /> : null}><TerminalArea onMenu={onMenu} shown={termShown} gid={termGid} tabsOn={tabsOn} /></Suspense>
+        </ErrorBoundary>}
       </main>
       {palette && <CommandPalette onClose={() => setPalette(false)} commands={commands} openThread={id => navigate(`/t/${id}`)} runRecipe={runRecipe} />}
       {shortcuts && <ShortcutsSheet onClose={() => setShortcuts(false)} />}
@@ -163,5 +175,5 @@ function ShellInner() {
 }
 
 export default function Shell() {
-  return <RecipeRunnerProvider><ShellInner /></RecipeRunnerProvider>
+  return <RecipeRunnerProvider><TerminalsProvider><ShellInner /></TerminalsProvider></RecipeRunnerProvider>
 }
