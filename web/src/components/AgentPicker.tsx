@@ -156,7 +156,10 @@ export function machineLoginOptions(list: HostLogin[], pid: ProviderId, current:
   return opts
 }
 
-export function AgentPicker({ value, onChange, allowDefault = false, compact = false, showProvider = true, noAccount = false, host = 0, ask = false }: {
+/** Claude Remote Control switch in the composer chips: on = the conversation is open in claude.ai/code and the Claude app. */
+export interface RemoteSwitch { on: boolean; busy?: boolean; state?: string; onToggle: () => void }
+
+export function AgentPicker({ value, onChange, allowDefault = false, compact = false, showProvider = true, noAccount = false, host = 0, ask = false, remote }: {
   value: AgentValue; onChange: (patch: Partial<AgentValue>) => void; allowDefault?: boolean; compact?: boolean; showProvider?: boolean
   /** no account to pick */
   noAccount?: boolean
@@ -164,6 +167,8 @@ export function AgentPicker({ value, onChange, allowDefault = false, compact = f
   host?: number
   /** an Ask my apps chat: account, model and effort only */
   ask?: boolean
+  /** Claude Remote Control toggle (compact only, Claude only) */
+  remote?: RemoteSwitch
 }) {
   const { providers, settings, accounts } = useApp()
   const pid = (value.provider || settings?.default_provider || 'claude') as ProviderId
@@ -198,6 +203,9 @@ export function AgentPicker({ value, onChange, allowDefault = false, compact = f
           onClick={() => onChange({ speed: on ? '' : fast.id })}><Icon name="zap" size={15} /></button>
       })() : named('Speed', <Select size={size} className={cls} label="Speed" value={allowDefault && !value.speed ? '__default' : (value.speed || '')} options={speeds}
         onChange={v => onChange({ speed: v === '__default' ? '' : v })} width="trigger" />))}
+      {compact && remote && pid === 'claude' && !ask && <button type="button" className={`speed-toggle rc-toggle ${remote.on ? 'on' : ''} ${remote.state === 'error' ? 'err' : ''}`} aria-pressed={remote.on} disabled={remote.busy}
+        aria-label="Remote Control" title={remote.state === 'error' ? 'Remote Control failed — tap to turn it off' : remote.on ? 'Remote Control is on: open this conversation in claude.ai/code or the Claude app — tap to turn off' : 'Remote Control: continue this conversation from claude.ai/code or the Claude app'}
+        onClick={remote.onToggle}><Icon name="smartphone" size={15} /></button>}
     </>
   )
   if (compact) return <div className="agent-chips">{pickers}</div>

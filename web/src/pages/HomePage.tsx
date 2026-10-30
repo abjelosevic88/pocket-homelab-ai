@@ -246,6 +246,10 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
 
   const needYou = (threads || []).filter(t => t.status === 'waiting' || t.pending > 0)
 
+  // Remote Control for the next conversation: remembered on this device
+  const [rcNext, setRcNext] = useState(() => localStorage.getItem('pai-rc-next') === '1')
+  const remoteSwitch = { on: rcNext, onToggle: () => setRcNext(v => { localStorage.setItem('pai-rc-next', v ? '0' : '1'); return !v }) }
+
   const send = async (text: string, uploadIds: string[]) => {
     if (!choice) return false
     if (wtSpec && repo === null && wtSpec.mode !== 'existing' && !(embedded && draft)) { toast('Still checking the folder for the worktree — try again in a second', 'err'); return false }
@@ -260,6 +264,10 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
         draft_uploads: draft ? draftFiles.map(f => f.id) : undefined,
       })
       upsertThread(t)
+      if (rcNext && t.provider === 'claude') {
+        // the thread page shows how it goes (chip + switch); only failures need a word here
+        api.post<Thread>(`${V1}/threads/${t.id}/remote-control`, { on: true }).then(upsertThread, e => toast('Remote Control: ' + errMsg(e), 'err'))
+      }
       navigate(`/t/${t.id}`, { replace: !!draft && embedded })
       return true
     } catch (e) {
@@ -295,7 +303,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
         <DraftFiles files={draftFiles} source={draft.ref} onRemove={id => setDraftFiles(f => f.filter(x => x.id !== id))} />
         <Composer ref={serverComposer} big autoFocus draftKey={`link-${draft.id}`} onSend={send} skills={choice?.provider ? { provider: choice.provider, cwd: choice.cwd, account_id: choice.account_id, host_id: hostId } : undefined}
           placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} about ${draft.ref || 'this'}${hostId ? ` on ${hosts.find(h => h.id === hostId)?.name}` : ''}…`}
-          footer={<AgentPicker compact showProvider={false} host={hostId} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} />} />
+          footer={<AgentPicker compact showProvider={false} host={hostId} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} remote={remoteSwitch} />} />
         </>
       )}
     </div>
@@ -377,7 +385,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
               {draft && <DraftFiles files={draftFiles} source={draft.ref} onRemove={id => setDraftFiles(f => f.filter(x => x.id !== id))} />}
               <Composer ref={serverComposer} big autoFocus draftKey={draft ? `link-${draft.id}` : 'new'} onSend={send} skills={choice?.provider ? { provider: choice.provider, cwd: choice.cwd, account_id: choice.account_id, host_id: hostId } : undefined}
                 placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} anything${hostId ? ` on ${hosts.find(h => h.id === hostId)?.name}` : ''}${choice.cwd && !wtSpec ? ` in ${shortPath(choice.cwd)}` : ''}${wtWhere}… paste a screenshot, type / for recipes`}
-                footer={<AgentPicker compact showProvider={false} host={hostId} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} />} />
+                footer={<AgentPicker compact showProvider={false} host={hostId} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} remote={remoteSwitch} />} />
               {providers.length > 0 && !providers.some(p => p.available) && (
                 <div className="callout danger mt-s"><Icon name="alert" size={15} /><span>Neither Claude Code nor Codex is available on the server. {providers.map(p => p.error).filter(Boolean).join(' ')}</span></div>
               )}

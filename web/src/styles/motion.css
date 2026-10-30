@@ -29,6 +29,9 @@
 .speed-toggle.on { color: #eab308; }
 .speed-toggle.on svg { filter: drop-shadow(0 0 5px rgba(234, 179, 8, .55)); animation: zap-on .35s var(--ease); }
 .speed-toggle:disabled { opacity: .35; cursor: not-allowed; }
+.rc-toggle.on { color: var(--accent); }
+.rc-toggle.on svg { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 55%, transparent)); animation: zap-on .35s var(--ease); }
+.rc-toggle.err { color: var(--danger, #dc2626); }
 .speed-toggle:active:not(:disabled) { transform: scale(.88); }
 @keyframes zap-on { 0% { transform: scale(.6) rotate(-12deg); } 60% { transform: scale(1.2) rotate(6deg); } 100% { transform: none; } }
 

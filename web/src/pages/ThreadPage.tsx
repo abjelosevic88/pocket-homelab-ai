@@ -45,6 +45,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const { user, settings, providers, threads, upsertThread, dropThread, setViewing } = useApp()
   const { toast } = useToast()
   const [thread, setThread] = useState<Thread | null>(null)
+  const [rcBusy, setRcBusy] = useState(false)
   const [items, setItems] = useState<Item[] | null>(null)
   const [missing, setMissing] = useState(false)
   const [editingTitle, setEditingTitle] = useState(false)
@@ -261,12 +262,13 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   // the text the agent is writing right now gets a blinking cursor
   const streamingKey = running && (lastItem?.kind === 'assistant' || lastItem?.kind === 'thinking') ? lastItem.key : undefined
   const remoteControl = async (on: boolean) => {
+    setRcBusy(true)
     try {
       if (on) toast('Connecting to claude.ai…')
       const th = await api.post<Thread>(`${V1}/threads/${id}/remote-control`, { on })
       setThread(th); upsertThread(th)
       toast(on ? 'Remote Control is on — open it in the Claude app' : 'Remote Control is off', 'ok')
-    } catch (e) { toast(errMsg(e), 'err') }
+    } catch (e) { toast(errMsg(e), 'err') } finally { setRcBusy(false) }
   }
   const menu: MenuItem[] = !owner ? [
     { label: 'Export as Markdown', icon: 'download', onSelect: () => download(`${V1}/threads/${id}/export.md`) },
@@ -375,7 +377,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
                   onChange={ch => patch(ch as Partial<Thread>)} /></span>}
                 {!owner && <span className="muted small">{t.source === 'ask' ? `Shared Ask chat from ${t.owner_name || 'someone'} — your questions use your own apps` : `Chatting in ${t.owner_name || 'someone'}’s chat — the agent runs on their login and settings`}</span>}
                 {owner && p && t.source !== 'ask' && <span className="thread-pickers"><AgentPicker compact showProvider={false} host={t.host_id || 0} value={{ provider: t.provider, model: t.model, effort: t.effort, mode: t.mode, speed: t.speed || '', account_id: t.account_id || 0, host_home: t.host_home || '' }}
-                  onChange={ch => patch(ch as Partial<Thread>)} /></span>}
+                  onChange={ch => patch(ch as Partial<Thread>)} remote={canRun ? { on: !!t.remote_control, busy: rcBusy, state: t.remote_control?.state, onToggle: () => remoteControl(!t.remote_control) } : undefined} /></span>}
               </>} />
           ) : (
             <div className="callout info"><Icon name="lock" size={15} /><span>An admin has to allow you to run agents before you can reply.</span></div>
