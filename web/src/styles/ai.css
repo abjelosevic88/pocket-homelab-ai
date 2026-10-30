@@ -660,3 +660,4 @@ button.privacy-badge:disabled { cursor: default; }
 /* a Projects conversation whose workspace isn't open in Projects */
 .th-row.is-paused { opacity: .55; }
 .th-row.is-paused:hover, .th-row.is-paused.active { opacity: .8; }
+.privacy-badge.muted { opacity: .6; }

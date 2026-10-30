@@ -35,6 +35,7 @@ func (s *Server) linkRoutes(r chi.Router) {
 	r.Get("/drafts/{id}", s.handleGetDraft)
 	r.Post("/drafts/{id}/start", s.handleStartDraft)
 	r.Get("/threads/{id}/context", s.handleThreadContext)
+	r.Post("/threads/{id}/pin", s.handleThreadPin)
 }
 
 // linkUser authenticates an app acting for a person with threads:write.
@@ -557,7 +558,11 @@ func (s *Server) threadContextPrompt(ctx context.Context, t *store.Thread) strin
 		return ""
 	}
 	from := firstNonEmpty(c.RefLabel, c.Ref)
-	return "\n\nContext from Pocket " + titleCase(c.Source) + " for this conversation (" + from + "):\n" + c.System
+	pin := ""
+	if c.Source == "projects" && !c.Unpinned {
+		pin = "\nThis conversation is pinned to " + c.Ref + ": Pocket AI refuses Pocket Projects changes to anything but that issue, new sub-issues of it and its team's memory (reads stay open). If the person wants another issue changed, say so and let them unpin the conversation.\n"
+	}
+	return "\n\nContext from Pocket " + titleCase(c.Source) + " for this conversation (" + from + "):\n" + c.System + pin
 }
 
 // inheritLink makes a fork or rewind of a conversation another app prepared

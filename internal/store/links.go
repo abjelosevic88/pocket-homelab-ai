@@ -161,21 +161,29 @@ type ThreadContext struct {
 	Ref      string `json:"ref"`
 	RefURL   string `json:"ref_url"`
 	RefLabel string `json:"ref_label"`
+	// Unpinned: the person let this Projects conversation change other issues too.
+	Unpinned bool `json:"unpinned"`
 }
 
-// SaveThreadContext stores (or replaces) a thread's context.
+// SaveThreadContext stores (or replaces) a thread's context (forks keep the pin as it was).
 func (s *Store) SaveThreadContext(ctx context.Context, c *ThreadContext) error {
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO thread_context (thread_id, system, source, ref, ref_url, ref_label) VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT(thread_id) DO UPDATE SET system = excluded.system, source = excluded.source, ref = excluded.ref, ref_url = excluded.ref_url, ref_label = excluded.ref_label`,
-		c.ThreadID, c.System, c.Source, c.Ref, c.RefURL, c.RefLabel)
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO thread_context (thread_id, system, source, ref, ref_url, ref_label, unpinned) VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(thread_id) DO UPDATE SET system = excluded.system, source = excluded.source, ref = excluded.ref, ref_url = excluded.ref_url, ref_label = excluded.ref_label, unpinned = excluded.unpinned`,
+		c.ThreadID, c.System, c.Source, c.Ref, c.RefURL, c.RefLabel, c.Unpinned)
+	return err
+}
+
+// SetThreadPinned pins (or unpins) a Projects conversation to its issue.
+func (s *Store) SetThreadPinned(ctx context.Context, threadID string, pinned bool) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE thread_context SET unpinned = ? WHERE thread_id = ?`, !pinned, threadID)
 	return err
 }
 
 // GetThreadContext loads a thread's context (ErrNotFound when it has none).
 func (s *Store) GetThreadContext(ctx context.Context, threadID string) (*ThreadContext, error) {
 	var c ThreadContext
-	err := s.DB.QueryRowContext(ctx, `SELECT thread_id, system, source, ref, ref_url, ref_label FROM thread_context WHERE thread_id = ?`, threadID).
-		Scan(&c.ThreadID, &c.System, &c.Source, &c.Ref, &c.RefURL, &c.RefLabel)
+	err := s.DB.QueryRowContext(ctx, `SELECT thread_id, system, source, ref, ref_url, ref_label, unpinned FROM thread_context WHERE thread_id = ?`, threadID).
+		Scan(&c.ThreadID, &c.System, &c.Source, &c.Ref, &c.RefURL, &c.RefLabel, &c.Unpinned)
 	if err != nil {
 		return nil, notFound(err)
 	}
