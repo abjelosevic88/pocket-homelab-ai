@@ -484,3 +484,54 @@ func TestStartWaitsForTheCheckAfterARestart(t *testing.T) {
 	waitFor(t, func() bool { _, err := os.Stat(argsFile); return err == nil })
 	s.re.resolve(th.ID) // twice is fine
 }
+
+// Field case: while Pocket AI followed a leftover, a second process came up
+// on the same session (Remote Control). The follow must stay on the
+// leftover: when that one ends, the follow ends, and the other process is
+// never touched (Stop used to end the wrong one).
+func TestFollowStaysOnTheLeftoverNotASecondProcess(t *testing.T) {
+	old := reattachPoll
+	reattachPoll = 50 * time.Millisecond
+	defer func() { reattachPoll = old }()
+	s, h, root := testServer(t)
+	_, u := person(t, s, h, "pinned@example.test", "admin", true)
+	fakeClaude(t, s, root)
+	th := cutThread(t, s, u.ID, root)
+	defer s.rt.stop(th.ID)
+	home := s.defaultHome("claude")
+	logPath := filepath.Join(home, "projects", "-work", th.ProviderSessionID+".jsonl")
+	_ = os.MkdirAll(filepath.Dir(logPath), 0o755)
+	_ = os.WriteFile(logPath, []byte(cutSessionLog()), 0o644)
+	_ = os.MkdirAll(filepath.Join(home, "sessions"), 0o755)
+	start := func() (*exec.Cmd, chan struct{}) {
+		c := exec.Command("sh", "-c", "sleep 300 & wait", "sh", "--input-format", "stream-json", "--permission-prompt-tool", "stdio")
+		c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := c.Start(); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan struct{})
+		go func() { _ = c.Wait(); close(done) }()
+		t.Cleanup(func() { _ = syscall.Kill(-c.Process.Pid, syscall.SIGKILL) })
+		b, _ := json.Marshal(map[string]any{"pid": c.Process.Pid, "sessionId": th.ProviderSessionID, "status": "busy"})
+		_ = os.WriteFile(filepath.Join(home, "sessions", strconv.Itoa(c.Process.Pid)+".json"), b, 0o644)
+		return c, done
+	}
+	leftover, leftoverDone := start()
+	s.reconnect(th.ID)
+	if !s.isReattached(th.ID) {
+		t.Fatal("not reconnected")
+	}
+	second, secondDone := start() // what Remote Control started next to it
+	time.Sleep(200 * time.Millisecond)
+	_ = syscall.Kill(-leftover.Process.Pid, syscall.SIGKILL) // the leftover ends on its own
+	<-leftoverDone
+	waitFor(t, func() bool { return !s.isReattached(th.ID) })
+	select {
+	case <-secondDone:
+		t.Fatal("the second process was ended")
+	case <-time.After(300 * time.Millisecond):
+	}
+	if err := syscall.Kill(second.Process.Pid, 0); err != nil {
+		t.Fatalf("second process: %v", err)
+	}
+}

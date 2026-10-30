@@ -172,10 +172,12 @@ type claudeProbe struct {
 
 // probeSh prints "state\t<busy|idle|gone>\t<pid>\t<own>\t<log size>" and,
 // when $2 >= 0, "data\t<base64 of the log from $2 on>" ($1 session id,
-// $3 most bytes). Claude Code registers each process in sessions/<pid>.json.
-const probeSh = `d="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; sid=$1; off=$2; most=$3
+// $3 most bytes, $4 > 0: only that process). Claude Code registers each
+// process in sessions/<pid>.json.
+const probeSh = `d="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; sid=$1; off=$2; most=$3; want=$4
 st=gone; pid=; own=0
 for f in "$d"/sessions/*.json; do
+  [ "$want" -gt 0 ] && [ "$f" != "$d/sessions/$want.json" ] && continue
   [ -f "$f" ] || continue
   grep -q "\"sessionId\":\"$sid\"" "$f" 2>/dev/null || continue
   p=$(sed -n 's/.*"pid":\([0-9][0-9]*\).*/\1/p' "$f"); s=$(sed -n 's/.*"status":"\([a-z]*\)".*/\1/p' "$f")
@@ -194,11 +196,14 @@ exit 0
 `
 
 // probeClaude looks at the process on a Claude session and reads its log
-// from off on (off < 0: no log bytes).
-func (s *Server) probeClaude(ctx context.Context, t *store.Thread, h *store.Host, off int64) (claudeProbe, error) {
+// from off on (off < 0: no log bytes). pid > 0 watches that one process
+// only: once Pocket AI follows a leftover, a process it starts itself on the
+// same session (Remote Control, a message after Stop) must never be taken
+// for it — Stop would end the wrong one.
+func (s *Server) probeClaude(ctx context.Context, t *store.Thread, h *store.Host, off int64, pid int) (claudeProbe, error) {
 	if h != nil {
 		out, errOut, err := remoteOf(h).Run(ctx, 45*time.Second, inLogin("claude", t.HostHome, probeSh),
-			t.ProviderSessionID, strconv.FormatInt(off, 10), strconv.Itoa(reattachWindow))
+			t.ProviderSessionID, strconv.FormatInt(off, 10), strconv.Itoa(reattachWindow), strconv.Itoa(pid))
 		if err != nil {
 			return claudeProbe{}, fmt.Errorf("%s: %s", h.Name, sshError(errOut, err))
 		}
@@ -206,7 +211,14 @@ func (s *Server) probeClaude(ctx context.Context, t *store.Thread, h *store.Host
 	}
 	p := claudeProbe{state: "gone", size: -1}
 	dir, _ := s.accountHome(ctx, "claude", t.AccountID)
-	if procs, ok := agent.ClaudeProcs(dir); ok {
+	procs, ok := agent.ClaudeProcs(dir)
+	if pid > 0 {
+		procs, ok = map[string]agent.ClaudeProc{}, true
+		if c, found := agent.ClaudeProcByPID(dir, pid); found && c.SessionID == t.ProviderSessionID {
+			procs[c.SessionID] = c
+		}
+	}
+	if ok {
 		if c, found := procs[t.ProviderSessionID]; found {
 			p.pid, p.state = c.PID, "idle"
 			if c.Busy() {
@@ -359,7 +371,7 @@ func (s *Server) sweepLeftovers(ctx context.Context, ids []string) {
 		if err != nil {
 			continue
 		}
-		p, err := s.probeClaude(ctx, t, h, -1)
+		p, err := s.probeClaude(ctx, t, h, -1, 0)
 		if err != nil {
 			down[t.HostID] = true
 			s.log.Info("leftover sweep: machine not reached", "host", h.Name, "err", err)
@@ -399,7 +411,7 @@ func (s *Server) reconnect(id string) {
 		return
 	}
 	if t.Provider == "claude" {
-		p, err := s.probeClaude(ctx, t, h, -1)
+		p, err := s.probeClaude(ctx, t, h, -1, 0)
 		if err != nil {
 			s.log.Info("reconnect: could not look at the agent", "thread", id, "err", err)
 			s.cutNotice(id)
@@ -486,7 +498,7 @@ func (s *Server) checkLeftover(ctx context.Context, t *store.Thread) {
 	if err != nil {
 		return
 	}
-	p, err := s.probeClaude(ctx, t, h, -1)
+	p, err := s.probeClaude(ctx, t, h, -1, 0)
 	if err != nil {
 		s.log.Info("leftover check failed", "thread", t.ID, "err", err)
 		return
@@ -572,7 +584,7 @@ func (s *Server) followLeftover(t *store.Thread, run *reattachRun, first claudeP
 	}
 	off := first.size
 	if first.size >= 0 {
-		if p, err := s.probeClaude(ctx, t, h, from); err == nil {
+		if p, err := s.probeClaude(ctx, t, h, from, run.pid); err == nil {
 			off = ap.catchUp(p.data, from)
 		}
 	}
@@ -583,7 +595,7 @@ func (s *Server) followLeftover(t *store.Thread, run *reattachRun, first claudeP
 			return
 		case <-time.After(reattachPoll):
 		}
-		p, err := s.probeClaude(ctx, t, h, off)
+		p, err := s.probeClaude(ctx, t, h, off, run.pid)
 		if err != nil {
 			if fails++; fails >= reattachFails {
 				s.log.Warn("reconnect: machine unreachable, giving up", "thread", t.ID, "err", err)
@@ -596,15 +608,10 @@ func (s *Server) followLeftover(t *store.Thread, run *reattachRun, first claudeP
 		if n := ap.feed(p.data, off); n > off {
 			off, lastGrowth = n, time.Now()
 		}
-		state = p.state
-		s.re.mu.Lock()
-		if p.pid > 0 {
-			run.pid, run.own = p.pid, p.own
-		}
-		s.re.mu.Unlock()
-		if state == "busy" && time.Since(lastGrowth) > reattachStuck && p.own {
+		state = p.state // of the process found first, never another one (pid pinned)
+		if state == "busy" && time.Since(lastGrowth) > reattachStuck && run.own {
 			s.log.Warn("reconnect: agent silent too long, ending it", "thread", t.ID)
-			s.endProcess(ctx, h, p.pid)
+			s.endProcess(ctx, h, run.pid)
 			state = "gone"
 		}
 	}
