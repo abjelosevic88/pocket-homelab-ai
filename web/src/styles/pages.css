@@ -512,7 +512,7 @@
 .files-path-in { flex: 1; min-width: 200px; height: 30px; font-size: 13px; }
 .files-list { display: flex; flex-direction: column; padding: 6px 12px 60px; max-width: 1100px; margin: 0 auto; }
 .files-list[aria-busy="true"] { opacity: .6; }
-.files-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) 90px 110px; align-items: center; gap: 12px; height: 36px; padding: 0 12px; border: 0; border-radius: 8px; background: none; color: var(--text-2); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; }
+.files-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) 90px 110px 26px; align-items: center; gap: 12px; height: 36px; padding: 0 12px; border: 0; border-radius: 8px; background: none; color: var(--text-2); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; }
 .files-row:hover { background: var(--surface-2); color: var(--text); }
 .files-row.dir { color: var(--text); }
 .files-row.dir > .icon { color: var(--accent-ink); }
@@ -527,7 +527,7 @@
 .term-drop span { color: var(--term-dim); }
 @media (max-width: 760px) {
   .files-bar { padding: 8px 12px; }
-  .files-row { grid-template-columns: 18px minmax(0, 1fr) 70px; }
+  .files-row { grid-template-columns: 18px minmax(0, 1fr) 70px 26px; }
   .files-time { display: none; }
 }
 .file-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -544,3 +544,10 @@
 .file-pdf { flex: 1; width: 100%; border: 0; background: var(--surface-2); }
 .file-msg { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--muted); padding: 30px; text-align: center; }
 .files-host { width: 190px; flex: none; }
+
+.files-row:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: -2px; }
+.files-more { display: grid; place-items: center; width: 26px; height: 26px; border: 0; border-radius: 6px; background: none; color: var(--muted); opacity: 0; cursor: pointer; }
+.files-row:hover .files-more, .files-more:focus-visible { opacity: 1; }
+.files-more:hover { background: var(--surface-3); color: var(--text); }
+@media (hover: none) { .files-more { opacity: .7; } }
+.files-list { min-height: calc(100% - 20px); }

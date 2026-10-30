@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -37,6 +38,10 @@ func (s *Server) fileRoutes(r chi.Router) {
 	r.Get("/api/v1/files", s.handleListFiles)
 	r.Get("/api/v1/files/raw", s.handleRawFile)
 	r.Post("/api/v1/files/upload", s.handleUploadFiles)
+	r.Post("/api/v1/files/mkdir", s.handleFileOp("mkdir"))
+	r.Post("/api/v1/files/newfile", s.handleFileOp("newfile"))
+	r.Post("/api/v1/files/rename", s.handleFileOp("rename"))
+	r.Post("/api/v1/files/delete", s.handleFileOp("delete"))
 }
 
 type fileEntry struct {
@@ -459,4 +464,139 @@ func saveLocal(dir, name string, src io.Reader) (string, error) {
 		return "", err
 	}
 	return final, nil
+}
+
+// ---------- new folder / new file / rename / delete ----------
+
+// remoteFileOp does one change on a machine: $1 op, $2 path (the folder for
+// mkdir/newfile, the entry for rename/delete), $3 a new name.
+const remoteFileOp = `op=$1; p=$2; n=$3
+case "$op" in
+mkdir|newfile)
+  [ -d "$p" ] || { echo "that folder is not there" >&2; exit 3; }
+  [ -e "$p/$n" ] || [ -L "$p/$n" ] && { echo "something called $n is there already" >&2; exit 3; }
+  if [ "$op" = mkdir ]; then mkdir -- "$p/$n"; else : > "$p/$n"; fi || exit 1
+  printf '%s' "$p/$n";;
+rename)
+  [ -e "$p" ] || [ -L "$p" ] || { echo "it is not there any more" >&2; exit 3; }
+  d=$(dirname -- "$p")
+  [ -e "$d/$n" ] || [ -L "$d/$n" ] && { echo "something called $n is there already" >&2; exit 3; }
+  mv -- "$p" "$d/$n" && printf '%s' "$d/$n";;
+delete)
+  [ -e "$p" ] || [ -L "$p" ] || exit 0
+  [ "$(cd -- "$p" 2>/dev/null && pwd -P)" = "$(cd && pwd -P)" ] && { echo "that is the home folder" >&2; exit 3; }
+  rm -rf -- "$p";;
+esac`
+
+// handleFileOp: {host, path, name}. Delete takes folders with everything in
+// them (the page asks first); never "/" or a home folder.
+func (s *Server) handleFileOp(op string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Host int64  `json:"host"`
+			Path string `json:"path"`
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		q := r.URL.Query()
+		q.Set("host", strconv.FormatInt(in.Host, 10))
+		r.URL.RawQuery = q.Encode()
+		p, err := s.filePlace(r)
+		if err != nil {
+			s.fail(w, err, "files")
+			return
+		}
+		name := ""
+		if op != "delete" {
+			if name, err = checkEntryName(in.Name); err != nil {
+				s.fail(w, err, "files")
+				return
+			}
+		}
+		target := strings.TrimSuffix(strings.TrimSpace(in.Path), "/")
+		if !strings.HasPrefix(target, "/") && !strings.HasPrefix(target, "~") {
+			s.fail(w, badRequest("use an absolute path"), "files")
+			return
+		}
+		var where string
+		if p.h != nil {
+			if target == "" || target == "/" {
+				s.fail(w, badRequest("not the root folder"), "files")
+				return
+			}
+			stdout, stderr, err := remoteOf(p.h).Run(r.Context(), 2*time.Minute, remoteFileOp, op, target, name)
+			if err != nil {
+				s.fail(w, badRequest(remoteErr(stderr, err)), "files")
+				return
+			}
+			where = strings.TrimSpace(stdout)
+		} else if where, err = p.localOp(op, target, name); err != nil {
+			s.fail(w, err, "files")
+			return
+		}
+		s.log.Info("files changed", "user", me(r), "op", op, "host", in.Host, "path", target, "name", name)
+		writeJSON(w, http.StatusOK, map[string]string{"path": where})
+	}
+}
+
+// checkEntryName: one plain name, no path in it.
+func checkEntryName(raw string) (string, error) {
+	n := strings.TrimSpace(raw)
+	if n == "" || n == "." || n == ".." || strings.ContainsAny(n, "/\x00\n") || len(n) > 255 {
+		return "", badRequest("use a plain name, without slashes")
+	}
+	return n, nil
+}
+
+func (p *filePlace) localOp(op, target, name string) (string, error) {
+	fp, err := p.local(target)
+	if err != nil {
+		return "", err
+	}
+	switch op {
+	case "mkdir", "newfile":
+		if fi, err := os.Stat(fp); err != nil || !fi.IsDir() {
+			return "", badRequest("that folder is not there")
+		}
+		dst := filepath.Join(fp, name)
+		if _, err := os.Lstat(dst); err == nil {
+			return "", badRequest("something called " + name + " is there already")
+		}
+		if op == "mkdir" {
+			err = os.Mkdir(dst, 0o755)
+		} else {
+			var f *os.File
+			if f, err = os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644); err == nil {
+				err = f.Close()
+			}
+		}
+		if err != nil {
+			return "", badRequest("could not make it: " + err.Error())
+		}
+		return dst, nil
+	case "rename":
+		if _, err := os.Lstat(fp); err != nil {
+			return "", badRequest("it is not there any more")
+		}
+		dst := filepath.Join(filepath.Dir(fp), name)
+		if _, err := os.Lstat(dst); err == nil {
+			return "", badRequest("something called " + name + " is there already")
+		}
+		if err := os.Rename(fp, dst); err != nil {
+			return "", badRequest("could not rename it: " + err.Error())
+		}
+		return dst, nil
+	case "delete":
+		if fp == "/" || fp == filepath.Clean(p.home) || (p.jail != "" && (fp == p.jail || filepath.Dir(fp) == p.jail)) {
+			return "", badRequest("that folder cannot be deleted from here")
+		}
+		if err := os.RemoveAll(fp); err != nil {
+			return "", badRequest("could not delete it: " + err.Error())
+		}
+		return fp, nil
+	}
+	return "", badRequest("unknown change")
 }
