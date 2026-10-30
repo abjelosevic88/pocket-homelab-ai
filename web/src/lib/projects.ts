@@ -15,12 +15,19 @@ export interface ProjectsLink {
   threads?: Record<string, string>
   core_links_url?: string
   projects_url?: string
+  /** the Projects workspace open to Pocket AI (only with several) */
+  agent_workspace?: string
+  /** thread id → why it is paused: its issue lives in another workspace */
+  paused?: Record<string, string>
 }
 
 let state: ProjectsLink | null = null
 
 /** A conversation a Projects issue started: its issue key (AS-7), else ''. */
 export const projectsRef = (t?: Thread) => !t ? '' : state?.threads?.[t.id] || ((t.source as string) === 'link:projects' ? (t.source_ref || '').toUpperCase() : '')
+
+/** Why a conversation is paused (its Projects workspace isn't the one open), else ''. */
+export const projectsPaused = (t?: Thread) => (t && state?.paused?.[t.id]) || ''
 
 let asked = ''
 let inflight: Promise<void> | null = null
@@ -50,7 +57,10 @@ export function useProjectsLink(refs: string[] = []): ProjectsLink | null {
     const want = [...new Set([...asked.split(',').filter(Boolean), ...key.split(',').filter(Boolean)])].sort().join(',')
     if (!state || want !== asked || Date.now() - at > 120e3) load(want)
     const t = setInterval(() => load(asked), 120e3)
-    return () => clearInterval(t)
+    // switching workspace happens in Projects, often in another tab: look again on coming back
+    const vis = () => { if (document.visibilityState === 'visible' && Date.now() - at > 5e3) load(asked) }
+    document.addEventListener('visibilitychange', vis)
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', vis) }
   }, [key])
   return state
 }

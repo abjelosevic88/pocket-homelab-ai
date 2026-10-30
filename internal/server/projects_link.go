@@ -80,6 +80,31 @@ func (s *Server) handleProjectsLink(w http.ResponseWriter, r *http.Request) {
 		rows.Close()
 	}
 	out["threads"] = threads
+	// one Projects workspace at a time is open to Pocket AI: the conversations
+	// about the others are paused (Projects refuses their tool calls)
+	if ws := s.projectsWorkspaces(r.Context(), u.Email); len(ws) > 1 {
+		active, own := "", ""
+		for _, w := range ws {
+			if w.Active {
+				active = w.Address
+			}
+			if w.Own {
+				own = w.Address
+			}
+		}
+		out["agent_workspace"] = active
+		paused := map[string]string{}
+		for id, ref := range threads {
+			addr := own
+			if i := strings.LastIndex(ref, "/"); i > 0 {
+				addr = strings.ToLower(ref[:i])
+			}
+			if active != "" && addr != active {
+				paused[id] = "Paused: " + addr + " isn't the workspace open in Pocket Projects (" + active + " is), so this conversation can't read or change its tickets. Open " + addr + " in Projects to continue with them."
+			}
+		}
+		out["paused"] = paused
+	}
 	refs := []string{}
 	for _, ref := range strings.Split(r.URL.Query().Get("refs"), ",") {
 		if ref = strings.ToUpper(strings.TrimSpace(ref)); projectsRefRe.MatchString(ref) && len(refs) < 40 {
@@ -138,6 +163,49 @@ func (s *Server) projectsIssues(ctx context.Context, email string, refs []string
 	}
 	wg.Wait()
 	return got
+}
+
+type projectsWorkspace struct {
+	Address string `json:"address"`
+	Own     bool   `json:"own"`
+	Active  bool   `json:"active"`
+}
+
+var projectsWS sync.Map // email → projectsWSCached
+
+type projectsWSCached struct {
+	at   time.Time
+	list []projectsWorkspace
+}
+
+// projectsWorkspaces: the person's Projects workspaces and the one open to
+// Pocket AI (nil when Projects can't say; then nothing is paused).
+func (s *Server) projectsWorkspaces(ctx context.Context, email string) []projectsWorkspace {
+	if v, ok := projectsWS.Load(email); ok && time.Since(v.(projectsWSCached).at) < 10*time.Second {
+		return v.(projectsWSCached).list
+	}
+	tok, err := s.core.ActAs(ctx, email, "projects", projectsScope)
+	if err != nil {
+		return nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, onThisHost(strings.TrimRight(tok.URL, "/"))+"/api/v1/workspaces", nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "PocketAI/"+Version)
+	res, err := projectsHTTP.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer res.Body.Close()
+	var list []projectsWorkspace
+	if res.StatusCode != http.StatusOK || json.NewDecoder(http.MaxBytesReader(nil, res.Body, 1<<20)).Decode(&list) != nil {
+		return nil // an older Projects without workspaces
+	}
+	projectsWS.Store(email, projectsWSCached{at: time.Now(), list: list})
+	return list
 }
 
 // projectsGetIssue: nil, nil = the issue is gone or not yours.

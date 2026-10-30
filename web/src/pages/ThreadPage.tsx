@@ -22,6 +22,7 @@ import { BatchReview, ThreadEvidence } from '../components/AppEvidence'
 import { RequestCard } from '../components/RequestCard'
 import { Select } from '../components/Select'
 import { ThreadRefChip } from '../components/ThreadRefChip'
+import { projectsPaused, projectsRef, useProjectsLink } from '../lib/projects'
 import { Timeline } from '../components/Timeline'
 import { PrivacyBadge, ShareDialog } from '../components/ShareDialog'
 import { accessOf } from '../lib/share'
@@ -68,6 +69,9 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const listCopy = threads?.find(t => t.id === id) || null
   const t = thread || listCopy
   const hostName = useHostName(t?.host_id)
+  // a Projects conversation whose workspace isn't the one open in Projects
+  useProjectsLink(useMemo(() => [projectsRef(t || undefined)].filter(Boolean), [t?.id]))
+  const paused = projectsPaused(t || undefined)
 
   const load = useCallback(async () => {
     try {
@@ -314,6 +318,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
           {items === null ? <Loading /> : (
             <>
               {items.length === 0 && <div className="muted center small" style={{ padding: 30 }}>Nothing here yet.</div>}
+              {paused && <div className="notice warn"><Icon name="alert" size={14} /><span>{paused} You can still read and chat here; its Pocket Projects tools are off.</span></div>}
               {t.source === 'rewind' && <div className="notice info"><Icon name="undo" size={14} /><span>Continued from an earlier message. <button type="button" className="link-btn" onClick={() => navigate(`/t/${t.source_ref}`)}>Open original conversation</button>. Files and app changes already made are unchanged.</span></div>}
               {t.source === 'import' && items.length > 0 && <div className="notice info"><Icon name="history" size={14} /><span>Imported from the server’s {providerName(t.provider)} history — sending a message continues that session.</span></div>}
               <Timeline key={id} threadId={t.provider === 'claude' ? id : undefined} items={visible} onResend={canSend ? resend : undefined} onDropUnsent={canSend ? dropUnsent : undefined} showThinking={!!settings?.show_thinking} streamingKey={streamingKey}
