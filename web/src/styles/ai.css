@@ -289,6 +289,10 @@
 .pin-ico { color: var(--accent); }
 .title-input { height: 30px; font-size: 15px; font-weight: 600; }
 .thread-sub .host-chip { display: inline-flex; align-items: center; gap: 4px; flex: none; height: 20px; padding: 0 7px; border-radius: 6px; background: var(--surface-3); color: var(--text-2); font-weight: 600; }
+.thread-sub .rc-chip { text-decoration: none; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.thread-sub .rc-chip.rc-starting, .thread-sub .rc-chip.rc-reconnecting { background: var(--surface-3); color: var(--text-2); }
+.thread-sub .rc-chip.rc-error { background: color-mix(in srgb, var(--danger, #dc2626) 14%, transparent); color: var(--danger, #dc2626); }
+.thread-sub .rc-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok, #16a34a); }
 .thread-sub { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--muted); min-width: 0; }
 .thread-sub .mono { font-size: 11.5px; }
 .thread-head-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }

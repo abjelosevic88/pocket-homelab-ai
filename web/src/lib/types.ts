@@ -212,6 +212,8 @@ export interface Thread {
   pending: number
   queued: number
   external?: boolean
+  /** Claude Remote Control is on: the session is open in claude.ai/code and the Claude app. */
+  remote_control?: { state: 'starting' | 'ready' | 'connected' | 'reconnecting' | 'error'; url?: string; error?: string }
   subagents?: Subagent[]
   /** shell commands and monitors still running in the background */
   background?: BackgroundTask[]
