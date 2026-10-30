@@ -3,10 +3,13 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -264,5 +267,170 @@ func waitFor(t *testing.T, ok func() bool) {
 			t.Fatal("timed out")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// The case from the field: the leftover's turn was over, but it still ran
+// a background waiter. The next message must not start a second process
+// next to it: the leftover and its waiter are ended first, the turn's
+// footer is not repeated, then the message goes to a new process.
+func TestMessageEndsAnIdleLeftoverWithItsWaiters(t *testing.T) {
+	old := reattachPoll
+	reattachPoll = 50 * time.Millisecond
+	defer func() { reattachPoll = old }()
+	s, h, root := testServer(t)
+	owner, u := person(t, s, h, "idle@example.test", "admin", true)
+	argsFile := fakeClaude(t, s, root)
+	th := cutThread(t, s, u.ID, root)
+	defer s.rt.stop(th.ID)
+	// the turn ended before the restart: Pocket AI has all of it and its footer
+	for _, it := range []agent.Item{{Key: "toolu_2", Kind: "tool", Tool: &agent.Tool{Kind: "shell", Title: "make test", Status: "done", Output: "PASS"}},
+		{Key: "c-msg_3-0", Kind: "assistant", Text: "The build works again."}, {Key: "turn-live", Kind: "turn", Turn: &agent.TurnInfo{OK: true}}} {
+		data, _ := json.Marshal(it)
+		if _, err := s.store.UpsertItem(context.Background(), th.ID, it.Key, it.Kind, data, it.Text); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano)
+	if _, err := s.store.DB.Exec(`UPDATE threads SET status='idle', activity_at=? WHERE id=?`, before, th.ID); err != nil {
+		t.Fatal(err)
+	}
+	home := s.defaultHome("claude")
+	logPath := filepath.Join(home, "projects", "-work", th.ProviderSessionID+".jsonl")
+	_ = os.MkdirAll(filepath.Dir(logPath), 0o755)
+	if err := os.WriteFile(logPath, []byte(cutSessionLog()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// the leftover: looks like a Pocket AI agent, runs two background waiters
+	leftover := exec.Command("sh", "-c", "sleep 300 & sleep 300 & wait", "sh", "--input-format", "stream-json", "--permission-prompt-tool", "stdio")
+	leftover.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := leftover.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = syscall.Kill(-leftover.Process.Pid, syscall.SIGKILL) }()
+	exited := make(chan struct{})
+	go func() { _ = leftover.Wait(); close(exited) }()
+	var waiters []string
+	waitFor(t, func() bool {
+		b, _ := os.ReadFile(fmt.Sprintf("/proc/%d/task/%d/children", leftover.Process.Pid, leftover.Process.Pid))
+		waiters = strings.Fields(string(b))
+		return len(waiters) == 2
+	})
+	reg := filepath.Join(home, "sessions", strconv.Itoa(leftover.Process.Pid)+".json")
+	_ = os.MkdirAll(filepath.Dir(reg), 0o755)
+	b, _ := json.Marshal(map[string]any{"pid": leftover.Process.Pid, "sessionId": th.ProviderSessionID, "status": "idle"})
+	if err := os.WriteFile(reg, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	owner.want("POST", "/api/v1/threads/"+th.ID+"/messages", map[string]any{"text": "now the docs"}, 200, nil)
+	select {
+	case <-exited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the leftover still runs")
+	}
+	for _, pid := range waiters {
+		waitFor(t, func() bool {
+			st, err := os.ReadFile("/proc/" + pid + "/stat")
+			return err != nil || strings.Contains(string(st), ") Z ")
+		})
+	}
+	waitFor(t, func() bool { _, err := os.Stat(argsFile); return err == nil })
+	items := threadItems(t, s, th.ID)
+	turns, ended := 0, false
+	for _, it := range items {
+		if it.Kind == "turn" {
+			turns++
+		}
+		ended = ended || (it.Kind == "notice" && strings.Contains(it.Text, "Pocket AI ended it"))
+	}
+	if turns != 1 || !ended || countText(items, "assistant", "The build works again.") != 1 || countText(items, "user", "now the docs") != 1 {
+		t.Fatalf("turns %d, ended notice %v: %+v", turns, ended, items)
+	}
+}
+
+// Right after a restart, conversations on other machines are looked at
+// without waiting for a message: an idle leftover of Pocket AI's that still
+// runs background waiters is ended with them. This runs the real remote
+// scripts (probe, end) through a fake ssh that executes them here.
+func TestSweepEndsIdleLeftoversOnOtherMachines(t *testing.T) {
+	old := reattachPoll
+	reattachPoll = 50 * time.Millisecond
+	defer func() { reattachPoll = old }()
+	s, h, root := testServer(t)
+	_, u := person(t, s, h, "sweep@example.test", "admin", true)
+	ctx := context.Background()
+	box := &store.Host{Name: "box", Target: "box.invalid"}
+	if err := s.store.CreateHost(ctx, box); err != nil {
+		t.Fatal(err)
+	}
+	remoteHome := filepath.Join(root, "box-home")
+	fake := filepath.Join(t.TempDir(), "ssh")
+	script := "#!/usr/bin/env python3\nimport sys,os\nargs=sys.argv[1:]\nassert 'box.invalid' in args, args\nos.environ['HOME']=" + strconv.Quote(remoteHome) +
+		"\nos.environ.pop('CLAUDE_CONFIG_DIR',None)\nos.execvp('sh',['sh','-c',args[-1]])\n"
+	if err := os.WriteFile(fake, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", filepath.Dir(fake)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	mk := func() *store.Thread {
+		th := cutThread(t, s, u.ID, "/work")
+		for _, it := range []agent.Item{{Key: "toolu_2", Kind: "tool", Tool: &agent.Tool{Kind: "shell", Title: "make test", Status: "done", Output: "PASS"}},
+			{Key: "c-msg_3-0", Kind: "assistant", Text: "The build works again."}, {Key: "turn-live", Kind: "turn", Turn: &agent.TurnInfo{OK: true}}} {
+			data, _ := json.Marshal(it)
+			_, _ = s.store.UpsertItem(ctx, th.ID, it.Key, it.Kind, data, it.Text)
+		}
+		if _, err := s.store.DB.Exec(`UPDATE threads SET status='idle', host_id=?, activity_at=? WHERE id=?`, box.ID, time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano), th.ID); err != nil {
+			t.Fatal(err)
+		}
+		logPath := filepath.Join(remoteHome, ".claude", "projects", "-work", th.ProviderSessionID+".jsonl")
+		_ = os.MkdirAll(filepath.Dir(logPath), 0o755)
+		if err := os.WriteFile(logPath, []byte(cutSessionLog()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return th
+	}
+	withLeftover, quiet := mk(), mk()
+	leftover := exec.Command("sh", "-c", "sleep 300 & sleep 300 & wait", "sh", "--input-format", "stream-json", "--permission-prompt-tool", "stdio")
+	leftover.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := leftover.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = syscall.Kill(-leftover.Process.Pid, syscall.SIGKILL) }()
+	exited := make(chan struct{})
+	go func() { _ = leftover.Wait(); close(exited) }()
+	reg := filepath.Join(remoteHome, ".claude", "sessions", strconv.Itoa(leftover.Process.Pid)+".json")
+	_ = os.MkdirAll(filepath.Dir(reg), 0o755)
+	b, _ := json.Marshal(map[string]any{"pid": leftover.Process.Pid, "sessionId": withLeftover.ProviderSessionID, "status": "idle"})
+	if err := os.WriteFile(reg, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s.sweepLeftovers(ctx)
+	select {
+	case <-exited:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the leftover still runs")
+	}
+	waitFor(t, func() bool { return !s.isReattached(withLeftover.ID) })
+	items := threadItems(t, s, withLeftover.ID)
+	turns, ended := 0, ""
+	for _, it := range items {
+		if it.Kind == "turn" {
+			turns++
+		}
+		if it.Kind == "notice" {
+			ended = it.Text
+		}
+	}
+	if turns != 1 || !strings.Contains(ended, "Pocket AI ended it") || strings.Contains(ended, "Your message") || countText(items, "assistant", "The build works again.") != 1 {
+		t.Fatalf("turns %d, notice %q: %+v", turns, ended, items)
+	}
+	for _, it := range threadItems(t, s, quiet.ID) {
+		if it.Kind == "notice" {
+			t.Fatalf("nothing was left over there: %+v", it)
+		}
+	}
+	if !s.re.wasChecked(quiet.ID) || !s.re.wasChecked(withLeftover.ID) {
+		t.Fatal("swept threads are not looked at again on their next message")
 	}
 }

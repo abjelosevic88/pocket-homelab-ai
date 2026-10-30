@@ -93,6 +93,11 @@ session's process (`sessions/<pid>.json` + `kill -0`, one ssh round trip that al
   text), cut tools get their output. Messages wait (`holds`), the 409 for sessions run elsewhere does not apply,
   Stop SIGTERMs the process. Done (idle or gone): an idle leftover that Pocket AI started is ended, held messages
   go out.
+- **Open but idle, Pocket AI's own** (its turn was over, but background work such as a waiter on a lane may still
+  run and act on its own): its output is caught up, then it is ended with its process group and every process
+  below it, and the message goes to a new process. Right after a restart every Claude conversation on another
+  machine active in the last 24 h is looked at this way (`sweepLeftovers`, one probe each; a machine that does
+  not answer is left to the next message), so such a leftover does not wait for someone to write.
 - **Gone mid-turn:** Pocket AI sends "continue" itself (`u-auto-…`, by "Pocket AI"); not again within 30 min
   (then the notice asks the person). Codex on another machine whose rollout changed in the last minute gets a
   warning instead (no auto-continue: its app-server may still be writing).

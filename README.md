@@ -157,6 +157,10 @@ make service                   # systemd user unit; edit ~/.config/pocket-ai/env
 loginctl enable-linger $USER   # keep it running without a login session
 ```
 
+To update, use `deploy/update.sh <new binary>` rather than `systemctl --user restart pocket-ai`: it keeps the old
+binary as a backup and, while agents work, lets Pocket AI restart itself once none is. A plain restart cuts every
+running turn off.
+
 Put it behind your reverse proxy with TLS (it streams Server-Sent Events; Caddy and nginx with
 `proxy_buffering off` work) and keep it on a private network. It listens on `127.0.0.1:8195` by default; `HOST`
 takes several addresses (`127.0.0.1,172.17.0.1` lets a proxy in Docker reach it). `AUTH_MODE=none` is refused on
