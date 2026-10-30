@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -86,6 +87,12 @@ func (rs *reattachSet) end(id string) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	delete(rs.m, id)
+}
+
+func (rs *reattachSet) wasChecked(id string) bool {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	return rs.checked[id]
 }
 
 // firstCheck is true once per thread and process lifetime.
@@ -212,16 +219,35 @@ func parseProbe(out string) (claudeProbe, error) {
 	return p, nil
 }
 
-// endProcess ends a leftover Claude Code process (SIGTERM).
+// endTreeSh SIGTERMs process $1, its process group and everything below it:
+// a leftover's background shells and waiters (a Bash tool's "wait until the
+// lane is idle") would otherwise go on and act next to the new process.
+const endTreeSh = `p=$1; all=$p; new=$p
+while [ -n "$new" ]; do
+  new=$(ps -A -o pid= -o ppid= 2>/dev/null | awk -v ps=" $new " 'index(ps, " " $2 " ") { printf "%s ", $1 }')
+  all="$all $new"
+done
+kill -TERM -"$p" 2>/dev/null
+kill -TERM $all 2>/dev/null
+exit 0
+`
+
+// endProcess ends a leftover Claude Code process and what it started.
 func (s *Server) endProcess(ctx context.Context, h *store.Host, pid int) {
 	if pid <= 0 {
 		return
 	}
 	if h == nil {
-		_ = syscall.Kill(pid, syscall.SIGTERM)
+		ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
+		if err := exec.CommandContext(ctx, "sh", "-c", endTreeSh, "sh", strconv.Itoa(pid)).Run(); err != nil {
+			_ = syscall.Kill(pid, syscall.SIGTERM)
+		}
 		return
 	}
-	_, _, _ = remoteOf(h).Run(ctx, 20*time.Second, `kill "$1" 2>/dev/null; exit 0`, strconv.Itoa(pid))
+	if _, errOut, err := remoteOf(h).Run(ctx, 20*time.Second, endTreeSh, strconv.Itoa(pid)); err != nil {
+		s.log.Warn("reconnect: could not end the leftover agent", "host", h.Name, "pid", pid, "err", sshError(errOut, err))
+	}
 }
 
 // ---------- after a restart ----------
@@ -231,6 +257,55 @@ func (s *Server) reconnectCut(ids []string) {
 	for _, id := range ids {
 		s.re.firstCheck(id)
 		go s.reconnect(id)
+	}
+	go s.sweepLeftovers(s.rt.ctx)
+}
+
+// sweepLeftovers: a turn that was over at the restart is not cut off, but
+// its process on another machine may still run background work (a waiter
+// on a lane, a monitor) that acts on its own once it fires. So every Claude
+// conversation on another machine active in the day before the restart is
+// looked at once, right away rather than on its next message: one still
+// working is followed, an idle one of Pocket AI's is ended. A machine that
+// does not answer is skipped (its conversations are looked at on their next
+// message instead).
+func (s *Server) sweepLeftovers(ctx context.Context) {
+	rows, err := s.store.DB.QueryContext(ctx, `SELECT id FROM threads WHERE provider = 'claude' AND host_id != 0 AND archived = 0
+		AND provider_session_id != '' AND activity_at >= ? ORDER BY host_id, activity_at DESC`, store.FormatTime(s.started.Add(-orphanRecent)))
+	if err != nil {
+		return
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	down := map[int64]bool{}
+	for _, id := range ids {
+		t, err := s.store.GetThreadAny(ctx, id)
+		if err != nil || down[t.HostID] || s.re.wasChecked(id) || s.rt.get(id) != nil || s.isReattached(id) {
+			continue
+		}
+		h, err := s.host(ctx, t.HostID)
+		if err != nil {
+			continue
+		}
+		p, err := s.probeClaude(ctx, t, h, -1)
+		if err != nil {
+			down[t.HostID] = true
+			s.log.Info("leftover sweep: machine not reached", "host", h.Name, "err", err)
+			continue
+		}
+		if !s.re.firstCheck(id) {
+			continue // a message got there first
+		}
+		if p.state == "busy" || (p.state == "idle" && p.own) {
+			s.log.Info("leftover sweep", "thread", id, "state", p.state, "pid", p.pid, "own", p.own)
+			s.startReattach(t, h, p, whySweep)
+		}
 	}
 }
 
@@ -262,7 +337,7 @@ func (s *Server) reconnect(id string) {
 			return
 		}
 		if p.state != "gone" {
-			s.startReattach(t, h, p, true)
+			s.startReattach(t, h, p, whyCut)
 			return
 		}
 	} else if h != nil && s.codexActive(ctx, t, h) {
@@ -341,15 +416,33 @@ func (s *Server) checkLeftover(ctx context.Context, t *store.Thread) {
 		return
 	}
 	p, err := s.probeClaude(ctx, t, h, -1)
-	if err != nil || p.state != "busy" || (h == nil && !p.own) {
-		return // a terminal here is the follower's (and the 409's) business
+	if err != nil {
+		s.log.Info("leftover check failed", "thread", t.ID, "err", err)
+		return
 	}
-	s.startReattach(t, h, p, false)
+	s.log.Info("leftover check", "thread", t.ID, "state", p.state, "pid", p.pid, "own", p.own)
+	switch {
+	case p.state == "busy" && (h != nil || p.own): // a terminal here is the follower's (and the 409's) business
+	case p.state == "idle" && p.own:
+		// its turn is over but it may still run background work (waiters,
+		// monitors) that would act next to the new process: catch up, end it
+	default:
+		return
+	}
+	s.startReattach(t, h, p, whyMessage)
 }
 
 // ---------- following the leftover process ----------
 
-func (s *Server) startReattach(t *store.Thread, h *store.Host, p claudeProbe, cut bool) {
+// Why Pocket AI looks at a leftover process (the notice says it).
+const (
+	whyCut     = "cut"     // its turn was cut off by the restart
+	whyMessage = "message" // a message came for the conversation
+	whySweep   = "sweep"   // the look right after the restart
+)
+
+func (s *Server) startReattach(t *store.Thread, h *store.Host, p claudeProbe, why string) {
+	cut := why != whyMessage
 	run := &reattachRun{host: h, pid: p.pid, own: p.own}
 	if !s.re.begin(t.ID, run) {
 		return
@@ -365,11 +458,23 @@ func (s *Server) startReattach(t *store.Thread, h *store.Host, p claudeProbe, cu
 	}
 	if p.state == "idle" {
 		text = "Pocket AI restarted while the agent was working " + where + ". It has finished since: here is what it did."
+		if why != whyCut {
+			text = "The agent's process from before Pocket AI restarted was still open " + where + "."
+		}
+		if p.own {
+			text += " Pocket AI ended it, with any background work it still ran (waiters, monitors), so only one process works on this conversation."
+		}
+		if why == whyMessage {
+			text += " Your message goes to a new one."
+		}
 	}
 	s.rt.saveItem(t.ID, agent.Item{Key: fmt.Sprintf("restart-%d", time.Now().UnixNano()), Kind: "notice", Level: "info", Text: text})
 	s.log.Info("reconnected to a running agent", "thread", t.ID, "where", where, "pid", p.pid, "state", p.state)
 	s.rt.setExternal(t.ID, p.state == "busy")
-	go s.followLeftover(t, run, p)
+	// what the thread had before anything new lands (the held message is
+	// saved right after this returns): the catch-up repeats none of it
+	ap := s.newLeftoverApplier(s.rt.ctx, t)
+	go s.followLeftover(t, run, p, ap)
 }
 
 // stopReattached ends the process a thread is reconnected to (Stop).
@@ -386,10 +491,9 @@ func (s *Server) stopReattached(threadID string) bool {
 	return true
 }
 
-func (s *Server) followLeftover(t *store.Thread, run *reattachRun, first claudeProbe) {
+func (s *Server) followLeftover(t *store.Thread, run *reattachRun, first claudeProbe, ap *leftoverApplier) {
 	ctx := s.rt.ctx
 	h := run.host
-	ap := s.newLeftoverApplier(ctx, t)
 	// catch up: the cut-off turn from its prompt on
 	from := first.size - reattachWindow
 	if from < 0 {
@@ -468,18 +572,20 @@ func (s *Server) followLeftover(t *store.Thread, run *reattachRun, first claudeP
 // items have other keys than the log's for messages; tool calls share
 // theirs).
 type leftoverApplier struct {
-	s      *Server
-	ctx    context.Context
-	t      *store.Thread
-	log    *agent.ClaudeLog
-	have   map[string]bool // item keys
-	texts  map[string]bool // kind + text of the messages of the cut-off turn
-	ended  bool
-	prompt bool // the next prompt line is the cut-off turn's own: already there
+	s       *Server
+	ctx     context.Context
+	t       *store.Thread
+	log     *agent.ClaudeLog
+	have    map[string]bool // item keys
+	texts   map[string]bool // kind + text of the messages of the cut-off turn
+	ended   bool
+	prompt  bool            // the next prompt line is the cut-off turn's own: already there
+	turns   int             // footers of that turn Pocket AI already has (it ended before the restart)
+	dupTurn map[string]bool // the log's keys for those footers
 }
 
 func (s *Server) newLeftoverApplier(ctx context.Context, t *store.Thread) *leftoverApplier {
-	ap := &leftoverApplier{s: s, ctx: ctx, t: t, log: &agent.ClaudeLog{}, have: map[string]bool{}, texts: map[string]bool{}}
+	ap := &leftoverApplier{s: s, ctx: ctx, t: t, log: &agent.ClaudeLog{}, have: map[string]bool{}, texts: map[string]bool{}, dupTurn: map[string]bool{}}
 	items, _ := s.store.ListItems(ctx, t.ID)
 	lastUser := 0
 	for i, it := range items {
@@ -489,6 +595,9 @@ func (s *Server) newLeftoverApplier(ctx context.Context, t *store.Thread) *lefto
 		}
 	}
 	for _, it := range items[lastUser:] {
+		if it.Kind == "turn" {
+			ap.turns++
+		}
 		if it.Kind == "user" || it.Kind == "assistant" {
 			var x agent.Item
 			if json.Unmarshal(it.Data, &x) == nil {
@@ -592,6 +701,15 @@ func (ap *leftoverApplier) apply(line []byte) {
 			ap.texts[k] = true
 		case "tool", "todos":
 			if ap.have[it.Key] {
+				continue
+			}
+		case "turn":
+			if ap.dupTurn[it.Key] {
+				continue
+			}
+			if !ap.have[it.Key] && ap.turns > 0 {
+				ap.turns-- // the log's footer of a turn Pocket AI closed itself
+				ap.dupTurn[it.Key] = true
 				continue
 			}
 		}
