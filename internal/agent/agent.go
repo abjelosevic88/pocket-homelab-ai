@@ -4,6 +4,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -221,6 +222,31 @@ type Session interface {
 	SetMode(mode string) error
 	Close() error
 	Done() <-chan struct{}
+}
+
+// RemoteInfo is where a session with Claude Remote Control on can be opened.
+type RemoteInfo struct {
+	SessionURL      string // https://claude.ai/code/session_…
+	BridgeSessionID string // reattach to the same claude.ai session after a restart
+}
+
+// RemoteControllable is a session that can be reached from claude.ai/code
+// and the Claude app (Claude Code's Remote Control). reattach is a
+// BridgeSessionID from before ("" = a new claude.ai session).
+type RemoteControllable interface {
+	RemoteControl(ctx context.Context, on bool, name, reattach string) (RemoteInfo, error)
+}
+
+// BridgeSink is the optional part of a Sink told how the Remote Control link
+// is doing (ready, connected, reconnecting, failed, …).
+type BridgeSink interface {
+	Bridge(state string)
+}
+
+// CancelSink is the optional part of a Sink told that the CLI withdrew a
+// request (answered in the Claude app, or no longer needed).
+type CancelSink interface {
+	RequestCancelled(id string)
 }
 
 // ErrClosed is returned once the CLI process is gone.
