@@ -23,16 +23,19 @@ import (
 // <dir>/codex/<login>/sessions/.../<name>.jsonl, <login> being "default"
 // or the folder's name (".claude-max"), so MirrorHomes(dir) reads it.
 
-// remoteSessionList prints "<rel>\t<size>\t<mtime>" per session file.
-const remoteSessionList = RemoteHomesSh + `one() { printf '%s\t%s\t%s\n' "$1" "$(wc -c <"$2" | tr -d ' ')" "$(date -r "$2" +%s 2>/dev/null || echo 0)"; }
+// remoteSessionList prints "<rel>\t<size>\t<mtime>" per session file. One
+// stat per folder (GNU -c or BSD -f), not three processes per file: the
+// forks made the list take seconds on a machine with a few hundred sessions.
+const remoteSessionList = RemoteHomesSh + `if stat -L -c %s / >/dev/null 2>&1; then sf=-c; fmt='%s|%Y|%n'; else sf=-f; fmt='%z|%m|%N'; fi
+fix() { awk -v p="$1" '{ i = index($0, "|"); s = substr($0, 1, i - 1); r = substr($0, i + 1); j = index(r, "|"); printf "%s%s\t%s\t%s\n", p, substr(r, j + 1), s, substr(r, 1, j - 1) }'; }
 c0="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; x0="${CODEX_HOME:-$HOME/.codex}"
 homes claude | while IFS= read -r c; do
   b=default; [ "$c" = "$c0" ] || b=${c##*/}
-  for f in "$c"/projects/*/*.jsonl; do [ -f "$f" ] && one "claude/$b/${f#"$c"/}" "$f"; done
+  [ -d "$c/projects" ] && (cd "$c" && find projects -mindepth 2 -maxdepth 2 -name '*.jsonl' -type f -print0 2>/dev/null | xargs -0 stat -L "$sf" "$fmt" 2>/dev/null) | fix "claude/$b/"
 done
 homes codex | while IFS= read -r x; do
   b=default; [ "$x" = "$x0" ] || b=${x##*/}
-  [ -d "$x/sessions" ] && find "$x/sessions" -type f -name '*.jsonl' 2>/dev/null | while IFS= read -r f; do one "codex/$b/${f#"$x"/}" "$f"; done
+  [ -d "$x/sessions" ] && (cd "$x" && find sessions -name '*.jsonl' -type f -print0 2>/dev/null | xargs -0 stat -L "$sf" "$fmt" 2>/dev/null) | fix "codex/$b/"
 done
 exit 0
 `
