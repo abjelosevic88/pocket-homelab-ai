@@ -86,6 +86,13 @@ func (r *Remote) mux() []string {
 // put the CLIs on PATH are not read. These are where installers put them.
 const remotePath = `PATH="$HOME/.local/bin:$HOME/bin:$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.volta/bin:$HOME/.nix-profile/bin:/etc/profiles/per-user/$USER/bin:/run/current-system/sw/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; export PATH`
 
+// guiBridge sets $g to pocket-gui (git.bjelke.org/Homelab/pocket-gui) when
+// the machine is a Mac running it: the CLI then starts in the logged-in GUI
+// session, where the keychain is unlocked (codesign, Xcode archives,
+// TestFlight uploads), not in the ssh one. Elsewhere $g is empty and the CLI
+// starts as always.
+const guiBridge = `g="$HOME/.pocket-ai/bin/pocket-gui"; { [ -S "$HOME/.pocket-ai/gui.sock" ] && [ -x "$g" ]; } || g=; `
+
 // ShellQuote quotes s for a POSIX shell.
 func ShellQuote(s string) string { return shq(s) }
 
@@ -114,7 +121,7 @@ func remoteScript(dir string, env []string, bin string, args []string) string {
 	if dir != "" {
 		b.WriteString("cd -- " + shq(dir) + " || exit 1; ")
 	}
-	b.WriteString("exec")
+	b.WriteString(guiBridge + "exec ${g:+\"$g\" run --}")
 	if len(env) > 0 {
 		b.WriteString(" env")
 		for _, e := range env {
