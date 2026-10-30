@@ -26,6 +26,11 @@ func TestAskDocumentText(t *testing.T) {
 	if err != nil || !strings.Contains(text, "Hello & goodbye") {
 		t.Fatal(text, err)
 	}
+	for name, body := range map[string]string{"page.html": "<html><body><h1>Hi</h1></body></html>", "data.json": `{"total": 125}`} {
+		if text, err := Text(name, []byte(body)); err != nil || text != body {
+			t.Fatal(name, text, err)
+		}
+	}
 	sheet := archive(map[string]string{"xl/sharedStrings.xml": `<sst><si><t>Revenue</t></si></sst>`, "xl/worksheets/sheet1.xml": `<worksheet><sheetData><row><c r="A1" t="s"><v>0</v></c><c r="B1"><v>125</v></c></row></sheetData></worksheet>`})
 	text, err = Text("test.xlsx", sheet)
 	if err != nil || !strings.Contains(text, "A1: Revenue") || !strings.Contains(text, "B1: 125") {
