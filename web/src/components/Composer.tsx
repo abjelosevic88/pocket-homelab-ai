@@ -25,7 +25,8 @@ export interface ComposerHandle { focus: () => void; setText: (t: string) => voi
 
 const MAX_EDGE = 2000
 const MAX_BYTES = 20 * 1024 * 1024
-const DOC_TYPES = '.pdf,.docx,.xlsx,.pptx,.odt,.ods,.odp,.txt,.md,.csv,.tsv,.json,.xml'
+// MIME types next to .json/.html: iOS greys those files out on extensions alone
+const DOC_TYPES = '.pdf,.docx,.xlsx,.pptx,.odt,.ods,.odp,.txt,.md,.csv,.tsv,.json,.xml,.html,.htm,application/json,text/html'
 
 /** Big photos are scaled down in the browser before upload: faster on mobile data, and
  *  the CLIs refuse very large images anyway. Screenshots under the limit pass as they are. */
@@ -170,7 +171,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
   useEffect(() => { if (autoFocus && !isTouch()) ta.current?.focus() }, [autoFocus, draftKey])
 
   const addFiles = useCallback(async (files: File[]) => {
-    const imgs = files.filter(f => f.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|hei[cf]|pdf|docx|xlsx|pptx|odt|ods|odp|txt|md|csv|tsv|json|xml)$/i.test(f.name))
+    const imgs = files.filter(f => f.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|hei[cf]|pdf|docx|xlsx|pptx|odt|ods|odp|txt|md|csv|tsv|json|xml|html?)$/i.test(f.name))
     if (imgs.length < files.length) toast('Attach images, PDF, Office documents, CSV or text', 'err')
     for (const raw of imgs) {
       const lid = 'a' + ++lidSeq

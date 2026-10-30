@@ -21,7 +21,7 @@ func Text(name string, data []byte) (string, error) {
 	}
 	ext := strings.ToLower(filepath.Ext(name))
 	switch ext {
-	case ".txt", ".md", ".csv", ".tsv", ".json", ".xml":
+	case ".txt", ".md", ".csv", ".tsv", ".json", ".xml", ".html", ".htm":
 		if !utf8.Valid(data) || bytes.ContainsRune(data, 0) {
 			return "", errors.New("file is not UTF-8 text")
 		}
