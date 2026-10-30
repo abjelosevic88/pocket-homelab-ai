@@ -14,19 +14,34 @@ import { Empty, errMsg, Loading, type MenuItem, MenuButton, Modal, Spinner, useM
 
 interface Term { id: string; host_id: number; host_name: string; title: string; cwd?: string; created_at: string; ended: boolean; exit_code: number; viewers: number }
 
-const theme = {
+const dark = {
   background: '#111113', foreground: '#e6e6ea', cursor: '#a78bfa', cursorAccent: '#111113',
   selectionBackground: 'rgba(167, 139, 250, .35)',
   black: '#1e1e22', red: '#f87171', green: '#4ade80', yellow: '#facc15', blue: '#60a5fa', magenta: '#c084fc', cyan: '#22d3ee', white: '#d4d4d8',
   brightBlack: '#6b6b76', brightRed: '#fca5a5', brightGreen: '#86efac', brightYellow: '#fde047', brightBlue: '#93c5fd', brightMagenta: '#d8b4fe', brightCyan: '#67e8f9', brightWhite: '#fafafa',
 }
+const light = {
+  background: '#ffffff', foreground: '#1f2328', cursor: '#7c3aed', cursorAccent: '#ffffff',
+  selectionBackground: 'rgba(124, 58, 237, .2)',
+  black: '#24292f', red: '#cf222e', green: '#116329', yellow: '#9a6700', blue: '#0969da', magenta: '#8250df', cyan: '#1b7c83', white: '#6e7781',
+  brightBlack: '#57606a', brightRed: '#a40e26', brightGreen: '#1a7f37', brightYellow: '#7d4e00', brightBlue: '#0550ae', brightMagenta: '#6639ba', brightCyan: '#0e6a74', brightWhite: '#424a53',
+}
+type Look = 'app' | 'light' | 'dark'
+const LOOK_KEY = 'pai-terminal-theme'
+// light: programs that print light grey or "white" text assume a dark
+// background; xterm darkens such text until it can be read
+const xtermLook = (l: 'light' | 'dark') => ({ theme: l === 'light' ? light : dark, minimumContrastRatio: l === 'light' ? 4.5 : 1 })
 
 const wsURL = (id: string) => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${V1}/terminals/${id}/ws`
 
 export default function TerminalPage({ onMenu }: { onMenu?: () => void }) {
-  const { hosts } = useApp()
+  const { hosts, theme: appTheme } = useApp()
   const { toast } = useToast()
   const navigate = useNavigate()
+  // colors follow the app's light/dark theme unless picked here (per device)
+  const [look, setLookRaw] = useState<Look>(() => (localStorage.getItem(LOOK_KEY) as Look) || 'app')
+  const setLook = (l: Look) => { setLookRaw(l); if (l === 'app') localStorage.removeItem(LOOK_KEY); else localStorage.setItem(LOOK_KEY, l) }
+  const shade: 'light' | 'dark' = look === 'app' ? appTheme : look
   const [params, setParams] = useSearchParams()
   const [list, setList] = useState<Term[] | null>(null)
   const [opening, setOpening] = useState(false)
@@ -82,10 +97,16 @@ export default function TerminalPage({ onMenu }: { onMenu?: () => void }) {
 
   const cur = list?.find(t => t.id === active)
   return (
-    <div className="page term-page">
+    <div className="page term-page" data-term={shade}>
       <PageHead title="Terminal" icon="terminal" onMenu={onMenu}
         sub={cur ? <>{cur.host_name}{cur.cwd ? <> · <span className="mono">{cur.cwd}</span></> : null}</> : 'A shell on this server or any of your machines'}
-        actions={<MenuButton items={machines} className="btn primary sm" label="New terminal" align="right">{opening ? <Spinner /> : <Icon name="plus" size={15} />} New</MenuButton>} />
+        actions={<><MenuButton items={[
+          { heading: 'Terminal colors' },
+          { label: 'Same as the app', icon: 'palette', checked: look === 'app', onSelect: () => setLook('app') },
+          { label: 'Light', icon: 'sun', checked: look === 'light', onSelect: () => setLook('light') },
+          { label: 'Dark', icon: 'moon', checked: look === 'dark', onSelect: () => setLook('dark') },
+        ]} label="Terminal colors" align="right"><Icon name={shade === 'light' ? 'sun' : 'moon'} size={16} /></MenuButton>
+        <MenuButton items={machines} className="btn primary sm" label="New terminal" align="right">{opening ? <Spinner /> : <Icon name="plus" size={15} />} New</MenuButton></>} />
       {list === null ? <Loading /> : list.length === 0 ? (
         <div className="page-scroll"><div className="page-inner">
           <Empty title="No terminal open" icon="terminal">
@@ -108,7 +129,7 @@ export default function TerminalPage({ onMenu }: { onMenu?: () => void }) {
           ))}
         </div>
         <div className="term-stage">
-          {list.map(t => <TermView key={t.id} term={t} visible={t.id === active} onEnded={ended}
+          {list.map(t => <TermView key={t.id} term={t} shade={shade} visible={t.id === active} onEnded={ended}
             onAgain={() => { close(t); open(t.host_id, t.cwd) }} onClose={() => close(t)} />)}
         </div>
       </>}
@@ -139,7 +160,7 @@ const KEYS: { label: string; send?: string; ctrl?: boolean; icon?: string }[] = 
   { label: '^C', send: '\x03' }, { label: '^D', send: '\x04' },
 ]
 
-function TermView({ term, visible, onEnded, onAgain, onClose }: { term: Term; visible: boolean; onEnded: (id: string, code: number) => void; onAgain: () => void; onClose: () => void }) {
+function TermView({ term, shade, visible, onEnded, onAgain, onClose }: { term: Term; shade: 'light' | 'dark'; visible: boolean; onEnded: (id: string, code: number) => void; onAgain: () => void; onClose: () => void }) {
   const box = useRef<HTMLDivElement>(null)
   const xt = useRef<Terminal | null>(null)
   const fit = useRef<FitAddon | null>(null)
@@ -165,7 +186,7 @@ function TermView({ term, visible, onEnded, onAgain, onClose }: { term: Term; vi
 
   useEffect(() => {
     const t = new Terminal({
-      theme, cursorBlink: true, allowProposedApi: true, scrollback: 10000, convertEol: false,
+      ...xtermLook(shade), cursorBlink: true, allowProposedApi: true, scrollback: 10000, convertEol: false,
       fontFamily: 'ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, "Symbols Nerd Font Mono", monospace',
       fontSize: window.matchMedia('(max-width: 760px)').matches ? 12 : 13,
     })
@@ -231,6 +252,7 @@ function TermView({ term, visible, onEnded, onAgain, onClose }: { term: Term; vi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [term.id])
 
+  useEffect(() => { if (xt.current) Object.assign(xt.current.options, xtermLook(shade)) }, [shade])
   useEffect(() => { if (visible) { requestAnimationFrame(() => { resize(); xt.current?.focus() }) } }, [visible, resize])
 
   const key = (k: typeof KEYS[number]) => {
