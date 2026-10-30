@@ -14,6 +14,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/coder/websocket"
 	"github.com/creack/pty"
@@ -48,9 +49,10 @@ type terminal struct {
 	Cwd      string    `json:"cwd,omitempty"`
 	Created  time.Time `json:"created_at"`
 
-	uid  int64
-	cmd  *exec.Cmd
-	ptmx *os.File
+	uid    int64
+	cmd    *exec.Cmd
+	ptmx   *os.File
+	direct bool // cmd is the shell itself (this server, not jailed): busy is exact
 
 	mu       sync.Mutex
 	buf      []byte
@@ -59,6 +61,8 @@ type terminal struct {
 	code     int
 	lastSeen time.Time
 	size     [2]uint16
+	lastIn   time.Time // last keystroke
+	lastOut  time.Time // last output
 }
 
 type termMsg struct {
@@ -71,12 +75,91 @@ type termView struct {
 	Ended    bool `json:"ended"`
 	ExitCode int  `json:"exit_code"`
 	Viewers  int  `json:"viewers"`
+	Busy     bool `json:"busy"` // a command is running
 }
 
 func (t *terminal) view() termView {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return termView{terminal: t, Ended: t.ended, ExitCode: t.code, Viewers: len(t.subs)}
+	return termView{terminal: t, Ended: t.ended, ExitCode: t.code, Viewers: len(t.subs), Busy: t.busyLocked()}
+}
+
+// busyLocked: a command is running in it. For a shell started here the
+// terminal's foreground process group tells exactly (not the shell's own =
+// something runs). Through ssh or the jail the foreground is always ssh or
+// bwrap, so only output tells: it printed in the last 3 s, and not merely
+// the echo of what was typed.
+func (t *terminal) busyLocked() bool {
+	if t.ended {
+		return false
+	}
+	if t.direct && t.cmd.Process != nil {
+		var pg int32
+		var errno syscall.Errno
+		if rc, err := t.ptmx.SyscallConn(); err == nil {
+			_ = rc.Control(func(fd uintptr) {
+				_, _, errno = syscall.Syscall(syscall.SYS_IOCTL, fd, syscall.TIOCGPGRP, uintptr(unsafe.Pointer(&pg)))
+			})
+			if errno == 0 && pg > 0 {
+				return int(pg) != t.cmd.Process.Pid
+			}
+		}
+	}
+	return time.Since(t.lastOut) < 3*time.Second && t.lastOut.Sub(t.lastIn) > 800*time.Millisecond
+}
+
+// termSummary is what the sidebar shows: open terminals, and which are busy.
+type termSummary struct {
+	Open    int      `json:"open"`
+	Busy    int      `json:"busy"`
+	BusyIDs []string `json:"busy_ids"`
+}
+
+// watchTerminals tells each person's pages when their terminals' summary
+// changes (opened, closed, ended, a command started or finished).
+func (s *Server) watchTerminals() {
+	last := map[int64]string{}
+	for range time.Tick(time.Second) {
+		now := map[int64]*termSummary{}
+		s.terms.mu.Lock()
+		for _, t := range s.terms.terms {
+			sum := now[t.uid]
+			if sum == nil {
+				sum = &termSummary{BusyIDs: []string{}}
+				now[t.uid] = sum
+			}
+			t.mu.Lock()
+			if !t.ended {
+				sum.Open++
+			}
+			if t.busyLocked() {
+				sum.Busy++
+				sum.BusyIDs = append(sum.BusyIDs, t.ID)
+			}
+			t.mu.Unlock()
+		}
+		s.terms.mu.Unlock()
+		gone := map[int64]bool{} // their last terminal went: say so once
+		for uid := range last {
+			if now[uid] == nil {
+				now[uid] = &termSummary{BusyIDs: []string{}}
+				gone[uid] = true
+			}
+		}
+		for uid, sum := range now {
+			sort.Strings(sum.BusyIDs)
+			b, _ := json.Marshal(sum)
+			if last[uid] == string(b) {
+				continue
+			}
+			s.rt.toUser(uid, sseEvent{Name: "terminals", Data: sum})
+			if gone[uid] {
+				delete(last, uid)
+			} else {
+				last[uid] = string(b)
+			}
+		}
+	}
 }
 
 type termHub struct {
@@ -151,7 +234,8 @@ func (s *Server) handleCreateTerminal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	t := &terminal{ID: uuid.NewString(), HostID: in.HostID, HostName: name, Title: name, Cwd: in.Cwd, Created: time.Now(),
-		uid: u.ID, cmd: cmd, ptmx: ptmx, subs: map[chan termMsg]struct{}{}, lastSeen: time.Now(), size: [2]uint16{100, 30}}
+		uid: u.ID, cmd: cmd, ptmx: ptmx, subs: map[chan termMsg]struct{}{}, lastSeen: time.Now(), size: [2]uint16{100, 30},
+		direct: in.HostID == 0 && !s.jailed(r.Context(), u.ID)}
 	s.terms.mu.Lock()
 	if s.terms.terms == nil {
 		s.terms.terms = map[string]*terminal{}
@@ -167,7 +251,7 @@ func (s *Server) handleCreateTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 	s.terms.terms[t.ID] = t
 	s.terms.mu.Unlock()
-	s.terms.once.Do(func() { go s.reapTerminals() })
+	s.terms.once.Do(func() { go s.reapTerminals(); go s.watchTerminals() })
 	go s.pumpTerminal(t)
 	s.log.Info("terminal opened", "user", u.ID, "host", in.HostID, "id", t.ID)
 	writeJSON(w, http.StatusCreated, t.view())
@@ -259,6 +343,7 @@ func (s *Server) pumpTerminal(t *terminal) {
 			chunk := append([]byte(nil), b[:n]...)
 			t.mu.Lock()
 			t.buf = append(t.buf, chunk...)
+			t.lastOut = time.Now()
 			if len(t.buf) > termScrollback {
 				t.buf = append([]byte(nil), t.buf[len(t.buf)-termScrollback*3/4:]...)
 			}
@@ -439,6 +524,9 @@ func (s *Server) handleTerminalSocket(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if typ == websocket.MessageBinary {
+				t.mu.Lock()
+				t.lastIn = time.Now()
+				t.mu.Unlock()
 				if _, err := t.ptmx.Write(data); err != nil {
 					return
 				}
