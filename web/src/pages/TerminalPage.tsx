@@ -29,9 +29,11 @@ const light = {
 }
 type Look = 'app' | 'light' | 'dark'
 const LOOK_KEY = 'pai-terminal-theme'
-// light: programs that print light grey or "white" text assume a dark
-// background; xterm darkens such text until it can be read
-const xtermLook = (l: 'light' | 'dark') => ({ theme: l === 'light' ? light : dark, minimumContrastRatio: l === 'light' ? 4.5 : 1 })
+// light: the palette itself keeps "white" and light grey readable on white
+// (xterm's minimumContrastRatio is not used: it measures reverse video, like
+// bash's pasted-text highlight, against the page instead of the highlight
+// and turns that text grey on dark)
+const xtermLook = (l: 'light' | 'dark') => ({ theme: l === 'light' ? light : dark, minimumContrastRatio: 1 })
 
 const wsURL = (id: string) => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${V1}/terminals/${id}/ws`
 
