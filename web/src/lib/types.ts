@@ -212,6 +212,8 @@ export interface Thread {
   pending: number
   queued: number
   external?: boolean
+  /** Pocket AI's own agent from before a restart, reconnected: messages wait for it, Stop ends it. */
+  reattached?: boolean
   /** Claude Remote Control is on: the session is open in claude.ai/code and the Claude app. */
   remote_control?: { state: 'starting' | 'ready' | 'connected' | 'reconnecting' | 'error'; url?: string; error?: string }
   subagents?: Subagent[]

@@ -346,6 +346,8 @@ func (s *Server) postMessage(ctx context.Context, u *store.User, t *store.Thread
 		return false, err
 	}
 	*t = *fresh // a rewind may have replaced the provider session while waiting
+	// still working from before a restart: reconnect to it, this message waits
+	s.checkLeftover(ctx, t)
 	if len(uploadIDs) > 10 {
 		return false, badRequest("Attach at most 10 files per message")
 	}
@@ -651,7 +653,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "empty message")
 		return
 	}
-	if s.rt.isExternal(t.ID) && s.rt.get(t.ID) == nil {
+	if s.rt.isExternal(t.ID) && s.rt.get(t.ID) == nil && !s.isReattached(t.ID) {
 		writeErr(w, http.StatusConflict, "this session is running somewhere else right now (a terminal or another app); reply when it has finished")
 		return
 	}
@@ -731,6 +733,10 @@ func (s *Server) handleSendNow(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleInterrupt(w http.ResponseWriter, r *http.Request) {
 	if t := s.threadAs(w, r, accessChat); t != nil {
+		if s.stopReattached(t.ID) {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		if err := s.rt.interrupt(t.ID); err != nil {
 			s.fail(w, err, "interrupt")
 			return
