@@ -1,6 +1,7 @@
 // Threads, grouped by time, with search (titles here, all messages on Enter), folder filter and archive.
 import type React from 'react'
 import { RunDots, RunningList, elapsed, useNow } from './RunningList'
+import { idsOf, useTerminals } from '../lib/terminals'
 import { UsageWidget } from './UsageWidget'
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -90,6 +91,9 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
   }, [showArchive, threads])
 
   const go = (path: string) => { navigate(path); onNavigate() }
+  // your terminal tabs, listed under Terminal
+  const term = useTerminals()
+  const termTabs = term.groups
   const activeId = loc.pathname.startsWith('/t/') ? loc.pathname.split('/')[2] : ''
   const mine = (t: Thread) => !user || !t.owner_id || t.owner_id === user.id
   const base = showArchive ? archived : threads && threads.filter(mine)
@@ -167,11 +171,29 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
         {nav('/schedules', 'clock', 'Schedules')}
         {(user?.role === 'admin' || user?.can_run) && nav('/history', 'history', 'On this server')}
         {(user?.role === 'admin' || user?.can_run) && nav('/worktrees', 'fork', 'Worktrees', activeWt > 0 ? <span className="badge">{activeWt}</span> : undefined)}
-        {(user?.role === 'admin' || user?.can_run) && nav('/terminal', 'terminal', 'Terminal', terms.open > 0 ? (
+        {(user?.role === 'admin' || user?.can_run) && nav('/term', 'terminal', 'Terminal', terms.open > 0 ? (
           <span className="sb-term" title={terms.busy ? `${terms.open} open · ${terms.busy} running a command` : `${terms.open} open`}>
             {terms.busy > 0 && <RunDots size={11} />}
             <span className={`badge ${terms.busy ? 'accent-soft' : ''}`}>{terms.open}</span>
           </span>) : undefined)}
+        {(user?.role === 'admin' || user?.can_run) && termTabs.length > 0 && (
+          <div className="sb-terms">
+            {termTabs.map(g => {
+              const ts = idsOf(g.root).map(id => term.byId.get(id)).filter(t => !!t)
+              const lead = term.byId.get(g.focus) || ts[0]
+              if (!lead) return null
+              const busy = ts.some(t => !t.ended && terms.busy_ids.includes(t.id))
+              return (
+                <button key={g.id} type="button" className={`sb-term-row ${loc.pathname === `/term/${g.id}` ? 'active' : ''} ${ts.every(t => t.ended) ? 'ended' : ''}`}
+                  onClick={() => go(`/term/${g.id}`)} title={`${lead.title} · ${lead.host_name}${lead.cwd ? ` · ${lead.cwd}` : ''}${ts.length > 1 ? ` · ${ts.length} panes` : ''}`}>
+                  <span className="sb-term-ico">{busy ? <RunDots size={10} /> : <span className="term-dot" />}</span>
+                  <span className="grow ellipsis">{lead.title}</span>
+                  {ts.length > 1 && <span className="sb-term-n">{ts.length}</span>}
+                </button>
+              )
+            })}
+          </div>
+        )}
         {nav('/shared', 'users', 'Shared', sharedN > 0 ? <span className="badge">{sharedN}</span> : undefined)}
         {nav('/usage', 'chart', 'Usage')}
         {nav('/snippets', 'bookmark', 'Snippets')}

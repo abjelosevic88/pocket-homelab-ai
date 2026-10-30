@@ -12,6 +12,8 @@ import { type MenuItem, MenuButton, useContextMenu } from './ui'
 import { useThreadMenu } from './ThreadMenu'
 import { keyCaps, useShortcuts } from '../lib/shortcuts'
 import { projectsRef, useProjectsLink } from '../lib/projects'
+import { idsOf, isTermTab, TERM_TAB, tabPath, useMachineItems, useTerminals } from '../lib/terminals'
+import { RunDots } from './RunningList'
 
 const KEY = 'pai-tabs'
 const load = (key = KEY): string[] => { try { const v = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(v) ? v.filter(x => typeof x === 'string') : [] } catch { return [] } }
@@ -38,7 +40,9 @@ export function useTabs(enabled: boolean) {
   const { threads } = useApp()
   const loc = useLocation()
   const navigate = useNavigate()
-  const active = /^\/t\/([^/]+)/.exec(loc.pathname)?.[1] || ''
+  const term = useTerminals()
+  // a conversation's id, or term:<tab> for a terminal tab
+  const active = /^\/t\/([^/]+)/.exec(loc.pathname)?.[1] || ((g => g ? TERM_TAB + g : '')(/^\/term\/([^/]+)/.exec(loc.pathname)?.[1]))
   useEffect(() => { localStorage.setItem(KEY, JSON.stringify(tabs)) }, [tabs])
   useEffect(() => { localStorage.setItem(CLOSED, JSON.stringify(closed)) }, [closed])
   useEffect(() => { if (enabled && active) { setTabs(t => t.includes(active) ? t : [...t, active]); setClosed(c => c.includes(active) ? c.filter(x => x !== active) : c) } }, [enabled, active])
@@ -46,12 +50,15 @@ export function useTabs(enabled: boolean) {
   const close = useCallback((ids: string[], remember = true) => {
     const next = tabs.filter(x => !ids.includes(x))
     setTabs(next)
-    if (remember) setClosed(c => [...ids.filter(id => tabs.includes(id)).reverse(), ...c.filter(x => !ids.includes(x))].slice(0, 20))
+    // closing a terminal tab ends its shells (it cannot be reopened)
+    const termGroups = ids.filter(isTermTab).map(id => id.slice(TERM_TAB.length))
+    if (remember && termGroups.length) term.closeGroups(termGroups)
+    if (remember) setClosed(c => [...ids.filter(id => tabs.includes(id) && !isTermTab(id)).reverse(), ...c.filter(x => !ids.includes(x))].slice(0, 20))
     if (active && ids.includes(active)) { // closing the open tab: go to its neighbour
       const to = next[Math.min(tabs.indexOf(active), next.length - 1)]
-      navigate(to ? `/t/${to}` : '/')
+      navigate(to ? tabPath(to) : '/')
     }
-  }, [tabs, active, navigate])
+  }, [tabs, active, navigate, term])
   const move = useCallback((id: string, before: string) => setTabs(t => {
     if (id === before) return t
     const rest = t.filter(x => x !== id)
@@ -67,7 +74,7 @@ export function useTabs(enabled: boolean) {
     if (!tabs.length) return
     const i = tabs.indexOf(active)
     const to = tabs[i < 0 ? (by > 0 ? 0 : tabs.length - 1) : (i + by + tabs.length) % tabs.length]
-    if (to !== active) navigate(`/t/${to}`)
+    if (to !== active) navigate(tabPath(to))
   }, [tabs, active, navigate])
   // groups: members always sit together in `tabs`, the group where its first member is
   const groupOf = useCallback((id: string) => groups.find(g => g.tabs.includes(id)), [groups])
@@ -147,7 +154,10 @@ export function useTabs(enabled: boolean) {
 
 export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, issues, groups, groupOf, joinGroup, newGroup, leaveGroup, editGroup, ungroup }: ReturnType<typeof useTabs>) {
   const [naming, setNaming] = useState('') // group whose label is being renamed
-  const { threads, running, user } = useApp()
+  const { threads, running, user, terms } = useApp()
+  const term = useTerminals()
+  const machines = useMachineItems(async h => { const g = await term.open(h); if (g) navigate(`/term/${g}`) })
+  const termGroup = (id: string) => isTermTab(id) ? term.groups.find(g => g.id === id.slice(TERM_TAB.length)) : undefined
   const keys = useShortcuts()
   const navigate = useNavigate()
   const [drag, setDrag] = useState('')
@@ -157,7 +167,7 @@ export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, i
   const byId = new Map((threads || []).map(t => [t.id, t] as [string, Thread]))
   // tabs of threads that are gone (deleted or archived) drop out — except the
   // one on screen (an archived thread you opened keeps its tab)
-  const gone = threads ? tabs.filter(id => !byId.has(id) && id !== active) : []
+  const gone = tabs.filter(id => id !== active && (isTermTab(id) ? term.list !== null && !termGroup(id) : !!threads && !byId.has(id)))
   const shown = tabs.filter(id => !gone.includes(id))
   useEffect(() => { if (gone.length) close(gone, false) }, [gone.join()]) // eslint-disable-line react-hooks/exhaustive-deps
   if (!shown.length) return null
@@ -232,12 +242,16 @@ export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, i
           const t = byId.get(id)
           const on = id === active
           const busy = working(t)
+          const tg = termGroup(id)
+          const tts = tg ? idsOf(tg.root).map(x => term.byId.get(x)).filter(x => !!x) : []
+          const tLead = tg ? term.byId.get(tg.focus) || tts[0] : undefined
+          const tBusy = tts.some(x => !x.ended && terms.busy_ids.includes(x.id))
           return (
             <div key={id} role="tab" aria-selected={on} tabIndex={0} draggable
               className={`tab ${on ? 'on' : ''} ${drag === id ? 'dragging' : ''} ${t?.unread && !on ? 'unread' : ''} ${r.group ? `grouped tg-${r.group.color}` : ''}`}
-              title={t ? threadTitle(t) : ''}
-              onClick={() => navigate(`/t/${id}`)}
-              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/t/${id}`) } }}
+              title={t ? threadTitle(t) : tLead ? `${tLead.title} · ${tLead.host_name}${tts.length > 1 ? ` · ${tts.length} panes` : ''}` : ''}
+              onClick={() => navigate(tabPath(id))}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(tabPath(id)) } }}
               onContextMenu={e => ctx.open(e, () => tabMenu(id, byId.get(id)))}
               onAuxClick={e => { if (e.button === 1) { e.preventDefault(); close([id]) } }}
               onMouseDown={e => { if (e.button === 1) e.preventDefault() }}
@@ -252,13 +266,16 @@ export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, i
                 if (into !== from) { if (into) joinGroup(drag, into); else leaveGroup(drag) }
                 move(drag, id)
               }}>
-              <span className={`tab-ico ${t?.provider || ''}`}>
+              {isTermTab(id) ? <span className="tab-ico term">
+                {tBusy ? <span className="tab-term-busy" role="img" aria-label="Running a command"><RunDots size={11} /></span> : <Icon name="terminal" size={13} />}
+              </span> : <span className={`tab-ico ${t?.provider || ''}`}>
                 {busy ? <span className={`tab-busy ${t?.status === 'waiting' || (t?.pending || 0) > 0 ? 'waiting' : ''}`} role="img" aria-label="Working" />
                   : t && hasBackground(t) ? <span className="tab-bg" role="img" aria-label="Still running in the background" title={backgroundTitle(t)}><BgMark size={11} /></span>
                   : t?.unread && !on ? <span className="tab-done" role="img" aria-label="Done, new reply" title="Done — new reply" />
                   : <Icon name={t?.provider === 'codex' ? 'codex' : 'claude'} size={13} />}
-              </span>
-              <span className="tab-title">{t ? threadTitle(t) : '…'}</span>
+              </span>}
+              <span className="tab-title">{t ? threadTitle(t) : tLead ? tLead.title : '…'}</span>
+              {tts.length > 1 && <span className="tab-panes" title={`${tts.length} panes`}><Icon name="split-right" size={10} />{tts.length}</span>}
               {t && <span className={`tab-privacy ${t.shares?.length ? 'shared' : ''}`} title={t.shares?.length ? (t.owner_name && t.owner_id !== user?.id ? `Shared by ${t.owner_name}` : 'Shared') : 'Private'}>
                 <Icon name={t.shares?.length ? 'users' : 'lock'} size={10} /></span>}
               <button type="button" className="tab-x" aria-label="Close tab" title="Close tab (middle-click)" onClick={e => { e.stopPropagation(); close([id]) }}><Icon name="x" size={12} /></button>
@@ -267,6 +284,7 @@ export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, i
         })}
       </div>
       <button type="button" className="tab-new" onClick={() => navigate('/')} aria-label="New thread" title="New thread"><Icon name="plus" size={16} /></button>
+      {(user?.role === 'admin' || user?.can_run) && <MenuButton label="New terminal" className="tab-new" width={240} items={machines}><Icon name="terminal" size={15} /></MenuButton>}
       <MenuButton label="Tab options" className="tab-more" align="right" width={250} items={[
         { label: 'Close this tab', icon: 'x', disabled: i < 0, onSelect: () => close([active]) },
         { label: 'Close other tabs', disabled: i < 0 || shown.length < 2, onSelect: () => close(shown.filter(x => x !== active)) },
