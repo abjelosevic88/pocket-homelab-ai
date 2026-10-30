@@ -440,7 +440,7 @@ func (s *Server) autoContinue(t *store.Thread, why string) {
 	in := agent.Input{Text: autoContinueText}
 	it := agent.Item{Key: key, Kind: "user", Text: autoContinueText, By: "Pocket AI"}
 	unlock := s.lockThreadEdit(t.ID)
-	held := s.holds().add(t.ID, func() { s.sendHeld(t.ID, key, in) })
+	held := s.holds().add(t.ID, key, func() { s.sendHeld(t.ID, key, in) })
 	it.Queued = held
 	s.rt.saveItem(t.ID, it)
 	fresh, err := s.store.GetThreadAny(ctx, t.ID)
@@ -620,8 +620,12 @@ func (s *Server) followLeftover(t *store.Thread, run *reattachRun, first claudeP
 	s.rt.setExternal(t.ID, false)
 	s.rt.setStatus(t.ID, "idle", "")
 	switch {
-	case stopped:
-		s.rt.saveItem(t.ID, agent.Item{Key: fmt.Sprintf("restart-%d", time.Now().UnixNano()), Kind: "notice", Level: "info", Text: "Stopped."})
+	case stopped: // Stop, or Send now on a waiting message
+		text := "Stopped."
+		if waiting > 0 {
+			text = "Stopped. What you sent meanwhile goes now."
+		}
+		s.rt.saveItem(t.ID, agent.Item{Key: fmt.Sprintf("restart-%d", time.Now().UnixNano()), Kind: "notice", Level: "info", Text: text})
 		s.holds().release(t.ID)
 	case state == "lost":
 		s.holds().release(t.ID)
