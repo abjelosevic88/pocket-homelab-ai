@@ -377,6 +377,13 @@ func (rt *engine) systemPrompt(ctx context.Context, uid int64) string {
 
 // ensure returns the live process of a thread, starting (or resuming) it if needed.
 func (rt *engine) ensure(t *store.Thread) (*run, error) {
+	if rt.get(t.ID) == nil {
+		// never a second process next to one from before a restart (reconnect.go)
+		rt.s.re.waitPending(t.ID)
+		if rt.s.isReattached(t.ID) {
+			return nil, errLeftoverWorks
+		}
+	}
 	for {
 		rt.mu.Lock()
 		if r := rt.runs[t.ID]; r != nil {
