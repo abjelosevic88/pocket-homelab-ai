@@ -349,6 +349,13 @@ func (hs *wtHolds) held(threadID string) bool {
 	return ok
 }
 
+// count is how many messages wait for the thread.
+func (hs *wtHolds) count(threadID string) int {
+	hs.mu.Lock()
+	defer hs.mu.Unlock()
+	return len(hs.m[threadID])
+}
+
 func (hs *wtHolds) release(threadID string) {
 	hs.mu.Lock()
 	q := hs.m[threadID]

@@ -64,6 +64,8 @@ type Server struct {
 	wtOnce sync.Once
 	wtHold *wtHolds // messages waiting for a worktree's setup: worktrees.go
 
+	re reattachSet // agents still working from before a restart: reconnect.go
+
 	provMu   sync.Mutex
 	provList []agent.Provider
 	provAt   time.Time
@@ -146,12 +148,9 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		return err
 	}
 	s.rt.start(ctx)
-	// say so in the thread, or a turn cut off by a crash or a manual restart
-	// just looks stuck
-	for _, id := range cut {
-		s.rt.saveItem(id, agent.Item{Key: fmt.Sprintf("restart-%d", time.Now().UnixNano()), Kind: "notice", Level: "warn",
-			Text: "Pocket AI restarted while the agent was working, so this turn stopped. Send a message (e.g. “continue”) to pick up where it left off."})
-	}
+	// a turn cut off by a crash or a restart: reconnect to the agent where it
+	// still works, continue it where it does not (reconnect.go)
+	s.reconnectCut(cut)
 	go s.housekeeping(ctx)
 	go s.scheduleLoop(ctx)
 	_, _ = s.store.DB.ExecContext(ctx, `UPDATE workflows SET last_status='interrupted' WHERE last_status='running'`)
