@@ -467,6 +467,9 @@
 .term-box { flex: 1; min-height: 0; padding: 8px 4px 4px 10px; }
 .term-box .xterm { height: 100%; }
 .term-box .xterm-viewport { scrollbar-width: thin; scrollbar-color: var(--term-thumb) transparent; }
+/* xterm paints its scroll layer black; the rows rarely fill the box to the
+   pixel, and in light colors that black showed as a bar under them */
+.term-box .xterm .xterm-viewport { background-color: var(--term-bg) !important; }
 .term-note { position: absolute; top: 10px; right: 14px; display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--term-dim); background: var(--term-note); border: 1px solid var(--term-line); padding: 5px 10px; border-radius: 8px; }
 .term-ended { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--term-line); background: var(--term-bar); color: var(--term-fg); font-size: 13px; }
 .term-ended span { flex: 1; min-width: 160px; }
