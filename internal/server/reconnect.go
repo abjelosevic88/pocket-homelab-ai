@@ -41,6 +41,10 @@ const (
 	orphanRecent    = 24 * time.Hour // sessions active this long before the restart are checked once before a resume
 )
 
+// leftoverTexts: how many recent items a catch-up checks for messages it
+// would repeat.
+const leftoverTexts = 400
+
 // reattachPoll: how often a leftover process is looked at (tests shorten it).
 var reattachPoll = 4 * time.Second
 
@@ -577,7 +581,7 @@ type leftoverApplier struct {
 	t       *store.Thread
 	log     *agent.ClaudeLog
 	have    map[string]bool // item keys
-	texts   map[string]bool // kind + text of the messages of the cut-off turn
+	texts   map[string]bool // kind + text of recent messages
 	ended   bool
 	prompt  bool            // the next prompt line is the cut-off turn's own: already there
 	turns   int             // footers of that turn Pocket AI already has (it ended before the restart)
@@ -598,6 +602,16 @@ func (s *Server) newLeftoverApplier(ctx context.Context, t *store.Thread) *lefto
 		if it.Kind == "turn" {
 			ap.turns++
 		}
+	}
+	// The catch-up starts at the log's last prompt, which can be well before
+	// the last message here: one sent mid-turn is no prompt in the log (a
+	// queued command). So messages are matched over the recent past, not
+	// just since the last one.
+	from := len(items) - leftoverTexts
+	if from < 0 {
+		from = 0
+	}
+	for _, it := range items[from:] {
 		if it.Kind == "user" || it.Kind == "assistant" {
 			var x agent.Item
 			if json.Unmarshal(it.Data, &x) == nil {
