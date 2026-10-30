@@ -5,12 +5,12 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { ago, fmtBytes } from '../lib/format'
-import { type FileEntry, type FileListing, fileIcon, filePath, filesPath, joinPath, uploadFiles } from '../lib/files'
+import { type FileEntry, type FileListing, fileIcon, filePath, filesPath, joinPath, rawURL, uploadFiles } from '../lib/files'
 import { useTerminals } from '../lib/terminals'
 import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
 import { Select } from '../components/Select'
-import { errMsg, Loading, Spinner, useToast } from '../components/ui'
+import { type Anchor, Confirm, copyText, download, errMsg, Loading, Menu, type MenuItem, Modal, rectOf, Spinner, useContextMenu, useToast } from '../components/ui'
 
 const HIDDEN = 'pai-files-hidden'
 
@@ -29,6 +29,7 @@ export default function FilesPage({ onMenu }: { onMenu?: () => void }) {
   const [editing, setEditing] = useState<string | null>(null)
   const [drop, setDrop] = useState(false)
   const [upload, setUpload] = useState<{ n: number; p: number } | null>(null)
+  const [rowMenu, setRowMenu] = useState<{ items: MenuItem[]; at: Anchor } | null>(null)
   const input = useRef<HTMLInputElement>(null)
 
   const go = useCallback((h: number, p: string) => navigate(filesPath(h, p)), [navigate])
@@ -55,7 +56,47 @@ export default function FilesPage({ onMenu }: { onMenu?: () => void }) {
   const crumbs = data ? data.path.split('/').filter(Boolean).map((part, i, all) => ({ part, path: '/' + all.slice(0, i + 1).join('/') })) : []
   const shown = (data?.entries || []).filter(e => hidden || !e.name.startsWith('.'))
   const open = (e: FileEntry) => { if (!data) return; const p = joinPath(data.path, e.name); if (e.dir) go(host, p); else navigate(filePath(host, p)) }
-  const openTerminal = async () => { if (!data) return; const g = await term.open(host, data.path); if (g) navigate(`/term/${g}`) }
+  const openTerminal = async (dir = data?.path) => { if (!dir) return; const g = await term.open(host, dir); if (g) navigate(`/term/${g}`) }
+
+  // right-click (or ⋯ on a row): new folder or file, upload, rename, delete…
+  const ctx = useContextMenu()
+  const [naming, setNaming] = useState<{ op: 'mkdir' | 'newfile' | 'rename'; entry?: FileEntry } | null>(null)
+  const [deleting, setDeleting] = useState<FileEntry | null>(null)
+  const change = async (op: string, path: string, name = '') => {
+    try {
+      await api.post(`${V1}/files/${op}`, { host, path, name })
+      load()
+      return true
+    } catch (e) { toast(errMsg(e), 'err'); return false }
+  }
+  const copy = (s: string) => copyText(s).then(ok => toast(ok ? 'Path copied' : 'Could not copy', ok ? 'ok' : 'err'))
+  const toggleHidden = () => { setHidden(!hidden); localStorage.setItem(HIDDEN, hidden ? '0' : '1') }
+  const folderItems = (): MenuItem[] => !data ? [] : [
+    { label: 'New folder…', icon: 'folder', onSelect: () => setNaming({ op: 'mkdir' }) },
+    { label: 'New file…', icon: 'file', onSelect: () => setNaming({ op: 'newfile' }) },
+    { label: 'Upload files…', icon: 'upload', onSelect: () => input.current?.click() },
+    'sep',
+    { label: 'Open a terminal here', icon: 'terminal', onSelect: () => openTerminal() },
+    { label: 'Copy folder path', icon: 'copy', onSelect: () => copy(data.path) },
+    { label: hidden ? 'Hide hidden files' : 'Show hidden files', icon: hidden ? 'eye-off' : 'eye', onSelect: toggleHidden },
+    { label: 'Reload', icon: 'refresh', onSelect: load },
+  ]
+  const entryItems = (e: FileEntry): MenuItem[] => {
+    if (!data) return []
+    const p = joinPath(data.path, e.name)
+    return [
+      { label: e.dir ? 'Open folder' : 'Open in a tab', icon: e.dir ? 'folder' : 'file', onSelect: () => open(e) },
+      ...(e.dir ? [{ label: 'Open a terminal here', icon: 'terminal', onSelect: () => openTerminal(p) }]
+        : [{ label: 'Download', icon: 'download', onSelect: () => download(rawURL(host, p, true)) }]),
+      { label: 'Copy path', icon: 'copy', onSelect: () => copy(p) },
+      'sep',
+      { label: 'Rename…', icon: 'edit', onSelect: () => setNaming({ op: 'rename', entry: e }) },
+      { label: 'Delete…', icon: 'trash', danger: true, onSelect: () => setDeleting(e) },
+      'sep',
+      { label: 'New folder…', icon: 'folder', onSelect: () => setNaming({ op: 'mkdir' }) },
+      { label: 'Upload files…', icon: 'upload', onSelect: () => input.current?.click() },
+    ]
+  }
 
   return (
     <div className={`page files-page ${drop ? 'dropping' : ''}`}
@@ -65,7 +106,7 @@ export default function FilesPage({ onMenu }: { onMenu?: () => void }) {
       <PageHead title="Files" icon="folder" onMenu={onMenu}
         sub={data ? `${data.host} · ${data.path}` : 'Files on this server or any of your machines'}
         actions={<>
-          <button type="button" className="btn ghost icon-only" title="Open a terminal here" aria-label="Open a terminal here" disabled={!data} onClick={openTerminal}><Icon name="terminal" size={16} /></button>
+          <button type="button" className="btn ghost icon-only" title="Open a terminal here" aria-label="Open a terminal here" disabled={!data} onClick={() => openTerminal()}><Icon name="terminal" size={16} /></button>
           <button type="button" className="btn ghost icon-only" title="Reload" aria-label="Reload" onClick={load}><Icon name="refresh" size={16} /></button>
           <button type="button" className="btn primary sm" disabled={!data || !!upload} onClick={() => input.current?.click()}>
             {upload ? <><Spinner /> {Math.round(upload.p * 100)}%</> : <><Icon name="upload" size={15} /> Upload</>}
@@ -95,20 +136,53 @@ export default function FilesPage({ onMenu }: { onMenu?: () => void }) {
       <div className="page-scroll">
         {err ? <div className="page-inner"><div className="files-err"><Icon name="alert" size={16} /> {err}</div></div>
           : !data ? <Loading />
-          : <div className="files-list" aria-busy={loading}>
+          : <div className="files-list" aria-busy={loading} onContextMenu={e => ctx.open(e, folderItems)}>
               {shown.length === 0 && <div className="files-empty">This folder is empty{!hidden && data.entries.length ? ' (except hidden files)' : ''}. Drop files here to upload them.</div>}
               {shown.map(e => (
-                <button key={e.name} type="button" className={`files-row ${e.dir ? 'dir' : ''}`} onClick={() => open(e)}>
+                <div key={e.name} role="button" tabIndex={0} className={`files-row ${e.dir ? 'dir' : ''}`} onClick={() => open(e)}
+                  onKeyDown={k => { if (k.key === 'Enter') open(e); if (k.key === 'F2') setNaming({ op: 'rename', entry: e }); if (k.key === 'Delete') setDeleting(e) }}
+                  onContextMenu={m => ctx.open(m, () => entryItems(e))}>
                   <Icon name={fileIcon(e.name, e.dir)} size={16} />
                   <span className="files-name">{e.name}{e.link && <span className="files-link" title="Symbolic link"> ↗</span>}</span>
                   <span className="files-size">{e.dir ? '' : fmtBytes(e.size)}</span>
                   <span className="files-time" title={e.mtime ? new Date(e.mtime * 1000).toLocaleString() : ''}>{e.mtime ? ago(new Date(e.mtime * 1000).toISOString()) : ''}</span>
-                </button>
+                  <button type="button" className="files-more" aria-label={`More for ${e.name}`} title="More"
+                    onClick={m => { m.stopPropagation(); setRowMenu({ items: entryItems(e), at: rectOf(m.currentTarget) }) }}><Icon name="more" size={15} /></button>
+                </div>
               ))}
               {data.more && <div className="files-empty">Only the first 3000 entries are shown.</div>}
             </div>}
       </div>
+      {ctx.menu}
+      {rowMenu && <Menu anchor={rowMenu.at} items={rowMenu.items} align="right" onClose={() => setRowMenu(null)} />}
+      {naming && data && <NameDialog op={naming.op} initial={naming.entry?.name || ''} dir={!!naming.entry?.dir} onClose={() => setNaming(null)}
+        onDone={async name => {
+          const ok = naming.op === 'rename' ? await change('rename', joinPath(data.path, naming.entry!.name), name) : await change(naming.op, data.path, name)
+          if (ok) setNaming(null)
+        }} />}
+      {deleting && data && <Confirm title={`Delete ${deleting.dir ? 'folder' : 'file'}?`} confirmLabel="Delete"
+        message={<><b>{deleting.name}</b>{deleting.dir ? ' and everything in it' : ''} will be deleted from {data.host}. This cannot be undone.</>}
+        onCancel={() => setDeleting(null)} onConfirm={async () => { const e = deleting; setDeleting(null); if (await change('delete', joinPath(data.path, e.name))) toast(`Deleted ${e.name}`, 'ok') }} />}
       {drop && <div className="files-drop"><Icon name="upload" size={28} /><b>Drop to upload</b><span className="mono">{data?.path}</span></div>}
     </div>
+  )
+}
+
+// a name for a new folder or file, or a new name (the name without its
+// extension is selected, like Finder)
+function NameDialog({ op, initial, dir, onClose, onDone }: { op: 'mkdir' | 'newfile' | 'rename'; initial: string; dir: boolean; onClose: () => void; onDone: (name: string) => Promise<void> }) {
+  const [v, setV] = useState(initial)
+  const [busy, setBusy] = useState(false)
+  const title = op === 'mkdir' ? 'New folder' : op === 'newfile' ? 'New file' : `Rename ${dir ? 'folder' : 'file'}`
+  const bad = !v.trim() || v.includes('/') || v === '.' || v === '..'
+  const save = async () => { if (bad || busy) return; setBusy(true); await onDone(v.trim()); setBusy(false) }
+  return (
+    <Modal title={title} size="sm" onClose={onClose}
+      footer={<><button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+        <button type="button" className="btn primary" disabled={bad || busy || (op === 'rename' && v.trim() === initial)} onClick={save}>{busy ? <Spinner /> : op === 'rename' ? 'Rename' : 'Create'}</button></>}>
+      <input autoFocus aria-label="Name" style={{ width: '100%' }} value={v} placeholder={op === 'mkdir' ? 'Folder name' : 'File name'}
+        onFocus={e => { const i = op === 'rename' && !dir ? v.lastIndexOf('.') : -1; e.currentTarget.setSelectionRange(0, i > 0 ? i : v.length) }}
+        onChange={e => setV(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') save() }} />
+    </Modal>
   )
 }

@@ -362,3 +362,6 @@ Same access rule as terminals (this server: owner/admins; people with a folder o
 | GET | `/api/v1/files?host=&path=` | folder listing (`path` empty = home): `path, home, parent, entries[{name, dir, link, size, mtime}]`, max 3000 |
 | GET | `/api/v1/files/raw?host=&path=[&download=1]` | the file (ranges on this server; other machines ≤ 64 MB). Sandboxed CSP, nosniff; HTML/JS served as text |
 | POST | `/api/v1/files/upload?host=&path=<folder>` | multipart files; never overwrites (`name (1).ext`); answers `{paths}` |
+| POST | `/api/v1/files/mkdir`, `/files/newfile` | `{host, path: folder, name}` → `{path}`; refused when the name is taken |
+| POST | `/api/v1/files/rename` | `{host, path, name}` (same folder, never over an existing entry) |
+| POST | `/api/v1/files/delete` | `{host, path}`; folders with everything in them; never `/`, a home folder or a person's own top folders |
