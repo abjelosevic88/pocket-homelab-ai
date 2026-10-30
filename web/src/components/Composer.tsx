@@ -25,8 +25,14 @@ export interface ComposerHandle { focus: () => void; setText: (t: string) => voi
 
 const MAX_EDGE = 2000
 const MAX_BYTES = 20 * 1024 * 1024
-// MIME types next to .json/.html: iOS greys those files out on extensions alone
-const DOC_TYPES = '.pdf,.docx,.xlsx,.pptx,.odt,.ods,.odp,.txt,.md,.csv,.tsv,.json,.xml,.html,.htm,application/json,text/html'
+// Read as plain text by the server (internal/documenttext textExt); keep in sync.
+const TEXT_EXT = 'txt md csv tsv json xml html htm yaml yml toml ini conf cfg log py js mjs cjs ts tsx jsx go rs java kt swift c h cpp rb php sh bash zsh sql css scss diff patch srt vtt ass ssa ics vcf eml svg'.split(' ')
+// Converted to text on the server; .doc/.xls/.ppt through Collabora.
+const OFFICE_EXT = 'pdf docx xlsx pptx odt ods odp doc xls ppt'.split(' ')
+const DOC_EXT = [...OFFICE_EXT, ...TEXT_EXT]
+const DOC_RE = new RegExp(`(\\.(${DOC_EXT.join('|')})|\\.env\\.example)$`, 'i')
+// MIME types next to the extensions: iOS greys files out on unknown extensions alone
+const DOC_TYPES = DOC_EXT.map(e => '.' + e).join(',') + ',.example,text/*,application/json,application/msword,application/vnd.ms-excel,application/vnd.ms-powerpoint'
 
 /** Big photos are scaled down in the browser before upload: faster on mobile data, and
  *  the CLIs refuse very large images anyway. Screenshots under the limit pass as they are. */
@@ -171,8 +177,8 @@ export const Composer = React.forwardRef<ComposerHandle, {
   useEffect(() => { if (autoFocus && !isTouch()) ta.current?.focus() }, [autoFocus, draftKey])
 
   const addFiles = useCallback(async (files: File[]) => {
-    const imgs = files.filter(f => f.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|hei[cf]|pdf|docx|xlsx|pptx|odt|ods|odp|txt|md|csv|tsv|json|xml|html?)$/i.test(f.name))
-    if (imgs.length < files.length) toast('Attach images, PDF, Office documents, CSV or text', 'err')
+    const imgs = files.filter(f => f.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|hei[cf])$/i.test(f.name) || DOC_RE.test(f.name))
+    if (imgs.length < files.length) toast('Attach images, PDF, Office documents, code or text files', 'err')
     for (const raw of imgs) {
       const lid = 'a' + ++lidSeq
       const preview = URL.createObjectURL(raw)

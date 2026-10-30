@@ -69,6 +69,9 @@ type Config struct {
 	IdleTimeout time.Duration // stop a CLI process after this long without a turn
 	MaxLive     int           // most CLI processes alive at once (oldest idle ones are stopped)
 	UploadMax   int64         // bytes per uploaded image
+	// Collabora Online (or CODE) base URL; its convert-to API turns old
+	// .doc/.xls/.ppt uploads into OOXML. "" = those are refused.
+	OfficeConvertURL string
 
 	// People other than the owner: a folder each here, their agents in a
 	// bubblewrap jail (agent/jail.go); SandboxOff keeps the folders but
@@ -159,6 +162,8 @@ func Load() (*Config, error) {
 		IdleTimeout: envDuration("IDLE_TIMEOUT", 20*time.Minute),
 		MaxLive:     envInt("MAX_LIVE", 12),
 		UploadMax:   int64(envInt("UPLOAD_MAX_MB", 20)) << 20,
+
+		OfficeConvertURL: strings.TrimRight(env("OFFICE_CONVERT_URL", ""), "/"),
 	}
 	home, _ := os.UserHomeDir()
 	c.Home = env("AGENT_HOME", home)
