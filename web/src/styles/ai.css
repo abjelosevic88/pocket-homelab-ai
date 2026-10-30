@@ -583,6 +583,11 @@ button.privacy-badge:disabled { cursor: default; }
 .tool.error .tool-ico, .tool.error .tool-name { color: var(--danger); }
 .tool-body { border-top: 0; margin: 2px 0 8px 6px; padding: 4px 0 4px 15px; border-left: 2px solid var(--border); }
 .thinking-body { margin: 2px 0 8px 6px; padding: 4px 0 4px 15px; font-style: normal; color: var(--muted); }
+/* continuation summaries, cross-session notes, sub-agent reports */
+.folded-label { flex-shrink: 0; }
+.folded-preview { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); }
+.folded-body { max-height: 60vh; overflow: auto; overflow-wrap: anywhere; }
+.msg.user .folded-note .thinking-h { height: auto; }
 .tool-run { display: flex; flex-direction: column; gap: 0; }
 .tool-run-body { margin: 2px 0 8px 6px; padding-left: 13px; border-left: 2px solid var(--border); display: grid; gap: 10px; }
 .tool-run-detail { display: grid; gap: 4px; padding: 2px 0; }
