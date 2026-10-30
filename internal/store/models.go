@@ -106,9 +106,18 @@ type Thread struct {
 	// Background work other than sub-agents (shell commands, monitors) a live
 	// session is running, even after its turn is over.
 	Background any `json:"background,omitempty"`
+	// RemoteControl: Claude Remote Control is on (nil = off).
+	RemoteControl *RemoteControl `json:"remote_control,omitempty"`
 	// Sharing: who else may open it, and whose it is.
 	Shares    []ThreadShare `json:"shares,omitempty"`
 	OwnerName string        `json:"owner_name,omitempty"`
+}
+
+// RemoteControl is how a thread's Claude Remote Control link is doing.
+type RemoteControl struct {
+	State string `json:"state"` // starting | ready | connected | reconnecting | error
+	URL   string `json:"url,omitempty"`
+	Error string `json:"error,omitempty"`
 }
 
 // Item is one stored timeline entry; Data is the JSON the runtime wrote.

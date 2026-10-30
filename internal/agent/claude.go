@@ -56,6 +56,18 @@ type claudeSession struct {
 	cost      float64 // cumulative cost reported by this process
 	subs      []Subagent
 	tasks     []Task // background shell commands and monitors still running
+
+	// Remote Control: control requests waiting for their answer, whether it
+	// is on, and what we sent while it was (the CLI may echo those back).
+	waiters map[string]chan controlReply
+	remote  bool
+	sent    []string
+}
+
+type controlReply struct {
+	ok   bool
+	err  string
+	body json.RawMessage
 }
 
 type claudePending struct {
@@ -122,7 +134,7 @@ func StartClaude(ctx context.Context, o Options, sink Sink) (Session, error) {
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	s := &claudeSession{opts: o, sink: sink, cmd: cmd, done: make(chan struct{}), errb: &tail{n: 8 << 10},
-		pending: map[string]claudePending{}, denied: map[string]bool{}, tools: map[string]*Tool{},
+		pending: map[string]claudePending{}, denied: map[string]bool{}, tools: map[string]*Tool{}, waiters: map[string]chan controlReply{},
 		streamKey: map[int]string{}, streamTyp: map[int]string{}, consumed: map[string]int{}, msgKeys: map[string][]string{}}
 	cmd.Stderr = s.errb
 	stdin, err := cmd.StdinPipe()
@@ -184,6 +196,12 @@ func (s *claudeSession) Send(in Input) error {
 		content = blocks
 	}
 	s.mu.Lock()
+	if s.remote {
+		s.sent = append(s.sent, strings.TrimSpace(in.Text))
+		if len(s.sent) > 20 {
+			s.sent = s.sent[len(s.sent)-20:]
+		}
+	}
 	if !s.running {
 		s.running = true
 		s.turnFrom = time.Now()
@@ -214,6 +232,67 @@ func (s *claudeSession) SetMode(mode string) error {
 	s.opts.Mode = mode
 	s.mu.Unlock()
 	return s.write(map[string]any{"type": "control_request", "request_id": id, "request": map[string]any{"subtype": "set_permission_mode", "mode": mode}})
+}
+
+// RemoteControl turns Claude Code's Remote Control on or off for this
+// process: on, the session shows up in claude.ai/code and the Claude app,
+// and messages and approvals from there run here.
+func (s *claudeSession) RemoteControl(ctx context.Context, on bool, name, reattach string) (RemoteInfo, error) {
+	if s.opts.Restricted {
+		return RemoteInfo{}, errors.New("Pocket Ask conversations cannot use Remote Control")
+	}
+	req := map[string]any{"subtype": "remote_control", "enabled": on}
+	if on && name != "" {
+		req["name"] = name
+	}
+	if on && reattach != "" {
+		req["reattach_session_id"] = reattach
+	}
+	s.mu.Lock()
+	s.reqSeq++
+	id := fmt.Sprintf("rc-%d", s.reqSeq)
+	ch := make(chan controlReply, 1)
+	s.waiters[id] = ch
+	if on {
+		s.remote = true
+	}
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.waiters, id)
+		s.mu.Unlock()
+	}()
+	if err := s.write(map[string]any{"type": "control_request", "request_id": id, "request": req}); err != nil {
+		return RemoteInfo{}, err
+	}
+	var rep controlReply
+	select {
+	case rep = <-ch:
+	case <-s.done:
+		return RemoteInfo{}, ErrClosed
+	case <-ctx.Done():
+		return RemoteInfo{}, errors.New("Claude Code did not answer the Remote Control request in time")
+	}
+	if !rep.ok {
+		if on {
+			s.mu.Lock()
+			s.remote = false
+			s.mu.Unlock()
+		}
+		return RemoteInfo{}, errors.New(firstNonEmpty(rep.err, "Claude Code refused Remote Control"))
+	}
+	if !on {
+		s.mu.Lock()
+		s.remote, s.sent = false, nil
+		s.mu.Unlock()
+		return RemoteInfo{}, nil
+	}
+	var r struct {
+		SessionURL      string `json:"session_url"`
+		BridgeSessionID string `json:"bridge_session_id"`
+	}
+	_ = json.Unmarshal(rep.body, &r)
+	return RemoteInfo{SessionURL: r.SessionURL, BridgeSessionID: r.BridgeSessionID}, nil
 }
 
 func (s *claudeSession) Close() error {
@@ -385,6 +464,10 @@ func (s *claudeSession) handle(m map[string]json.RawMessage) {
 			s.handleTask(m)
 		case "background_tasks_changed":
 			s.handleBackground(m)
+		case "bridge_state":
+			if b, ok := s.sink.(BridgeSink); ok {
+				b.Bridge(str(m, "state"))
+			}
 		}
 	case "stream_event":
 		if p := m["parent_tool_use_id"]; len(p) > 0 && string(p) != "null" {
@@ -402,6 +485,7 @@ func (s *claudeSession) handle(m map[string]json.RawMessage) {
 		if p := m["parent_tool_use_id"]; len(p) > 0 && string(p) != "null" {
 			return
 		}
+		s.handleRemoteUser(m)
 		s.handleUser(m["message"], m["tool_use_result"])
 	case "result":
 		s.handleResult(m)
@@ -410,8 +494,103 @@ func (s *claudeSession) handle(m map[string]json.RawMessage) {
 	case "control_request":
 		s.handleControl(str(m, "request_id"), m["request"])
 	case "control_response":
-		// answers to our initialize / interrupt
+		s.handleControlResponse(m["response"])
+	case "control_cancel_request":
+		id := str(m, "request_id")
+		s.mu.Lock()
+		_, ok := s.pending[id]
+		delete(s.pending, id)
+		s.mu.Unlock()
+		if c, can := s.sink.(CancelSink); ok && can {
+			c.RequestCancelled(id)
+		}
 	}
+}
+
+// handleControlResponse hands answers to the requests someone waits on
+// (Remote Control); the ones to initialize / interrupt are not needed.
+func (s *claudeSession) handleControlResponse(raw json.RawMessage) {
+	var r struct {
+		Subtype   string          `json:"subtype"`
+		RequestID string          `json:"request_id"`
+		Response  json.RawMessage `json:"response"`
+		Error     string          `json:"error"`
+	}
+	if json.Unmarshal(raw, &r) != nil {
+		return
+	}
+	s.mu.Lock()
+	ch := s.waiters[r.RequestID]
+	s.mu.Unlock()
+	if ch != nil {
+		select {
+		case ch <- controlReply{ok: r.Subtype == "success", err: r.Error, body: r.Response}:
+		default:
+		}
+	}
+}
+
+// handleRemoteUser puts a message typed in claude.ai or the Claude app on the
+// timeline: with Remote Control on, it reaches the process without us.
+func (s *claudeSession) handleRemoteUser(m map[string]json.RawMessage) {
+	s.mu.Lock()
+	remote := s.remote
+	s.mu.Unlock()
+	if !remote {
+		return
+	}
+	for _, k := range []string{"isReplay", "isSynthetic", "isMeta"} {
+		if string(m[k]) == "true" {
+			return
+		}
+	}
+	var msg struct {
+		Content json.RawMessage `json:"content"`
+	}
+	if json.Unmarshal(m["message"], &msg) != nil {
+		return
+	}
+	var text string
+	if json.Unmarshal(msg.Content, &text) != nil {
+		var blocks []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(msg.Content, &blocks) != nil {
+			return
+		}
+		var parts []string
+		for _, b := range blocks {
+			switch b.Type {
+			case "text":
+				parts = append(parts, b.Text)
+			case "image":
+			default:
+				return // tool results and the like
+			}
+		}
+		text = strings.Join(parts, "\n")
+	}
+	text = strings.TrimSpace(text)
+	// tags are the CLI talking to the model (reminders, task notifications)
+	if text == "" || strings.HasPrefix(text, "<") {
+		return
+	}
+	s.mu.Lock()
+	for i, t := range s.sent {
+		if t == text {
+			s.sent = append(s.sent[:i], s.sent[i+1:]...)
+			s.mu.Unlock()
+			return // one of ours, echoed
+		}
+	}
+	key := "rc-" + str(m, "uuid")
+	if key == "rc-" {
+		key = s.nextKey("rc")
+	}
+	s.mu.Unlock()
+	s.selfStarted()
+	s.sink.Item(Item{Key: key, Kind: "user", Text: text, By: "Claude app"})
 }
 
 // selfStarted opens a turn the agent began without a message from us: when
