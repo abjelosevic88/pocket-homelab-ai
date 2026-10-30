@@ -242,6 +242,10 @@ func (s *Server) callPocketTool(ctx, session context.Context, t *store.Thread, s
 	if tool.Annotations.ReadOnly {
 		return s.readApp(ctx, uid, t.ID, call.Name, args)
 	}
+	// a conversation started from a Projects issue changes only that issue
+	if msg := s.projectsPin(ctx, uid, t.ID, call.Name, args); msg != "" {
+		return toolFailure(msg)
+	}
 	callID := s.startAppCall(ctx, uid, t.ID, call.Name, call.Arguments, true)
 	if callID == "" {
 		return toolFailure("Could not save the approval record; no change was sent")

@@ -295,7 +295,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
           <div className="thread-sub">
             <PrivacyBadge thread={t} access={access} onShare={owner ? () => setSharing(true) : undefined} />
             <ProviderBadge provider={t.provider} size="xs" />
-            <ThreadRefChip threadId={t.id} source={t.source} />
+            <ThreadRefChip threadId={t.id} source={t.source} owner={owner} />
             {!!t.worktree_id && <WorktreeChip id={t.worktree_id} threadId={t.id} onAsk={owner && canRun ? text => { void send(text, []) } : undefined} />}
             {hostName && <span className="host-chip" title={`Runs on ${hostName} over ssh`}><Icon name="server" size={12} />{hostName}</span>}
             {t.source === 'ask' ? <span className="ask-chip" title="Works on your Pocket apps; each change waits for your approval"><Icon name="sparkles" size={12} />Ask my apps
