@@ -24,6 +24,8 @@ import TodayPage from './TodayPage'
 import UsagePage from './UsagePage'
 import SnippetsPage from './SnippetsPage'
 import WorktreesPage from './WorktreesPage'
+import FilesPage from './FilesPage'
+import FileView from './FileView'
 // xterm is big: only loaded once you have a terminal
 const TerminalArea = lazy(() => import('./TerminalArea'))
 import { BriefingPage, MemoryPage, ActionsPage, WorkflowsPage } from './AssistantPages'
@@ -123,6 +125,7 @@ function ShellInner() {
     { id: 'schedules', label: 'Schedules', icon: 'clock', keywords: 'cron timer automatic', run: () => navigate('/schedules') },
     { id: 'history', label: 'On this server — CLI sessions', icon: 'history', keywords: 'import resume history claude codex', run: () => navigate('/history') },
     { id: 'snippets', label: 'Snippets', icon: 'bookmark', keywords: 'saved text prompts', run: () => navigate('/snippets') },
+    { id: 'files', label: 'Files', icon: 'folder', keywords: 'upload download browse open file folder server machine', run: () => navigate('/files') },
     { id: 'terminal', label: 'Terminal', icon: 'terminal', keywords: 'shell ssh console bash zsh server machine', run: () => navigate('/term') },
     { id: 'usage', label: 'Usage & limits', icon: 'chart', keywords: 'cost tokens rate limit', run: () => navigate('/usage') },
     { id: 'settings', label: 'Settings', icon: 'settings', run: () => navigate('/settings') },
@@ -161,6 +164,8 @@ function ShellInner() {
             <Route path="/worktrees" element={<WorktreesPage onMenu={onMenu} />} />
             <Route path="/terminal" element={<Navigate to={`/term${loc.search}`} replace />} />
             <Route path="/term/*" element={null} />
+            <Route path="/files" element={<FilesPage onMenu={onMenu} />} />
+            <Route path="/f/:host" element={<FileView onMenu={onMenu} />} />
             <Route path="*" element={<HomePage onMenu={onMenu} />} />
           </Routes>
         </ErrorBoundary>
