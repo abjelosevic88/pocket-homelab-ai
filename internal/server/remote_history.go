@@ -89,11 +89,17 @@ func (s *Server) remoteHomes(ctx context.Context, u *store.User) []hostHomes {
 	}
 	timer := time.NewTimer(remoteMirrorWait)
 	defer timer.Stop()
+	// one deadline for all of them: the timer fires once, so after it the
+	// rest are not waited for (a second slow machine would otherwise block
+	// until its copy finished, up to 10 minutes)
+wait:
 	for _, ch := range wait {
 		select {
 		case <-ch:
 		case <-timer.C:
+			break wait
 		case <-ctx.Done():
+			break wait
 		}
 	}
 	out := make([]hostHomes, 0, len(hosts))
