@@ -194,6 +194,7 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
             })}
           </div>
         )}
+        {(user?.role === 'admin' || user?.can_run) && nav('/files', 'folder', 'Files')}
         {nav('/shared', 'users', 'Shared', sharedN > 0 ? <span className="badge">{sharedN}</span> : undefined)}
         {nav('/usage', 'chart', 'Usage')}
         {nav('/snippets', 'bookmark', 'Snippets')}

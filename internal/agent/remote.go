@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -154,6 +155,12 @@ func Command(r *Remote, dir string, env []string, bin string, args ...string) (*
 // for a few seconds now and then ("No route to host"). Agents do not share
 // it (see Command): a lost link must not take every running session along.
 func (r *Remote) Run(ctx context.Context, timeout time.Duration, script string, args ...string) (string, string, error) {
+	return r.RunInput(ctx, timeout, nil, script, args...)
+}
+
+// RunInput is Run with stdin (an upload): never tried twice, the input is
+// read once.
+func (r *Remote) RunInput(ctx context.Context, timeout time.Duration, stdin io.Reader, script string, args ...string) (string, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	full := `[ -r /etc/profile ] && . /etc/profile >/dev/null 2>&1 </dev/null; [ -r "$HOME/.profile" ] && . "$HOME/.profile" >/dev/null 2>&1 </dev/null; ` +
@@ -171,9 +178,10 @@ func (r *Remote) Run(ctx context.Context, timeout time.Duration, script string, 
 		}
 		var out, errb bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &out, &errb
+		cmd.Stdin = stdin
 		err = cmd.Run()
 		stderr := strings.TrimSpace(errb.String())
-		if err == nil || try >= 2 || !notConnected(err, stderr) {
+		if err == nil || try >= 2 || stdin != nil || !notConnected(err, stderr) {
 			return out.String(), stderr, err
 		}
 		select { // 1 s, then 3 s: blips last a few seconds
