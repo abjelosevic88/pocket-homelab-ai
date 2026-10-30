@@ -419,6 +419,14 @@
 .tg-label.dragging { opacity: .5; }
 
 /* Terminal (TerminalPage.tsx) */
+/* Nerd Font icons (eza, starship, powerline prompts): symbols only, MIT,
+   fetched by the browser only when a terminal shows one of them */
+@font-face {
+  font-family: 'Symbols Nerd Font Mono';
+  src: url('../fonts/SymbolsNerdFontMono.woff2') format('woff2');
+  font-display: block;
+  unicode-range: U+23FB-23FE, U+2665, U+26A1, U+2B58, U+E000-F8FF, U+F0000-FFFFD;
+}
 .term-page { background: var(--bg); }
 .term-start { flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 14px; }
 .term-tabs { display: flex; gap: 4px; padding: 8px 16px 0; overflow-x: auto; flex-shrink: 0; scrollbar-width: none; }

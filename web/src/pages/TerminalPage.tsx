@@ -166,13 +166,15 @@ function TermView({ term, visible, onEnded, onAgain, onClose }: { term: Term; vi
   useEffect(() => {
     const t = new Terminal({
       theme, cursorBlink: true, allowProposedApi: true, scrollback: 10000, convertEol: false,
-      fontFamily: 'ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace',
+      fontFamily: 'ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, "Symbols Nerd Font Mono", monospace',
       fontSize: window.matchMedia('(max-width: 760px)').matches ? 12 : 13,
     })
     const f = new FitAddon()
     t.loadAddon(f)
     t.loadAddon(new WebLinksAddon())
     t.open(box.current!)
+    // icons drawn before the Nerd Font arrived: draw them again
+    document.fonts?.load('13px "Symbols Nerd Font Mono"', '\uf07b').then(() => { if (xt.current === t) t.refresh(0, t.rows - 1) }).catch(() => {})
     xt.current = t
     fit.current = f
     t.onData(d => {
