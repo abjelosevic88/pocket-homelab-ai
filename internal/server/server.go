@@ -241,6 +241,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/link/dirs", s.handleLinkDirs)
 		r.Get("/link/active", s.handleLinkActive)
 		r.Get("/link/prs", s.handleLinkPRs)
+		r.Get("/link/edits", s.handleLinkEdits)
 		r.Get("/link/worktrees", s.handleLinkWorktrees)
 		r.Get("/link/deploy", s.handleLinkDeploy)
 		r.Put("/link/deploy/config", s.handleLinkDeployConfig)
@@ -440,7 +441,8 @@ func (s *Server) registerWithCore(ctx context.Context) error {
 		Publishes: []string{"ai.turn_finished", "ai.needs_input", "ai.schedule_attention"},
 		Uses:      []core.Use{projectsUse},
 		Offers: []core.Offer{{Scope: core.InferenceScope, Name: "Generate text", Description: "Text-only generation with your Pocket AI account; no tools or conversation access"},
-			{Scope: ThreadsScope, Name: "Start coding conversations", Description: "Prepare a conversation with Claude Code or Codex in a folder on this server; you read the prompt and press send yourself"}},
+			{Scope: ThreadsScope, Name: "Start coding conversations", Description: "Prepare a conversation with Claude Code or Codex in a folder on this server; you read the prompt and press send yourself"},
+			{Scope: ThreadsReadScope, Name: "See what your coding conversations changed", Description: "Which files the agent edited for a pull request or a branch, in order, with the sentence it said just before — never the rest of the conversation"}},
 	}
 	if s.cfg.BaseURL != "" {
 		m.OIDC = &core.OIDCRequest{RedirectURIs: []string{s.cfg.BaseURL + "/api/v1/auth/oidc/callback"}}
