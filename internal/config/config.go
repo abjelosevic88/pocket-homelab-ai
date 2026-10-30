@@ -159,7 +159,7 @@ func Load() (*Config, error) {
 
 		ClaudeBin:   env("CLAUDE_BIN", "claude"),
 		CodexBin:    env("CODEX_BIN", "codex"),
-		IdleTimeout: envDuration("IDLE_TIMEOUT", 20*time.Minute),
+		IdleTimeout: envDuration("IDLE_TIMEOUT", 60*time.Minute),
 		MaxLive:     envInt("MAX_LIVE", 12),
 		UploadMax:   int64(envInt("UPLOAD_MAX_MB", 20)) << 20,
 
