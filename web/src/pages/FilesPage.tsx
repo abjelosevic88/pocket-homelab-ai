@@ -62,12 +62,13 @@ export default function FilesPage({ onMenu }: { onMenu?: () => void }) {
   const ctx = useContextMenu()
   const [naming, setNaming] = useState<{ op: 'mkdir' | 'newfile' | 'rename'; entry?: FileEntry } | null>(null)
   const [deleting, setDeleting] = useState<FileEntry | null>(null)
-  const change = async (op: string, path: string, name = '') => {
+  // '' = done; else what went wrong (the name dialog shows it in place)
+  const change = async (op: string, path: string, name = '', quiet = false) => {
     try {
       await api.post(`${V1}/files/${op}`, { host, path, name })
       load()
-      return true
-    } catch (e) { toast(errMsg(e), 'err'); return false }
+      return ''
+    } catch (e) { if (!quiet) toast(errMsg(e), 'err'); return errMsg(e) || 'It did not work' }
   }
   const copy = (s: string) => copyText(s).then(ok => toast(ok ? 'Path copied' : 'Could not copy', ok ? 'ok' : 'err'))
   const toggleHidden = () => { setHidden(!hidden); localStorage.setItem(HIDDEN, hidden ? '0' : '1') }
@@ -156,33 +157,49 @@ export default function FilesPage({ onMenu }: { onMenu?: () => void }) {
       {ctx.menu}
       {rowMenu && <Menu anchor={rowMenu.at} items={rowMenu.items} align="right" onClose={() => setRowMenu(null)} />}
       {naming && data && <NameDialog op={naming.op} initial={naming.entry?.name || ''} dir={!!naming.entry?.dir} onClose={() => setNaming(null)}
+        taken={data.entries.filter(e => e.name !== naming.entry?.name)}
+        onOpen={e => { setNaming(null); open(e) }}
         onDone={async name => {
-          const ok = naming.op === 'rename' ? await change('rename', joinPath(data.path, naming.entry!.name), name) : await change(naming.op, data.path, name)
-          if (ok) setNaming(null)
+          const why = naming.op === 'rename' ? await change('rename', joinPath(data.path, naming.entry!.name), name, true) : await change(naming.op, data.path, name, true)
+          if (!why) setNaming(null)
+          return why
         }} />}
       {deleting && data && <Confirm title={`Delete ${deleting.dir ? 'folder' : 'file'}?`} confirmLabel="Delete"
         message={<><b>{deleting.name}</b>{deleting.dir ? ' and everything in it' : ''} will be deleted from {data.host}. This cannot be undone.</>}
-        onCancel={() => setDeleting(null)} onConfirm={async () => { const e = deleting; setDeleting(null); if (await change('delete', joinPath(data.path, e.name))) toast(`Deleted ${e.name}`, 'ok') }} />}
+        onCancel={() => setDeleting(null)} onConfirm={async () => { const e = deleting; setDeleting(null); if (!(await change('delete', joinPath(data.path, e.name)))) toast(`Deleted ${e.name}`, 'ok') }} />}
       {drop && <div className="files-drop"><Icon name="upload" size={28} /><b>Drop to upload</b><span className="mono">{data?.path}</span></div>}
     </div>
   )
 }
 
 // a name for a new folder or file, or a new name (the name without its
-// extension is selected, like Finder)
-function NameDialog({ op, initial, dir, onClose, onDone }: { op: 'mkdir' | 'newfile' | 'rename'; initial: string; dir: boolean; onClose: () => void; onDone: (name: string) => Promise<void> }) {
+// extension is selected, like Finder). A name already in the folder is
+// said right under the field (with a way to open that one), not after Create.
+function NameDialog({ op, initial, dir, taken, onOpen, onClose, onDone }: {
+  op: 'mkdir' | 'newfile' | 'rename'; initial: string; dir: boolean; taken: FileEntry[]
+  onOpen: (e: FileEntry) => void; onClose: () => void; onDone: (name: string) => Promise<string>
+}) {
   const [v, setV] = useState(initial)
   const [busy, setBusy] = useState(false)
+  const [why, setWhy] = useState('')
   const title = op === 'mkdir' ? 'New folder' : op === 'newfile' ? 'New file' : `Rename ${dir ? 'folder' : 'file'}`
-  const bad = !v.trim() || v.includes('/') || v === '.' || v === '..'
-  const save = async () => { if (bad || busy) return; setBusy(true); await onDone(v.trim()); setBusy(false) }
+  const name = v.trim()
+  const clash = taken.find(e => e.name === name)
+  const bad = !name || name.includes('/') || name === '.' || name === '..' || !!clash
+  const save = async () => { if (bad || busy) return; setBusy(true); setWhy(await onDone(name)); setBusy(false) }
   return (
     <Modal title={title} size="sm" onClose={onClose}
       footer={<><button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
-        <button type="button" className="btn primary" disabled={bad || busy || (op === 'rename' && v.trim() === initial)} onClick={save}>{busy ? <Spinner /> : op === 'rename' ? 'Rename' : 'Create'}</button></>}>
-      <input autoFocus aria-label="Name" style={{ width: '100%' }} value={v} placeholder={op === 'mkdir' ? 'Folder name' : 'File name'}
+        <button type="button" className="btn primary" disabled={bad || busy || (op === 'rename' && name === initial)} onClick={save}>{busy ? <Spinner /> : op === 'rename' ? 'Rename' : 'Create'}</button></>}>
+      <input autoFocus aria-label="Name" aria-invalid={!!clash || !!why || undefined} style={{ width: '100%' }} value={v} placeholder={op === 'mkdir' ? 'Folder name' : 'File name'}
         onFocus={e => { const i = op === 'rename' && !dir ? v.lastIndexOf('.') : -1; e.currentTarget.setSelectionRange(0, i > 0 ? i : v.length) }}
-        onChange={e => setV(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') save() }} />
+        onChange={e => { setV(e.target.value); setWhy('') }} onKeyDown={e => { if (e.key === 'Enter') save() }} />
+      {clash ? <p className="files-name-why">
+          A {clash.dir ? 'folder' : 'file'} called <b>{clash.name}</b> is already here.{' '}
+          <button type="button" className="link-btn" onClick={() => onOpen(clash)}>Open it</button>{' '}or pick another name.
+        </p>
+        : name.includes('/') ? <p className="files-name-why">Use a plain name, without slashes.</p>
+        : why ? <p className="files-name-why">{why}</p> : null}
     </Modal>
   )
 }
