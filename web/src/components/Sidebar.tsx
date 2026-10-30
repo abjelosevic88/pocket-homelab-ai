@@ -1,6 +1,6 @@
 // Threads, grouped by time, with search (titles here, all messages on Enter), folder filter and archive.
 import type React from 'react'
-import { RunningList, elapsed, useNow } from './RunningList'
+import { RunDots, RunningList, elapsed, useNow } from './RunningList'
 import { UsageWidget } from './UsageWidget'
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -71,7 +71,7 @@ export function ThreadRow({ t, active, onOpen, onContextMenu }: { t: Thread; act
 }
 
 export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onPalette: () => void }) {
-  const { threads, workspaces, worktrees, user, settings, live, status, updateReady } = useApp()
+  const { threads, workspaces, worktrees, user, settings, live, status, updateReady, terms } = useApp()
   const navigate = useNavigate()
   const loc = useLocation()
   const [q, setQ] = useState('')
@@ -167,7 +167,11 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
         {nav('/schedules', 'clock', 'Schedules')}
         {(user?.role === 'admin' || user?.can_run) && nav('/history', 'history', 'On this server')}
         {(user?.role === 'admin' || user?.can_run) && nav('/worktrees', 'fork', 'Worktrees', activeWt > 0 ? <span className="badge">{activeWt}</span> : undefined)}
-        {(user?.role === 'admin' || user?.can_run) && nav('/terminal', 'terminal', 'Terminal')}
+        {(user?.role === 'admin' || user?.can_run) && nav('/terminal', 'terminal', 'Terminal', terms.open > 0 ? (
+          <span className="sb-term" title={terms.busy ? `${terms.open} open · ${terms.busy} running a command` : `${terms.open} open`}>
+            {terms.busy > 0 && <RunDots size={11} />}
+            <span className={`badge ${terms.busy ? 'accent-soft' : ''}`}>{terms.open}</span>
+          </span>) : undefined)}
         {nav('/shared', 'users', 'Shared', sharedN > 0 ? <span className="badge">{sharedN}</span> : undefined)}
         {nav('/usage', 'chart', 'Usage')}
         {nav('/snippets', 'bookmark', 'Snippets')}

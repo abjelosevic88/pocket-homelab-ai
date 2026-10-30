@@ -29,6 +29,8 @@ interface AppState {
   recipes: Recipe[]
   limits: Limits
   running: RunningItem[]
+  /** your terminals: open (not ended), and the ones running a command */
+  terms: TermSummary
   /** The thread open on screen (no push/browser notification for it). */
   viewing: string | null
   setViewing: (id: string | null) => void
@@ -51,6 +53,8 @@ const Ctx = createContext<AppState>(null!)
 export function useApp() { return useContext(Ctx) }
 
 const THEME_KEY = 'pai-theme'
+export interface TermSummary { open: number; busy: number; busy_ids: string[] }
+const noTerms: TermSummary = { open: 0, busy: 0, busy_ids: [] }
 
 export const DEFAULT_SETTINGS: Settings = {
   title: 'Pocket AI', app_model: '', app_effort: '', app_account_id: -1, default_provider: 'claude', default_cwd: '',
@@ -106,6 +110,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [recipes, setRecipes] = useState<Recipe[]>([])
   const [limits, setLimits] = useState<Limits>({})
   const [running, setRunning] = useState<RunningItem[]>([])
+  const [terms, setTerms] = useState<TermSummary>(noTerms)
+  const reloadTerms = useCallback(() => {
+    api.get<{ id: string; ended: boolean; busy: boolean }[]>(`${V1}/terminals`).then(l => {
+      const busy = (l || []).filter(t => t.busy).map(t => t.id).sort()
+      setTerms({ open: (l || []).filter(t => !t.ended).length, busy: busy.length, busy_ids: busy })
+    }).catch(() => {})
+  }, [])
   const runTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const reloadRunning = useCallback(() => {
     if (runTimer.current) clearTimeout(runTimer.current)
@@ -221,10 +232,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       hosts: () => { reloadHosts().catch(() => {}) },
       worktrees: () => { reloadWorktrees().catch(() => {}) },
       running: () => reloadRunning(),
+      terminals: d => setTerms({ ...noTerms, ...(d as TermSummary) }),
       ping: () => {},
-    }, { onOpen: () => { setLive(true); reloadThreads().catch(() => {}); reloadRunning() }, onDown: () => setLive(false) })
+    }, { onOpen: () => { setLive(true); reloadThreads().catch(() => {}); reloadRunning(); reloadTerms() }, onDown: () => setLive(false) })
     return () => { close(); setLive(false) }
-  }, [user, upsertThread, reloadThreads, reloadRunning, reloadAccounts, reloadHosts, reloadWorktrees])
+  }, [user, upsertThread, reloadThreads, reloadRunning, reloadTerms, reloadAccounts, reloadHosts, reloadWorktrees])
 
   // App badge (installed PWA) = threads that need you.
   useEffect(() => {
@@ -246,9 +258,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const value = useMemo<AppState>(() => ({
-    updateReady, status, user, sr, settings, providers, providersReady, accounts, reloadAccounts, hosts, reloadHosts, worktrees, reloadWorktrees, threads, workspaces, recipes, limits, running, viewing, setViewing, live, themeMode, theme, setThemeMode, refresh,
+    updateReady, status, user, sr, settings, providers, providersReady, accounts, reloadAccounts, hosts, reloadHosts, worktrees, reloadWorktrees, threads, workspaces, recipes, limits, running, terms, viewing, setViewing, live, themeMode, theme, setThemeMode, refresh,
     reloadThreads, reloadWorkspaces, reloadRecipes, reloadProviders, upsertThread, dropThread, saveSettings, setUser,
-  }), [status, user, sr, settings, providers, providersReady, accounts, reloadAccounts, hosts, reloadHosts, worktrees, reloadWorktrees, threads, workspaces, recipes, limits, running, viewing, setViewing, live, themeMode, theme, setThemeMode, refresh, reloadThreads, reloadWorkspaces, reloadRecipes, reloadProviders, upsertThread, dropThread, saveSettings])
+  }), [status, user, sr, settings, providers, providersReady, accounts, reloadAccounts, hosts, reloadHosts, worktrees, reloadWorktrees, threads, workspaces, recipes, limits, running, terms, viewing, setViewing, live, themeMode, theme, setThemeMode, refresh, reloadThreads, reloadWorkspaces, reloadRecipes, reloadProviders, upsertThread, dropThread, saveSettings])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }
