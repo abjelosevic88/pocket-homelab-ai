@@ -16,7 +16,7 @@ import { type Option, Select } from './Select'
 import { Avatar, Kbd, Spinner, useContextMenu } from './ui'
 import { useThreadMenu } from './ThreadMenu'
 import { PrivacyChip } from './ShareDialog'
-import { projectsRef, useProjectsLink } from '../lib/projects'
+import { projectsPaused, projectsRef, useProjectsLink } from '../lib/projects'
 
 function groupOf(t: Thread): string {
   if (t.pinned) return 'Pinned'
@@ -47,8 +47,9 @@ export function ThreadRow({ t, active, onOpen, onContextMenu }: { t: Thread; act
   const working = waiting || t.status === 'running' || !!run
   // the turn is over but commands, monitors or sub-agents still run
   const bg = !working && hasBackground(t)
+  const paused = projectsPaused(t)
   return (
-    <button type="button" className={`th-row ${active ? 'active' : ''} ${t.unread ? 'unread' : ''} ${working ? 'is-working' : ''} ${bg ? 'is-background' : ''}`} onClick={onOpen} onContextMenu={onContextMenu} title={host ? `${host}: ${t.cwd}` : t.cwd}>
+    <button type="button" className={`th-row ${active ? 'active' : ''} ${t.unread ? 'unread' : ''} ${working ? 'is-working' : ''} ${bg ? 'is-background' : ''} ${paused ? 'is-paused' : ''}`} onClick={onOpen} onContextMenu={onContextMenu} title={paused || (host ? `${host}: ${t.cwd}` : t.cwd)}>
       <span className="th-main">
         <span className="th-title ellipsis">{threadTitle(t)}</span>
         <span className="th-meta">
