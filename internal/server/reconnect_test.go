@@ -329,7 +329,8 @@ func TestMessageEndsAnIdleLeftoverWithItsWaiters(t *testing.T) {
 		t.Fatal(err)
 	}
 	// the leftover: looks like a Pocket AI agent, runs two background waiters
-	leftover := exec.Command("sh", "-c", "sleep 300 & sleep 300 & wait", "sh", "--input-format", "stream-json", "--permission-prompt-tool", "stdio")
+	// the second waiter looks like a Bash call of Claude Code's (snapshot + eval)
+	leftover := exec.Command("sh", "-c", `sleep 300 & sh -c "sleep 300; : shell-snapshots/x && eval 'make docs' < /dev/null" & wait`, "sh", "--input-format", "stream-json", "--permission-prompt-tool", "stdio")
 	leftover.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := leftover.Start(); err != nil {
 		t.Fatal(err)
@@ -373,6 +374,11 @@ func TestMessageEndsAnIdleLeftoverWithItsWaiters(t *testing.T) {
 	if turns != 1 || !ended || countText(items, "assistant", "The build works again.") != 1 || countText(items, "user", "now the docs") != 1 {
 		t.Fatalf("turns %d, ended notice %v: %+v", turns, ended, items)
 	}
+	// the new process hears what ended with the old one
+	waitFor(t, func() bool {
+		b, _ := os.ReadFile(argsFile + ".stdin")
+		return strings.Contains(string(b), "now the docs") && strings.Contains(string(b), "`make docs` (running")
+	})
 }
 
 // Right after a restart, conversations on other machines are looked at
