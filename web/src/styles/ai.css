@@ -656,3 +656,7 @@ button.privacy-badge:disabled { cursor: default; }
 .sb-issue-row:hover .sb-issue-open, .sb-issue-open:focus-visible { opacity: 1; }
 .sb-issue-open:hover { background: var(--surface-2); color: var(--text); }
 @media (hover: none) { .sb-issue-open { opacity: 1; position: static; } .sb-issue-row:has(.sb-issue-open) .sb-issue-n { display: none; } }
+
+/* a Projects conversation whose workspace isn't open in Projects */
+.th-row.is-paused { opacity: .55; }
+.th-row.is-paused:hover, .th-row.is-paused.active { opacity: .8; }
