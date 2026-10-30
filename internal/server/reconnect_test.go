@@ -251,6 +251,23 @@ func TestCutTurnReconnectsToAWorkingProcess(t *testing.T) {
 	if _, err := os.Stat(argsFile); err == nil {
 		t.Fatal("a second process started next to the working one")
 	}
+	// nothing else starts one either: Remote Control waits, other starts are refused
+	s.rt.rcMu.Lock()
+	s.rt.rc[th.ID] = &rcState{}
+	s.rt.rcMu.Unlock()
+	if err := s.rt.attachRemote(th.ID); err != nil {
+		t.Fatalf("remote control while reconnected: %v", err)
+	}
+	if _, err := s.rt.ensure(got); err != errLeftoverWorks {
+		t.Fatalf("ensure while reconnected: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if _, err := os.Stat(argsFile); err == nil {
+		t.Fatal("Remote Control started a second process next to the working one")
+	}
+	s.rt.rcMu.Lock()
+	delete(s.rt.rc, th.ID)
+	s.rt.rcMu.Unlock()
 	// the leftover goes on and finishes
 	if err := os.WriteFile(logPath, []byte(full), 0o644); err != nil {
 		t.Fatal(err)
@@ -415,7 +432,7 @@ func TestSweepEndsIdleLeftoversOnOtherMachines(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s.sweepLeftovers(ctx)
+	s.sweepLeftovers(ctx, s.sweepCandidates(ctx, nil))
 	select {
 	case <-exited:
 	case <-time.After(10 * time.Second):
@@ -443,4 +460,27 @@ func TestSweepEndsIdleLeftoversOnOtherMachines(t *testing.T) {
 	if !s.re.wasChecked(quiet.ID) || !s.re.wasChecked(withLeftover.ID) {
 		t.Fatal("swept threads are not looked at again on their next message")
 	}
+}
+
+// Right after a restart nothing starts a process for a conversation whose
+// check has not finished yet (Remote Control comes back after 5 s).
+func TestStartWaitsForTheCheckAfterARestart(t *testing.T) {
+	s, h, root := testServer(t)
+	_, u := person(t, s, h, "pending@example.test", "admin", true)
+	argsFile := fakeClaude(t, s, root)
+	th := thread(t, s, u.ID, root)
+	defer s.rt.stop(th.ID)
+	s.re.markPending([]string{th.ID})
+	started := make(chan error, 1)
+	go func() { _, err := s.rt.ensure(th); started <- err }()
+	time.Sleep(200 * time.Millisecond)
+	if _, err := os.Stat(argsFile); err == nil {
+		t.Fatal("started before the check finished")
+	}
+	s.re.resolve(th.ID)
+	if err := <-started; err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { _, err := os.Stat(argsFile); return err == nil })
+	s.re.resolve(th.ID) // twice is fine
 }

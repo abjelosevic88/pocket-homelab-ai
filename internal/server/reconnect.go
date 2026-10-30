@@ -55,6 +55,50 @@ type reattachSet struct {
 	mu      sync.Mutex
 	m       map[string]*reattachRun
 	checked map[string]bool // threads already checked for a leftover process
+	// pending: threads whose check right after the restart has not finished;
+	// nothing starts a process for them until it has (Remote Control comes
+	// back 5 s after a restart, often before the machine answered)
+	pending map[string]chan struct{}
+}
+
+// pendingWait caps how long a start waits for a thread's check.
+const pendingWait = 90 * time.Second
+
+func (rs *reattachSet) markPending(ids []string) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if rs.pending == nil {
+		rs.pending = map[string]chan struct{}{}
+	}
+	for _, id := range ids {
+		if rs.pending[id] == nil {
+			rs.pending[id] = make(chan struct{})
+		}
+	}
+}
+
+// resolve ends a thread's pending check (safe to call more than once).
+func (rs *reattachSet) resolve(id string) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if ch := rs.pending[id]; ch != nil {
+		close(ch)
+		delete(rs.pending, id)
+	}
+}
+
+// waitPending returns once the thread's check after the restart is done.
+func (rs *reattachSet) waitPending(id string) {
+	rs.mu.Lock()
+	ch := rs.pending[id]
+	rs.mu.Unlock()
+	if ch == nil {
+		return
+	}
+	select {
+	case <-ch:
+	case <-time.After(pendingWait):
+	}
 }
 
 type reattachRun struct {
@@ -258,11 +302,37 @@ func (s *Server) endProcess(ctx context.Context, h *store.Host, pid int) {
 
 // reconnectCut handles the turns a restart cut off (store.ResetRunning).
 func (s *Server) reconnectCut(ids []string) {
+	s.re.markPending(ids)
+	sweep := s.sweepCandidates(s.rt.ctx, ids)
+	s.re.markPending(sweep)
 	for _, id := range ids {
 		s.re.firstCheck(id)
 		go s.reconnect(id)
 	}
-	go s.sweepLeftovers(s.rt.ctx)
+	go s.sweepLeftovers(s.rt.ctx, sweep)
+}
+
+// sweepCandidates: the Claude conversations on other machines active in
+// the day before the restart, except the ones cut off mid-turn.
+func (s *Server) sweepCandidates(ctx context.Context, cut []string) []string {
+	skip := map[string]bool{}
+	for _, id := range cut {
+		skip[id] = true
+	}
+	rows, err := s.store.DB.QueryContext(ctx, `SELECT id FROM threads WHERE provider = 'claude' AND host_id != 0 AND archived = 0
+		AND provider_session_id != '' AND activity_at >= ? ORDER BY host_id, activity_at DESC`, store.FormatTime(s.started.Add(-orphanRecent)))
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil && !skip[id] {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 // sweepLeftovers: a turn that was over at the restart is not cut off, but
@@ -273,20 +343,12 @@ func (s *Server) reconnectCut(ids []string) {
 // working is followed, an idle one of Pocket AI's is ended. A machine that
 // does not answer is skipped (its conversations are looked at on their next
 // message instead).
-func (s *Server) sweepLeftovers(ctx context.Context) {
-	rows, err := s.store.DB.QueryContext(ctx, `SELECT id FROM threads WHERE provider = 'claude' AND host_id != 0 AND archived = 0
-		AND provider_session_id != '' AND activity_at >= ? ORDER BY host_id, activity_at DESC`, store.FormatTime(s.started.Add(-orphanRecent)))
-	if err != nil {
-		return
-	}
-	var ids []string
-	for rows.Next() {
-		var id string
-		if rows.Scan(&id) == nil {
-			ids = append(ids, id)
+func (s *Server) sweepLeftovers(ctx context.Context, ids []string) {
+	defer func() {
+		for _, id := range ids {
+			s.re.resolve(id)
 		}
-	}
-	rows.Close()
+	}()
 	down := map[int64]bool{}
 	for _, id := range ids {
 		t, err := s.store.GetThreadAny(ctx, id)
@@ -304,12 +366,14 @@ func (s *Server) sweepLeftovers(ctx context.Context) {
 			continue
 		}
 		if !s.re.firstCheck(id) {
+			s.re.resolve(id)
 			continue // a message got there first
 		}
 		if p.state == "busy" || (p.state == "idle" && p.own) {
 			s.log.Info("leftover sweep", "thread", id, "state", p.state, "pid", p.pid, "own", p.own)
 			s.startReattach(t, h, p, whySweep)
 		}
+		s.re.resolve(id)
 	}
 }
 
@@ -319,6 +383,7 @@ func (s *Server) cutNotice(threadID string) {
 }
 
 func (s *Server) reconnect(id string) {
+	defer s.re.resolve(id)
 	ctx := s.rt.ctx
 	t, err := s.store.GetThreadAny(ctx, id)
 	if err != nil {
@@ -349,6 +414,7 @@ func (s *Server) reconnect(id string) {
 			Text: "Pocket AI restarted while Codex was working on " + h.Name + ", and Codex may still be writing there. Look before you send “continue”, so it does not do the work twice."})
 		return
 	}
+	s.re.resolve(id) // its "continue" starts the process
 	s.autoContinue(t, "Pocket AI restarted while the agent was working, so this turn stopped. It continues on its own:")
 }
 
@@ -408,6 +474,7 @@ func (s *Server) recentlyContinued(ctx context.Context, threadID string) bool {
 // (on another machine, or anywhere for a turn Pocket AI started), Pocket AI
 // reconnects to it and the message waits. Callers hold lockThreadEdit.
 func (s *Server) checkLeftover(ctx context.Context, t *store.Thread) {
+	s.re.waitPending(t.ID)
 	if t.Provider != "claude" || t.ProviderSessionID == "" || s.rt.get(t.ID) != nil || s.isReattached(t.ID) {
 		return
 	}
@@ -569,7 +636,14 @@ func (s *Server) followLeftover(t *store.Thread, run *reattachRun, first claudeP
 			s.autoContinue(fresh, "The agent stopped before it finished this turn. It continues on its own:")
 		}
 	}
+	// Remote Control waited for the leftover (attachRemote): it starts now
+	if s.rt.remoteWanted(t.ID) {
+		go func() { _ = s.rt.attachRemote(t.ID) }()
+	}
 }
+
+// errLeftoverWorks: nothing starts a second process next to a leftover one.
+var errLeftoverWorks = badRequest("The agent from before Pocket AI restarted is still working on this conversation. Wait until it is done, or press Stop to end it first.")
 
 // leftoverApplier turns log lines of a leftover process into timeline
 // items without repeating what Pocket AI already showed live (its own
