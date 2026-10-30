@@ -13,6 +13,19 @@ import (
 	"unicode/utf8"
 )
 
+// textExt are read as they are: UTF-8 text the agent sees verbatim.
+// Keep in sync with TEXT_EXT in web/src/components/Composer.tsx.
+var textExt = map[string]bool{}
+
+func init() {
+	for _, e := range strings.Fields(`txt md csv tsv json xml html htm
+		yaml yml toml ini conf cfg log env.example
+		py js mjs cjs ts tsx jsx go rs java kt swift c h cpp rb php sh bash zsh sql css scss diff patch
+		srt vtt ass ssa ics vcf eml svg`) {
+		textExt["."+e] = true
+	}
+}
+
 // Text extracts bounded textual content without launching macros, fetching
 // external references, or evaluating spreadsheet formulas.
 func Text(name string, data []byte) (string, error) {
@@ -20,13 +33,16 @@ func Text(name string, data []byte) (string, error) {
 		return "", errors.New("document is too large for text extraction (20 MiB maximum)")
 	}
 	ext := strings.ToLower(filepath.Ext(name))
-	switch ext {
-	case ".txt", ".md", ".csv", ".tsv", ".json", ".xml", ".html", ".htm":
+	if strings.HasSuffix(strings.ToLower(name), ".env.example") {
+		ext = ".env.example"
+	}
+	switch {
+	case textExt[ext]:
 		if !utf8.Valid(data) || bytes.ContainsRune(data, 0) {
 			return "", errors.New("file is not UTF-8 text")
 		}
 		return boundedText(string(data)), nil
-	case ".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp":
+	case ext == ".docx", ext == ".xlsx", ext == ".pptx", ext == ".odt", ext == ".ods", ext == ".odp":
 	default:
 		return "", errors.New("text extraction supports DOCX, XLSX, PPTX, OpenDocument and UTF-8 text; export older or binary formats to one of these first")
 	}

@@ -25,6 +25,7 @@ Everything is an environment variable (the systemd unit reads `~/.config/pocket-
 | `IDLE_TIMEOUT` | `20m` | A thread's CLI process stops after this long idle; the next message resumes the session. |
 | `MAX_LIVE` | `12` | Most CLI processes at once; the longest-idle ones are stopped first. |
 | `UPLOAD_MAX_MB` | `20` | Per image. PNG, JPEG, GIF, WebP (the web app shrinks big photos and converts HEIC where the browser can decode it). |
+| `OFFICE_CONVERT_URL` | (off) | Collabora Online / CODE base URL, e.g. `http://127.0.0.1:9980`. Old `.doc/.xls/.ppt` attachments go through its `/cool/convert-to` API (the server's address must be in Collabora's `net.post_allow`; private ranges are by default). Off = they are refused with a hint to save as DOCX/XLSX/PPTX. |
 | `LOG_LEVEL`, `LOG_FORMAT` | `info`, `text` | |
 
 ## Security model

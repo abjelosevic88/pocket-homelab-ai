@@ -26,7 +26,7 @@ Memory contains only explicitly saved preferences. Disable, edit or forget each 
 
 ## Documents
 
-Attach up to 10 images, PDFs, DOCX/XLSX/PPTX, OpenDocument, CSV/TSV or UTF-8 text files. Office extraction does not execute macros, evaluate formulas or fetch external resources. PDF extraction requires **pdftotext** on the service PATH (Poppler utilities); it reads at most 100 pages with a 10-second deadline. Extracted text is bounded at 180,000 bytes per document and 250,000 per message. Scanned PDFs without readable text need OCR in Documents or page images. Text extraction does not verify visual layout or signatures. File downloads are owner-scoped and use attachment disposition.
+Attach up to 10 images, PDFs, DOCX/XLSX/PPTX, OpenDocument, old DOC/XLS/PPT (converted by Collabora when `OFFICE_CONVERT_URL` is set), or UTF-8 text files: CSV/TSV, JSON, HTML, XML, YAML/TOML/INI/conf, logs, source code, diffs, subtitles (SRT/VTT/ASS), ICS/VCF, EML and SVG (read as markup). Office extraction does not execute macros, evaluate formulas or fetch external resources. PDF extraction requires **pdftotext** on the service PATH (Poppler utilities); it reads at most 100 pages with a 10-second deadline. Extracted text is bounded at 180,000 bytes per document and 250,000 per message. Scanned PDFs without readable text need OCR in Documents or page images. Text extraction does not verify visual layout or signatures. File downloads are owner-scoped and use attachment disposition.
 
 ## Release checks
 
