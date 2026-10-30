@@ -85,12 +85,18 @@ var (
 	hostLoginsCache = map[int64]hostLoginCache{}
 )
 
-// hostLogins asks a machine about all of its logins (cached 10 minutes).
+// hostLogins asks a machine about all of its logins (cached; after 10
+// minutes the cached answer is still given while a fresh one is asked).
 func (s *Server) hostLogins(ctx context.Context, h *store.Host, refresh bool) []hostLoginView {
 	hostLoginsMu.Lock()
 	c, ok := hostLoginsCache[h.ID]
 	hostLoginsMu.Unlock()
-	if ok && !refresh && time.Since(c.at) < 10*time.Minute {
+	if ok && !refresh {
+		if time.Since(c.at) >= 10*time.Minute {
+			// the picker shows what was known; asking takes seconds (ssh and
+			// the CLIs there), so it is done in the background for next time
+			s.refreshHostLogins(h)
+		}
 		return append([]hostLoginView(nil), c.views...)
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 60*time.Second)
@@ -177,6 +183,18 @@ func (s *Server) hostLogins(ctx context.Context, h *store.Host, refresh bool) []
 	hostLoginsCache[h.ID] = hostLoginCache{at: now, views: out}
 	hostLoginsMu.Unlock()
 	return append([]hostLoginView(nil), out...)
+}
+
+var hostLoginsRefreshing sync.Map // host id → a background ask is running
+
+func (s *Server) refreshHostLogins(h *store.Host) {
+	if _, busy := hostLoginsRefreshing.LoadOrStore(h.ID, true); busy {
+		return
+	}
+	go func() {
+		defer hostLoginsRefreshing.Delete(h.ID)
+		s.hostLogins(s.rt.ctx, h, true)
+	}()
 }
 
 const notInstalled = "Not installed: "
