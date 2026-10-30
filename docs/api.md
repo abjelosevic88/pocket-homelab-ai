@@ -349,3 +349,5 @@ unwatched) and end when Pocket AI restarts.
 | PATCH | `/api/v1/terminals/{id}` | `{title}` |
 | DELETE | `/api/v1/terminals/{id}` | hangs it up |
 | GET (WebSocket) | `/api/v1/terminals/{id}/ws` | same origin only. Server → binary output (first the last 512 KB it printed), text `{"type":"end","code"}`. Client → binary keystrokes, text `{"type":"resize","cols","rows"}` |
+
+`GET /api/v1/terminals/layout` → `{layout}` and `PUT` `{layout}` (≤64 KB JSON): how the page arranges your terminals (tabs, split panes), kept in memory per person like the terminals themselves, so every device shows the same.

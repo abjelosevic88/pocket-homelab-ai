@@ -163,13 +163,16 @@ func (s *Server) watchTerminals() {
 }
 
 type termHub struct {
-	mu    sync.Mutex
-	terms map[string]*terminal
-	once  sync.Once
+	mu      sync.Mutex
+	terms   map[string]*terminal
+	layouts map[int64]json.RawMessage // per person: tabs and their splits (the page's own shape)
+	once    sync.Once
 }
 
 func (s *Server) terminalRoutes(r chi.Router) {
 	r.Get("/terminals", s.handleListTerminals)
+	r.Get("/terminals/layout", s.handleTerminalLayout)
+	r.Put("/terminals/layout", s.handleTerminalLayout)
 	r.Post("/terminals", s.handleCreateTerminal)
 	r.Patch("/terminals/{tid}", s.handleRenameTerminal)
 	r.Delete("/terminals/{tid}", s.handleCloseTerminal)
@@ -204,6 +207,37 @@ func (s *Server) handleListTerminals(w http.ResponseWriter, r *http.Request) {
 		out = append(out, t.view())
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// handleTerminalLayout keeps how a person's terminals are arranged (tabs,
+// split panes), so every device shows the same. Like the terminals
+// themselves it lives until Pocket AI restarts.
+func (s *Server) handleTerminalLayout(w http.ResponseWriter, r *http.Request) {
+	uid := me(r)
+	if r.Method == http.MethodPut {
+		var in struct {
+			Layout json.RawMessage `json:"layout"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil || len(in.Layout) == 0 || !json.Valid(in.Layout) {
+			writeErr(w, http.StatusBadRequest, "invalid layout")
+			return
+		}
+		s.terms.mu.Lock()
+		if s.terms.layouts == nil {
+			s.terms.layouts = map[int64]json.RawMessage{}
+		}
+		s.terms.layouts[uid] = in.Layout
+		s.terms.mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	s.terms.mu.Lock()
+	l := s.terms.layouts[uid]
+	s.terms.mu.Unlock()
+	if l == nil {
+		l = json.RawMessage("null")
+	}
+	writeJSON(w, http.StatusOK, map[string]json.RawMessage{"layout": l})
 }
 
 func (s *Server) handleCreateTerminal(w http.ResponseWriter, r *http.Request) {
