@@ -260,6 +260,14 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const lastItem = visible[visible.length - 1]
   // the text the agent is writing right now gets a blinking cursor
   const streamingKey = running && (lastItem?.kind === 'assistant' || lastItem?.kind === 'thinking') ? lastItem.key : undefined
+  const remoteControl = async (on: boolean) => {
+    try {
+      if (on) toast('Connecting to claude.ai…')
+      const th = await api.post<Thread>(`${V1}/threads/${id}/remote-control`, { on })
+      setThread(th); upsertThread(th)
+      toast(on ? 'Remote Control is on — open it in the Claude app' : 'Remote Control is off', 'ok')
+    } catch (e) { toast(errMsg(e), 'err') }
+  }
   const menu: MenuItem[] = !owner ? [
     { label: 'Export as Markdown', icon: 'download', onSelect: () => download(`${V1}/threads/${id}/export.md`) },
   ] : [
@@ -270,6 +278,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
     { label: t.pinned ? 'Unpin' : 'Pin to top', icon: 'bookmark', onSelect: () => patch({ pinned: !t.pinned }) },
     { label: 'Rename', icon: 'edit', onSelect: () => { setTitleDraft(t.title || threadTitle(t)); setEditingTitle(true) } },
     { label: 'Move to another folder…', icon: 'folder', disabled: t.source === 'ask' || !canRun || running, onSelect: () => setMoving(true) },
+    ...(t.provider === 'claude' && t.source !== 'ask' && canRun ? [{ label: t.remote_control ? 'Turn off Remote Control' : 'Turn on Remote Control', icon: 'smartphone' as const, onSelect: () => remoteControl(!t.remote_control) }] : []),
     { label: 'Fork into a new thread', icon: 'fork', disabled: t.source === 'ask' || !t.provider_session_id || !canRun, onSelect: fork },
     { label: 'Export as Markdown', icon: 'download', onSelect: () => download(`${V1}/threads/${id}/export.md`) },
     'sep',
@@ -297,6 +306,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
             <ProviderBadge provider={t.provider} size="xs" />
             <ThreadRefChip threadId={t.id} source={t.source} owner={owner} />
             {!!t.worktree_id && <WorktreeChip id={t.worktree_id} threadId={t.id} onAsk={owner && canRun ? text => { void send(text, []) } : undefined} />}
+            {t.remote_control && <RemoteChip rc={t.remote_control} />}
             {hostName && <span className="host-chip" title={`Runs on ${hostName} over ssh`}><Icon name="server" size={12} />{hostName}</span>}
             {t.source === 'ask' ? <span className="ask-chip" title="Works on your Pocket apps; each change waits for your approval"><Icon name="sparkles" size={12} />Ask my apps
               {askSource(t.source_ref) && <a className="ask-source" href={t.source_ref} target="_blank" rel="noopener noreferrer" title="Open the item this chat started from">Source ↗</a>}</span>
@@ -388,4 +398,16 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
  * started on Pocket AI's own home screen has no item to go back to. */
 function askSource(ref?: string) {
   try { return !!ref && new URL(ref).origin !== location.origin } catch { return false }
+}
+
+const rcLabel = { starting: 'Connecting…', ready: 'Remote Control', connected: 'Remote Control', reconnecting: 'Reconnecting…', error: 'Remote Control failed' } as const
+
+// Claude Remote Control is on: the link opens this session in claude.ai/code
+// (the Claude app takes it over on a phone).
+function RemoteChip({ rc }: { rc: NonNullable<Thread['remote_control']> }) {
+  const title = rc.state === 'error' ? rc.error || 'Remote Control failed' : 'Open this conversation in claude.ai/code or the Claude app'
+  const body = <><Icon name="smartphone" size={12} />{rcLabel[rc.state] ?? 'Remote Control'}{rc.state === 'connected' && <span className="rc-dot" />}</>
+  return rc.url && rc.state !== 'error'
+    ? <a className={`host-chip rc-chip rc-${rc.state}`} href={rc.url} target="_blank" rel="noopener noreferrer" title={title}>{body}</a>
+    : <span className={`host-chip rc-chip rc-${rc.state}`} title={title}>{body}</span>
 }

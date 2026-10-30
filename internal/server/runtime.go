@@ -48,6 +48,9 @@ type engine struct {
 
 	turnBy map[string]int64 // thread id → whose message the running turn answers
 
+	rcMu sync.Mutex
+	rc   map[string]*rcState // thread id → Remote Control turned on (remote_control.go)
+
 	sharesMu sync.RWMutex
 	shares   map[string]store.SharedThread // thread id → owner and shares (shares.go); nil = not loaded yet
 }
@@ -76,6 +79,7 @@ type run struct {
 	lastText  string // last assistant text of the current turn
 	subs      []agent.Subagent
 	tasks     []agent.Task // background shell commands and monitors still running
+	remote    bool         // Claude Remote Control is on: never idle-stopped
 }
 
 // taskHold caps how long background tasks keep an otherwise quiet agent
@@ -97,7 +101,7 @@ type queued struct {
 func newRuntime(s *Server) *engine {
 	return &engine{s: s, runs: map[string]*run{}, watchers: map[string]map[chan sseEvent]int64{},
 		userSubs: map[int64]map[chan sseEvent]struct{}{}, limits: map[string]*provLimits{}, starting: map[string]chan struct{}{},
-		followers: map[string]*follower{}, turnBy: map[string]int64{}, external: map[string]bool{}, extSubs: map[string][]agent.Subagent{}, extSubsAt: map[string]time.Time{}}
+		followers: map[string]*follower{}, turnBy: map[string]int64{}, external: map[string]bool{}, extSubs: map[string][]agent.Subagent{}, extSubsAt: map[string]time.Time{}, rc: map[string]*rcState{}}
 }
 
 func (rt *engine) start(ctx context.Context) {
@@ -114,6 +118,7 @@ func (rt *engine) start(ctx context.Context) {
 			rt.limits[p] = &l
 		}
 	}
+	rt.loadRemote(ctx)
 	go rt.reaper(ctx)
 	go rt.activeLoop(ctx)
 	go rt.flusher(ctx)
@@ -149,6 +154,7 @@ func (rt *engine) decorate(t *store.Thread) *store.Thread {
 		r.mu.Unlock()
 	}
 	t.External = rt.isExternal(t.ID)
+	t.RemoteControl = rt.rcGet(t.ID)
 	if st, ok := rt.sharesOf(t.ID); ok {
 		t.Shares, t.OwnerName = st.Shares, st.OwnerName
 	} else {
@@ -394,6 +400,9 @@ func (rt *engine) ensure(t *store.Thread) (*run, error) {
 		close(done)
 		if err == nil {
 			rt.enforceMax()
+			if rt.remoteWanted(t.ID) {
+				go func() { _ = rt.attachRemote(t.ID) }()
+			}
 		}
 		return r, err
 	}
@@ -615,7 +624,7 @@ func (rt *engine) idle(d time.Duration) []string {
 	rt.mu.Lock()
 	for id, r := range rt.runs {
 		r.mu.Lock()
-		if !r.working() && len(r.pending) == 0 && time.Since(r.lastUsed) >= d {
+		if !r.working() && !r.remote && len(r.pending) == 0 && time.Since(r.lastUsed) >= d {
 			c = append(c, cand{id, r.lastUsed})
 		}
 		r.mu.Unlock()
@@ -1676,7 +1685,15 @@ func (k *runSink) Exited(err error) {
 	r.mu.Lock()
 	q := r.queue
 	r.queue = nil
+	wasRemote := r.remote
+	r.remote = false
 	r.mu.Unlock()
+	if rt.remoteWanted(r.threadID) && rt.ctx.Err() == nil {
+		if wasRemote {
+			rt.rcSet(r.threadID, func(st *rcState) { st.fails = 0 })
+		}
+		go rt.reviveRemote(r.threadID)
+	}
 	if err != nil {
 		rt.s.log.Warn("agent exited", "thread", r.threadID, "err", err)
 		rt.s.pauseDeferredSource(rt.ctx, r.threadID, "The other chat lost its connection. Review it before sending this prompt.")

@@ -32,6 +32,7 @@ func (s *Server) threadRoutes(r chi.Router) {
 	r.Post("/threads/{id}/queue/{key}/now", s.handleSendNow)
 	r.Post("/threads/{id}/queue/{key}/edit", s.handleEditQueued)
 	r.Post("/threads/{id}/interrupt", s.handleInterrupt)
+	r.Post("/threads/{id}/remote-control", s.handleRemoteControl)
 	r.Post("/threads/{id}/requests/{rid}", s.handleRespond)
 	r.Post("/threads/{id}/read", s.handleMarkRead)
 	r.Post("/threads/{id}/fork", s.handleFork)
@@ -584,6 +585,9 @@ func (s *Server) handlePatchThread(w http.ResponseWriter, r *http.Request) {
 		s.rt.setMode(t, t.Mode)
 	}
 	if t.Archived {
+		if s.rt.remoteWanted(t.ID) {
+			s.rt.detachRemote(t.ID) // an archived thread is not reachable from the phone
+		}
 		s.rt.stop(t.ID)
 	}
 	t, _ = s.store.GetThread(r.Context(), me(r), t.ID)
