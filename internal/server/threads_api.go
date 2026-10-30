@@ -324,7 +324,7 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	t, err := s.createThread(r.Context(), userFrom(r.Context()), in, "web", "")
+	t, err := s.createThread(context.WithValue(r.Context(), startInBackground{}, true), userFrom(r.Context()), in, "web", "")
 	if err != nil && t == nil {
 		s.fail(w, err, "create thread")
 		return
@@ -426,11 +426,44 @@ func (s *Server) postMessage(ctx context.Context, u *store.User, t *store.Thread
 		}
 		return true, nil
 	}
+	if bg, _ := ctx.Value(startInBackground{}).(bool); bg && s.rt.get(t.ID) == nil {
+		// the page shows the new chat now; its agent starts meanwhile (seconds
+		// on another machine) and a failure shows in the thread
+		if th := s.rt.setStatus(t.ID, "running", ""); th != nil {
+			*t = *th
+		}
+		go s.sendStarting(t.ID, it.Key, in)
+		return false, nil
+	}
 	queued, err := s.rt.send(t, it.Key, in, sendNow...)
 	if err != nil {
 		return false, err
 	}
 	return queued, nil
+}
+
+// startInBackground (a context key) lets postMessage return before a
+// thread's agent has started.
+type startInBackground struct{}
+
+// sendStarting hands the first message to an agent that is still to start,
+// after the request that posted it has been answered.
+func (s *Server) sendStarting(threadID, key string, in agent.Input) {
+	t, err := s.store.GetThreadAny(s.rt.ctx, threadID)
+	if err != nil {
+		return
+	}
+	_, err = s.rt.send(t, key, in)
+	var gone *folderGoneError
+	switch {
+	case errors.As(err, &gone):
+		s.rt.setStatus(t.ID, "idle", "")
+		s.rt.holdUnsent(t.ID, "Not sent — its folder is gone.")
+		s.rt.folderGoneNotice(t.ID, gone)
+	case err != nil:
+		s.rt.saveItem(t.ID, agent.Item{Key: "err-" + uuid.NewString()[:8], Kind: "notice", Level: "error", Text: err.Error()})
+		s.rt.setStatus(t.ID, "error", err.Error())
+	}
 }
 
 func (s *Server) handleGetThread(w http.ResponseWriter, r *http.Request) {
