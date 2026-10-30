@@ -8,6 +8,7 @@ import (
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/documenttext"
 	"io"
 	"mime"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"os/exec"
@@ -117,6 +118,9 @@ func (s *Server) saveUpload(ctx context.Context, uid int64, filename string, dat
 			}
 			extracted, err = pdfText(ctx, data)
 			contentType = "application/pdf"
+		} else if modern, legacy := legacyOffice[ext]; legacy {
+			extracted, err = s.legacyOfficeText(ctx, filename, modern, data)
+			contentType = "application/octet-stream"
 		} else {
 			extracted, err = documenttext.Text(filename, data)
 			contentType = "application/octet-stream"
@@ -254,4 +258,47 @@ func (w *boundedOutput) Write(p []byte) (int, error) {
 		return len(p), nil
 	}
 	return w.b.Write(p)
+}
+
+// legacyOffice maps the old binary Office formats to what Collabora
+// converts them into before the usual (bounded, macro-free) extraction.
+var legacyOffice = map[string]string{".doc": "docx", ".xls": "xlsx", ".ppt": "pptx"}
+
+// oleMagic starts every .doc/.xls/.ppt (OLE2 compound file).
+var oleMagic = []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1}
+
+// legacyOfficeText converts an old Office file with Collabora's convert-to
+// API (OFFICE_CONVERT_URL) and extracts the text of the result.
+func (s *Server) legacyOfficeText(ctx context.Context, filename, modern string, data []byte) (string, error) {
+	if !bytes.HasPrefix(data, oleMagic) {
+		return "", fmt.Errorf("%s is not an old-style Office file", filepath.Base(filename))
+	}
+	if s.cfg.OfficeConvertURL == "" {
+		return "", errors.New("old .doc/.xls/.ppt files need a converter on this server; save as DOCX, XLSX or PPTX first")
+	}
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	part, err := mw.CreateFormFile("data", "upload"+filepath.Ext(filename))
+	if err != nil {
+		return "", err
+	}
+	part.Write(data) //nolint:errcheck
+	mw.Close()
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.OfficeConvertURL+"/cool/convert-to/"+modern, &body)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", errors.New("the document converter is not reachable; try again or save as " + strings.ToUpper(modern))
+	}
+	defer res.Body.Close()
+	converted, err := io.ReadAll(io.LimitReader(res.Body, 20<<20+1))
+	if err != nil || res.StatusCode != http.StatusOK || len(converted) == 0 {
+		return "", fmt.Errorf("%s could not be converted (it may be encrypted or damaged)", filepath.Base(filename))
+	}
+	return documenttext.Text("converted."+modern, converted)
 }
