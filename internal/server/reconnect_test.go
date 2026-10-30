@@ -145,6 +145,16 @@ func TestLeftoverCatchUpShowsTheRestOnce(t *testing.T) {
 	if turns != 1 {
 		t.Fatalf("turn footers: %d", turns)
 	}
+	// a message sent mid-turn is a queued command in the log, not a prompt:
+	// a catch-up from the turn's prompt must still not repeat what came before it
+	sent := agent.Item{Key: "u-midturn", Kind: "user", Text: "how is it going?"}
+	data, _ := json.Marshal(sent)
+	_, _ = s.store.UpsertItem(context.Background(), th.ID, sent.Key, sent.Kind, data, sent.Text)
+	again := s.newLeftoverApplier(context.Background(), th)
+	again.catchUp([]byte(log), 0)
+	if n := countText(threadItems(t, s, th.ID), "assistant", "The build works again."); n != 1 {
+		t.Fatalf("after a mid-turn message the reply came back %d times", n)
+	}
 	// later looks add only what is new
 	more := claudeLine("user", "p2", "and the docs?", "")
 	if next := ap.feed([]byte(more), int64(len(log))); next != int64(len(log)+len(more)) || ap.ended {
