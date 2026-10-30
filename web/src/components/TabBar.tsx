@@ -13,6 +13,7 @@ import { useThreadMenu } from './ThreadMenu'
 import { keyCaps, useShortcuts } from '../lib/shortcuts'
 import { projectsRef, useProjectsLink } from '../lib/projects'
 import { idsOf, isTermTab, TERM_TAB, tabPath, useMachineItems, useTerminals } from '../lib/terminals'
+import { baseOf, fileIcon, fileTab, isFileTab, parseFileTab } from '../lib/files'
 import { RunDots } from './RunningList'
 
 const KEY = 'pai-tabs'
@@ -42,7 +43,10 @@ export function useTabs(enabled: boolean) {
   const navigate = useNavigate()
   const term = useTerminals()
   // a conversation's id, or term:<tab> for a terminal tab
+  const fileHost = /^\/f\/(\d+)$/.exec(loc.pathname)?.[1]
+  const filePathParam = fileHost ? new URLSearchParams(loc.search).get('path') : null
   const active = /^\/t\/([^/]+)/.exec(loc.pathname)?.[1] || ((g => g ? TERM_TAB + g : '')(/^\/term\/([^/]+)/.exec(loc.pathname)?.[1]))
+    || (fileHost && filePathParam ? fileTab(Number(fileHost), filePathParam) : '')
   useEffect(() => { localStorage.setItem(KEY, JSON.stringify(tabs)) }, [tabs])
   useEffect(() => { localStorage.setItem(CLOSED, JSON.stringify(closed)) }, [closed])
   useEffect(() => { if (enabled && active) { setTabs(t => t.includes(active) ? t : [...t, active]); setClosed(c => c.includes(active) ? c.filter(x => x !== active) : c) } }, [enabled, active])
@@ -154,7 +158,7 @@ export function useTabs(enabled: boolean) {
 
 export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, issues, groups, groupOf, joinGroup, newGroup, leaveGroup, editGroup, ungroup }: ReturnType<typeof useTabs>) {
   const [naming, setNaming] = useState('') // group whose label is being renamed
-  const { threads, running, user, terms } = useApp()
+  const { threads, running, user, terms, hosts } = useApp()
   const term = useTerminals()
   const machines = useMachineItems(async h => { const g = await term.open(h); if (g) navigate(`/term/${g}`) })
   const termGroup = (id: string) => isTermTab(id) ? term.groups.find(g => g.id === id.slice(TERM_TAB.length)) : undefined
@@ -167,7 +171,7 @@ export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, i
   const byId = new Map((threads || []).map(t => [t.id, t] as [string, Thread]))
   // tabs of threads that are gone (deleted or archived) drop out — except the
   // one on screen (an archived thread you opened keeps its tab)
-  const gone = tabs.filter(id => id !== active && (isTermTab(id) ? term.list !== null && !termGroup(id) : !!threads && !byId.has(id)))
+  const gone = tabs.filter(id => id !== active && !isFileTab(id) && (isTermTab(id) ? term.list !== null && !termGroup(id) : !!threads && !byId.has(id)))
   const shown = tabs.filter(id => !gone.includes(id))
   useEffect(() => { if (gone.length) close(gone, false) }, [gone.join()]) // eslint-disable-line react-hooks/exhaustive-deps
   if (!shown.length) return null
@@ -246,10 +250,11 @@ export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, i
           const tts = tg ? idsOf(tg.root).map(x => term.byId.get(x)).filter(x => !!x) : []
           const tLead = tg ? term.byId.get(tg.focus) || tts[0] : undefined
           const tBusy = tts.some(x => !x.ended && terms.busy_ids.includes(x.id))
+          const file = isFileTab(id) ? parseFileTab(id) : null
           return (
             <div key={id} role="tab" aria-selected={on} tabIndex={0} draggable
               className={`tab ${on ? 'on' : ''} ${drag === id ? 'dragging' : ''} ${t?.unread && !on ? 'unread' : ''} ${r.group ? `grouped tg-${r.group.color}` : ''}`}
-              title={t ? threadTitle(t) : tLead ? `${tLead.title} · ${tLead.host_name}${tts.length > 1 ? ` · ${tts.length} panes` : ''}` : ''}
+              title={file ? `${file.path} · ${file.host ? hosts.find(h => h.id === file.host)?.name || 'Server' : 'This server'}` : t ? threadTitle(t) : tLead ? `${tLead.title} · ${tLead.host_name}${tts.length > 1 ? ` · ${tts.length} panes` : ''}` : ''}
               onClick={() => navigate(tabPath(id))}
               onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(tabPath(id)) } }}
               onContextMenu={e => ctx.open(e, () => tabMenu(id, byId.get(id)))}
@@ -266,7 +271,7 @@ export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, i
                 if (into !== from) { if (into) joinGroup(drag, into); else leaveGroup(drag) }
                 move(drag, id)
               }}>
-              {isTermTab(id) ? <span className="tab-ico term">
+              {file ? <span className="tab-ico term"><Icon name={fileIcon(file.path)} size={13} /></span> : isTermTab(id) ? <span className="tab-ico term">
                 {tBusy ? <span className="tab-term-busy" role="img" aria-label="Running a command"><RunDots size={11} /></span> : <Icon name="terminal" size={13} />}
               </span> : <span className={`tab-ico ${t?.provider || ''}`}>
                 {busy ? <span className={`tab-busy ${t?.status === 'waiting' || (t?.pending || 0) > 0 ? 'waiting' : ''}`} role="img" aria-label="Working" />
@@ -274,7 +279,7 @@ export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, i
                   : t?.unread && !on ? <span className="tab-done" role="img" aria-label="Done, new reply" title="Done — new reply" />
                   : <Icon name={t?.provider === 'codex' ? 'codex' : 'claude'} size={13} />}
               </span>}
-              <span className="tab-title">{t ? threadTitle(t) : tLead ? tLead.title : '…'}</span>
+              <span className="tab-title">{file ? baseOf(file.path) : t ? threadTitle(t) : tLead ? tLead.title : '…'}</span>
               {tts.length > 1 && <span className="tab-panes" title={`${tts.length} panes`}><Icon name="split-right" size={10} />{tts.length}</span>}
               {t && <span className={`tab-privacy ${t.shares?.length ? 'shared' : ''}`} title={t.shares?.length ? (t.owner_name && t.owner_id !== user?.id ? `Shared by ${t.owner_name}` : 'Shared') : 'Private'}>
                 <Icon name={t.shares?.length ? 'users' : 'lock'} size={10} /></span>}

@@ -12,7 +12,8 @@ import { useApp } from '../lib/app-context'
 import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
 import { RunDots } from '../components/RunningList'
-import { idsOf, isLeaf, type Node, type Term, type TermGroup, useMachineItems, useTerminals } from '../lib/terminals'
+import { type FileListing, filesPath, shq, uploadFiles } from '../lib/files'
+import { idsOf, isLeaf, type Node as Layout, type Term, type TermGroup, useMachineItems, useTerminals } from '../lib/terminals'
 import { Empty, errMsg, Loading, type MenuItem, MenuButton, Modal, Spinner, useMediaQuery, useToast } from '../components/ui'
 
 
@@ -84,7 +85,7 @@ export default function TerminalArea({ onMenu, shown, gid, tabsOn }: { onMenu?: 
   const cur = g ? byId.get(g.focus) : undefined
   const busy = new Set(terms.busy_ids)
 
-  const renderNode = (grp: TermGroup, n: Node, path: string, many: boolean): React.ReactNode => {
+  const renderNode = (grp: TermGroup, n: Layout, path: string, many: boolean): React.ReactNode => {
     if (isLeaf(n)) {
       const t = byId.get(n.t)
       if (!t) return null
@@ -121,6 +122,7 @@ export default function TerminalArea({ onMenu, shown, gid, tabsOn }: { onMenu?: 
         sub={cur ? <>{cur.host_name}{cur.cwd ? <> · <span className="mono">{cur.cwd}</span></> : null}</> : 'A shell on this server or any of your machines'}
         actions={<>
           {g && cur && <>
+            <button type="button" className="btn ghost icon-only" title="Files in this folder" aria-label="Files in this folder" onClick={() => navigate(filesPath(cur.host_id, cur.cwd || ''))}><Icon name="folder" size={16} /></button>
             <button type="button" className="btn ghost icon-only" title="Split right" aria-label="Split right" disabled={opening} onClick={() => tm.split(g.id, cur.id, 'row')}><Icon name="split-right" size={16} /></button>
             <button type="button" className="btn ghost icon-only" title="Split down" aria-label="Split down" disabled={opening} onClick={() => tm.split(g.id, cur.id, 'col')}><Icon name="split-down" size={16} /></button>
           </>}
@@ -221,6 +223,22 @@ function TermView({ term, shade, visible, focused, onEnded, onAgain, onClose }: 
   const [gone, setGone] = useState(false)
   const touch = useMediaQuery('(pointer: coarse)')
   const { toast } = useToast()
+  // files dropped on a terminal go to its machine (its folder, else home) and
+  // their paths are typed in, like dropping a file on a Mac terminal
+  const [dropping, setDropping] = useState(false)
+  const [sending, setSending] = useState<number | null>(null)
+  const dropFiles = async (files: File[]) => {
+    if (!files.length) return
+    setSending(0)
+    try {
+      const dir = term.cwd || (await api.get<FileListing>(`${V1}/files?host=${term.host_id}&path=`)).path
+      const paths = await uploadFiles(term.host_id, dir, files, p => setSending(p))
+      xt.current?.paste(paths.map(shq).join(' ') + ' ')
+      toast(paths.length === 1 ? `Uploaded to ${paths[0]}` : `Uploaded ${paths.length} files to ${dir}`, 'ok')
+    } catch (e) { toast(errMsg(e), 'err') }
+    setSending(null)
+    xt.current?.focus()
+  }
 
   const send = useCallback((s: string) => {
     const w = ws.current
@@ -316,8 +334,13 @@ function TermView({ term, shade, visible, focused, onEnded, onAgain, onClose }: 
   }
 
   return (
-    <div className="term-view">
+    <div className="term-view"
+      onDragOver={e => { if (e.dataTransfer.types.includes('Files') && state !== 'ended') { e.preventDefault(); setDropping(true) } }}
+      onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropping(false) }}
+      onDrop={e => { if (!e.dataTransfer.files.length) return; e.preventDefault(); setDropping(false); dropFiles([...e.dataTransfer.files]) }}>
       <div className="term-box" ref={box} />
+      {dropping && <div className="term-drop"><Icon name="upload" size={22} /><b>Drop to upload</b><span>to {term.host_name}: {term.cwd || 'home folder'} — the paths are typed in</span></div>}
+      {sending !== null && <div className="term-note"><Spinner size={12} /> Uploading… {Math.round(sending * 100)}%</div>}
       {state === 'connecting' && <div className="term-note"><Spinner size={12} /> Connecting…</div>}
       {state === 'lost' && <div className="term-note"><Spinner size={12} /> Connection lost — reconnecting…</div>}
       {state === 'ended' && (

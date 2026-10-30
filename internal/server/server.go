@@ -218,6 +218,8 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/v1/events", s.handleUserEvents)
 		r.Get("/api/v1/threads/{id}/events", s.handleThreadEvents)
 		r.Get("/api/v1/terminals/{tid}/ws", s.handleTerminalSocket)
+		// files: big uploads and downloads must not hit the request timeout (files.go)
+		s.fileRoutes(r)
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {

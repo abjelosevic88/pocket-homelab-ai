@@ -352,3 +352,13 @@ unwatched) and end when Pocket AI restarts.
 | GET (WebSocket) | `/api/v1/terminals/{id}/ws` | same origin only. Server → binary output (first the last 512 KB it printed), text `{"type":"end","code"}`. Client → binary keystrokes, text `{"type":"resize","cols","rows"}` |
 
 `GET /api/v1/terminals/layout` → `{layout}` and `PUT` `{layout}` (≤64 KB JSON): how the page arranges your terminals (tabs, split panes), kept in memory per person like the terminals themselves, so every device shows the same.
+
+## Files
+
+Same access rule as terminals (this server: owner/admins; people with a folder of their own: only that folder; other machines: their ssh account).
+
+| Method | Path | |
+|---|---|---|
+| GET | `/api/v1/files?host=&path=` | folder listing (`path` empty = home): `path, home, parent, entries[{name, dir, link, size, mtime}]`, max 3000 |
+| GET | `/api/v1/files/raw?host=&path=[&download=1]` | the file (ranges on this server; other machines ≤ 64 MB). Sandboxed CSP, nosniff; HTML/JS served as text |
+| POST | `/api/v1/files/upload?host=&path=<folder>` | multipart files; never overwrites (`name (1).ext`); answers `{paths}` |

@@ -498,3 +498,49 @@
   .term-stage { margin: 0; border-radius: 0; border-left: 0; border-right: 0; border-bottom: 0; }
   .term-box { padding: 4px 2px 2px 6px; }
 }
+
+/* Files (FilesPage.tsx) and a file in a tab (FileView.tsx) */
+.files-page { position: relative; }
+.files-bar { display: flex; align-items: center; gap: 8px; padding: 10px 24px; border-bottom: 1px solid var(--hairline); flex-shrink: 0; flex-wrap: wrap; }
+.files-crumbs { display: flex; align-items: center; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; gap: 1px; }
+.files-crumbs::-webkit-scrollbar { display: none; }
+.files-crumb { display: inline-flex; align-items: center; height: 28px; padding: 0 7px; border: 0; border-radius: 6px; background: none; color: var(--text-2); font-size: 13px; cursor: pointer; white-space: nowrap; }
+.files-crumb:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+.files-crumb:disabled { opacity: .35; cursor: default; }
+.files-crumbs > .row:last-of-type .files-crumb { color: var(--text); font-weight: 600; }
+.files-sep { color: var(--faint); font-size: 13px; }
+.files-path-in { flex: 1; min-width: 200px; height: 30px; font-size: 13px; }
+.files-list { display: flex; flex-direction: column; padding: 6px 12px 60px; max-width: 1100px; margin: 0 auto; }
+.files-list[aria-busy="true"] { opacity: .6; }
+.files-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) 90px 110px; align-items: center; gap: 12px; height: 36px; padding: 0 12px; border: 0; border-radius: 8px; background: none; color: var(--text-2); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; }
+.files-row:hover { background: var(--surface-2); color: var(--text); }
+.files-row.dir { color: var(--text); }
+.files-row.dir > .icon { color: var(--accent-ink); }
+.files-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files-link { color: var(--muted); }
+.files-size, .files-time { color: var(--muted); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.files-empty { padding: 30px 12px; text-align: center; color: var(--muted); font-size: 13px; }
+.files-err { display: flex; align-items: center; gap: 8px; color: var(--danger); padding: 14px; border-radius: 10px; background: var(--danger-soft); }
+.files-drop, .term-drop { position: absolute; inset: 0; z-index: 20; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; background: color-mix(in srgb, var(--accent) 10%, color-mix(in srgb, var(--bg) 85%, transparent)); border: 2px dashed var(--accent); border-radius: 12px; color: var(--accent-ink); pointer-events: none; text-align: center; padding: 20px; }
+.files-drop span, .term-drop span { font-size: 12px; color: var(--text-2); }
+.term-drop { background: color-mix(in srgb, var(--accent) 14%, color-mix(in srgb, var(--term-bg) 80%, transparent)); color: var(--term-fg); }
+.term-drop span { color: var(--term-dim); }
+@media (max-width: 760px) {
+  .files-bar { padding: 8px 12px; }
+  .files-row { grid-template-columns: 18px minmax(0, 1fr) 70px; }
+  .files-time { display: none; }
+}
+.file-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.file-code { flex: 1; min-height: 0; overflow: auto; background: var(--surface); }
+.file-code pre { margin: 0; padding: 12px 0 40px; font: 12.5px/1.55 ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace; tab-size: 4; white-space: pre; }
+.file-line { display: block; padding-right: 24px; }
+.file-line:hover { background: var(--surface-2); }
+.file-ln { display: inline-block; width: 52px; padding-right: 14px; text-align: right; color: var(--faint); user-select: none; position: sticky; left: 0; background: inherit; }
+.file-md { max-width: 860px; }
+.file-media { flex: 1; min-height: 0; display: grid; place-items: center; padding: 20px; overflow: auto; background: var(--surface-2); }
+.file-media img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; box-shadow: 0 1px 8px rgba(0, 0, 0, .12); background: repeating-conic-gradient(#e8e8ec 0 25%, #fff 0 50%) 0 0 / 16px 16px; }
+.file-media video { max-width: 100%; max-height: 100%; border-radius: 8px; background: #000; }
+.file-media audio { width: min(520px, 100%); }
+.file-pdf { flex: 1; width: 100%; border: 0; background: var(--surface-2); }
+.file-msg { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--muted); padding: 30px; text-align: center; }
+.files-host { width: 190px; flex: none; }
