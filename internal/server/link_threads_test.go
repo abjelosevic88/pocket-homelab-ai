@@ -58,7 +58,7 @@ func fakeClaude(t *testing.T, s *Server, root string) string {
 	t.Helper()
 	argsFile := filepath.Join(root, "claude-args.json")
 	bin := filepath.Join(root, "fake-claude")
-	script := "#!/usr/bin/env python3\nimport sys,json\nif sys.argv[1:2] == ['auth']:\n    print('{}')\n    sys.exit(0)\njson.dump(sys.argv[1:],open(" + "'" + argsFile + "'" + ",'w'))\nfor line in sys.stdin:\n    pass\n"
+	script := "#!/usr/bin/env python3\nimport sys,json\nif sys.argv[1:2] == ['auth']:\n    print('{}')\n    sys.exit(0)\njson.dump(sys.argv[1:],open(" + "'" + argsFile + "'" + ",'w'))\nfor line in sys.stdin:\n    open(" + "'" + argsFile + ".stdin'" + ",'a').write(line)\n"
 	if err := os.WriteFile(bin, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}

@@ -104,8 +104,9 @@ func (rs *reattachSet) waitPending(id string) {
 type reattachRun struct {
 	host    *store.Host // nil = this server
 	pid     int
-	own     bool // started by Pocket AI (stream-json over stdin), so it may be ended
-	stopped bool // the person pressed Stop
+	own     bool     // started by Pocket AI (stream-json over stdin), so it may be ended
+	stopped bool     // the person pressed Stop
+	ended   []string // commands Stop ended with the process
 }
 
 func (rs *reattachSet) get(id string) *reattachRun {
@@ -287,27 +288,68 @@ while [ -n "$new" ]; do
   new=$(ps -A -o pid= -o ppid= 2>/dev/null | awk -v ps=" $new " 'index(ps, " " $2 " ") { printf "%s ", $1 }')
   all="$all $new"
 done
+for q in $all; do [ "$q" = "$p" ] || ps -o pid= -o ppid= -o etime= -o args= -p "$q" 2>/dev/null; done | cut -c1-4000
 kill -TERM -"$p" 2>/dev/null
 kill -TERM $all 2>/dev/null
 exit 0
 `
 
-// endProcess ends a leftover Claude Code process and what it started.
-func (s *Server) endProcess(ctx context.Context, h *store.Host, pid int) {
+// endProcess ends a leftover Claude Code process and what it started. It
+// returns the shell commands the agent still ran (foreground or background)
+// that ended with it, so the person and the next process know.
+func (s *Server) endProcess(ctx context.Context, h *store.Host, pid int) []string {
 	if pid <= 0 {
-		return
+		return nil
 	}
 	if h == nil {
 		ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
-		if err := exec.CommandContext(ctx, "sh", "-c", endTreeSh, "sh", strconv.Itoa(pid)).Run(); err != nil {
+		out, err := exec.CommandContext(ctx, "sh", "-c", endTreeSh, "sh", strconv.Itoa(pid)).Output()
+		if err != nil {
 			_ = syscall.Kill(pid, syscall.SIGTERM)
 		}
-		return
+		return endedCommands(string(out), pid)
 	}
-	if _, errOut, err := remoteOf(h).Run(ctx, 20*time.Second, endTreeSh, strconv.Itoa(pid)); err != nil {
+	out, errOut, err := remoteOf(h).Run(ctx, 20*time.Second, endTreeSh, strconv.Itoa(pid))
+	if err != nil {
 		s.log.Warn("reconnect: could not end the leftover agent", "host", h.Name, "pid", pid, "err", sshError(errOut, err))
 	}
+	return endedCommands(out, pid)
+}
+
+// endedCommands picks the agent's own shell commands out of endTreeSh's
+// process list: Claude Code runs each Bash call as a direct child
+// "<shell> -c source …/shell-snapshots/… && eval '<command>' < /dev/null …".
+// MCP servers, hooks and what the commands started themselves are left out.
+func endedCommands(out string, pid int) []string {
+	var cmds []string
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 4 || f[1] != strconv.Itoa(pid) {
+			continue
+		}
+		args := strings.Join(f[3:], " ")
+		i := strings.Index(args, "eval '")
+		if i < 0 || !strings.Contains(args, "shell-snapshots/") {
+			continue
+		}
+		cmd := args[i+len("eval '"):]
+		if j := strings.LastIndex(cmd, "' < /dev/null"); j >= 0 {
+			cmd = cmd[:j]
+		}
+		cmd = strings.Join(strings.Fields(strings.ReplaceAll(cmd, `'\''`, "'")), " ")
+		if r := []rune(cmd); len(r) > 100 {
+			cmd = string(r[:99]) + "…"
+		}
+		cmds = append(cmds, fmt.Sprintf("`%s` (running %s)", cmd, f[2]))
+	}
+	return cmds
+}
+
+// endedNote tells the person (notice) and the next agent turn what ended
+// with the old process.
+func endedNote(cmds []string) string {
+	return "These commands it still ran were ended with it:\n- " + strings.Join(cmds, "\n- ")
 }
 
 // ---------- after a restart ----------
@@ -570,7 +612,10 @@ func (s *Server) stopReattached(threadID string) bool {
 	run.stopped = true
 	pid := run.pid
 	s.re.mu.Unlock()
-	s.endProcess(s.rt.ctx, run.host, pid)
+	ended := s.endProcess(s.rt.ctx, run.host, pid)
+	s.re.mu.Lock()
+	run.ended = append(run.ended, ended...)
+	s.re.mu.Unlock()
 	return true
 }
 
@@ -589,6 +634,7 @@ func (s *Server) followLeftover(t *store.Thread, run *reattachRun, first claudeP
 		}
 	}
 	state, fails, lastGrowth := first.state, 0, time.Now()
+	var ended []string // commands that ended with the leftover
 	for state == "busy" {
 		select {
 		case <-ctx.Done():
@@ -611,16 +657,23 @@ func (s *Server) followLeftover(t *store.Thread, run *reattachRun, first claudeP
 		state = p.state // of the process found first, never another one (pid pinned)
 		if state == "busy" && time.Since(lastGrowth) > reattachStuck && run.own {
 			s.log.Warn("reconnect: agent silent too long, ending it", "thread", t.ID)
-			s.endProcess(ctx, h, run.pid)
+			ended = append(ended, s.endProcess(ctx, h, run.pid)...)
 			state = "gone"
 		}
 	}
 	s.re.mu.Lock()
 	stopped, pid, own := run.stopped, run.pid, run.own
+	ended = append(ended, run.ended...)
 	s.re.mu.Unlock()
 	// an idle leftover would only sit on the session next to the new process
 	if state == "idle" && own {
-		s.endProcess(ctx, h, pid)
+		ended = append(ended, s.endProcess(ctx, h, pid)...)
+	}
+	if len(ended) > 0 {
+		s.log.Info("reconnect: ended with the leftover", "thread", t.ID, "commands", len(ended))
+		// the next process knows nothing of them: no output, no task notices
+		s.rt.addTurnNote(t.ID, "\n\n[Pocket AI: before this message it ended this conversation's previous Claude Code process (left over from before a Pocket AI restart). "+
+			endedNote(ended)+"\nTheir output and completion notices will not arrive. Rerun what you still need.]\n")
 	}
 	waiting := s.holds().count(t.ID)
 	s.re.end(t.ID)
@@ -631,6 +684,9 @@ func (s *Server) followLeftover(t *store.Thread, run *reattachRun, first claudeP
 		text := "Stopped."
 		if waiting > 0 {
 			text = "Stopped. What you sent meanwhile goes now."
+		}
+		if len(ended) > 0 {
+			text += " " + endedNote(ended)
 		}
 		s.rt.saveItem(t.ID, agent.Item{Key: fmt.Sprintf("restart-%d", time.Now().UnixNano()), Kind: "notice", Level: "info", Text: text})
 		s.holds().release(t.ID)
