@@ -46,7 +46,8 @@ type engine struct {
 	extSubsAt map[string]time.Time                 // when extSubs last went out
 	active    []agent.ActiveSession                // last scan of the CLIs' session files (running.go)
 
-	turnBy map[string]int64 // thread id → whose message the running turn answers
+	turnBy map[string]int64  // thread id → whose message the running turn answers
+	notes  map[string]string // thread id → said to the agent with the next message (reconnect.go)
 
 	rcMu sync.Mutex
 	rc   map[string]*rcState // thread id → Remote Control turned on (remote_control.go)
@@ -1819,9 +1820,29 @@ func (rt *engine) turnSender(t *store.Thread) int64 {
 	return t.UserID
 }
 
+// addTurnNote keeps something Pocket AI did on its own for the agent to
+// hear with the next message.
+func (rt *engine) addTurnNote(threadID, note string) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if rt.notes == nil {
+		rt.notes = map[string]string{}
+	}
+	rt.notes[threadID] += note
+}
+
+func (rt *engine) takeTurnNote(threadID string) string {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	n := rt.notes[threadID]
+	delete(rt.notes, threadID)
+	return n
+}
+
 // withMemory adds the sender's saved memory, but only the owner's: someone
 // chatting in a shared thread doesn't get theirs pulled into it unasked.
 func (rt *engine) withMemory(r *run, in agent.Input, sender int64) agent.Input {
+	in.Text += rt.takeTurnNote(r.threadID)
 	t, err := rt.s.store.GetThread(rt.ctx, r.userID, r.threadID)
 	if err != nil || sender != r.userID {
 		return in
