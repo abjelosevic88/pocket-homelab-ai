@@ -50,6 +50,19 @@ func ClaudeProcs(claudeHome string) (procs map[string]ClaudeProc, ok bool) {
 	return procs, true
 }
 
+// ClaudeProcByPID reads one process's registration, if it still runs.
+func ClaudeProcByPID(claudeHome string, pid int) (ClaudeProc, bool) {
+	b, err := ReadConfined(filepath.Join(claudeHome, "sessions", strconv.Itoa(pid)+".json"))
+	if err != nil {
+		return ClaudeProc{}, false
+	}
+	var p ClaudeProc
+	if json.Unmarshal(b, &p) != nil || p.PID != pid || !procAlive(p.PID, p.ProcStart) {
+		return ClaudeProc{}, false
+	}
+	return p, true
+}
+
 // procAlive: the pid exists and (when known) is the same process that wrote
 // the file, not a later one that got the pid again.
 func procAlive(pid int, start string) bool {
