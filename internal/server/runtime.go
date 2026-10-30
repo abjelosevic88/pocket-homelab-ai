@@ -154,6 +154,7 @@ func (rt *engine) decorate(t *store.Thread) *store.Thread {
 		r.mu.Unlock()
 	}
 	t.External = rt.isExternal(t.ID)
+	t.Reattached = rt.s.isReattached(t.ID)
 	t.RemoteControl = rt.rcGet(t.ID)
 	if st, ok := rt.sharesOf(t.ID); ok {
 		t.Shares, t.OwnerName = st.Shares, st.OwnerName
