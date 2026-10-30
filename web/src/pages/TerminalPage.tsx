@@ -10,6 +10,7 @@ import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
+import { RunDots } from '../components/RunningList'
 import { Empty, errMsg, Loading, type MenuItem, MenuButton, Modal, Spinner, useMediaQuery, useToast } from '../components/ui'
 
 interface Term { id: string; host_id: number; host_name: string; title: string; cwd?: string; created_at: string; ended: boolean; exit_code: number; viewers: number }
@@ -35,7 +36,7 @@ const xtermLook = (l: 'light' | 'dark') => ({ theme: l === 'light' ? light : dar
 const wsURL = (id: string) => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${V1}/terminals/${id}/ws`
 
 export default function TerminalPage({ onMenu }: { onMenu?: () => void }) {
-  const { hosts, theme: appTheme } = useApp()
+  const { hosts, theme: appTheme, terms } = useApp()
   const { toast } = useToast()
   const navigate = useNavigate()
   // colors follow the app's light/dark theme unless picked here (per device)
@@ -122,7 +123,7 @@ export default function TerminalPage({ onMenu }: { onMenu?: () => void }) {
           {list.map(t => (
             <div key={t.id} role="tab" aria-selected={t.id === active} className={`term-tab ${t.id === active ? 'on' : ''} ${t.ended ? 'ended' : ''}`}
               onClick={() => select(t.id)} onDoubleClick={() => setRenaming(t)} title={t.ended ? `Ended (exit ${t.exit_code})` : t.title}>
-              <span className="term-dot" />
+              {!t.ended && terms.busy_ids.includes(t.id) ? <span className="term-busy" title="Running a command"><RunDots size={10} /></span> : <span className="term-dot" />}
               <span className="term-tab-name">{t.title}</span>
               <button type="button" className="term-tab-x" aria-label={`Close ${t.title}`} onClick={e => { e.stopPropagation(); close(t) }}><Icon name="x" size={12} /></button>
             </div>

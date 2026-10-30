@@ -437,6 +437,8 @@
 .term-tab.on { color: var(--term-fg); background: var(--term-bg); border-color: var(--border); }
 .term-dot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; flex-shrink: 0; }
 .term-tab.ended .term-dot { background: var(--faint, #8a8a96); }
+.term-busy { display: inline-flex; width: 10px; height: 10px; flex-shrink: 0; }
+.sb-term { display: inline-flex; align-items: center; gap: 6px; }
 .term-tab-name { max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
 .term-tab-x { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 5px; color: inherit; opacity: .55; background: none; border: 0; padding: 0; }
 .term-tab-x:hover { opacity: 1; background: rgba(127, 127, 127, .2); }
