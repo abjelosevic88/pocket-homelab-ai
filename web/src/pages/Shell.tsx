@@ -23,7 +23,7 @@ import SharedPage from './SharedPage'
 import TodayPage from './TodayPage'
 import UsagePage from './UsagePage'
 import SnippetsPage from './SnippetsPage'
-import AwayPage from './AwayPage'
+import AwayPage, { AwayBanner } from './AwayPage'
 import WorktreesPage from './WorktreesPage'
 import FilesPage from './FilesPage'
 import FileView from './FileView'
@@ -147,6 +147,7 @@ function ShellInner() {
       {drawer && drawerOpen && <div className="drawer-backdrop" onClick={() => setDrawerOpen(false)} />}
       <main className="main">
         {tabsOn && <TabBar {...tabs} />}
+        {!embedded && <AwayBanner />}
         <ErrorBoundary where="page" key={loc.pathname.split('/')[1] || 'home'}>
           <Routes>
             <Route path="/" element={<HomePage onMenu={onMenu} />} />
