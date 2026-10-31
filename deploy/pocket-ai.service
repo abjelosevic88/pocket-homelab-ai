@@ -17,7 +17,9 @@ Environment=PATH=%h/.nix-profile/bin:/nix/var/nix/profiles/default/bin:%h/.local
 WorkingDirectory=%h
 ExecStart=%h/.local/bin/pocket-ai
 Restart=always
-RestartSec=5
+# Quick: an update restarts by exiting (SIGUSR1), and agents under their
+# holders wait meanwhile.
+RestartSec=1
 # Stopping the service stops the agents it started (they are its children).
 KillMode=control-group
 TimeoutStopSec=30
