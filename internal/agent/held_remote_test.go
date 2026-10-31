@@ -50,7 +50,6 @@ func TestHeldClaudeRemote(t *testing.T) {
 	if _, _, err := r.Run(ctx, 30*time.Second, `chmod 700 "$1" "$2"`, holdBin, cli); err != nil {
 		t.Fatal(err)
 	}
-	reconnectFor = time.Minute
 	rr := &Remote{Target: target, Slot: slot}
 	o := Options{Bin: cli, Cwd: dir, Mode: "default", Remote: rr, Hold: &Hold{Bin: holdBin, Slot: slot}}
 	rec := &heldRec{rec: newRec()}
