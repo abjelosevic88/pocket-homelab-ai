@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/agent"
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/hold"
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
@@ -191,6 +193,12 @@ func (rt *engine) holdFor(ctx context.Context, t *store.Thread, h *store.Host, o
 	if h == nil {
 		o.Hold.Scope = serviceScope()
 	}
+	if agent.TakeUnstopped(t.ID) {
+		// it was stopped while its machine could not be reached: end it now
+		// and start anew rather than take it back
+		stopHolder(ctx, h, bin, t.ID)
+		return nil
+	}
 	hd, ok := holderStatus(ctx, h, bin, t.ID)
 	if !ok {
 		return nil
@@ -297,4 +305,75 @@ func (rt *engine) adopt(id string) bool {
 	}
 	rt.s.log.Info("took back a running agent", "thread", id)
 	return true
+}
+
+func stopHolder(ctx context.Context, h *store.Host, bin, slot string) {
+	if h == nil {
+		_ = hold.Stop(slot)
+		return
+	}
+	_, _, _ = remoteOf(h).Run(ctx, 30*time.Second, `"$1" stop "$2"`, bin, slot)
+}
+
+// Link: a held agent's connection has been down for a moment, or is back
+// (link.go). Meanwhile messages wait in the queue; after more than a day
+// away they are left unsent rather than acted on that late.
+func (k *runSink) Link(up bool) {
+	if !k.beginEvent() {
+		return
+	}
+	defer k.r.eventMu.Unlock()
+	r, rt := k.r, k.rt
+	r.mu.Lock()
+	if !up {
+		r.linkDown, r.linkDownAt = true, time.Now()
+		key := ""
+		if r.running && r.linkNotice == "" {
+			r.linkNotice = "link-" + uuid.NewString()[:8]
+			key = r.linkNotice
+		}
+		r.mu.Unlock()
+		if key != "" {
+			rt.linkNotice(r, key)
+		}
+		return
+	}
+	away := time.Since(r.linkDownAt)
+	key := r.linkNotice
+	r.linkDown, r.linkNotice = false, ""
+	var late []queued
+	if away > 24*time.Hour {
+		late, r.queue = r.queue, nil
+	}
+	r.mu.Unlock()
+	if key != "" {
+		rt.saveItem(r.threadID, agent.Item{Key: key, Kind: "notice", Level: "info",
+			Text: "Reconnected to " + rt.machineName(r.host) + " after " + away.Round(time.Second).String() + "."})
+	}
+	for _, q := range late {
+		if st, err := rt.s.store.GetItem(rt.ctx, r.threadID, q.key); err == nil {
+			var it agent.Item
+			if json.Unmarshal(st.Data, &it) == nil {
+				it.Queued, it.Unsent, it.UnsentWhy = false, true, "The connection was down for over a day, so this was not sent. Send it again if it still applies."
+				rt.saveItem(r.threadID, it)
+			}
+		}
+	}
+	go rt.next(r) // what waited goes out now
+}
+
+// linkNotice tells the thread its agent's connection is down.
+func (rt *engine) linkNotice(r *run, key string) {
+	rt.saveItem(r.threadID, agent.Item{Key: key, Kind: "notice", Level: "warn",
+		Text: "Lost the connection to " + rt.machineName(r.host) + ". Reconnecting… The agent keeps working there; messages you send wait until it is back."})
+}
+
+func (rt *engine) machineName(id int64) string {
+	if id == 0 {
+		return "this server"
+	}
+	if h, err := rt.s.host(rt.ctx, id); err == nil && h != nil {
+		return h.Name
+	}
+	return "its machine"
 }
