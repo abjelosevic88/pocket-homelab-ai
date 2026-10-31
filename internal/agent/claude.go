@@ -365,6 +365,9 @@ func (s *claudeSession) read() {
 	}
 	// adopted: sub-agents and background shells from earlier turns first,
 	// so the ones still running show again
+	if len(s.l.Header.Kept) > 0 {
+		s.l.quietStart()
+	}
 	for _, k := range s.l.Header.Kept {
 		handle([]byte(k))
 	}

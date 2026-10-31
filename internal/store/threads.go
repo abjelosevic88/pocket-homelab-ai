@@ -200,8 +200,12 @@ func (s *Store) SessionThreadsAll(ctx context.Context, userID int64) map[string]
 	return out
 }
 
-// ResetRunning marks threads left running by a previous process as idle and
-// returns the ones that were cut off mid-turn.
+// ResetRunning, at start: messages queued in the last process are marked
+// unsent, and what was left half-done in threads that were not working is
+// cleared. It returns the threads that were working (cut off mid-turn) and
+// leaves them as they are: each is reset with ResetThread once it is clear
+// its agent is not taken back from a holder, so a reconnect does not flicker
+// through idle and failed tools.
 func (s *Store) ResetRunning(ctx context.Context) []string {
 	var cut []string
 	if rows, err := s.DB.QueryContext(ctx, `SELECT id FROM threads WHERE status IN ('running', 'waiting')`); err == nil {
@@ -215,10 +219,18 @@ func (s *Store) ResetRunning(ctx context.Context) []string {
 	}
 	// messages still waiting in a queue were lost with the process
 	_, _ = s.DB.ExecContext(ctx, `UPDATE items SET data = json_set(json_remove(data, '$.queued'), '$.unsent', json('true')) WHERE kind = 'user' AND json_extract(data, '$.queued') = 1`)
-	_, _ = s.DB.ExecContext(ctx, `UPDATE threads SET status = 'idle' WHERE status IN ('running', 'waiting')`)
-	_, _ = s.DB.ExecContext(ctx, `UPDATE items SET data = json_set(data, '$.request.status', 'expired') WHERE kind = 'request' AND json_extract(data, '$.request.status') = 'pending'`)
-	_, _ = s.DB.ExecContext(ctx, `UPDATE items SET data = json_set(data, '$.tool.status', 'error') WHERE kind = 'tool' AND json_extract(data, '$.tool.status') = 'running'`)
+	working := `thread_id NOT IN (SELECT id FROM threads WHERE status IN ('running', 'waiting'))`
+	_, _ = s.DB.ExecContext(ctx, `UPDATE items SET data = json_set(data, '$.request.status', 'expired') WHERE kind = 'request' AND json_extract(data, '$.request.status') = 'pending' AND `+working)
+	_, _ = s.DB.ExecContext(ctx, `UPDATE items SET data = json_set(data, '$.tool.status', 'error') WHERE kind = 'tool' AND json_extract(data, '$.tool.status') = 'running' AND `+working)
 	return cut
+}
+
+// ResetThread marks a thread a previous process left working as idle: its
+// pending requests expired, its running tools failed.
+func (s *Store) ResetThread(ctx context.Context, id string) {
+	_, _ = s.DB.ExecContext(ctx, `UPDATE threads SET status = 'idle' WHERE id = ? AND status IN ('running', 'waiting')`, id)
+	_, _ = s.DB.ExecContext(ctx, `UPDATE items SET data = json_set(data, '$.request.status', 'expired') WHERE thread_id = ? AND kind = 'request' AND json_extract(data, '$.request.status') = 'pending'`, id)
+	_, _ = s.DB.ExecContext(ctx, `UPDATE items SET data = json_set(data, '$.tool.status', 'error') WHERE thread_id = ? AND kind = 'tool' AND json_extract(data, '$.tool.status') = 'running'`, id)
 }
 
 // ---------- items ----------

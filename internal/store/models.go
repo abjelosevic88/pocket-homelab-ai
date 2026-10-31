@@ -104,6 +104,9 @@ type Thread struct {
 	// Reattached: that is Pocket AI's own agent from before a restart, which
 	// it reconnected to: messages wait for it and Stop ends it.
 	Reattached bool `json:"reattached,omitempty"`
+	// Reconnecting: Pocket AI is getting its agent back (right after a
+	// restart, or while the link to its machine is down); it works on.
+	Reconnecting bool `json:"reconnecting,omitempty"`
 	// Subagents at work right now (background sub-agents of a live session).
 	Subagents any `json:"subagents,omitempty"`
 	// Background work other than sub-agents (shell commands, monitors) a live

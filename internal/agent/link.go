@@ -31,6 +31,9 @@ type Hold struct {
 	// Leave closes when Pocket AI is stopping: closing the session then
 	// only lets go of the CLI, and a dropped connection is not reattached.
 	Leave <-chan struct{}
+	// FromTurn: adopting, replay the whole last turn, ended or not (the
+	// thread never saw it end: Pocket AI was down when it did).
+	FromTurn bool
 }
 
 func (h *Hold) leaving() bool {
@@ -89,6 +92,13 @@ type LinkSink interface {
 	Link(up bool)
 }
 
+// ReplaySink is the optional part of a Sink told while an adopted CLI's
+// output that was already shown before is read again: it may keep that out
+// of view and show the result once, instead of flickering through it.
+type ReplaySink interface {
+	Replay(on bool)
+}
+
 // link is a CLI's stdio. Plain, it is the process itself. Held, it is
 // pocket-hold attach, and when the connection drops the link attaches again
 // where it stopped: no output read twice or lost, stdin the holder may not
@@ -117,6 +127,8 @@ type link struct {
 	onLink  func(up bool)
 
 	off      int64 // stdout read so far (held)
+	onReplay func(on bool)
+	quiet    bool
 	exit     *int  // the holder reported the CLI's exit
 	stopping bool
 	quit     chan struct{} // closed by Detach or Close: stop reconnecting
@@ -131,10 +143,16 @@ func openLink(ctx context.Context, o Options, m marks, bin string, args []string
 	if ls, ok := sink.(LinkSink); ok {
 		l.onLink = ls.Link
 	}
+	if rs, ok := sink.(ReplaySink); ok {
+		l.onReplay = rs.Replay
+	}
 	if l.log == nil {
 		l.log = slog.Default()
 	}
 	from := int64(hold.FromReplay)
+	if l.h != nil && l.h.FromTurn {
+		from = hold.FromTurn
+	}
 	cmd, stdin, r, hd, err := l.connect(from, l.h != nil && l.h.Adopt)
 	if err != nil {
 		return nil, err
@@ -222,8 +240,15 @@ func (l *link) connect(from int64, only bool) (*exec.Cmd, io.WriteCloser, *bufio
 // (nil for 0), errDetached, or the error of the connection that was lost.
 func (l *link) Lines(fn func(line []byte)) error {
 	r := l.r
+	if l.h != nil && !l.Header.Started && l.off < l.Header.Live {
+		l.quietStart()
+	}
+	defer l.quietEnd()
 	for {
 		for {
+			if l.quiet && l.off >= l.Header.Live {
+				l.quietEnd()
+			}
 			line, err := r.ReadBytes('\n')
 			if err != nil {
 				break // a partial line is not counted: it comes again
@@ -276,6 +301,22 @@ func (l *link) Lines(fn func(line []byte)) error {
 			return err
 		}
 		r = nr
+	}
+}
+
+// quietStart: what follows was shown before (an adopted CLI's replay, or
+// the earlier turns' kept lines); quietEnd: live output again.
+func (l *link) quietStart() {
+	if !l.quiet && l.onReplay != nil {
+		l.quiet = true
+		l.onReplay(true)
+	}
+}
+
+func (l *link) quietEnd() {
+	if l.quiet {
+		l.quiet = false
+		l.onReplay(false)
 	}
 }
 
