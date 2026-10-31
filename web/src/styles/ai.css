@@ -472,7 +472,7 @@
      scroll sideways if a long model name does not fit, never squeeze */
   .composer-extra:has(.agent-chips) { mask-image: linear-gradient(to right, #000 calc(100% - 10px), transparent); padding-right: 6px; }
   .composer-extra:has(.agent-chips) .composer-status { font-size: 0; gap: 0; padding: 0 4px; }
-  .agent-chips { flex-wrap: nowrap; }
+  .agent-chips { flex-wrap: nowrap; flex-shrink: 0; } /* scroll, never shrink: shrunk chips spill under the cache clock */
   .agent-chips .select-trigger { max-width: none; flex-shrink: 0; padding-left: 4px; padding-right: 3px; gap: 1px; font-size: 13px; }
   .agent-chips .select-caret { width: 10px; height: 10px; opacity: .7; }
   .agent-chips .inline-ico { margin-right: 2px; }
