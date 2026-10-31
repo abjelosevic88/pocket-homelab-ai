@@ -1,5 +1,6 @@
 // The agent asks: may I run this? which option? is this plan OK? — answered right above the composer.
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { api, V1 } from '../lib/api'
 import type { AgentRequest } from '../lib/types'
 import { Icon } from './icons'
@@ -150,8 +151,8 @@ export function RequestCard({ threadId, req, onDone }: { threadId: string; req: 
 export function RequestSummary({ req }: { req: AgentRequest }) {
   const label = req.type === 'question' ? 'Question' : req.type === 'plan' ? 'Plan' : (req.title || req.tool_name)
   const st = req.status
-  const icon = st === 'allowed' || st === 'answered' ? 'check-circle' : st === 'denied' ? 'x-circle' : st === 'pending' ? 'clock' : 'minus'
-  const word = st === 'allowed' ? (req.type === 'plan' ? 'approved' : req.auto ? 'allowed automatically' : 'allowed') : st === 'answered' ? 'answered' : st === 'denied' ? (req.type === 'plan' ? 'sent back' : 'denied') : st === 'pending' ? 'waiting for you' : 'expired'
+  const icon = st === 'allowed' || st === 'answered' ? 'check-circle' : st === 'denied' ? 'x-circle' : st === 'pending' ? 'clock' : st === 'deferred' ? 'moon' : 'minus'
+  const word = st === 'allowed' ? (req.type === 'plan' ? 'approved' : req.auto === 'away' ? 'allowed — you approved it after being away' : req.auto ? 'allowed automatically' : 'allowed') : st === 'answered' ? 'answered' : st === 'denied' ? (req.type === 'plan' ? 'sent back' : 'denied') : st === 'pending' ? 'waiting for you' : st === 'deferred' ? 'saved for when you are back; the agent carried on' : 'expired'
   let detail = ''
   if (req.type === 'question' && req.answer && typeof req.answer === 'object') {
     const a = req.answer as Record<string, unknown>
@@ -161,7 +162,8 @@ export function RequestSummary({ req }: { req: AgentRequest }) {
   return (
     <div className={`req-line ${st}`}>
       <Icon name={icon} size={13} />
-      <span className="ellipsis" title={req.auto ? `Your rule: ${req.auto} (Settings → App changes)` : undefined}><b>{label}</b> — {word}{detail ? `: ${detail}` : ''}</span>
+      <span className="ellipsis" title={req.auto && req.auto !== 'away' ? `Your rule: ${req.auto} (Settings → App changes)` : undefined}><b>{label}</b> — {word}{detail ? `: ${detail}` : ''}</span>
+      {st === 'deferred' && <Link to="/away" className="req-line-go">Decide</Link>}
     </div>
   )
 }

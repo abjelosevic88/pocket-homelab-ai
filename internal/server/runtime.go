@@ -886,6 +886,9 @@ func (rt *engine) respond(t *store.Thread, reqID string, resp agent.Response) er
 	if !ok {
 		return badRequest("that request is no longer waiting")
 	}
+	if resp.Decision == "defer" {
+		return rt.deferPending(t, r, reqID)
+	}
 	var answerErr error
 	if strings.HasPrefix(reqID, "ask-") {
 		answerErr = rt.s.answerAsk(t, reqID, resp)
@@ -922,6 +925,46 @@ func (rt *engine) respond(t *store.Thread, reqID string, resp agent.Response) er
 		if th, err := rt.s.store.GetThreadAny(rt.ctx, t.ID); err == nil {
 			rt.publishThread(th)
 		}
+	}
+	return nil
+}
+
+// deferPending answers a waiting request "not now": its person went away.
+func (rt *engine) deferPending(t *store.Thread, r *run, reqID string) error {
+	st, err := rt.s.store.GetItem(rt.ctx, t.ID, "req-"+reqID)
+	if err != nil {
+		return badRequest("that request is no longer waiting")
+	}
+	var it agent.Item
+	if json.Unmarshal(st.Data, &it) != nil || it.Request == nil {
+		return badRequest("that request is no longer waiting")
+	}
+	req := *it.Request
+	uid := r.userID
+	if req.ForID != 0 {
+		uid = req.ForID
+	}
+	if strings.HasPrefix(reqID, "ask-") {
+		err = rt.s.answerAsk(t, reqID, agent.Response{Decision: "defer"}) // the tool call saves it (assistant_tools.go)
+	} else {
+		msg := awayDeferText
+		if req.Type == "question" {
+			msg = awayQuestionText
+		}
+		if err = r.sess.Respond(reqID, agent.Response{Decision: "defer", Message: msg}); err == nil {
+			rt.s.saveDeferred(t.ID, req, uid, awayMatch(req.ToolName, req.Input))
+		}
+	}
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	delete(r.pending, reqID)
+	r.lastUsed = time.Now()
+	left := len(r.pending)
+	r.mu.Unlock()
+	if left == 0 {
+		rt.setStatus(t.ID, "running", "")
 	}
 	return nil
 }
@@ -1659,6 +1702,18 @@ func (k *runSink) Request(req agent.Request) {
 			return // answered already: the replay of a turn taken back asks again
 		}
 	}
+	// approved after being away: the agent repeats the call (away.go)
+	if !strings.HasPrefix(req.ID, "ask-") && k.approvedAgentRequest(req) {
+		return
+	}
+	approver := r.userID
+	if req.ForID != 0 {
+		approver = req.ForID
+	}
+	away := k.rt.s.isAway(k.rt.ctxOrBackground(), approver)
+	if away && req.Type != "plan" && !strings.HasPrefix(req.ID, "ask-") && k.deferAgentRequest(req, approver) {
+		return
+	}
 	r.mu.Lock()
 	r.pending[req.ID] = true
 	r.lastUsed = time.Now()
@@ -1666,6 +1721,12 @@ func (k *runSink) Request(req agent.Request) {
 	k.rt.saveItem(r.threadID, agent.Item{Key: "req-" + req.ID, Kind: "request", Request: &req})
 	t := k.rt.setStatus(r.threadID, "waiting", "")
 	if t == nil {
+		return
+	}
+	if away {
+		// a plan: in the summary when everything else is done
+		k.rt.s.awayMark(approver)
+		go k.rt.s.awayCheckDone(approver)
 		return
 	}
 	what := "needs your OK"
@@ -1688,6 +1749,9 @@ func (k *runSink) Subagents(list []agent.Subagent) {
 	k.r.subs = list
 	k.r.lastUsed = time.Now()
 	k.r.mu.Unlock()
+	if len(list) == 0 {
+		go k.rt.s.awayCheckDone(k.r.userID)
+	}
 	if t, err := k.rt.s.store.GetThreadAny(k.rt.ctx, k.r.threadID); err == nil {
 		k.rt.publishThread(t)
 	}
@@ -1702,6 +1766,9 @@ func (k *runSink) Tasks(list []agent.Task) {
 	k.r.tasks = list
 	k.r.lastUsed = time.Now() // the idle clock starts when the last one ends
 	k.r.mu.Unlock()
+	if len(list) == 0 {
+		go k.rt.s.awayCheckDone(k.r.userID)
+	}
 	if t, err := k.rt.s.store.GetThreadAny(k.rt.ctx, k.r.threadID); err == nil {
 		k.rt.publishThread(t)
 	}
@@ -1814,9 +1881,14 @@ func (k *runSink) TurnDone(ti agent.TurnInfo) {
 		switch {
 		case !ti.OK && !ti.Interrupted:
 			rt.notify(t, "failed", providerName(t.Provider)+" stopped with an error", oneLine(t.Title+"\n"+ti.Error, 200))
+		case ti.OK && rt.s.isAway(rt.ctx, t.UserID):
+			rt.s.awayTurnDone(t.UserID, t.ID) // in the summary when everything is done
 		case ti.OK:
 			rt.notify(t, "finished", providerName(t.Provider)+" finished", oneLine(firstNonEmpty(t.Preview, t.Title), 240))
 		}
+	}
+	if queuedN == 0 {
+		go rt.s.awayCheckDone(t.UserID)
 	}
 	rt.s.publish(t.UserID, "ai.turn_finished", t.ID, map[string]any{"thread_id": t.ID, "title": t.Title, "ok": ti.OK,
 		"provider": t.Provider, "cost_usd": ti.CostUSD, "duration_ms": ti.DurationMS})
@@ -1873,6 +1945,9 @@ func (k *runSink) Exited(err error) {
 		rt.setStatus(r.threadID, "idle", "")
 	} else if e == nil {
 		rt.publishThread(t)
+	}
+	if len(q) == 0 {
+		go rt.s.awayCheckDone(r.userID)
 	}
 	// Messages queued behind a process that died start a new one.
 	if len(q) > 0 {
@@ -2004,6 +2079,9 @@ func (rt *engine) takeTurnNote(threadID string) string {
 // chatting in a shared thread doesn't get theirs pulled into it unasked.
 func (rt *engine) withMemory(r *run, in agent.Input, sender int64) agent.Input {
 	in.Text += rt.takeTurnNote(r.threadID)
+	if rt.s.isAway(rt.ctxOrBackground(), sender) {
+		in.Text += awayNote
+	}
 	t, err := rt.s.store.GetThread(rt.ctx, r.userID, r.threadID)
 	if err != nil || sender != r.userID {
 		return in

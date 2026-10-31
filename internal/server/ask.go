@@ -30,8 +30,8 @@ type askSource struct {
 }
 type askApproval struct {
 	Thread string
-	Answer chan bool
-	UserID int64 // whose apps the change is for: only they may approve it
+	Answer chan string // allow | deny | defer (its person is away)
+	UserID int64       // whose apps the change is for: only they may approve it
 }
 
 var askApprovals sync.Map // server + thread + request → one-use approval
@@ -411,7 +411,7 @@ func (s *Server) answerAsk(t *store.Thread, id string, resp agent.Response) erro
 	if !ok {
 		return badRequest("This approval has expired")
 	}
-	value.(askApproval).Answer <- resp.Decision == "allow"
+	value.(askApproval).Answer <- resp.Decision
 	return nil
 }
 

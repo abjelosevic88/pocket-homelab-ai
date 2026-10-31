@@ -554,3 +554,15 @@
 .files-name-why { margin: 8px 0 0; font-size: 13px; color: var(--danger); line-height: 1.45; }
 .files-name-why .link-btn { font-size: 13px; }
 .modal input[aria-invalid] { border-color: var(--danger); }
+
+/* Away page */
+.away-page { display: grid; gap: 18px; }
+.away-sec { display: grid; gap: 10px; }
+.away-sec > p { margin: -4px 0 2px; }
+.away-sec .srv-h { display: flex; align-items: center; gap: 8px; }
+.away-all { margin-left: auto; }
+.away-thread { display: grid; gap: 8px; }
+.away-thread-h { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 2px 2px 0; color: var(--text); font-weight: 600; font-size: 13.5px; text-decoration: none; }
+.away-thread-h:hover { color: var(--accent-ink); }
+.away-item { display: grid; gap: 4px; }
+.away-item .req-card { max-height: none; animation: none; }

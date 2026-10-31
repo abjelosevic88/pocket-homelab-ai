@@ -525,7 +525,7 @@ func (s *codexSession) Respond(id string, r Response) error {
 		switch r.Decision {
 		case "allow_session":
 			d = "acceptForSession"
-		case "deny":
+		case "deny", "defer":
 			d = "decline"
 		}
 		return s.c.reply(p.rpcID, map[string]any{"decision": d})
@@ -534,7 +534,7 @@ func (s *codexSession) Respond(id string, r Response) error {
 		switch r.Decision {
 		case "allow_session":
 			d = "approved_for_session"
-		case "deny":
+		case "deny", "defer":
 			d = "denied"
 		}
 		return s.c.reply(p.rpcID, map[string]any{"decision": d})
@@ -542,6 +542,9 @@ func (s *codexSession) Respond(id string, r Response) error {
 		answers := map[string]any{}
 		for _, q := range p.questions {
 			a := r.Answers[q.ID]
+			if r.Decision == "defer" {
+				a = []string{r.Message} // its person is away: the answer says so
+			}
 			if a == nil {
 				a = []string{}
 			}
@@ -549,7 +552,7 @@ func (s *codexSession) Respond(id string, r Response) error {
 		}
 		return s.c.reply(p.rpcID, map[string]any{"answers": answers})
 	case "item/permissions/requestApproval":
-		if r.Decision == "deny" {
+		if r.Decision == "deny" || r.Decision == "defer" {
 			return s.c.reply(p.rpcID, map[string]any{"permissions": map[string]any{}, "scope": "turn"})
 		}
 		scope := "turn"

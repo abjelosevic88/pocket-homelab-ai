@@ -76,6 +76,7 @@ type Server struct {
 
 	accts accountState // logins: status cache, sign-ins in progress (accounts.go)
 	terms termHub      // shells in the browser (terminals.go)
+	aw    awayBook     // away from keyboard (away.go)
 }
 
 // New creates a server.
@@ -294,6 +295,9 @@ func (s *Server) Router() http.Handler {
 			r.Put("/pocket-tools/auto-approve", s.handlePutAppAuto)
 			r.Post("/pocket-tools/auto-approve", s.handleAddAppAuto)
 			r.Put("/settings", s.handlePutSettings)
+			r.Get("/away", s.handleGetAway)
+			r.Put("/away", s.handlePutAway)
+			r.Post("/away/allow-all", s.handleAwayAllowAll)
 			r.Get("/settings/system", s.handleSystemInfo)
 			r.Post("/notify/test", s.handleTestNotify)
 

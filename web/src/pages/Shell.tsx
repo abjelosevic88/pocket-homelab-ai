@@ -23,6 +23,7 @@ import SharedPage from './SharedPage'
 import TodayPage from './TodayPage'
 import UsagePage from './UsagePage'
 import SnippetsPage from './SnippetsPage'
+import AwayPage from './AwayPage'
 import WorktreesPage from './WorktreesPage'
 import FilesPage from './FilesPage'
 import FileView from './FileView'
@@ -161,6 +162,7 @@ function ShellInner() {
             <Route path="/workflows" element={<WorkflowsPage onMenu={onMenu} />} />
             <Route path="/usage" element={<UsagePage onMenu={onMenu} />} />
             <Route path="/snippets" element={<SnippetsPage onMenu={onMenu} />} />
+            <Route path="/away" element={<AwayPage onMenu={onMenu} />} />
             <Route path="/worktrees" element={<WorktreesPage onMenu={onMenu} />} />
             <Route path="/terminal" element={<Navigate to={`/term${loc.search}`} replace />} />
             <Route path="/term/*" element={null} />
