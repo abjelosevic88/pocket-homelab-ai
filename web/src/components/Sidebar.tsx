@@ -206,6 +206,7 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
         {nav('/shared', 'users', 'Shared', sharedN > 0 ? <span className="badge">{sharedN}</span> : undefined)}
         {nav('/usage', 'chart', 'Usage')}
         {nav('/snippets', 'bookmark', 'Snippets')}
+        <button type="button" className={`sb-item ${showArchive ? 'active' : ''}`} onClick={() => { setShowArchive(a => !a); setHits(null) }}><Icon name="archive" size={16} /><span className="grow">Archive</span></button>
       </nav>
 
       <div className="sb-sec">
@@ -240,6 +241,7 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
         </div>
       ) : (
         <div className="sb-threads">
+          {showArchive && <button type="button" className="sb-away" onClick={() => setShowArchive(false)}><Icon name="arrow-left" size={13} /><span className="grow">Back to threads</span></button>}
           {(away?.on || saved > 0) && !showArchive && (
             <button type="button" className={`sb-away ${away?.on ? 'on' : ''}`} onClick={() => go('/away')}>
               <Icon name="moon" size={13} /><span className="grow ellipsis">{away?.on ? 'Away — agents carry on without you' : 'Saved while you were away'}</span>
@@ -293,7 +295,6 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
       <div className="sb-bottom">
       {!showArchive && <UsageWidget onNavigate={onNavigate} />}
       <div className="sb-foot">
-        <button type="button" className={`sb-foot-link ${showArchive ? 'active' : ''}`} onClick={() => { setShowArchive(a => !a); setHits(null) }}><Icon name="archive" size={14} />{showArchive ? 'Back to threads' : 'Archive'}</button>
         <button type="button" className={`sb-foot-link away-toggle ${away?.on ? 'on' : ''}`} aria-pressed={!!away?.on} onClick={toggleAway}
           title={away?.on ? "I'm back: show what the agents saved for me" : 'Away from keyboard: agents keep working on what they can and save approvals and questions for when you are back'}>
           <Icon name="moon" size={14} />{away?.on ? 'Away' : 'Away mode'}
