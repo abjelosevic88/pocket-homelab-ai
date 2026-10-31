@@ -16,7 +16,7 @@ import (
 func TestRemoteCommandQuoting(t *testing.T) {
 	args := []string{"it's", `a "quoted" \ back\slash`, "line\nbreak", "$HOME `id` $(id)", "", "--flag=x y", "ünï ✓"}
 	dir := t.TempDir()
-	script := remoteScript("", dir, []string{"POCKET_AI=1", "X=a b'c"}, "sh", append([]string{"-c", `printf '%s|' "$PWD" "$POCKET_AI" "$X" "$@"`, "sh"}, args...))
+	script := remoteScript("", dir, []string{"POCKET_AI=1", "X=a b'c"}, nil, "sh", append([]string{"-c", `printf '%s|' "$PWD" "$POCKET_AI" "$X" "$@"`, "sh"}, args...))
 	want := dir + "|1|a b'c|" + strings.Join(args, "|") + "|"
 	for _, shell := range []string{"sh", "bash", "zsh", "fish"} {
 		if _, err := exec.LookPath(shell); err != nil {
@@ -42,7 +42,7 @@ func TestRemoteSlotTakeover(t *testing.T) {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // sshd makes it a session leader
 		return cmd
 	}
-	old := start(remoteScript("thread-1", "", nil, "sh", []string{"-c", "sleep 60; : stream-json"}))
+	old := start(remoteScript("thread-1", "", nil, nil, "sh", []string{"-c", "sleep 60; : stream-json"}))
 	if err := old.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestRemoteSlotTakeover(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	// another thread's slot leaves it alone
-	if out, err := start(remoteScript("thread-2", "", nil, "echo", []string{"ok"})).CombinedOutput(); err != nil || string(out) != "ok\n" {
+	if out, err := start(remoteScript("thread-2", "", nil, nil, "echo", []string{"ok"})).CombinedOutput(); err != nil || string(out) != "ok\n" {
 		t.Fatalf("other slot: %v %q", err, out)
 	}
 	select {
@@ -68,7 +68,7 @@ func TestRemoteSlotTakeover(t *testing.T) {
 		t.Fatal("a start in another slot ended this one")
 	case <-time.After(300 * time.Millisecond):
 	}
-	if out, err := start(remoteScript("thread-1", "", nil, "echo", []string{"ok"})).CombinedOutput(); err != nil || string(out) != "ok\n" {
+	if out, err := start(remoteScript("thread-1", "", nil, nil, "echo", []string{"ok"})).CombinedOutput(); err != nil || string(out) != "ok\n" {
 		t.Fatalf("takeover: %v %q", err, out)
 	}
 	select {

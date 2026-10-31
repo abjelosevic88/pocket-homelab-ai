@@ -209,7 +209,9 @@ type Options struct {
 	Env          []string
 	// Remote: run the CLI on another machine over ssh (nil = this server).
 	Remote *Remote
-	Log    *slog.Logger
+	// Hold: run it under pocket-hold, so it outlives the connection (link.go).
+	Hold *Hold
+	Log  *slog.Logger
 }
 
 // Session is a live CLI process attached to one thread.

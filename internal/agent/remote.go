@@ -129,8 +129,9 @@ const slotTakeover = `f="$HOME/.pocket-ai/run/$1"; mkdir -p "${f%/*}"; ` +
 	`kill -HUP "-$p" 2>/dev/null || kill -HUP "$p" 2>/dev/null; i=0; while kill -0 "$p" 2>/dev/null && [ $i -lt 10 ]; do sleep 1; i=$((i+1)); done; ` +
 	`kill -KILL "-$p" 2>/dev/null || kill -KILL "$p" 2>/dev/null; fi; echo $$ > "$f"; `
 
-// script builds the remote sh script: profile, PATH, folder, slot, then exec.
-func remoteScript(slot, dir string, env []string, bin string, args []string) string {
+// script builds the remote sh script: profile, PATH, folder, slot, then exec
+// (behind wrap, pocket-hold attach, when given).
+func remoteScript(slot, dir string, env []string, wrap []string, bin string, args []string) string {
 	var b strings.Builder
 	b.WriteString(`[ -r /etc/profile ] && . /etc/profile >/dev/null 2>&1 </dev/null; [ -r "$HOME/.profile" ] && . "$HOME/.profile" >/dev/null 2>&1 </dev/null; `)
 	b.WriteString(remotePath + "; ")
@@ -140,7 +141,11 @@ func remoteScript(slot, dir string, env []string, bin string, args []string) str
 	if slot != "" {
 		b.WriteString("set -- " + shq(slot) + "; " + slotTakeover)
 	}
-	b.WriteString(guiBridge + "exec ${g:+\"$g\" run --}")
+	b.WriteString(guiBridge + "exec")
+	for _, w := range wrap {
+		b.WriteString(" " + shq(w))
+	}
+	b.WriteString(" ${g:+\"$g\" run --}")
 	if len(env) > 0 {
 		b.WriteString(" env")
 		for _, e := range env {
@@ -161,6 +166,10 @@ func Command(r *Remote, dir string, env []string, bin string, args ...string) (*
 	if r == nil {
 		return LocalCmd(nil, dir, env, bin, args...)
 	}
+	return r.command(dir, env, nil, bin, args)
+}
+
+func (r *Remote) command(dir string, env []string, wrap []string, bin string, args []string) (*exec.Cmd, error) {
 	var argv []string
 	if len(r.Forwards) > 0 {
 		// a forward that cannot be made fails the start instead of leaving the tools dead
@@ -170,7 +179,7 @@ func Command(r *Remote, dir string, env []string, bin string, args ...string) (*
 		}
 	}
 	argv = append(argv, r.sshArgs()...)
-	return r.ssh(nil, append(argv, remoteCommand(remoteScript(r.Slot, dir, env, bin, args))))
+	return r.ssh(nil, append(argv, remoteCommand(remoteScript(r.Slot, dir, env, wrap, bin, args))))
 }
 
 // Run runs a short sh script on the remote machine (the same profile and

@@ -1,20 +1,16 @@
 package agent
 
 import (
-	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 )
 
@@ -53,9 +49,7 @@ func codexPolicy(mode string) (approval, sandbox string) {
 
 // rpc is a JSON-RPC client over a codex app-server process.
 type rpc struct {
-	cmd   *exec.Cmd
-	stdin io.WriteCloser
-	wmu   sync.Mutex
+	l     *link
 	next  atomic.Int64
 	mu    sync.Mutex
 	calls map[int64]chan rpcReply
@@ -117,34 +111,30 @@ type rpcReply struct {
 }
 
 func startRPC(bin, cwd string, env []string, remote ...*Remote) (*rpc, error) {
-	if bin == "" {
-		bin = "codex"
-	}
 	var r *Remote
 	if len(remote) > 0 {
 		r = remote[0]
 	}
-	cmd, err := Command(r, cwd, env, bin, "app-server")
-	if err != nil {
-		return nil, err
+	return openRPC(context.Background(), Options{Cwd: cwd, Env: env, Remote: r}, bin)
+}
+
+// openRPC starts `codex app-server` where o says, held when o.Hold is set.
+func openRPC(ctx context.Context, o Options, bin string) (*rpc, error) {
+	if bin == "" {
+		bin = "codex"
 	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	c := &rpc{cmd: cmd, calls: map[int64]chan rpcReply{}, done: make(chan struct{}), errb: &tail{n: 8 << 10}}
+	c := &rpc{calls: map[int64]chan rpcReply{}, done: make(chan struct{}), errb: &tail{n: 8 << 10}}
 	c.qcond = sync.NewCond(&c.qmu)
-	cmd.Stderr = c.errb
-	in, err := cmd.StdinPipe()
+	l, err := openLink(ctx, o, codexMarks, bin, []string{"app-server"}, c.errb)
 	if err != nil {
 		return nil, err
 	}
-	out, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
+	c.l = l
+	if l.h != nil {
+		// answers to an earlier connection's calls may still come: number past them
+		c.next.Store(time.Now().UnixMilli() << 10)
 	}
-	c.stdin = in
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start %s app-server: %w", bin, err)
-	}
-	go c.read(out)
+	go c.read()
 	go c.dispatch()
 	return c, nil
 }
@@ -154,15 +144,7 @@ func (c *rpc) send(v any) error {
 	if err != nil {
 		return err
 	}
-	c.wmu.Lock()
-	defer c.wmu.Unlock()
-	select {
-	case <-c.done:
-		return ErrClosed
-	default:
-	}
-	_, err = c.stdin.Write(append(b, '\n'))
-	return err
+	return c.l.Write(append(b, '\n'))
 }
 
 func (c *rpc) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
@@ -197,10 +179,8 @@ func (c *rpc) replyError(id json.RawMessage, msg string) error {
 	return c.send(map[string]any{"id": id, "error": map[string]any{"code": -32601, "message": msg}})
 }
 
-func (c *rpc) read(r io.Reader) {
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 1<<20), 64<<20)
-	for sc.Scan() {
+func (c *rpc) read() {
+	c.err = c.l.Lines(func(line []byte) {
 		var m struct {
 			ID     json.RawMessage `json:"id"`
 			Method string          `json:"method"`
@@ -210,8 +190,8 @@ func (c *rpc) read(r io.Reader) {
 				Message string `json:"message"`
 			} `json:"error"`
 		}
-		if json.Unmarshal(sc.Bytes(), &m) != nil {
-			continue
+		if json.Unmarshal(line, &m) != nil {
+			return
 		}
 		switch {
 		case m.Method != "":
@@ -230,8 +210,7 @@ func (c *rpc) read(r io.Reader) {
 				ch <- rep
 			}
 		}
-	}
-	c.err = c.cmd.Wait()
+	})
 	close(c.done)
 	c.qmu.Lock()
 	c.qdone = true
@@ -239,22 +218,13 @@ func (c *rpc) read(r io.Reader) {
 	c.qcond.Broadcast()
 }
 
+// close ends the app-server (a held one stays when Pocket AI is stopping)
+// and returns once it is gone, or after the kill escalation.
 func (c *rpc) close() {
-	c.wmu.Lock()
-	_ = c.stdin.Close()
-	c.wmu.Unlock()
-	if c.cmd.Process == nil {
-		return
-	}
+	c.l.Close(c.done)
 	select {
 	case <-c.done:
-	case <-time.After(2 * time.Second):
-		_ = syscall.Kill(-c.cmd.Process.Pid, syscall.SIGTERM)
-		select {
-		case <-c.done:
-		case <-time.After(5 * time.Second):
-			_ = syscall.Kill(-c.cmd.Process.Pid, syscall.SIGKILL)
-		}
+	case <-time.After(25 * time.Second):
 	}
 }
 
@@ -306,13 +276,24 @@ var Version = "dev"
 
 // StartCodex starts `codex app-server` and opens (or resumes, or forks) a thread.
 func StartCodex(ctx context.Context, o Options, sink Sink) (Session, error) {
-	c, err := startRPC(o.Bin, o.Cwd, o.Env, o.Remote)
+	c, err := openRPC(ctx, o, o.Bin)
 	if err != nil {
 		return nil, err
 	}
 	s := &codexSession{opts: o, sink: sink, c: c, ctx: ctx, pending: map[string]codexPending{}, exited: make(chan struct{})}
 	c.onNotify = s.notify
 	c.onRequest = s.request
+	if c.l.h != nil && !c.l.Header.Started {
+		// a held app-server that was running already: its thread is loaded,
+		// and the replay of the running turn (if any) tells its id
+		s.threadID = o.ResumeID
+		if c.l.Header.Busy {
+			s.running, s.turnFrom = true, time.Now()
+			sink.TurnStarted()
+		}
+		s.watch(ctx)
+		return s, nil
+	}
 	ictx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	if err := c.initialize(ictx, Version); err != nil {
@@ -367,6 +348,13 @@ func StartCodex(ctx context.Context, o Options, sink Sink) (Session, error) {
 		s.threadID = o.ResumeID
 	}
 	sink.SessionID(s.threadID)
+	s.watch(ctx)
+	return s, nil
+}
+
+// watch reports the app-server's end to the sink.
+func (s *codexSession) watch(ctx context.Context) {
+	c, o, sink := s.c, s.opts, s.sink
 	go func() {
 		lost := ""
 		select {
@@ -374,6 +362,10 @@ func StartCodex(ctx context.Context, o Options, sink Sink) (Session, error) {
 			lost = lostLink(o.Remote, c.err, c.errb.String())
 		case <-ctx.Done():
 			c.close()
+		}
+		if errors.Is(c.err, errDetached) {
+			close(s.exited)
+			return // it runs on, for the next Pocket AI to attach to
 		}
 		s.mu.Lock()
 		running := s.running
@@ -395,7 +387,6 @@ func StartCodex(ctx context.Context, o Options, sink Sink) (Session, error) {
 			sink.Exited(nil)
 		}
 	}()
-	return s, nil
 }
 
 func stderrHint(t *tail) string {

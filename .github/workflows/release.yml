@@ -25,6 +25,7 @@ jobs:
         env: { GOOS: "${{ matrix.goos }}", GOARCH: "${{ matrix.goarch }}", CGO_ENABLED: "0" }
         run: |
           name="pocket-ai_${{ github.ref_name }}_${GOOS}_${GOARCH}"
+          (cd internal/hold && GOOS= GOARCH= sh build-bins.sh) # pocket-hold for every machine, embedded
           go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME#v}" -o "dist/$name/pocket-ai" ./cmd/pocket-ai
           cp README.md LICENSE .env.example "dist/$name/"
           cp deploy/pocket-ai.service "dist/$name/"

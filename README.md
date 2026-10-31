@@ -62,6 +62,12 @@ Personal app assistance: [Briefing, workflows, memory, sources and document uplo
   the conversation lives here as usual. Nothing to install there but Claude Code and/or Codex.
 - Every thread is a real CLI session: it resumes after a restart, and **On this server** lists the sessions you
   started in a terminal (or in another tool) so you can open and continue them here.
+- **Agents outlive their connection.** Each CLI runs under a small holder, `pocket-hold`, which Pocket AI
+  copies to every machine itself (`~/.pocket-ai/bin`). The CLI keeps working when the ssh link drops or Pocket
+  AI is redeployed. Pocket AI then attaches again where it stopped: a dropped link within about 3 minutes, a
+  redeploy at its next start. A turn in progress, its sub-agents, background shells and pending approvals all
+  come back. `make build` embeds the holders (`go generate ./internal/hold`); without them, or with
+  `POCKET_HOLD=off`, agents run as plain children of their connection again.
 
 **Pocket apps, directly**
 - Enable Pocket Ask once from an app. Ordinary Claude and Codex threads then use that person's app tools directly, including when resuming a saved conversation.

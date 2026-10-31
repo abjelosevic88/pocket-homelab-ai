@@ -229,6 +229,9 @@ func cleanEnv(person string, env []string) []string {
 		"TMPDIR=/tmp", "DISABLE_AUTOUPDATER=1")
 }
 
+// Jailed says whether a CLI started in dir with env runs in a person's sandbox.
+func Jailed(dir string, env []string) bool { return personDir(dir, env) != "" }
+
 // LocalCmd is exec.Command for anything that may belong to a person: it
 // runs bin in dir with env added, inside the jail when it is theirs.
 // ctx may be nil.

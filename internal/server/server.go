@@ -148,9 +148,15 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	s.rt.start(ctx)
 	// say so in the thread, or a turn cut off by a crash or a manual restart
 	// just looks stuck
+	// one still running under its holder is taken back, turn and all
 	for _, id := range cut {
-		s.rt.saveItem(id, agent.Item{Key: fmt.Sprintf("restart-%d", time.Now().UnixNano()), Kind: "notice", Level: "warn",
-			Text: "Pocket AI restarted while the agent was working, so this turn stopped. Send a message (e.g. “continue”) to pick up where it left off."})
+		go func(id string) {
+			if s.rt.adopt(id) {
+				return
+			}
+			s.rt.saveItem(id, agent.Item{Key: fmt.Sprintf("restart-%d", time.Now().UnixNano()), Kind: "notice", Level: "warn",
+				Text: "Pocket AI restarted while the agent was working, so this turn stopped. Send a message (e.g. “continue”) to pick up where it left off."})
+		}(id)
 	}
 	go s.housekeeping(ctx)
 	go s.scheduleLoop(ctx)
@@ -499,7 +505,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) WaitIdle(ctx context.Context, max time.Duration) {
 	start := time.Now()
 	nextLog := start.Add(10 * time.Minute)
-	for s.rt.busyCount() > 0 || len(s.inferenceSlots) > 0 {
+	for s.rt.busy(false) > 0 || len(s.inferenceSlots) > 0 { // held agents work on through it
 		if max > 0 && time.Since(start) > max {
 			return
 		}
