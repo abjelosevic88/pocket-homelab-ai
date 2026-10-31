@@ -129,7 +129,7 @@ type link struct {
 	off      int64 // stdout read so far (held)
 	onReplay func(on bool)
 	quiet    bool
-	exit     *int  // the holder reported the CLI's exit
+	exit     *int // the holder reported the CLI's exit
 	stopping bool
 	quit     chan struct{} // closed by Detach or Close: stop reconnecting
 	quitOnce sync.Once
