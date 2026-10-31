@@ -66,9 +66,28 @@ var (
 	codexMarks = marks{`"method":"turn/start"`, `"method":"turn/completed"`, nil} // its sub-agents live within a turn
 )
 
-// reconnectFor is how long a held link tries to get its CLI back after the
-// connection dropped before it reports the loss.
-var reconnectFor = 15 * time.Minute
+// A held link tries to get its CLI back for as long as it takes (the
+// machine may be asleep or offline for hours), up to retryMax apart; it
+// stops when the holder says the CLI is gone, or the session is closed.
+var retryMax = time.Minute
+
+// unstopped: slots whose stop could not reach their holder (the machine was
+// unreachable). The thread's next start ends that CLI first instead of
+// taking it back.
+var unstopped sync.Map
+
+// TakeUnstopped reports (once) whether slot's CLI was stopped while its
+// machine could not be reached, so it may still run there.
+func TakeUnstopped(slot string) bool {
+	_, ok := unstopped.LoadAndDelete(slot)
+	return ok
+}
+
+// LinkSink is the optional part of a Sink told when a held CLI's
+// connection has been down for a moment, and when it is back.
+type LinkSink interface {
+	Link(up bool)
+}
 
 // link is a CLI's stdio. Plain, it is the process itself. Held, it is
 // pocket-hold attach, and when the connection drops the link attaches again
@@ -86,14 +105,16 @@ type link struct {
 
 	Header hold.Header // what the first attach found
 
-	wmu    sync.Mutex
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	r      *bufio.Reader
-	down   chan struct{} // non-nil while reconnecting; closed when back
-	ended  bool
-	inLog  []byte // stdin written, from inBase on (held)
-	inBase int64
+	wmu     sync.Mutex
+	cmd     *exec.Cmd
+	stdin   io.WriteCloser
+	r       *bufio.Reader
+	down    bool   // reconnecting
+	pending []byte // written while down: goes out when back
+	ended   bool
+	inLog   []byte // stdin written, from inBase on (held)
+	inBase  int64
+	onLink  func(up bool)
 
 	off      int64 // stdout read so far (held)
 	exit     *int  // the holder reported the CLI's exit
@@ -105,8 +126,11 @@ type link struct {
 
 const inLogMax = 32 << 20
 
-func openLink(ctx context.Context, o Options, m marks, bin string, args []string, errb *tail) (*link, error) {
+func openLink(ctx context.Context, o Options, m marks, bin string, args []string, errb *tail, sink Sink) (*link, error) {
 	l := &link{ctx: ctx, o: o, h: o.Hold, m: m, bin: bin, args: args, errb: errb, log: o.Log, quit: make(chan struct{})}
+	if ls, ok := sink.(LinkSink); ok {
+		l.onLink = ls.Link
+	}
 	if l.log == nil {
 		l.log = slog.Default()
 	}
@@ -261,9 +285,23 @@ type heldExit struct{ code int }
 func (e *heldExit) Error() string { return "exit status " + strconv.Itoa(e.code) }
 
 func (l *link) reattach() (*bufio.Reader, bool) {
-	deadline := time.Now().Add(reconnectFor)
 	delay := time.Second
-	for {
+	told := false // the sink knows it is down (not for a blip)
+	defer func() {
+		if told && l.onLink != nil {
+			l.wmu.Lock()
+			up := !l.down && !l.ended
+			l.wmu.Unlock()
+			if up {
+				l.onLink(true)
+			}
+		}
+	}()
+	for try := 0; ; try++ {
+		if try == 2 && l.onLink != nil {
+			told = true
+			l.onLink(false)
+		}
 		select {
 		case <-l.quit:
 			return nil, false
@@ -292,10 +330,16 @@ func (l *link) reattach() (*bufio.Reader, bool) {
 					l.log.Warn("agent input lost on reattach", "slot", l.h.Slot, "holder", hd.In, "kept from", l.inBase)
 				}
 			}
+			// then what was written meanwhile
+			if err == nil && len(l.pending) > 0 {
+				if _, err = stdin.Write(l.pending); err == nil {
+					l.logIn(l.pending)
+					l.pending = nil
+				}
+			}
 			if err == nil {
 				l.cmd, l.stdin = cmd, stdin
-				close(l.down)
-				l.down = nil
+				l.down = false
 				l.wmu.Unlock()
 				l.log.Info("agent reattached", "slot", l.h.Slot, "offset", l.off)
 				return r, true
@@ -304,17 +348,14 @@ func (l *link) reattach() (*bufio.Reader, bool) {
 			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			_ = cmd.Wait()
 		}
-		if time.Now().After(deadline) {
-			return nil, false
-		}
-		delay = min(delay*2, 15*time.Second)
+		delay = min(delay*2, retryMax)
 	}
 }
 
 func (l *link) markDown() {
 	l.wmu.Lock()
-	if l.down == nil && !l.ended {
-		l.down = make(chan struct{})
+	if !l.ended {
+		l.down = true
 	}
 	l.wmu.Unlock()
 }
@@ -322,45 +363,43 @@ func (l *link) markDown() {
 func (l *link) finish() {
 	l.wmu.Lock()
 	l.ended = true
-	if l.down != nil {
-		close(l.down)
-		l.down = nil
-	}
+	l.down = false
+	l.pending = nil
 	l.wmu.Unlock()
 	l.quitOnce.Do(func() { close(l.quit) })
 }
 
-// Write sends p to the CLI's stdin. Held, it waits out a reattach.
+// Write sends p to the CLI's stdin. Held and reconnecting, it keeps p to
+// send once the connection is back, and does not wait for that.
 func (l *link) Write(p []byte) error {
-	for {
-		l.wmu.Lock()
-		if l.ended {
-			l.wmu.Unlock()
-			return ErrClosed
-		}
-		if wait := l.down; wait != nil {
-			l.wmu.Unlock()
-			<-wait
-			continue
-		}
-		_, err := l.stdin.Write(p)
-		if err == nil && l.h != nil {
-			l.inLog = append(l.inLog, p...)
-			if over := len(l.inLog) - inLogMax; over > 0 {
-				l.inLog = append([]byte(nil), l.inLog[over:]...)
-				l.inBase += int64(over)
-			}
-		}
-		if err != nil && l.h != nil && !l.ended {
-			// the connection went under it: write again once it is back
-			if l.down == nil {
-				l.down = make(chan struct{})
-			}
-			l.wmu.Unlock()
-			continue
-		}
-		l.wmu.Unlock()
-		return err
+	l.wmu.Lock()
+	defer l.wmu.Unlock()
+	if l.ended {
+		return ErrClosed
+	}
+	if l.down {
+		l.pending = append(l.pending, p...)
+		return nil
+	}
+	_, err := l.stdin.Write(p)
+	if err == nil && l.h != nil {
+		l.logIn(p)
+	}
+	if err != nil && l.h != nil {
+		// the connection went under it: it goes out once it is back
+		l.down = true
+		l.pending = append(l.pending, p...)
+		return nil
+	}
+	return err
+}
+
+// logIn keeps what the holder may still need again; with l.wmu held.
+func (l *link) logIn(p []byte) {
+	l.inLog = append(l.inLog, p...)
+	if over := len(l.inLog) - inLogMax; over > 0 {
+		l.inLog = append([]byte(nil), l.inLog[over:]...)
+		l.inBase += int64(over)
 	}
 }
 
@@ -374,7 +413,7 @@ func (l *link) Close(done <-chan struct{}) {
 		}
 		l.wmu.Lock()
 		l.stopping = true
-		up := l.down == nil && !l.ended
+		up := !l.down && !l.ended
 		l.wmu.Unlock()
 		if up {
 			_ = l.writeNow([]byte(hold.StopLine + "\n"))
@@ -411,7 +450,7 @@ func (l *link) Close(done <-chan struct{}) {
 func (l *link) writeNow(p []byte) error {
 	l.wmu.Lock()
 	defer l.wmu.Unlock()
-	if l.ended || l.down != nil {
+	if l.ended || l.down {
 		return ErrClosed
 	}
 	_, err := l.stdin.Write(p)
@@ -457,6 +496,7 @@ func (l *link) stopHeld() {
 	}
 	if err != nil {
 		l.log.Warn("could not stop a held agent", "slot", l.h.Slot, "err", err)
+		unstopped.Store(l.h.Slot, true)
 	}
 }
 

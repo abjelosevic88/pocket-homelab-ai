@@ -147,3 +147,82 @@ func TestRestartTakesBackRunningAgent(t *testing.T) {
 	s2.rt.stop(th.ID)
 	waitFor("the agent to end", func() bool { _, ok, _ := hold.Status(th.ID); return !ok })
 }
+
+// While a held agent's connection is down, messages wait in the queue (the
+// thread says why) and go out when it is back; after a day away they are
+// left unsent instead.
+func TestLinkDownQueuesMessages(t *testing.T) {
+	s, c, th, r, sess := queueFixture(t)
+	r.mu.Lock()
+	r.running = false
+	r.mu.Unlock()
+	k := &runSink{rt: s.rt, r: r}
+	endpoint := "/api/v1/threads/" + th.ID + "/messages"
+	item := func(match func(*agent.Item) bool) *agent.Item {
+		rows, _ := s.store.ListItems(context.Background(), th.ID)
+		for _, row := range rows {
+			var it agent.Item
+			_ = json.Unmarshal(row.Data, &it)
+			if match(&it) {
+				return &it
+			}
+		}
+		return nil
+	}
+	notice := func(prefix string) *agent.Item {
+		return item(func(it *agent.Item) bool { return it.Kind == "notice" && strings.HasPrefix(it.Text, prefix) })
+	}
+	waitSent := func(n int) {
+		t.Helper()
+		for i := 0; ; i++ {
+			r.mu.Lock()
+			got := len(sess.sent)
+			r.mu.Unlock()
+			if got == n {
+				return
+			}
+			if i > 100 {
+				t.Fatalf("sent %d, want %d", got, n)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+
+	k.Link(false)
+	if notice("Lost the connection") != nil {
+		t.Fatal("an idle thread got a notice for nothing")
+	}
+	c.want("POST", endpoint, map[string]any{"text": "while away"}, 200, nil)
+	if len(sess.sent) != 0 || strings.Join(queuedTexts(r), ",") != "while away" {
+		t.Fatalf("not queued: sent %v queue %v", sess.sent, queuedTexts(r))
+	}
+	for i := 0; notice("Lost the connection") == nil; i++ {
+		if i > 100 {
+			t.Fatal("no notice for the queued message")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	k.Link(true)
+	waitSent(1)
+	if !strings.HasPrefix(sess.sent[0].Text, "while away") || notice("Reconnected to this server after") == nil {
+		t.Fatalf("after reconnecting: %v", sess.sent)
+	}
+
+	// a day away: what waited is not sent that late
+	r.mu.Lock()
+	r.running = false
+	r.mu.Unlock()
+	k.Link(false)
+	c.want("POST", endpoint, map[string]any{"text": "stale"}, 200, nil)
+	r.mu.Lock()
+	r.linkDownAt = time.Now().Add(-25 * time.Hour)
+	r.mu.Unlock()
+	k.Link(true)
+	time.Sleep(100 * time.Millisecond)
+	if len(sess.sent) != 1 {
+		t.Fatalf("a day-old message went out: %v", sess.sent)
+	}
+	if it := item(func(it *agent.Item) bool { return it.Kind == "user" && it.Text == "stale" }); it == nil || !it.Unsent || it.Queued || it.UnsentWhy == "" {
+		t.Fatalf("stale message: %+v", it)
+	}
+}

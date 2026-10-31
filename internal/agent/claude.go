@@ -127,7 +127,7 @@ func StartClaude(ctx context.Context, o Options, sink Sink) (Session, error) {
 	s := &claudeSession{opts: o, sink: sink, done: make(chan struct{}), errb: &tail{n: 8 << 10},
 		pending: map[string]claudePending{}, denied: map[string]bool{}, tools: map[string]*Tool{}, waiters: map[string]chan controlReply{},
 		streamKey: map[int]string{}, streamTyp: map[int]string{}, consumed: map[string]int{}, msgKeys: map[string][]string{}}
-	l, err := openLink(ctx, o, claudeMarks, bin, args, s.errb)
+	l, err := openLink(ctx, o, claudeMarks, bin, args, s.errb, sink)
 	if err != nil {
 		return nil, err
 	}

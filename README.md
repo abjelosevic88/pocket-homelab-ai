@@ -64,9 +64,12 @@ Personal app assistance: [Briefing, workflows, memory, sources and document uplo
   started in a terminal (or in another tool) so you can open and continue them here.
 - **Agents outlive their connection.** Each CLI runs under a small holder, `pocket-hold`, which Pocket AI
   copies to every machine itself (`~/.pocket-ai/bin`). The CLI keeps working when the ssh link drops or Pocket
-  AI is redeployed. Pocket AI then attaches again where it stopped: a dropped link within 15 minutes, a
+  AI is redeployed. Pocket AI then attaches again where it stopped: a dropped link as soon as the machine can
+  be reached again (it keeps trying, at most a minute apart, and the thread says it is reconnecting), a
   redeploy at its next start. A turn in progress, its sub-agents, background shells and pending approvals all
-  come back. `make build` embeds the holders (`go generate ./internal/hold`); without them, or with
+  come back. Messages sent meanwhile wait in the queue, and are left unsent after a day away. Nobody attached:
+  a running turn is never cut; otherwise the CLI ends after 24 hours and the thread resumes from its session
+  as usual. `make build` embeds the holders (`go generate ./internal/hold`); without them, or with
   `POCKET_HOLD=off`, agents run as plain children of their connection again.
 
 **Pocket apps, directly**

@@ -292,8 +292,8 @@ func Main(args []string) int {
 	fs.Var(&keep, "keep-mark", "stdout lines with this are kept for readers that replay (repeatable)")
 	meta := fs.String("meta", "", "stored with the holder, returned in headers")
 	scope := fs.String("scope", "", "command to start the holder under (space-separated)")
-	idle := fs.Duration("idle", 0, "end the CLI after this long detached and idle")
-	maxd := fs.Duration("max", 0, "end the CLI after this long detached")
+	idle := fs.Duration("idle", 0, "end the CLI after this long detached with no turn running (default 24h)")
+	maxd := fs.Duration("max", 0, "end the CLI after this long detached even mid-turn (default never)")
 	linger := fs.Duration("linger", 0, "keep an ended CLI's output this long")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2

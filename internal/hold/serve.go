@@ -27,8 +27,10 @@ type ServeOptions struct {
 	// life and given to readers that replay (Header.Kept).
 	KeepMarks []string
 	Meta      string // returned in every header
-	// With nobody attached: end the CLI after IdleDetached without a turn
-	// running, or after MaxDetached whatever it does.
+	// With nobody attached and no turn running, end the CLI after
+	// IdleDetached (counted from whichever came last: the detach or the end
+	// of the turn). A running turn is never cut; MaxDetached > 0 caps even
+	// that.
 	IdleDetached, MaxDetached time.Duration
 	// Linger is how long an ended CLI's output waits for someone to collect it.
 	Linger time.Duration
@@ -59,6 +61,8 @@ type holder struct {
 	keptBytes int
 	cur       *client
 	detached  time.Time
+	turnEnded time.Time
+	started   time.Time
 	exited    bool
 	code      int
 	acked     chan struct{}
@@ -91,10 +95,7 @@ type client struct {
 // the CLI has ended and its exit was collected (or Linger passed).
 func Serve(slot string, o ServeOptions, argv []string) int {
 	if o.IdleDetached <= 0 {
-		o.IdleDetached = 6 * time.Hour
-	}
-	if o.MaxDetached <= 0 {
-		o.MaxDetached = 48 * time.Hour
+		o.IdleDetached = 24 * time.Hour
 	}
 	if o.Linger <= 0 {
 		o.Linger = 30 * time.Minute
@@ -133,7 +134,7 @@ func Serve(slot string, o ServeOptions, argv []string) int {
 	if err != nil {
 		logf, _ = os.Open(os.DevNull)
 	}
-	h := &holder{o: o, log: log.New(logf, "", log.LstdFlags), acked: make(chan struct{}), done: make(chan struct{}), detached: time.Now()}
+	h := &holder{o: o, log: log.New(logf, "", log.LstdFlags), acked: make(chan struct{}), done: make(chan struct{}), detached: time.Now(), started: time.Now()}
 	h.cond = sync.NewCond(&h.mu)
 	h.out.fn = h.outLine
 	h.in.fn = h.inLine
@@ -289,6 +290,7 @@ func (h *holder) outLine(line []byte, end int64) {
 	if h.busy && h.o.EndMark != "" && bytes.Contains(line, []byte(h.o.EndMark)) {
 		h.busy = false
 		h.lastEnd = end
+		h.turnEnded = time.Now()
 	}
 }
 
@@ -528,13 +530,24 @@ func (h *holder) monitor() {
 		h.mu.Lock()
 		away := h.cur == nil
 		since := time.Since(h.detached)
+		quiet := time.Since(latest(h.detached, h.turnEnded, h.started))
 		busy := h.busy
 		h.mu.Unlock()
 		switch {
-		case away && !busy && since > h.o.IdleDetached:
+		case away && !busy && quiet > h.o.IdleDetached:
 			h.stop("idle with nobody attached")
-		case away && since > h.o.MaxDetached:
+		case away && h.o.MaxDetached > 0 && since > h.o.MaxDetached:
 			h.stop("nobody attached")
 		}
 	}
+}
+
+func latest(ts ...time.Time) time.Time {
+	var l time.Time
+	for _, t := range ts {
+		if t.After(l) {
+			l = t
+		}
+	}
+	return l
 }

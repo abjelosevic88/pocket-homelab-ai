@@ -115,17 +115,17 @@ func startRPC(bin, cwd string, env []string, remote ...*Remote) (*rpc, error) {
 	if len(remote) > 0 {
 		r = remote[0]
 	}
-	return openRPC(context.Background(), Options{Cwd: cwd, Env: env, Remote: r}, bin)
+	return openRPC(context.Background(), Options{Cwd: cwd, Env: env, Remote: r}, bin, nil)
 }
 
 // openRPC starts `codex app-server` where o says, held when o.Hold is set.
-func openRPC(ctx context.Context, o Options, bin string) (*rpc, error) {
+func openRPC(ctx context.Context, o Options, bin string, sink Sink) (*rpc, error) {
 	if bin == "" {
 		bin = "codex"
 	}
 	c := &rpc{calls: map[int64]chan rpcReply{}, done: make(chan struct{}), errb: &tail{n: 8 << 10}}
 	c.qcond = sync.NewCond(&c.qmu)
-	l, err := openLink(ctx, o, codexMarks, bin, []string{"app-server"}, c.errb)
+	l, err := openLink(ctx, o, codexMarks, bin, []string{"app-server"}, c.errb, sink)
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +276,7 @@ var Version = "dev"
 
 // StartCodex starts `codex app-server` and opens (or resumes, or forks) a thread.
 func StartCodex(ctx context.Context, o Options, sink Sink) (Session, error) {
-	c, err := openRPC(ctx, o, o.Bin)
+	c, err := openRPC(ctx, o, o.Bin, sink)
 	if err != nil {
 		return nil, err
 	}

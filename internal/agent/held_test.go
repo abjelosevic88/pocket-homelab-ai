@@ -33,7 +33,10 @@ type heldRec struct {
 	*rec
 	started int
 	subs    []Subagent
+	links   []bool
 }
+
+func (r *heldRec) Link(up bool) { r.mu.Lock(); r.links = append(r.links, up); r.mu.Unlock() }
 
 func (r *heldRec) TurnStarted()           { r.mu.Lock(); r.started++; r.mu.Unlock() }
 func (r *heldRec) Subagents(l []Subagent) { r.mu.Lock(); r.subs = l; r.mu.Unlock() }
@@ -72,7 +75,6 @@ func heldSetup(t *testing.T) (bin, holdBin string) {
 // letting go of it; the next start adopts the running turn and its sub-agents.
 func TestHeldClaude(t *testing.T) {
 	bin, holdBin := heldSetup(t)
-	reconnectFor = 20 * time.Second
 	dir := t.TempDir()
 	leave := make(chan struct{})
 	o := Options{Bin: bin, Cwd: dir, Mode: "default", Hold: &Hold{Bin: holdBin, Slot: "thread-x", Leave: leave}}
@@ -97,17 +99,40 @@ func TestHeldClaude(t *testing.T) {
 	cs.l.wmu.Unlock()
 	_ = syscall.Kill(-pid, syscall.SIGKILL)
 	r.wait(t, func() bool { return r.has("second 1") && len(r.turns) == 1 })
+	if len(r.links) != 0 {
+		t.Fatalf("a blip was reported: %v", r.links)
+	}
 	// and it takes messages again
 	if err := s.Send(Input{Text: "two"}); err != nil {
 		t.Fatal(err)
 	}
 	r.wait(t, func() bool { return len(r.turns) == 2 })
 
-	// a third turn is running when Pocket AI stops: it lets go
-	if err := s.Send(Input{Text: "three"}); err != nil {
+	// a longer outage: the machine cannot be reached for a while (pocket-hold
+	// there cannot be run); what is sent meanwhile waits and goes out after
+	retryMax = time.Second
+	t.Cleanup(func() { retryMax = time.Minute })
+	if err := os.Rename(holdBin, holdBin+".away"); err != nil {
 		t.Fatal(err)
 	}
-	r.wait(t, func() bool { return r.has("first 3") })
+	cs.l.wmu.Lock()
+	pid = cs.l.cmd.Process.Pid
+	cs.l.wmu.Unlock()
+	_ = syscall.Kill(-pid, syscall.SIGKILL)
+	r.wait(t, func() bool { return len(r.links) == 1 })
+	if err := s.Send(Input{Text: "sent while away"}); err != nil {
+		t.Fatalf("send while away: %v", err)
+	}
+	if err := os.Rename(holdBin+".away", holdBin); err != nil {
+		t.Fatal(err)
+	}
+	r.wait(t, func() bool { return len(r.links) == 2 && r.links[1] && len(r.turns) == 3 && r.has("second 3") })
+
+	// a third turn is running when Pocket AI stops: it lets go
+	if err := s.Send(Input{Text: "four"}); err != nil {
+		t.Fatal(err)
+	}
+	r.wait(t, func() bool { return r.has("first 4") })
 	close(leave)
 	cancel()
 	select {
@@ -134,7 +159,7 @@ func TestHeldClaude(t *testing.T) {
 	if r2.started != 1 {
 		t.Fatalf("adopted turn not reported running")
 	}
-	r2.wait(t, func() bool { return r2.has("first 3") && r2.has("second 3") && len(r2.turns) == 1 && len(r2.subs) == 3 })
+	r2.wait(t, func() bool { return r2.has("first 4") && r2.has("second 4") && len(r2.turns) == 1 && len(r2.subs) == 4 })
 	if len(r2.turns) != 1 || len(r2.items) != 2 {
 		t.Fatalf("adopted: %d turns, items %v", len(r2.turns), r2.order)
 	}

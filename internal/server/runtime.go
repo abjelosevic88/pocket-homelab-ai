@@ -81,6 +81,11 @@ type run struct {
 	tasks     []agent.Task // background shell commands and monitors still running
 	remote    bool         // Claude Remote Control is on: never idle-stopped
 	held      bool         // under pocket-hold: outlives this process (held.go)
+	// linkDown: a held agent's connection is down and being retried; sent
+	// messages wait in queue until it is back (runSink.Link).
+	linkDown   bool
+	linkDownAt time.Time
+	linkNotice string // the thread's "Lost the connection" notice
 }
 
 // taskHold caps how long background tasks keep an otherwise quiet agent
@@ -662,7 +667,7 @@ func (rt *engine) send(t *store.Thread, key string, in agent.Input, sendNow ...b
 	// Match the global -> run lock order used by the idle reaper.
 	rt.mu.Lock()
 	r.mu.Lock()
-	waiting := r.running || len(r.queue) > 0
+	waiting := r.running || len(r.queue) > 0 || r.linkDown
 	// Update the item before exposing it to next(): a quick interruption must
 	// not be followed by a late write that marks an already-sent item queued.
 	if st, err := rt.s.store.GetItem(rt.ctx, t.ID, key); err == nil {
@@ -678,6 +683,10 @@ func (rt *engine) send(t *store.Thread, key string, in agent.Input, sendNow ...b
 		}
 	}
 	if waiting {
+		if r.linkDown && r.linkNotice == "" {
+			r.linkNotice = "link-" + uuid.NewString()[:8]
+			go rt.linkNotice(r, r.linkNotice)
+		}
 		now := len(sendNow) > 0 && sendNow[0]
 		q := queued{key: key, in: in}
 		if now {
@@ -719,7 +728,7 @@ func (rt *engine) send(t *store.Thread, key string, in agent.Input, sendNow ...b
 // next sends the first queued message after a turn ended.
 func (rt *engine) next(r *run) {
 	r.mu.Lock()
-	if len(r.queue) == 0 || r.running {
+	if len(r.queue) == 0 || r.running || r.linkDown {
 		r.mu.Unlock()
 		return
 	}
