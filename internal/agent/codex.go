@@ -260,8 +260,12 @@ type codexSession struct {
 	pending    map[string]codexPending
 	tokensBase struct{ in, out, cached int64 }
 	tokensNow  struct{ in, out, cached int64 }
-	closed     bool
-	exited     chan struct{}
+	// model / tier: what the app-server said it runs, for pricing; cost is
+	// the running turn's price so far.
+	model, tier string
+	cost        float64
+	closed      bool
+	exited      chan struct{}
 }
 
 type codexPending struct {
@@ -281,6 +285,9 @@ func StartCodex(ctx context.Context, o Options, sink Sink) (Session, error) {
 		return nil, err
 	}
 	s := &codexSession{opts: o, sink: sink, c: c, ctx: ctx, pending: map[string]codexPending{}, exited: make(chan struct{})}
+	if o.Model != "default" {
+		s.model = o.Model // until the app-server names it
+	}
 	c.onNotify = s.notify
 	c.onRequest = s.request
 	if c.l.h != nil && !c.l.Header.Started {
@@ -337,8 +344,14 @@ func StartCodex(ctx context.Context, o Options, sink Sink) (Session, error) {
 		Thread struct {
 			ID string `json:"id"`
 		} `json:"thread"`
+		Model       string `json:"model"`
+		ServiceTier string `json:"serviceTier"`
 	}
 	_ = json.Unmarshal(res, &r)
+	if r.Model != "" {
+		s.model = r.Model
+	}
+	s.tier = r.ServiceTier
 	if o.Fork && (r.Thread.ID == "" || r.Thread.ID == o.ResumeID) {
 		c.close()
 		return nil, fmt.Errorf("codex: the agent did not create a separate session")
@@ -452,6 +465,7 @@ func (s *codexSession) Send(in Input) error {
 	s.running = true
 	s.turnFrom = time.Now()
 	s.tokensBase = s.tokensNow
+	s.cost = 0
 	s.mu.Unlock()
 	s.sink.TurnStarted()
 	res, err := s.c.call(s.ctx, "turn/start", params)
@@ -700,14 +714,26 @@ func (s *codexSession) notify(method string, params json.RawMessage) {
 					OutputTokens      int64 `json:"outputTokens"`
 				} `json:"total"`
 				Last struct {
-					InputTokens  int64 `json:"inputTokens"`
-					OutputTokens int64 `json:"outputTokens"`
+					InputTokens           int64 `json:"inputTokens"`
+					CachedInputTokens     int64 `json:"cachedInputTokens"`
+					CacheWriteInputTokens int64 `json:"cacheWriteInputTokens"`
+					OutputTokens          int64 `json:"outputTokens"`
 				} `json:"last"`
 				ModelContextWindow int64 `json:"modelContextWindow"`
 			} `json:"tokenUsage"`
 		}
 		if json.Unmarshal(params, &p) == nil {
 			s.mu.Lock()
+			// One update per model response, priced on its own (the long-context
+			// rate is per request); a repeat of the last one leaves the total as is.
+			tot, l := p.TokenUsage.Total, p.TokenUsage.Last
+			if s.running && tot.InputTokens+tot.OutputTokens > s.tokensNow.in+s.tokensNow.out {
+				tier := s.opts.Speed
+				if tier == "" {
+					tier = s.tier
+				}
+				s.cost += codexCost(s.model, tier, codexUsage{Input: l.InputTokens, Cached: l.CachedInputTokens, Write: l.CacheWriteInputTokens, Output: l.OutputTokens})
+			}
 			s.tokensNow.in = p.TokenUsage.Total.InputTokens
 			s.tokensNow.out = p.TokenUsage.Total.OutputTokens
 			s.tokensNow.cached = p.TokenUsage.Total.CachedInputTokens
@@ -768,7 +794,7 @@ func (s *codexSession) notify(method string, params json.RawMessage) {
 		if dur == 0 {
 			dur = time.Since(s.turnFrom).Milliseconds()
 		}
-		t := TurnInfo{ID: p.Turn.ID, OK: p.Turn.Status == "completed", DurationMS: dur,
+		t := TurnInfo{ID: p.Turn.ID, OK: p.Turn.Status == "completed", DurationMS: dur, CostUSD: s.cost,
 			InputTokens: s.tokensNow.in - s.tokensBase.in, OutputTokens: s.tokensNow.out - s.tokensBase.out,
 			CachedTokens: s.tokensNow.cached - s.tokensBase.cached}
 		s.turnID = ""
