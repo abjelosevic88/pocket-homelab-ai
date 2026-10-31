@@ -304,6 +304,14 @@ func (s *claudeSession) Respond(id string, r Response) error {
 	}
 	var resp map[string]any
 	switch {
+	case r.Decision == "defer":
+		// its person is away: no, for now, said in Pocket AI's own words
+		resp = map[string]any{"behavior": "deny", "message": r.Message}
+		if p.toolUseID != "" {
+			s.mu.Lock()
+			s.denied[p.toolUseID] = true
+			s.mu.Unlock()
+		}
 	case r.Decision == "deny":
 		msg := strings.TrimSpace(r.Message)
 		if msg == "" {

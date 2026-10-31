@@ -278,24 +278,42 @@ func (s *Server) callPocketTool(ctx, session context.Context, t *store.Thread, s
 	}
 	_, _ = s.store.DB.ExecContext(ctx, `UPDATE app_calls SET status='pending' WHERE id=?`, callID)
 	id := "ask-" + uuid.NewString()
-	answer := make(chan bool, 1)
+	answer := make(chan string, 1)
 	key := struct {
 		S          *Server
 		Thread, ID string
 	}{s, t.ID, id}
 	req := agent.Request{ID: id, Type: "permission", ToolName: call.Name, Title: askActionTitle(call.Name), Input: preview, Status: "pending", ForID: uid, For: byName, App: tool.Meta.App, Kind: tool.Meta.Kind}
 	approved := false
+	match := awayMatch(call.Name, call.Arguments)
+	deferred := func() json.RawMessage {
+		s.saveDeferred(t.ID, req, uid, match)
+		status = "deferred"
+		result = toolFailure(awayDeferText)
+		return result
+	}
 	if why := s.appAutoRules(ctx, uid).allows(tool); why != "" {
 		// the person's own rule: shown in the timeline as allowed, nobody waits
 		req.Status, req.Auto = "allowed", why
 		sink.rt.saveItem(sink.r.threadID, agent.Item{Key: "req-" + id, Kind: "request", Request: &req})
 		approved = true
+	} else if s.takeAwayApproval(ctx, t.ID, match) {
+		// approved after being away; the agent repeats the call (away.go)
+		req.Status, req.Auto = "allowed", "away"
+		sink.rt.saveItem(sink.r.threadID, agent.Item{Key: "req-" + id, Kind: "request", Request: &req})
+		approved = true
+	} else if s.isAway(ctx, uid) {
+		return deferred()
 	} else {
 		askApprovals.Store(key, askApproval{Thread: t.ID, Answer: answer, UserID: uid})
 		defer askApprovals.Delete(key)
 		sink.Request(req)
 		select {
-		case approved = <-answer:
+		case d := <-answer:
+			if d == "defer" {
+				return deferred()
+			}
+			approved = d == "allow"
 		case <-ctx.Done():
 		case <-session.Done():
 		case <-time.After(10 * time.Minute):

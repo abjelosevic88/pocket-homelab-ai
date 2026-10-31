@@ -276,7 +276,8 @@ export interface AgentRequest {
   questions?: Question[]
   plan?: string
   can_allow_session?: boolean
-  status: 'pending' | 'allowed' | 'denied' | 'answered' | 'expired'
+  /** deferred: asked while you were away; the agent carried on without it (Away page). */
+  status: 'pending' | 'allowed' | 'denied' | 'answered' | 'expired' | 'deferred'
   answer?: unknown
   /** A Pocket app change in a shared chat: whose apps (only they answer it). */
   for_id?: number
@@ -285,6 +286,19 @@ export interface AgentRequest {
   app?: string
   kind?: 'add' | 'change'
   auto?: string
+}
+
+/** Away from keyboard: what the agents saved for you while you were away. */
+export interface AwayEntry { thread_id: string; thread_title: string; key: string; request: AgentRequest; at: string }
+export interface AwaySummary {
+  on: boolean
+  since?: string
+  /** answered "not now": waiting for your decision */
+  items: AwayEntry[]
+  /** still waiting in a live conversation (plans, or asked before you went away) */
+  waiting: AwayEntry[]
+  /** your conversations still at work */
+  working: number
 }
 
 export interface TurnInfo { ok: boolean; duration_ms: number; cost_usd: number; input_tokens: number; output_tokens: number; error?: string

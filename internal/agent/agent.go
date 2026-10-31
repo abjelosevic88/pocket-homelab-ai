@@ -159,7 +159,7 @@ type Window struct {
 
 // Response is the person's answer to a Request.
 type Response struct {
-	Decision string              `json:"decision"` // allow | allow_session | deny
+	Decision string              `json:"decision"` // allow | allow_session | deny | defer (its person is away: Message says so)
 	Message  string              `json:"message,omitempty"`
 	Answers  map[string][]string `json:"answers,omitempty"`
 }

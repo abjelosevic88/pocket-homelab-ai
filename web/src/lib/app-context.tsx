@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { api, V1 } from './api'
 import { openSSE } from './sse'
-import type { Account, AuthStatus, Host, Worktree, Limits, Provider, Recipe, Settings, SettingsResponse, Thread, User, Workspace, RunningItem } from './types'
+import type { Account, AuthStatus, AwaySummary, Host, Worktree, Limits, Provider, Recipe, Settings, SettingsResponse, Thread, User, Workspace, RunningItem } from './types'
 
 export type ThemeMode = 'system' | 'light' | 'dark'
 
@@ -46,6 +46,10 @@ interface AppState {
   upsertThread: (t: Thread) => void
   dropThread: (id: string) => void
   saveSettings: (patch: Partial<Settings> & { notify_token?: string }) => Promise<SettingsResponse>
+  /** Away from keyboard: on/off and what was saved for you (null = not loaded). */
+  away: AwaySummary | null
+  setAway: (on: boolean) => Promise<AwaySummary>
+  reloadAway: () => void
   setUser: (u: User | null) => void
 }
 
@@ -111,6 +115,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [limits, setLimits] = useState<Limits>({})
   const [running, setRunning] = useState<RunningItem[]>([])
   const [terms, setTerms] = useState<TermSummary>(noTerms)
+  const [away, setAwaySum] = useState<AwaySummary | null>(null)
+  const awayTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const reloadAway = useCallback(() => {
+    if (awayTimer.current) clearTimeout(awayTimer.current)
+    awayTimer.current = setTimeout(() => { api.get<AwaySummary>(`${V1}/away`).then(a => a && setAwaySum(a)).catch(() => {}) }, 250)
+  }, [])
+  const setAway = useCallback(async (on: boolean) => {
+    const a = await api.put<AwaySummary>(`${V1}/away`, { on })
+    setAwaySum(a)
+    return a
+  }, [])
   const reloadTerms = useCallback(() => {
     api.get<{ id: string; ended: boolean; busy: boolean }[]>(`${V1}/terminals`).then(l => {
       const busy = (l || []).filter(t => t.busy).map(t => t.id).sort()
@@ -222,7 +237,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const before = prevStatus.current.get(t.id)
         prevStatus.current.set(t.id, t.status)
         upsertThread(t)
-        if (before !== t.status) reloadRunning()
+        if (before !== t.status) { reloadRunning(); reloadAway() }
         const theirs = !!t.owner_id && t.owner_id !== userRef.current?.id // shared with me: no pings
         if (before && before !== t.status && !theirs) notifyBrowser(t, before, viewingRef.current, settingsRef.current)
       },
@@ -233,10 +248,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       worktrees: () => { reloadWorktrees().catch(() => {}) },
       running: () => reloadRunning(),
       terminals: d => setTerms({ ...noTerms, ...(d as TermSummary) }),
+      away: () => reloadAway(),
       ping: () => {},
-    }, { onOpen: () => { setLive(true); reloadThreads().catch(() => {}); reloadRunning(); reloadTerms() }, onDown: () => setLive(false) })
+    }, { onOpen: () => { setLive(true); reloadThreads().catch(() => {}); reloadRunning(); reloadTerms(); reloadAway() }, onDown: () => setLive(false) })
     return () => { close(); setLive(false) }
-  }, [user, upsertThread, reloadThreads, reloadRunning, reloadTerms, reloadAccounts, reloadHosts, reloadWorktrees])
+  }, [user, upsertThread, reloadThreads, reloadRunning, reloadTerms, reloadAccounts, reloadHosts, reloadWorktrees, reloadAway])
 
   // App badge (installed PWA) = threads that need you.
   useEffect(() => {
@@ -258,9 +274,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const value = useMemo<AppState>(() => ({
-    updateReady, status, user, sr, settings, providers, providersReady, accounts, reloadAccounts, hosts, reloadHosts, worktrees, reloadWorktrees, threads, workspaces, recipes, limits, running, terms, viewing, setViewing, live, themeMode, theme, setThemeMode, refresh,
+    updateReady, status, user, sr, settings, providers, providersReady, accounts, reloadAccounts, hosts, reloadHosts, worktrees, reloadWorktrees, threads, workspaces, recipes, limits, running, terms, away, setAway, reloadAway, viewing, setViewing, live, themeMode, theme, setThemeMode, refresh,
     reloadThreads, reloadWorkspaces, reloadRecipes, reloadProviders, upsertThread, dropThread, saveSettings, setUser,
-  }), [status, user, sr, settings, providers, providersReady, accounts, reloadAccounts, hosts, reloadHosts, worktrees, reloadWorktrees, threads, workspaces, recipes, limits, running, terms, viewing, setViewing, live, themeMode, theme, setThemeMode, refresh, reloadThreads, reloadWorkspaces, reloadRecipes, reloadProviders, upsertThread, dropThread, saveSettings])
+  }), [status, user, sr, settings, providers, providersReady, accounts, reloadAccounts, hosts, reloadHosts, worktrees, reloadWorktrees, threads, workspaces, recipes, limits, running, terms, away, setAway, reloadAway, viewing, setViewing, live, themeMode, theme, setThemeMode, refresh, reloadThreads, reloadWorkspaces, reloadRecipes, reloadProviders, upsertThread, dropThread, saveSettings])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

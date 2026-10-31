@@ -483,7 +483,7 @@ func TestSharedAskChats(t *testing.T) {
 		S          *Server
 		Thread, ID string
 	}{s, th.ID, "ask-test"}
-	askApprovals.Store(key, askApproval{Thread: th.ID, Answer: make(chan bool, 1), UserID: au.ID})
+	askApprovals.Store(key, askApproval{Thread: th.ID, Answer: make(chan string, 1), UserID: au.ID})
 	defer askApprovals.Delete(key)
 	bob.want("POST", path+"/requests/ask-test", map[string]string{"decision": "allow"}, 403, nil)
 	if s.askApprover(th.ID, "ask-test") != au.ID {

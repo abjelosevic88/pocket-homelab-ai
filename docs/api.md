@@ -336,6 +336,30 @@ Claiming a dispatch happens before sending; a process interrupted during dispatc
 `uncertain` on startup, never automatically retried. Sent and cancelled records are omitted
 from the active list. Existing same-chat queue and message-receipt semantics are unchanged.
 
+## Away from keyboard
+
+While a person is away, nothing an agent asks of them is left waiting overnight. A
+permission or question (Claude `can_use_tool` / AskUserQuestion, Codex approvals and
+`request_user_input`) and a Pocket app change for that person is answered "not now"
+(Claude: deny with a message telling it to carry on with the work that does not depend
+on it; Codex: decline / an answer saying so) and saved with request status `deferred`.
+Every message sent while away carries a short note asking the agent not to stop for
+questions in chat. Plans keep waiting (nothing else can happen in plan mode). Per-thread
+"finished" pushes are folded into ONE notification when none of the person's
+conversations is working any more (link: `/away`).
+
+- `GET /away` → `{on, since, items, waiting, working}`: `items` = saved requests
+  (`{thread_id, thread_title, key, request, at}`), `waiting` = requests still pending in
+  live conversations (plans, or asked before going away), `working` = conversations at work.
+- `PUT /away {on}`: turning on answers "not now" what already waits on the person.
+- `POST /threads/{id}/requests/{rid}` on a saved request records the decision (only its
+  person; `allow`/`allow_session`/`deny`, answers for questions). Decisions reaching one
+  conversation within 2.5 s go out together as one message from that person; an approved
+  call (same tool + input, wording fields ignored) then runs without asking, once, within 24 h.
+- `POST /away/allow-all` approves every saved permission/app change (not questions).
+
+SSE `away` on `/events` = the summary changed. Migration `0029_away_deferred.sql`.
+
 ## Terminals
 
 A shell on this server (the server account: box owner or admins only; people

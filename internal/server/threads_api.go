@@ -802,6 +802,22 @@ func (s *Server) handleRespond(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+	// saved while its person was away: decided now, told to the agent (away.go)
+	if saved, err := s.deferredFor(r.Context(), t.ID, chi.URLParam(r, "rid"), me(r)); saved {
+		switch {
+		case err != nil:
+			writeErr(w, http.StatusForbidden, err.Error())
+		case in.Decision != "allow" && in.Decision != "allow_session" && in.Decision != "deny":
+			writeErr(w, http.StatusBadRequest, "decision must be allow or deny")
+		default:
+			if err := s.decideDeferred(r.Context(), me(r), t, chi.URLParam(r, "rid"), in); err != nil {
+				s.fail(w, err, "decide")
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		}
+		return
+	}
 	if strings.HasPrefix(chi.URLParam(r, "rid"), "ask-") {
 		if who := s.askApprover(t.ID, chi.URLParam(r, "rid")); who != 0 && who != me(r) {
 			writeErr(w, http.StatusForbidden, "this change is for someone else's apps: only they can approve it")

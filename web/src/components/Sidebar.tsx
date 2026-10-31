@@ -72,7 +72,7 @@ export function ThreadRow({ t, active, onOpen, onContextMenu }: { t: Thread; act
 }
 
 export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onPalette: () => void }) {
-  const { threads, workspaces, worktrees, user, settings, live, status, updateReady, terms } = useApp()
+  const { threads, workspaces, worktrees, user, settings, live, status, updateReady, terms, away, setAway } = useApp()
   const navigate = useNavigate()
   const loc = useLocation()
   const [q, setQ] = useState('')
@@ -91,6 +91,14 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
   }, [showArchive, threads])
 
   const go = (path: string) => { navigate(path); onNavigate() }
+  // Away from keyboard: agents carry on without you; back = decide what they saved
+  const saved = (away?.items.length || 0) + (away?.on ? away.waiting.length : 0)
+  const toggleAway = async () => {
+    try {
+      const a = await setAway(!away?.on)
+      if (!a.on && a.items.length + a.waiting.length > 0) go('/away')
+    } catch { /* the button shows the old state */ }
+  }
   // your terminal tabs, listed under Terminal
   const term = useTerminals()
   const termTabs = term.groups
@@ -232,7 +240,13 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
         </div>
       ) : (
         <div className="sb-threads">
-          {needYou > 0 && !showArchive && <div className="sb-needyou"><Icon name="help-circle" size={13} />{needYou === 1 ? '1 thread needs you' : `${needYou} threads need you`}</div>}
+          {(away?.on || saved > 0) && !showArchive && (
+            <button type="button" className={`sb-away ${away?.on ? 'on' : ''}`} onClick={() => go('/away')}>
+              <Icon name="moon" size={13} /><span className="grow ellipsis">{away?.on ? 'Away — agents carry on without you' : 'Saved while you were away'}</span>
+              {saved > 0 && <span className="badge">{saved}</span>}
+            </button>
+          )}
+          {needYou > 0 && !showArchive && !away?.on && <div className="sb-needyou"><Icon name="help-circle" size={13} />{needYou === 1 ? '1 thread needs you' : `${needYou} threads need you`}</div>}
           {base === null && <div className="sb-empty"><Spinner /></div>}
           {base && shown.length === 0 && !(shared.length && !q && !ws) && <div className="sb-empty">{q || ws ? 'No threads match.' : showArchive ? 'Nothing archived.' : 'No threads yet — start one above.'}</div>}
           {projIssues.length > 0 && (
@@ -280,6 +294,10 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
       {!showArchive && <UsageWidget onNavigate={onNavigate} />}
       <div className="sb-foot">
         <button type="button" className={`sb-foot-link ${showArchive ? 'active' : ''}`} onClick={() => { setShowArchive(a => !a); setHits(null) }}><Icon name="archive" size={14} />{showArchive ? 'Back to threads' : 'Archive'}</button>
+        <button type="button" className={`sb-foot-link away-toggle ${away?.on ? 'on' : ''}`} aria-pressed={!!away?.on} onClick={toggleAway}
+          title={away?.on ? "I'm back: show what the agents saved for me" : 'Away from keyboard: agents keep working on what they can and save approvals and questions for when you are back'}>
+          <Icon name="moon" size={14} />{away?.on ? 'Away' : 'Away mode'}
+        </button>
         <span className="spacer" />
         <button type="button" className={`sb-foot-link ${loc.pathname.startsWith('/settings') ? 'active' : ''}`} onClick={() => go('/settings')} title="Settings">
           {user && <Avatar name={user.name} email={user.email} size={20} />}<Icon name="settings" size={14} />
