@@ -3,7 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { api, ApiError, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
-import { fmtCost, providerName, shortPath, threadTitle } from '../lib/format'
+import { fmtCost, isTouch, providerName, shortPath, threadTitle } from '../lib/format'
 import { openInParent, parentTabs } from '../lib/embed'
 import { openSSE } from '../lib/sse'
 import type { Item, Thread, ThreadDetail, Upload } from '../lib/types'
@@ -14,7 +14,7 @@ import { AgentPicker } from '../components/AgentPicker'
 import { BranchButton } from '../components/BranchPicker'
 import { useHostName } from '../components/HostPicker'
 import { WorktreeChip } from '../components/Worktree'
-import { ContextMeter, ProviderBadge } from '../components/bits'
+import { CacheChip, ContextMeter, ProviderBadge } from '../components/bits'
 import { Composer, type ComposerHandle } from '../components/Composer'
 import { Icon } from '../components/icons'
 import { AskButton } from '../components/AskButton'
@@ -392,6 +392,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
                 {!owner && <span className="muted small">{t.source === 'ask' ? `Shared Ask chat from ${t.owner_name || 'someone'} — your questions use your own apps` : `Chatting in ${t.owner_name || 'someone'}’s chat — the agent runs on their login and settings`}</span>}
                 {owner && p && t.source !== 'ask' && <span className="thread-pickers"><AgentPicker compact showProvider={false} host={t.host_id || 0} value={{ provider: t.provider, model: t.model, effort: t.effort, mode: t.mode, speed: t.speed || '', account_id: t.account_id || 0, host_home: t.host_home || '' }}
                   onChange={ch => patch(ch as Partial<Thread>)} remote={canRun ? { on: !!t.remote_control, busy: rcBusy, state: t.remote_control?.state, onToggle: () => remoteControl(!t.remote_control) } : undefined} /></span>}
+                {owner && <CacheChip t={t} onTap={text => { if (isTouch()) toast(text) }} />}
               </>} />
           ) : (
             <div className="callout info"><Icon name="lock" size={15} /><span>An admin has to allow you to run agents before you can reply.</span></div>
