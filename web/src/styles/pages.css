@@ -566,3 +566,8 @@
 .away-thread-h:hover { color: var(--accent-ink); }
 .away-item { display: grid; gap: 4px; }
 .away-item .req-card { max-height: none; animation: none; }
+.away-banner { flex: none; display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 12px 6px 14px; background: var(--accent-soft); color: var(--accent-ink); border-bottom: 1px solid var(--border); font-size: 12.5px; }
+.away-banner b { font-weight: 650; }
+.away-banner-saved { flex: none; font-weight: 650; color: var(--accent-ink); }
+.away-banner .btn { flex: none; }
+@media (max-width: 640px) { .away-banner-long { display: none; } }

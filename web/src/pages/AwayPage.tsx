@@ -2,7 +2,7 @@
 // can, and save what needs you (approvals, questions) here. Decide them when
 // you are back; each conversation hears your decisions as one message.
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { stamp } from '../lib/format'
@@ -97,6 +97,32 @@ export default function AwayPage({ onMenu }: { onMenu?: () => void }) {
           </>}
         </div>
       </div>
+    </div>
+  )
+}
+
+/** Across the top of every page while away mode is on (the Away page says it itself). */
+export function AwayBanner() {
+  const { away, setAway } = useApp()
+  const { toast } = useToast()
+  const loc = useLocation()
+  const navigate = useNavigate()
+  const [busy, setBusy] = useState(false)
+  if (!away?.on || loc.pathname === '/away') return null
+  const saved = away.items.length + away.waiting.length
+  const back = async () => {
+    setBusy(true)
+    try {
+      const a = await setAway(false)
+      if (a.items.length + a.waiting.length > 0) navigate('/away')
+    } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
+  }
+  return (
+    <div className="away-banner" role="status">
+      <Icon name="moon" size={14} />
+      <span className="grow ellipsis"><b>Away mode</b><span className="away-banner-long"> — agents keep working and save approvals and questions for you</span></span>
+      {saved > 0 && <Link to="/away" className="away-banner-saved">{saved} saved</Link>}
+      <button type="button" className="btn sm" disabled={busy} onClick={back}>{busy ? <Spinner size={12} /> : <Icon name="sun" size={12} />}I&rsquo;m back</button>
     </div>
   )
 }
