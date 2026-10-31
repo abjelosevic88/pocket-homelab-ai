@@ -64,6 +64,8 @@ type Server struct {
 	wtOnce sync.Once
 	wtHold *wtHolds // messages waiting for a worktree's setup: worktrees.go
 
+	re reattachSet // agents still working from before a restart: reconnect.go
+
 	provMu   sync.Mutex
 	provList []agent.Provider
 	provAt   time.Time
@@ -146,18 +148,10 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		return err
 	}
 	s.rt.start(ctx)
-	// say so in the thread, or a turn cut off by a crash or a manual restart
-	// just looks stuck
-	// one still running under its holder is taken back, turn and all
-	for _, id := range cut {
-		go func(id string) {
-			if s.rt.adopt(id) {
-				return
-			}
-			s.rt.saveItem(id, agent.Item{Key: fmt.Sprintf("restart-%d", time.Now().UnixNano()), Kind: "notice", Level: "warn",
-				Text: "Pocket AI restarted while the agent was working, so this turn stopped. Send a message (e.g. “continue”) to pick up where it left off."})
-		}(id)
-	}
+	// a turn cut off by a crash or a restart: take it back from its holder,
+	// else reconnect to the agent where it still works, continue it where it
+	// does not (reconnect.go, held.go)
+	s.reconnectCut(cut)
 	go s.housekeeping(ctx)
 	go s.scheduleLoop(ctx)
 	_, _ = s.store.DB.ExecContext(ctx, `UPDATE workflows SET last_status='interrupted' WHERE last_status='running'`)
@@ -247,6 +241,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/link/dirs", s.handleLinkDirs)
 		r.Get("/link/active", s.handleLinkActive)
 		r.Get("/link/prs", s.handleLinkPRs)
+		r.Get("/link/edits", s.handleLinkEdits)
 		r.Get("/link/worktrees", s.handleLinkWorktrees)
 		r.Get("/link/deploy", s.handleLinkDeploy)
 		r.Put("/link/deploy/config", s.handleLinkDeployConfig)
@@ -446,7 +441,8 @@ func (s *Server) registerWithCore(ctx context.Context) error {
 		Publishes: []string{"ai.turn_finished", "ai.needs_input", "ai.schedule_attention"},
 		Uses:      []core.Use{projectsUse},
 		Offers: []core.Offer{{Scope: core.InferenceScope, Name: "Generate text", Description: "Text-only generation with your Pocket AI account; no tools or conversation access"},
-			{Scope: ThreadsScope, Name: "Start coding conversations", Description: "Prepare a conversation with Claude Code or Codex in a folder on this server; you read the prompt and press send yourself"}},
+			{Scope: ThreadsScope, Name: "Start coding conversations", Description: "Prepare a conversation with Claude Code or Codex in a folder on this server; you read the prompt and press send yourself"},
+			{Scope: ThreadsReadScope, Name: "See what your coding conversations changed", Description: "Which files the agent edited for a pull request or a branch, in order, with the sentence it said just before — never the rest of the conversation"}},
 	}
 	if s.cfg.BaseURL != "" {
 		m.OIDC = &core.OIDCRequest{RedirectURIs: []string{s.cfg.BaseURL + "/api/v1/auth/oidc/callback"}}

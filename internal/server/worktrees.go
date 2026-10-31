@@ -311,35 +311,105 @@ func (s *Server) createWorktree(ctx context.Context, u *store.User, h *store.Hos
 
 // ---------- setup ----------
 
-// holds: messages to threads whose worktree is still being set up; they go
+// holds: messages to threads whose worktree is still being set up (or that
+// are reconnected to a process from before a restart, reconnect.go); they go
 // out (in order) once setup finished, or when the person continues without it.
+// Each keeps its item key, so the queue strip's ✕, Edit and Send now find it.
 type wtHolds struct {
 	mu sync.Mutex
-	m  map[string][]func()
+	m  map[string][]heldMsg
+}
+
+type heldMsg struct {
+	key  string
+	send func()
 }
 
 func (s *Server) holds() *wtHolds {
-	s.wtOnce.Do(func() { s.wtHold = &wtHolds{m: map[string][]func(){}} })
+	s.wtOnce.Do(func() { s.wtHold = &wtHolds{m: map[string][]heldMsg{}} })
 	return s.wtHold
 }
 
 func (hs *wtHolds) hold(threadID string) {
 	hs.mu.Lock()
 	if _, ok := hs.m[threadID]; !ok {
-		hs.m[threadID] = []func(){}
+		hs.m[threadID] = []heldMsg{}
 	}
 	hs.mu.Unlock()
 }
 
-// add keeps send for later if the thread is on hold.
-func (hs *wtHolds) add(threadID string, send func()) bool {
+// add keeps send (the message with item key) for later if the thread is on
+// hold.
+func (hs *wtHolds) add(threadID, key string, send func()) bool {
 	hs.mu.Lock()
 	defer hs.mu.Unlock()
 	q, ok := hs.m[threadID]
 	if ok {
-		hs.m[threadID] = append(q, send)
+		hs.m[threadID] = append(q, heldMsg{key: key, send: send})
 	}
 	return ok
+}
+
+// drop takes one message out; false when it does not wait (any more). The
+// thread stays on hold.
+func (hs *wtHolds) drop(threadID, key string) bool {
+	hs.mu.Lock()
+	defer hs.mu.Unlock()
+	q := hs.m[threadID]
+	for i, x := range q {
+		if x.key == key {
+			hs.m[threadID] = append(q[:i:i], q[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// clear takes all waiting messages out (the thread stays on hold) and
+// returns their keys.
+func (hs *wtHolds) clear(threadID string) []string {
+	hs.mu.Lock()
+	defer hs.mu.Unlock()
+	q, ok := hs.m[threadID]
+	if !ok {
+		return nil
+	}
+	hs.m[threadID] = []heldMsg{}
+	keys := make([]string, 0, len(q))
+	for _, x := range q {
+		keys = append(keys, x.key)
+	}
+	return keys
+}
+
+// moveFirst puts one message at the front, so it goes out first.
+func (hs *wtHolds) moveFirst(threadID, key string) bool {
+	hs.mu.Lock()
+	defer hs.mu.Unlock()
+	q := hs.m[threadID]
+	for i, x := range q {
+		if x.key == key {
+			hs.m[threadID] = append([]heldMsg{x}, append(q[:i:i], q[i+1:]...)...)
+			return true
+		}
+	}
+	return false
+}
+
+// sendHeldNow is Send now on a waiting message: it goes first, and now. A
+// process from before a restart is ended (followLeftover then sends what
+// waits, this one first); a worktree setup is not waited for, as when the
+// person continues without it. False when the message does not wait.
+func (s *Server) sendHeldNow(threadID, key string) bool {
+	if !s.holds().moveFirst(threadID, key) {
+		return false
+	}
+	if s.isReattached(threadID) {
+		s.stopReattached(threadID)
+	} else {
+		s.holds().release(threadID)
+	}
+	return true
 }
 
 func (hs *wtHolds) held(threadID string) bool {
@@ -349,13 +419,20 @@ func (hs *wtHolds) held(threadID string) bool {
 	return ok
 }
 
+// count is how many messages wait for the thread.
+func (hs *wtHolds) count(threadID string) int {
+	hs.mu.Lock()
+	defer hs.mu.Unlock()
+	return len(hs.m[threadID])
+}
+
 func (hs *wtHolds) release(threadID string) {
 	hs.mu.Lock()
 	q := hs.m[threadID]
 	delete(hs.m, threadID)
 	hs.mu.Unlock()
-	for _, f := range q {
-		f()
+	for _, x := range q {
+		x.send()
 	}
 }
 

@@ -46,7 +46,8 @@ type engine struct {
 	extSubsAt map[string]time.Time                 // when extSubs last went out
 	active    []agent.ActiveSession                // last scan of the CLIs' session files (running.go)
 
-	turnBy map[string]int64 // thread id → whose message the running turn answers
+	turnBy map[string]int64  // thread id → whose message the running turn answers
+	notes  map[string]string // thread id → said to the agent with the next message (reconnect.go)
 
 	rcMu sync.Mutex
 	rc   map[string]*rcState // thread id → Remote Control turned on (remote_control.go)
@@ -160,6 +161,7 @@ func (rt *engine) decorate(t *store.Thread) *store.Thread {
 		r.mu.Unlock()
 	}
 	t.External = rt.isExternal(t.ID)
+	t.Reattached = rt.s.isReattached(t.ID)
 	t.RemoteControl = rt.rcGet(t.ID)
 	if st, ok := rt.sharesOf(t.ID); ok {
 		t.Shares, t.OwnerName = st.Shares, st.OwnerName
@@ -382,6 +384,19 @@ func (rt *engine) systemPrompt(ctx context.Context, uid int64) string {
 
 // ensure returns the live process of a thread, starting (or resuming) it if needed.
 func (rt *engine) ensure(t *store.Thread) (*run, error) {
+	if rt.get(t.ID) == nil {
+		// never a second process next to one from before a restart (reconnect.go)
+		rt.s.re.waitPending(t.ID)
+		if rt.s.isReattached(t.ID) {
+			return nil, errLeftoverWorks
+		}
+	}
+	return rt.ensureRun(t)
+}
+
+// ensureRun is ensure without the wait for a check after a restart: for
+// the check itself, taking an agent back from its holder (held.go).
+func (rt *engine) ensureRun(t *store.Thread) (*run, error) {
 	for {
 		rt.mu.Lock()
 		if r := rt.runs[t.ID]; r != nil {
@@ -1829,9 +1844,29 @@ func (rt *engine) turnSender(t *store.Thread) int64 {
 	return t.UserID
 }
 
+// addTurnNote keeps something Pocket AI did on its own for the agent to
+// hear with the next message.
+func (rt *engine) addTurnNote(threadID, note string) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if rt.notes == nil {
+		rt.notes = map[string]string{}
+	}
+	rt.notes[threadID] += note
+}
+
+func (rt *engine) takeTurnNote(threadID string) string {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	n := rt.notes[threadID]
+	delete(rt.notes, threadID)
+	return n
+}
+
 // withMemory adds the sender's saved memory, but only the owner's: someone
 // chatting in a shared thread doesn't get theirs pulled into it unasked.
 func (rt *engine) withMemory(r *run, in agent.Input, sender int64) agent.Input {
+	in.Text += rt.takeTurnNote(r.threadID)
 	t, err := rt.s.store.GetThread(rt.ctx, r.userID, r.threadID)
 	if err != nil || sender != r.userID {
 		return in

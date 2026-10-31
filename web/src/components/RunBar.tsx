@@ -50,7 +50,7 @@ export function RunBar({ t, items }: { t: Thread; items: Item[] }) {
   const turnOver = t.status !== 'running' && !waiting
   const since = turnOver ? backgroundSince(t) || t.activity_at : t.prompt_at || t.activity_at
   const origin = running.find(r => r.session_id === t.provider_session_id)?.origin || ''
-  const what = waiting ? 'Waiting for you' : t.external ? `Working ${WHERE[origin] || 'elsewhere'}` : 'Working…'
+  const what = waiting ? 'Waiting for you' : t.reattached ? 'Working · reconnected after the restart' : t.external ? `Working ${WHERE[origin] || 'elsewhere'}` : 'Working…'
   const tasks = t.background?.length || 0
 
   return (

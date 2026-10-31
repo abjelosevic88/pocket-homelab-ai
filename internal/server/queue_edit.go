@@ -49,7 +49,10 @@ func (s *Server) handleEditQueued(w http.ResponseWriter, req *http.Request) {
 		}
 		uploads = append(uploads, uploadOut{Upload: up, URL: "/api/v1/uploads/" + up.ID})
 	}
-	if err := s.rt.takeQueued(t.ID, key); err != nil {
+	if s.holds().drop(t.ID, key) {
+		// it waited for a setup or a reconnected process, not in the queue
+		s.rt.dropQueued(t.ID, key)
+	} else if err := s.rt.takeQueued(t.ID, key); err != nil {
 		writeErr(w, http.StatusConflict, err.Error())
 		return
 	}

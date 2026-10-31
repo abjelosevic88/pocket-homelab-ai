@@ -78,17 +78,66 @@ function logImages(threadId: string | undefined, key: string, n: number): ItemIm
 // Older tool rows only have "[image]" lines in their output.
 const imageCount = (t: ToolInfo) => t.images ?? (t.output || '').split('\n').filter(l => l === '[image]').length
 
+// Messages the CLI hands the agent on its own (a summary when a session is
+// continued, notes from other sessions, sub-agent reports) fold into a quiet
+// one-line row so they don't take over the conversation.
+type Folded = { icon: string; label: string; body: string; rest: string }
+const attr = (attrs: string, name: string) => attrs.match(new RegExp(`\\b${name}="([^"]*)"`))?.[1] || ''
+export function foldedMessage(text: string): Folded | null {
+  const t = text.trim()
+  if (/^This session is being continued from a previous conversation/.test(t)) {
+    return { icon: 'history', label: 'Summary of the earlier conversation', body: t, rest: '' }
+  }
+  const m = t.match(/^<([a-z][\w-]*)((?:\s[^>]*)?)>([\s\S]*?)<\/\1>/)
+  if (!m) return null
+  const [whole, tag, attrs] = m
+  let body = m[3].trim()
+  const rest = t.slice(whole.length).trim()
+  switch (tag) {
+    case 'cross-session-message':
+      return { icon: 'message', label: `Message from ${attr(attrs, 'from-name') || 'another session'}`, body, rest }
+    case 'teammate-message':
+      return { icon: 'message', label: `Message from ${attr(attrs, 'teammate_id') || 'a teammate'}`, body, rest }
+    case 'agent-message':
+      body = body.replace(/^\[Subagent hand-back\][^\n]*\n+/, '').trim()
+      return { icon: 'bot', label: 'Subagent report', body, rest }
+    default: {
+      const name = tag.replace(/-/g, ' ')
+      return { icon: 'info', label: name[0].toUpperCase() + name.slice(1), body, rest }
+    }
+  }
+}
+
+function FoldedNote({ f }: { f: Folded }) {
+  const [open, setOpen] = useState(false)
+  const preview = f.body.split('\n').map(l => l.trim()).find(l => l && !l.startsWith('<')) || ''
+  return (
+    <div className={`thinking folded-note ${open ? 'open' : ''}`}>
+      <button type="button" className="thinking-h" onClick={() => setOpen(o => !o)} aria-expanded={open}>
+        <Icon name={f.icon} size={14} /><span className="folded-label">{f.label}</span>
+        {!open && preview && <span className="folded-preview">{preview}</span>}
+        <Icon name="chevron-down" size={14} className="tool-caret" />
+      </button>
+      {open && <div className="thinking-body folded-body">{f.body}</div>}
+    </div>
+  )
+}
+
 export const ItemView = memo(function ItemView({ item, showThinking, threadId, ownerId, ownerName, onMoveFolder }: { item: Item; showThinking: boolean; threadId?: string; ownerId?: number; ownerName?: string; onMoveFolder?: () => void }) {
   switch (item.kind) {
     case 'user': {
       const pics = [...(item.images || []), ...logImages(threadId, item.key, item.log_images || 0)]
+      const f = item.text ? foldedMessage(item.text) : null
+      if (f && !f.rest && !pics.length && !item.files?.length) {
+        return <div id={`item-${item.key}`}><FoldedNote f={f} /></div>
+      }
       return (
         <div className={`msg user ${item.queued ? 'queued' : ''} ${item.unsent ? 'unsent' : ''}`} id={`item-${item.key}`}>
           {(item.by || ownerName) && <ByLine name={item.by || ownerName!} id={item.by ? item.by_id : ownerId} />}
           <div className="bubble">
             {pics.length > 0 && <Images images={pics} />}
             {item.files?.map(f => <a className="file-chip" key={f.id} href={f.url} download={f.name}>📄 {f.name}</a>)}
-            {item.text && <div className="user-text">{item.text}</div>}
+            {f ? <><FoldedNote f={f} />{f.rest && <div className="user-text">{f.rest}</div>}</> : item.text && <div className="user-text">{item.text}</div>}
           </div>
           {item.queued && <div className="queued-tag"><Icon name="clock" size={11} />queued — sent when the agent is done</div>}
         </div>

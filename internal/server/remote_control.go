@@ -115,6 +115,10 @@ func (rt *engine) attachRemote(threadID string) error {
 		return fail(errors.New("Remote Control is off while the thread is archived"))
 	}
 	rt.rcSet(threadID, func(st *rcState) { st.State, st.Error = "starting", "" })
+	rt.s.re.waitPending(threadID)
+	if rt.s.isReattached(threadID) {
+		return nil // the agent from before the restart works on: on once it is done (followLeftover)
+	}
 	r, err := rt.ensure(t)
 	if err != nil {
 		return fail(err)
