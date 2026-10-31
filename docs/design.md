@@ -60,7 +60,7 @@ same command there over ssh — `ssh -T -o BatchMode=yes -o StrictHostKeyCheckin
 remote command is a POSIX `sh` script sent as base64 (`exec /bin/sh -c 'eval "$(echo … | base64 -d)"'`), so the
 remote login shell (bash, zsh, fish) never parses the prompt or flags; the script sources `/etc/profile` and
 `~/.profile` quietly, puts the usual install folders on `PATH`, `cd`s into the thread's folder and `exec`s the CLI.
-When the ssh link closes the CLI sees EOF and exits.
+When the ssh link closes the CLI sees EOF and exits — Claude Code only after the turn it is in (see below).
 
 - The remote's own login is used (no account switching); its rate-limit windows are ignored here.
 - Pictures: Claude gets them inline as always; Codex gets `{"type":"image","url":"data:…"}` instead of
@@ -80,6 +80,27 @@ When the ssh link closes the CLI sees EOF and exits.
   ssh runs in their jail with `-F none` (or their `home/.ssh/config`), `-i` that key, `IdentitiesOnly`,
   no agent, their `known_hosts`, and no shared connection. List, edit, check, run and sign-in only ever reach
   the person's own hosts. Without PEOPLE_DIR everyone shares the admins' hosts, as before.
+
+## After a restart (`internal/server/reconnect.go`)
+
+A restart takes this server's agents down with the service; on another machine only the ssh link goes, and
+Claude Code there may finish its turn. For each turn a restart cut off (`store.ResetRunning`), and once per
+thread for a message to a Claude session active in the 24 h before the restart, Pocket AI looks at the
+session's process (`sessions/<pid>.json` + `kill -0`, one ssh round trip that also reads the log):
+
+- **Still working:** reconnected (`threads.reattached`, status running). The log is read every 4 s from the
+  cut-off turn's prompt on; items Pocket AI already showed are not repeated (tool calls by key, messages by
+  text), cut tools get their output. Messages wait (`holds`), the 409 for sessions run elsewhere does not apply,
+  Stop SIGTERMs the process. Done (idle or gone): an idle leftover that Pocket AI started is ended, held messages
+  go out.
+- **Open but idle, Pocket AI's own** (its turn was over, but background work such as a waiter on a lane may still
+  run and act on its own): its output is caught up, then it is ended with its process group and every process
+  below it, and the message goes to a new process. Right after a restart every Claude conversation on another
+  machine active in the last 24 h is looked at this way (`sweepLeftovers`, one probe each; a machine that does
+  not answer is left to the next message), so such a leftover does not wait for someone to write.
+- **Gone mid-turn:** Pocket AI sends "continue" itself (`u-auto-…`, by "Pocket AI"); not again within 30 min
+  (then the notice asks the person). Codex on another machine whose rollout changed in the last minute gets a
+  warning instead (no auto-continue: its app-server may still be writing).
 
 ## Worktrees
 

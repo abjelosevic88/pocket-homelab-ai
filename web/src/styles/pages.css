@@ -551,3 +551,6 @@
 .files-more:hover { background: var(--surface-3); color: var(--text); }
 @media (hover: none) { .files-more { opacity: .7; } }
 .files-list { min-height: calc(100% - 20px); }
+.files-name-why { margin: 8px 0 0; font-size: 13px; color: var(--danger); line-height: 1.45; }
+.files-name-why .link-btn { font-size: 13px; }
+.modal input[aria-invalid] { border-color: var(--danger); }

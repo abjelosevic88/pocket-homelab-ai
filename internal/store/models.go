@@ -101,6 +101,9 @@ type Thread struct {
 	// External: the session is being driven somewhere else right now (a
 	// terminal, another app) and Pocket AI is following its log.
 	External bool `json:"external"`
+	// Reattached: that is Pocket AI's own agent from before a restart, which
+	// it reconnected to: messages wait for it and Stop ends it.
+	Reattached bool `json:"reattached,omitempty"`
 	// Subagents at work right now (background sub-agents of a live session).
 	Subagents any `json:"subagents,omitempty"`
 	// Background work other than sub-agents (shell commands, monitors) a live

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -16,9 +17,9 @@ import (
 
 // "On this server" and Today also cover the person's other machines: their
 // CLI sessions are copied into DATA_DIR/remote-sessions/<host>/mirror
-// (agent.MirrorSessions) and read from there. A page waits a moment for a
-// fresh copy; a slow or unreachable machine shows its last copy, and the
-// copy finishes in the background for the next look.
+// (agent.MirrorSessions) and read from there. A machine with a copy already
+// shows it at once while a fresh one is made in the background for the
+// next look; only a machine never copied before is waited for, a moment.
 
 const (
 	remoteMirrorTTL  = 20 * time.Second
@@ -83,9 +84,12 @@ func (s *Server) remoteHomes(ctx context.Context, u *store.User) []hostHomes {
 	if len(hosts) == 0 {
 		return nil
 	}
-	wait := make([]<-chan struct{}, len(hosts))
-	for i, h := range hosts {
-		wait[i] = s.syncMirror(h, false)
+	var wait []<-chan struct{}
+	for _, h := range hosts {
+		done := s.syncMirror(h, false)
+		if _, err := os.Stat(s.mirrorDir(h)); err != nil {
+			wait = append(wait, done) // nothing to show yet
+		}
 	}
 	timer := time.NewTimer(remoteMirrorWait)
 	defer timer.Stop()
