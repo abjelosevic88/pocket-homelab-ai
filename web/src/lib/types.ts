@@ -441,8 +441,12 @@ export interface ProviderLimits {
   server_login?: boolean
   /** Limits keys of other logins on the same account, folded into this one. */
   aliases?: string[]
+  /** a login on another machine of theirs (label names the machine) */
+  host_id?: number
+  /** names of the other logins on the same account, folded into this one */
+  also?: string[]
 }
-/** Keyed "claude" / "codex" for the server's own login, "claude:3" for account 3;
+/** Keyed "claude" / "codex" for the server's own login, "claude:3" for account 3, "claude@2" for a login on machine 2;
  * logins signed in to the same account arrive once, under the named one. */
 export type Limits = Record<string, ProviderLimits | undefined>
 

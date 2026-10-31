@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"sort"
 	"strings"
 	"syscall"
@@ -18,15 +19,23 @@ import (
 // included — through the get_usage control request. No prompt is sent and
 // no session is written. An answer without any window (the CLI had not
 // fetched them yet) is asked again a few times, then is an error: an empty
-// read must not pass for "no limits".
-func ClaudeLimits(ctx context.Context, bin, cwd string, env []string) ([]Window, string, error) {
+// read must not pass for "no limits". r is another machine's login (nil =
+// here; cwd is only used here).
+func ClaudeLimits(ctx context.Context, r *Remote, bin, cwd string, env []string) ([]Window, string, error) {
 	if bin == "" {
 		bin = "claude"
 	}
 	ctx, cancel := context.WithTimeout(ctx, 40*time.Second)
 	defer cancel()
-	cmd, err := LocalCmd(ctx, cwd, env, bin, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-		"--permission-prompt-tool", "stdio", "--no-session-persistence")
+	args := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+		"--permission-prompt-tool", "stdio", "--no-session-persistence"}
+	var cmd *exec.Cmd
+	var err error
+	if r != nil {
+		cmd, err = Command(r, "", env, bin, args...)
+	} else {
+		cmd, err = LocalCmd(ctx, cwd, env, bin, args...)
+	}
 	if err != nil {
 		return nil, "", err
 	}
@@ -36,6 +45,9 @@ func ClaudeLimits(ctx context.Context, bin, cwd string, env []string) ([]Window,
 	if err := cmd.Start(); err != nil {
 		return nil, "", err
 	}
+	// ssh has no context of its own: the timeout ends it here
+	stop := context.AfterFunc(ctx, func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) })
+	defer stop()
 	defer func() {
 		_ = stdin.Close()
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
@@ -199,9 +211,14 @@ type ResetCredit struct {
 	ExpiresAt string `json:"expires_at,omitempty"`
 }
 
-// CodexLimits reads the plan limits and the free resets Codex has granted.
-func CodexLimits(ctx context.Context, bin string, env []string) ([]Window, *Resets, error) {
-	c, err := startRPC(bin, os.TempDir(), env)
+// CodexLimits reads the plan limits and the free resets Codex has granted;
+// remote is another machine's login (nil = here).
+func CodexLimits(ctx context.Context, remote *Remote, bin string, env []string) ([]Window, *Resets, error) {
+	dir := ""
+	if remote == nil {
+		dir = os.TempDir()
+	}
+	c, err := startRPC(bin, dir, env, remote)
 	if err != nil {
 		return nil, nil, err
 	}
