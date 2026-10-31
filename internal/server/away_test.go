@@ -137,3 +137,85 @@ func TestAwayMatchIgnoresWording(t *testing.T) {
 		t.Fatal("match is not the exact call")
 	}
 }
+
+// A background sub-agent's request after the main turn ended is deferred too,
+// and the summary waits until the sub-agent is done.
+func TestAwayCoversBackgroundSubagents(t *testing.T) {
+	s, h, root := testServer(t)
+	owner, u := person(t, s, h, "subs@example.test", "admin", true)
+	fakeClaude(t, s, root)
+	outPath := filepath.Join(root, "out.jsonl")
+	outJSON, _ := json.Marshal(outPath)
+	script := `#!/usr/bin/env python3
+import sys, json, time
+if sys.argv[1:2] == ['auth']:
+    print('{}')
+    sys.exit(0)
+def rec(x):
+    with open(` + string(outJSON) + `, 'a') as f:
+        f.write(json.dumps(x) + '\n')
+def say(x):
+    print(json.dumps(x), flush=True)
+for line in sys.stdin:
+    msg = json.loads(line)
+    t = msg.get('type')
+    if t == 'user':
+        say({'type':'system','subtype':'init','session_id':'subs-sess'})
+        say({'type':'system','subtype':'task_started','task_id':'a1','description':'Check the docs','task_type':'local_agent'})
+        say({'type':'result','subtype':'success','is_error':False})
+        # the sub-agent, still at work in the background, asks
+        say({'type':'control_request','request_id':'s1','request':{'subtype':'can_use_tool','tool_name':'Bash','input':{'command':'rm -rf build'},'tool_use_id':'tu-s1','agent_id':'a1'}})
+    elif t == 'control_response':
+        rec(msg)
+        time.sleep(2)  # the sub-agent carries on, then finishes
+        say({'type':'system','subtype':'task_notification','task_id':'a1','status':'completed'})
+`
+	if err := os.WriteFile(s.cfg.ClaudeBin, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	old := awayDoneDelay
+	awayDoneDelay = 200 * time.Millisecond
+	sent := make(chan string, 4)
+	awaySummarySent = func(uid int64, title string) {
+		if uid == u.ID {
+			sent <- title
+		}
+	}
+	t.Cleanup(func() { awayDoneDelay, awaySummarySent = old, nil })
+
+	owner.want("PUT", "/api/v1/away", map[string]any{"on": true}, 200, nil)
+	th := thread(t, s, u.ID, root)
+	defer s.rt.stop(th.ID)
+	owner.want("POST", "/api/v1/threads/"+th.ID+"/messages", map[string]any{"text": "tidy up"}, 200, nil)
+	deadline := time.Now().Add(8 * time.Second)
+	var resp map[string]any
+	for resp == nil && time.Now().Before(deadline) {
+		data, _ := os.ReadFile(outPath)
+		_ = json.Unmarshal([]byte(strings.TrimSpace(string(data))), &resp)
+		time.Sleep(10 * time.Millisecond)
+	}
+	r, _ := resp["response"].(map[string]any)
+	inner, _ := r["response"].(map[string]any)
+	if inner["behavior"] != "deny" || !strings.Contains(inner["message"].(string), "away mode") {
+		t.Fatal("the sub-agent's request was not deferred", resp)
+	}
+	var st awaySum
+	owner.want("GET", "/api/v1/away", nil, 200, &st)
+	if len(st.Items) != 1 || st.Items[0].Request.ID != "s1" {
+		t.Fatal("the sub-agent's request is not saved", st.Items)
+	}
+	select {
+	case title := <-sent:
+		t.Fatal("summary sent while a sub-agent still works:", title)
+	case <-time.After(time.Second):
+	}
+	// the sub-agent finishes: now everything is done
+	select {
+	case title := <-sent:
+		if !strings.Contains(title, "1 decision") {
+			t.Fatal("summary does not count the saved request:", title)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no summary once the sub-agent was done")
+	}
+}

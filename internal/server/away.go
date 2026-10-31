@@ -43,7 +43,15 @@ const awayQuestionText = "The user is away from the keyboard (Pocket AI away mod
 
 const awayNote = "\n\n[Pocket AI: the user is away from the keyboard. Don't stop to ask them in chat: decide what is safe and easy to undo yourself. " +
 	"If an approval or a question is declined because they are away, keep working on everything that does not depend on it, " +
-	"and end with a short list of what is waiting for them.]"
+	"and end with a short list of what is waiting for them. Sub-agents you start get the same answers: tell them to carry on past " +
+	"anything declined as away and to report it back to you, then include what they report in your list.]"
+
+// how long none of a person's conversations must stay quiet before the summary
+// goes out: a background sub-agent that finishes wakes its agent for another turn.
+var awayDoneDelay = 8 * time.Second
+
+// awaySummarySent sees each summary (tests).
+var awaySummarySent func(uid int64, title string)
 
 type awayState struct {
 	On    bool   `json:"on"`
@@ -57,6 +65,7 @@ type awayBook struct {
 	decisions map[string]*awayBatch     // thread id → decisions not sent yet
 	finished  map[int64]map[string]bool // person → threads that finished a turn while away
 	dirty     map[int64]bool            // person → something happened since the last summary
+	timers    map[int64]*time.Timer     // person → summary check waiting for quiet
 }
 
 type awayBatch struct {
@@ -219,8 +228,27 @@ func (s *Server) awayTurnDone(uid int64, threadID string) {
 }
 
 // awayCheckDone sends the summary once none of an away person's
-// conversations works any more (waiting on a plan counts as done).
+// conversations (sub-agents included) works any more and stays so for
+// awayDoneDelay (waiting on a plan counts as done).
 func (s *Server) awayCheckDone(uid int64) {
+	s.aw.mu.Lock()
+	if s.aw.timers == nil {
+		s.aw.timers = map[int64]*time.Timer{}
+	}
+	if t := s.aw.timers[uid]; t != nil {
+		t.Reset(awayDoneDelay)
+	} else {
+		s.aw.timers[uid] = time.AfterFunc(awayDoneDelay, func() {
+			s.aw.mu.Lock()
+			delete(s.aw.timers, uid)
+			s.aw.mu.Unlock()
+			s.awaySummaryIfDone(uid)
+		})
+	}
+	s.aw.mu.Unlock()
+}
+
+func (s *Server) awaySummaryIfDone(uid int64) {
 	ctx := s.rt.ctxOrBackground()
 	if !s.isAway(ctx, uid) {
 		return
@@ -265,6 +293,9 @@ func (s *Server) awayCheckDone(uid int64) {
 		body = strings.TrimSpace(body + " Open Pocket AI to approve or answer what they saved for you.")
 	}
 	s.log.Info("away: all work done", "user", uid, "finished", finished, "waiting", waiting)
+	if awaySummarySent != nil {
+		awaySummarySent(uid, title)
+	}
 	s.notifyMobile(uid, kind, title, body, "")
 	s.notifyUser(ctx, uid, kind, title, body, strings.TrimRight(s.cfg.BaseURL, "/")+"/away")
 }
