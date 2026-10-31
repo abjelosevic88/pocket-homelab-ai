@@ -2,8 +2,8 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
