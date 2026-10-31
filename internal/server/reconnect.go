@@ -356,6 +356,9 @@ func endedNote(cmds []string) string {
 
 // reconnectCut handles the turns a restart cut off (store.ResetRunning).
 func (s *Server) reconnectCut(ids []string) {
+	for _, id := range ids {
+		s.rt.reconnecting.Store(id, true)
+	}
 	s.re.markPending(ids)
 	sweep := s.sweepCandidates(s.rt.ctx, ids)
 	s.re.markPending(sweep)
@@ -447,10 +450,13 @@ func (s *Server) cutNotice(threadID string) {
 
 func (s *Server) reconnect(id string) {
 	defer s.re.resolve(id)
+	defer s.rt.doneReconnecting(id)
 	if s.rt.adopt(id) {
 		return // it ran under its holder: taken back, turn and all (held.go)
 	}
 	ctx := s.rt.ctx
+	// not held: what ResetRunning left alone for a takeover is reset now
+	s.store.ResetThread(ctx, id)
 	t, err := s.store.GetThreadAny(ctx, id)
 	if err != nil {
 		return

@@ -30,6 +30,19 @@ import { actionFor, useShortcuts } from '../lib/shortcuts'
 import { FolderPicker } from '../components/FolderPicker'
 import { Confirm, download, Empty, errMsg, Loading, type MenuItem, MenuButton, useContextMenu, useToast } from '../components/ui'
 
+// A reload after the stream came back: the server keeps a streaming reply's
+// text a moment behind what was streamed here, so text further along on
+// screen stays instead of shrinking and growing back.
+function keepStreamed(prev: Item[] | null, next: Item[]): Item[] {
+  if (!prev) return next
+  const had = new Map(prev.map(it => [it.key, it]))
+  return next.map(it => {
+    const old = had.get(it.key)
+    if ((it.kind === 'assistant' || it.kind === 'thinking') && old?.text && old.text.length > (it.text || '').length && old.text.startsWith(it.text || '')) return { ...it, text: old.text }
+    return it
+  })
+}
+
 function upsert(list: Item[], it: Item): Item[] {
   const i = list.findIndex(x => x.key === it.key)
   if (i < 0) return [...list, it]
@@ -48,6 +61,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const [rcBusy, setRcBusy] = useState(false)
   const [items, setItems] = useState<Item[] | null>(null)
   const [missing, setMissing] = useState(false)
+  const [streamDown, setStreamDown] = useState(false) // live updates dropped (Pocket AI restarting, network)
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -78,7 +92,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
     try {
       const d = await api.get<ThreadDetail>(`${V1}/threads/${id}`)
       setThread(d.thread)
-      setItems(d.items || [])
+      setItems(prev => keepStreamed(prev, d.items || []))
       setMissing(false)
       upsertThread(d.thread)
     } catch (e) {
@@ -118,7 +132,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
       thread: d => { const th = d as Thread; if (th?.id === id) { setThread(th); upsertThread(th) } },
       revoked: () => { setMissing(true); dropThread(id) }, // no longer shared with you
       ping: () => {},
-    }, { onOpen: () => { if (!first) load(); first = false } })
+    }, { onOpen: () => { setStreamDown(false); if (!first) load(); first = false }, onDown: () => setStreamDown(true) })
     return close
   }, [id, load, upsertThread, dropThread])
 
@@ -348,7 +362,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
       <div className="thread-bottom">
         {newBelow && !atBottom && <button type="button" className="new-below" onClick={() => { toBottom(true); setNewBelow(false) }}><Icon name="arrow-down" size={13} />New messages</button>}
         <div className="thread-bottom-inner">
-          {(running || t.status === 'waiting' || !!t.subagents?.length || !!t.background?.length) && items ? <RunBar t={t} items={items} />
+          {(running || t.status === 'waiting' || !!t.subagents?.length || !!t.background?.length) && items ? <RunBar t={t} items={items} reconnecting={streamDown} />
             : t.provider === 'claude' && t.provider_session_id && <div className="sub-dock"><SubagentsChip t={t} /></div>}
           <QueueStrip threadId={id} queued={queuedItems} agent={t.provider === 'codex' ? 'Codex' : 'Claude'} onClearAll={canSend ? clearQueue : undefined} onEdit={canSend ? async it => {
             const draft = await api.post<{ text: string; uploads: Upload[] }>(`${V1}/threads/${id}/queue/${encodeURIComponent(it.key)}/edit`)

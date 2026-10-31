@@ -50,6 +50,10 @@ const StopLine = `{"pocket_hold":"stop"}`
 // the end of the last one when none runs): what a new reader has not seen.
 const FromReplay = -1
 
+// FromTurn asks for the output since the start of the last turn, whether it
+// still runs or not: for a reader that never saw that turn end.
+const FromTurn = -2
+
 type hello struct {
 	From int64 `json:"from"`
 	Peek bool  `json:"peek,omitempty"` // header only; the attached client stays
@@ -66,6 +70,7 @@ type Header struct {
 	Busy     bool   `json:"busy,omitempty"`     // a turn is running
 	Offset   int64  `json:"offset"`             // stdout offset the stream starts at
 	In       int64  `json:"in"`                 // stdin bytes the CLI got so far
+	Live     int64  `json:"live,omitempty"`     // stdout offset where the replay ends and live output begins
 	Gap      bool   `json:"gap,omitempty"`      // output before Offset that was asked for is gone
 	Exited   bool   `json:"exited,omitempty"`   // the CLI ended; its output and exit follow
 	Stopping bool   `json:"stopping,omitempty"` // it was told to end

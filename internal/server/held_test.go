@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -27,6 +28,9 @@ while IFS= read -r line; do
     *'"type":"user"'*)
       n=$((n+1))
       printf '%s\n' '{"type":"system","subtype":"init","session_id":"sess-held"}'
+      printf '%s\n' '{"type":"stream_event","event":{"type":"message_start","message":{"id":"m'$n'a"}}}'
+      printf '%s\n' '{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text"}}}'
+      printf '%s\n' '{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"first '$n'"}}}'
       printf '%s\n' '{"type":"assistant","message":{"id":"m'$n'a","content":[{"type":"text","text":"first '$n'"}]}}'
       sleep 3
       printf '%s\n' '{"type":"assistant","message":{"id":"m'$n'b","content":[{"type":"text","text":"second '$n'"}]}}'
@@ -37,7 +41,13 @@ done`
 // A redeploy in the middle of a turn: the old Pocket AI lets go of the
 // agent, the new one takes it back at boot, and the turn finishes as if
 // nothing happened.
-func TestRestartTakesBackRunningAgent(t *testing.T) {
+func TestRestartTakesBackRunningAgent(t *testing.T) { restartTakeBack(t, false) }
+
+// The turn ends while Pocket AI is down: the next one still shows its last
+// reply and its end (it replays the whole last turn).
+func TestRestartTakesBackFinishedTurn(t *testing.T) { restartTakeBack(t, true) }
+
+func restartTakeBack(t *testing.T, finishWhileDown bool) {
 	if _, _, ok := hold.Binary(runtime.GOOS, runtime.GOARCH); !ok {
 		t.Skip("pocket-hold not built in (go generate ./internal/hold)")
 	}
@@ -124,9 +134,43 @@ func TestRestartTakesBackRunningAgent(t *testing.T) {
 	if got, _ := st.GetThreadAny(context.Background(), th.ID); got.Status != "running" {
 		t.Fatalf("status after letting go: %s", got.Status)
 	}
+	if finishWhileDown {
+		waitFor("the turn to end unseen", func() bool { st, ok, _ := hold.Status(th.ID); return ok && !st.Busy })
+	}
 
-	// the new one takes the turn back at boot
+	// the new one takes the turn back at boot; what an app watching the
+	// thread sees must not flicker: never idle before the turn ends, never a
+	// reply blanked out to be streamed again
 	s2 := New(cfg, st, log, nil)
+	seen := s2.rt.subscribeThread(th.ID, u.ID)
+	var flicker []string
+	var sawReconnecting bool
+	watched := make(chan struct{})
+	go func() {
+		defer close(watched)
+		ended := false
+		for ev := range seen {
+			switch ev.Name {
+			case "thread":
+				tt := ev.Data.(*store.Thread)
+				sawReconnecting = sawReconnecting || tt.Reconnecting
+				if tt.Status == "idle" && !ended && !finishWhileDown {
+					flicker = append(flicker, "idle mid-turn")
+				}
+			case "item":
+				it := ev.Data.(map[string]any)
+				if it["kind"] == "turn" {
+					ended = true
+				}
+				if it["kind"] == "assistant" && it["text"] == nil {
+					flicker = append(flicker, "reply blanked: "+fmt.Sprint(it["key"]))
+				}
+				if it["kind"] == "notice" && strings.HasPrefix(fmt.Sprint(it["key"]), "restart-") {
+					flicker = append(flicker, "restart notice")
+				}
+			}
+		}
+	}()
 	ctx2, stop2 := context.WithCancel(context.Background())
 	defer stop2()
 	if err := s2.Bootstrap(ctx2); err != nil {
@@ -138,6 +182,12 @@ func TestRestartTakesBackRunningAgent(t *testing.T) {
 	})
 	if x := texts(); x["first 1"] != 1 || x["second 1"] != 1 || x["restart notice"] != 0 {
 		t.Fatalf("timeline after taking back: %v", x)
+	}
+	s2.rt.unsubscribeThread(th.ID, seen)
+	close(seen)
+	<-watched
+	if len(flicker) > 0 || (!sawReconnecting && !finishWhileDown) {
+		t.Fatalf("flicker while taking back: %v (reconnecting shown: %v)", flicker, sawReconnecting)
 	}
 	// and it goes on as usual
 	if _, err := s2.rt.send(th, "u2", agent.Input{Text: "again"}); err != nil {

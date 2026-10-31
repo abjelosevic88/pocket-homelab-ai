@@ -397,7 +397,10 @@ func (h *holder) serveConn(c net.Conn) {
 		return
 	}
 	from := hi.From
-	if from < 0 {
+	switch {
+	case from == FromTurn:
+		from = h.turnStart
+	case from < 0:
 		from = h.replayFrom()
 	}
 	if total := h.total(); from > total {
@@ -407,6 +410,7 @@ func (h *holder) serveConn(c net.Conn) {
 		hd.Gap, from = true, h.base
 	}
 	hd.Offset = from
+	hd.Live = h.total()
 	if hi.From < 0 {
 		for _, k := range h.kept {
 			if k.end <= from {
