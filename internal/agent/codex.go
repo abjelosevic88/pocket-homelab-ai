@@ -60,6 +60,7 @@ type rpc struct {
 	mu    sync.Mutex
 	calls map[int64]chan rpcReply
 	done  chan struct{}
+	err   error // how the process ended, once done is closed
 	errb  *tail
 	// onNotify / onRequest are called in order from a dispatcher goroutine
 	// (not the reader), so handlers may make calls of their own.
@@ -230,7 +231,7 @@ func (c *rpc) read(r io.Reader) {
 			}
 		}
 	}
-	_ = c.cmd.Wait()
+	c.err = c.cmd.Wait()
 	close(c.done)
 	c.qmu.Lock()
 	c.qdone = true
@@ -367,8 +368,10 @@ func StartCodex(ctx context.Context, o Options, sink Sink) (Session, error) {
 	}
 	sink.SessionID(s.threadID)
 	go func() {
+		lost := ""
 		select {
 		case <-c.done:
+			lost = lostLink(o.Remote, c.err, c.errb.String())
 		case <-ctx.Done():
 			c.close()
 		}
@@ -379,10 +382,18 @@ func StartCodex(ctx context.Context, o Options, sink Sink) (Session, error) {
 		s.closed = true
 		s.mu.Unlock()
 		if running {
-			sink.TurnDone(TurnInfo{ID: turnID, OK: false, DurationMS: time.Since(turnFrom).Milliseconds(), Error: "Codex exited" + stderrHint(c.errb)})
+			why := "Codex exited" + stderrHint(c.errb)
+			if lost != "" {
+				why = lost
+			}
+			sink.TurnDone(TurnInfo{ID: turnID, OK: false, DurationMS: time.Since(turnFrom).Milliseconds(), Error: why})
 		}
 		close(s.exited)
-		sink.Exited(nil)
+		if lost != "" {
+			sink.Exited(errors.New(lost))
+		} else {
+			sink.Exited(nil)
+		}
 	}()
 	return s, nil
 }

@@ -427,6 +427,9 @@ func isKilled(err error) bool {
 
 func (s *claudeSession) exitError(err error) string {
 	msg := s.errb.String()
+	if lost := lostLink(s.opts.Remote, err, msg); lost != "" {
+		return lost
+	}
 	if msg == "" && err != nil {
 		msg = err.Error()
 	}
