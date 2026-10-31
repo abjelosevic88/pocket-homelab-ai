@@ -527,6 +527,7 @@ func (rt *engine) startRemote(t *store.Thread, h *store.Host) (*run, error) {
 	}
 	o := rt.baseOptions(ctx, t)
 	o.Remote = remoteOf(h)
+	o.Remote.Slot = t.ID // ends this thread's process from a connection that dropped unnoticed there
 	o.Bin = hostBin(h, t.Provider)
 	o.Env = append(o.Env, agent.HomeEnv(t.Provider, t.HostHome)...) // which login there
 	if o.ResumeID != "" {
@@ -1697,7 +1698,10 @@ func (k *runSink) Exited(err error) {
 	if err != nil {
 		rt.s.log.Warn("agent exited", "thread", r.threadID, "err", err)
 		rt.s.pauseDeferredSource(rt.ctx, r.threadID, "The other chat lost its connection. Review it before sending this prompt.")
-		rt.saveItem(r.threadID, agent.Item{Key: "exit-" + uuid.NewString()[:8], Kind: "notice", Level: "error", Text: err.Error()})
+		// a turn cut off by the exit already shows this error in its footer
+		if t, e := rt.s.store.GetThreadAny(rt.ctx, r.threadID); e != nil || t.Status != "error" || t.Error != err.Error() {
+			rt.saveItem(r.threadID, agent.Item{Key: "exit-" + uuid.NewString()[:8], Kind: "notice", Level: "error", Text: err.Error()})
+		}
 		rt.setStatus(r.threadID, "error", err.Error())
 	} else if t, e := rt.s.store.GetThreadAny(rt.ctx, r.threadID); e == nil && (t.Status == "running" || t.Status == "waiting") {
 		rt.setStatus(r.threadID, "idle", "")
