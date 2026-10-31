@@ -12,3 +12,4 @@ web/dist/*
 *.log
 /tmp/
 __pycache__/
+/internal/hold/bin/pocket-hold-*

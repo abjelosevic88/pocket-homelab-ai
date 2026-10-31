@@ -15,7 +15,7 @@ func TestRemotePocketTools(t *testing.T) {
 	f := filepath.Join(t.TempDir(), "mcp.json")
 	os.WriteFile(f, []byte(`{"mcpServers":{"pocket":{"type":"http","url":"http://127.0.0.1:38211/mcp","headers":{"Authorization":"Bearer cap"}}}}`), 0o600)
 	o := agent.Options{MCPConfig: f, Remote: &agent.Remote{Target: "ubuntu@box"}}
-	if err := remotePocketTools(&o); err != nil {
+	if err := remotePocketTools(&o, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(o.Remote.Forwards) != 1 || !regexp.MustCompile(`^127\.0\.0\.1:\d{5}:127\.0\.0\.1:38211$`).MatchString(o.Remote.Forwards[0]) {
