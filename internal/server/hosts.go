@@ -241,6 +241,7 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
 		h.Info = s.checkHost(r.Context(), h)
 		s.forgetHostLogins(h.ID) // another machine (or CLI) now
 	}
+	forgetHolder(h.ID) // it may point at another machine now
 	if err := s.store.UpdateHost(r.Context(), h); err != nil {
 		s.fail(w, err, "host")
 		return
@@ -257,6 +258,7 @@ func (s *Server) handleDeleteHost(w http.ResponseWriter, r *http.Request) {
 	id := h.ID
 	s.rt.stopHost(id)
 	s.forgetHostLogins(id)
+	forgetHolder(id)
 	if err := s.store.DeleteHost(r.Context(), id); err != nil {
 		s.fail(w, err, "host")
 		return
@@ -280,6 +282,7 @@ func (s *Server) handleCheckHost(w http.ResponseWriter, r *http.Request) {
 	}
 	h.Info = s.checkHost(r.Context(), h)
 	s.dropHostStatus(h.ID) // Accounts asks the machine again too (a CLI may be new there)
+	forgetHolder(h.ID)     // Check: look for it again too
 	if err := s.store.UpdateHost(r.Context(), h); err != nil {
 		s.fail(w, err, "host")
 		return

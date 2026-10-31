@@ -1,13 +1,11 @@
 package agent
 
 import (
-	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,13 +26,11 @@ var ClaudeModes = []Mode{
 
 // claudeSession is one `claude -p` process speaking stream-json.
 type claudeSession struct {
-	opts  Options
-	sink  Sink
-	cmd   *exec.Cmd
-	stdin io.WriteCloser
-	wmu   sync.Mutex
-	done  chan struct{}
-	errb  *tail
+	opts Options
+	sink Sink
+	l    *link
+	done chan struct{}
+	errb *tail
 
 	mu       sync.Mutex
 	pending  map[string]claudePending // control request id → what was asked
@@ -128,33 +124,30 @@ func StartClaude(ctx context.Context, o Options, sink Sink) (Session, error) {
 		}
 		args = append(args, flag, o.SystemPrompt)
 	}
-	cmd, err := Command(o.Remote, o.Cwd, o.Env, bin, args...)
-	if err != nil {
-		return nil, err
-	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	s := &claudeSession{opts: o, sink: sink, cmd: cmd, done: make(chan struct{}), errb: &tail{n: 8 << 10},
+	s := &claudeSession{opts: o, sink: sink, done: make(chan struct{}), errb: &tail{n: 8 << 10},
 		pending: map[string]claudePending{}, denied: map[string]bool{}, tools: map[string]*Tool{}, waiters: map[string]chan controlReply{},
 		streamKey: map[int]string{}, streamTyp: map[int]string{}, consumed: map[string]int{}, msgKeys: map[string][]string{}}
-	cmd.Stderr = s.errb
-	stdin, err := cmd.StdinPipe()
+	l, err := openLink(ctx, o, claudeMarks, bin, args, s.errb)
 	if err != nil {
 		return nil, err
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
+	s.l = l
+	// A held CLI that was running already (Pocket AI restarted, or this
+	// thread's last connection dropped) knows its session: no initialize,
+	// and a turn it is in the middle of is on.
+	adopted := l.h != nil && !l.Header.Started
+	if adopted && l.Header.Busy {
+		s.running, s.turnFrom = true, time.Now()
+		sink.TurnStarted()
 	}
-	s.stdin = stdin
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start %s: %w", bin, err)
-	}
-	go s.read(stdout)
+	go s.read()
 	go func() {
 		<-ctx.Done()
 		_ = s.Close()
 	}()
-	_ = s.write(map[string]any{"type": "control_request", "request_id": "init", "request": map[string]any{"subtype": "initialize"}})
+	if !adopted {
+		_ = s.write(map[string]any{"type": "control_request", "request_id": "init", "request": map[string]any{"subtype": "initialize"}})
+	}
 	return s, nil
 }
 
@@ -165,15 +158,7 @@ func (s *claudeSession) write(v any) error {
 	if err != nil {
 		return err
 	}
-	s.wmu.Lock()
-	defer s.wmu.Unlock()
-	select {
-	case <-s.done:
-		return ErrClosed
-	default:
-	}
-	_, err = s.stdin.Write(append(b, '\n'))
-	return err
+	return s.l.Write(append(b, '\n'))
 }
 
 func (s *claudeSession) Send(in Input) error {
@@ -303,21 +288,7 @@ func (s *claudeSession) Close() error {
 	}
 	s.closed = true
 	s.mu.Unlock()
-	_ = s.stdin.Close()
-	if s.cmd.Process != nil {
-		go func() {
-			select {
-			case <-s.done:
-			case <-time.After(3 * time.Second):
-				_ = syscall.Kill(-s.cmd.Process.Pid, syscall.SIGTERM)
-				select {
-				case <-s.done:
-				case <-time.After(5 * time.Second):
-					_ = syscall.Kill(-s.cmd.Process.Pid, syscall.SIGKILL)
-				}
-			}
-		}()
-	}
+	s.l.Close(s.done)
 	return nil
 }
 
@@ -381,21 +352,23 @@ func (s *claudeSession) Respond(id string, r Response) error {
 
 // ---------- reading the stream ----------
 
-func (s *claudeSession) read(r io.Reader) {
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 1<<20), 64<<20)
-	for sc.Scan() {
-		line := sc.Bytes()
+func (s *claudeSession) read() {
+	handle := func(line []byte) {
 		if len(line) == 0 || line[0] != '{' {
-			continue
+			return
 		}
 		var m map[string]json.RawMessage
-		if err := json.Unmarshal(line, &m); err != nil {
-			continue
+		if json.Unmarshal(line, &m) != nil {
+			return
 		}
 		s.handle(m)
 	}
-	err := s.cmd.Wait()
+	// adopted: sub-agents and background shells from earlier turns first,
+	// so the ones still running show again
+	for _, k := range s.l.Header.Kept {
+		handle([]byte(k))
+	}
+	err := s.l.Lines(handle)
 	s.mu.Lock()
 	running := s.running
 	s.running = false
@@ -405,6 +378,9 @@ func (s *claudeSession) read(r io.Reader) {
 	}
 	s.mu.Unlock()
 	close(s.done)
+	if errors.Is(err, errDetached) {
+		return // the CLI runs on, for the next Pocket AI to attach to
+	}
 	if running {
 		s.sink.TurnDone(TurnInfo{OK: false, Error: s.exitError(err)})
 	}
@@ -422,7 +398,8 @@ func isKilled(err error) bool {
 			return true
 		}
 	}
-	return false
+	var he *heldExit
+	return errors.As(err, &he) && he.code > 128 // the holder reports a signal as 128+n
 }
 
 func (s *claudeSession) exitError(err error) string {

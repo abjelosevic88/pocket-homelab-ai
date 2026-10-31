@@ -80,6 +80,7 @@ type run struct {
 	subs      []agent.Subagent
 	tasks     []agent.Task // background shell commands and monitors still running
 	remote    bool         // Claude Remote Control is on: never idle-stopped
+	held      bool         // under pocket-hold: outlives this process (held.go)
 }
 
 // taskHold caps how long background tasks keep an otherwise quiet agent
@@ -442,15 +443,16 @@ func (rt *engine) startRun(t *store.Thread) (*run, error) {
 		return nil, err
 	}
 	sink := &runSink{rt: rt, r: r}
+	pin := rt.holdFor(ctx, t, nil, &o)
 	if t.Source == "ask" {
-		if err := rt.s.preparePocketTools(ctx, t, sink, &o); err != nil {
+		if err := rt.s.preparePocketTools(ctx, t, sink, &o, pin); err != nil {
 			cancel()
 			return nil, err
 		}
 	} else if _, err := rt.s.askToken(ctx, t.UserID); err == nil {
 		// An existing per-person connection is shared with ordinary coding
 		// threads. Core still checks access and the proxy still gates writes.
-		if err := rt.s.preparePocketTools(ctx, t, sink, &o); err != nil {
+		if err := rt.s.preparePocketTools(ctx, t, sink, &o, pin); err != nil {
 			rt.s.log.Warn("Pocket app tools unavailable", "thread", t.ID, "err", err)
 			o.SystemPrompt += "\nPocket app tools are currently unavailable. For app-data questions, explain that the user should reconnect Pocket Ask; do not search credentials or databases as a workaround."
 		}
@@ -460,18 +462,16 @@ func (rt *engine) startRun(t *store.Thread) (*run, error) {
 	switch t.Provider {
 	case "claude":
 		o.Bin = rt.s.cfg.ClaudeBin
-		r.sess, err = agent.StartClaude(ctx, o, sink)
 	case "codex":
 		o.Bin = rt.s.cfg.CodexBin
-		r.sess, err = agent.StartCodex(ctx, o, sink)
-	default:
-		err = badRequest("unknown provider " + t.Provider)
 	}
+	r.sess, err = startSession(ctx, t.Provider, o, sink)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
-	rt.s.log.Info("agent started", "thread", t.ID, "provider", t.Provider, "account", t.AccountID, "model", t.Model, "mode", t.Mode, "resume", o.ResumeID != "", "cwd", t.Cwd)
+	r.held = o.Hold != nil
+	rt.s.log.Info("agent started", "thread", t.ID, "provider", t.Provider, "held", r.held, "adopted", pin != nil, "account", t.AccountID, "model", t.Model, "mode", t.Mode, "resume", o.ResumeID != "", "cwd", t.Cwd)
 	return r, nil
 }
 
@@ -541,14 +541,15 @@ func (rt *engine) startRemote(t *store.Thread, h *store.Host) (*run, error) {
 	o.SystemPrompt = strings.Replace(o.SystemPrompt, "the coding-agent CLIs on this server", "the coding-agent CLIs on the person's machines", 1) +
 		"\nThis conversation runs on the machine \"" + h.Name + "\" (" + firstNonEmpty(h.Info.Hostname, h.Target) + "), reached over ssh from the Pocket AI server."
 	sink := &runSink{rt: rt, r: r}
+	pin := rt.holdFor(ctx, t, h, &o)
 	// Pocket app tools: their endpoint is on this server's loopback, so the
 	// ssh connection carries it to the remote machine's loopback.
 	tools := false
 	if t.Source != "ask" {
 		if _, err := rt.s.askToken(ctx, t.UserID); err == nil {
-			if err := rt.s.preparePocketTools(ctx, t, sink, &o); err != nil {
+			if err := rt.s.preparePocketTools(ctx, t, sink, &o, pin); err != nil {
 				rt.s.log.Warn("Pocket app tools unavailable", "thread", t.ID, "host", h.Name, "err", err)
-			} else if err := remotePocketTools(&o); err != nil {
+			} else if err := remotePocketTools(&o, pin); err != nil {
 				rt.s.log.Warn("Pocket app tools not forwarded", "thread", t.ID, "host", h.Name, "err", err)
 				o.MCPConfig = ""
 			} else {
@@ -560,19 +561,13 @@ func (rt *engine) startRemote(t *store.Thread, h *store.Host) (*run, error) {
 		o.SystemPrompt += " Pocket app tools are not available here; for Pocket app data, the person can use a conversation on the Pocket AI server."
 	}
 	var err error
-	switch t.Provider {
-	case "claude":
-		r.sess, err = agent.StartClaude(ctx, o, sink)
-	case "codex":
-		r.sess, err = agent.StartCodex(ctx, o, sink)
-	default:
-		err = badRequest("unknown provider " + t.Provider)
-	}
+	r.sess, err = startSession(ctx, t.Provider, o, sink)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
-	rt.s.log.Info("agent started", "thread", t.ID, "provider", t.Provider, "host", h.Name, "login", firstNonEmpty(t.HostHome, "default"), "model", t.Model, "mode", t.Mode, "resume", o.ResumeID != "", "cwd", t.Cwd, "pocket_tools", tools)
+	r.held = o.Hold != nil
+	rt.s.log.Info("agent started", "thread", t.ID, "provider", t.Provider, "host", h.Name, "held", r.held, "adopted", pin != nil, "login", firstNonEmpty(t.HostHome, "default"), "model", t.Model, "mode", t.Mode, "resume", o.ResumeID != "", "cwd", t.Cwd, "pocket_tools", tools)
 	return r, nil
 }
 
@@ -754,7 +749,11 @@ func (rt *engine) next(r *run) {
 }
 
 // busyCount is how many threads have a turn running or messages waiting.
-func (rt *engine) busyCount() int {
+func (rt *engine) busyCount() int { return rt.busy(true) }
+
+// busy counts working threads; without held ones, those a restart would cut
+// off (a held agent works on and is taken back).
+func (rt *engine) busy(held bool) int {
 	rt.mu.Lock()
 	runs := make([]*run, 0, len(rt.runs))
 	for _, r := range rt.runs {
@@ -764,7 +763,7 @@ func (rt *engine) busyCount() int {
 	n := 0
 	for _, r := range runs {
 		r.mu.Lock()
-		if r.working() {
+		if r.working() && (held || !r.held) {
 			n++
 		}
 		r.mu.Unlock()
@@ -1493,6 +1492,12 @@ func (k *runSink) Request(req agent.Request) {
 	}
 	defer k.r.eventMu.Unlock()
 	r := k.r
+	if st, err := k.rt.s.store.GetItem(k.rt.ctx, r.threadID, "req-"+req.ID); err == nil {
+		var it agent.Item
+		if json.Unmarshal(st.Data, &it) == nil && it.Request != nil && it.Request.Status != "" && it.Request.Status != "pending" && it.Request.Status != "expired" {
+			return // answered already: the replay of a turn taken back asks again
+		}
+	}
 	r.mu.Lock()
 	r.pending[req.ID] = true
 	r.lastUsed = time.Now()
@@ -1830,7 +1835,7 @@ func (rt *engine) withMemory(r *run, in agent.Input, sender int64) agent.Input {
 // machine: a port on its loopback is forwarded over the agent's ssh
 // connection to the tool endpoint here, and the CLI there gets the config
 // itself (it has no file of ours).
-func remotePocketTools(o *agent.Options) error {
+func remotePocketTools(o *agent.Options, pin *holdMeta) error {
 	raw, err := os.ReadFile(o.MCPConfig)
 	if err != nil {
 		return err
@@ -1847,6 +1852,9 @@ func remotePocketTools(o *agent.Options) error {
 		return errors.New("no local Pocket tool endpoint")
 	}
 	remote := 20000 + mathrand.IntN(40000)
+	if pin != nil && pin.Port > 0 {
+		remote = pin.Port // the adopted CLI was started with it
+	}
 	o.Remote.Forwards = append(o.Remote.Forwards, fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%s", remote, u.Port()))
 	u.Host = fmt.Sprintf("127.0.0.1:%d", remote)
 	pocket["url"] = u.String()

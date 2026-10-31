@@ -249,7 +249,13 @@ const askSystemPrompt = `You are Pocket Ask, a personal assistant inside the use
 
 // An ephemeral loopback MCP server holds Core credentials outside the CLI.
 // Approval happens here before dispatch, independent of Claude permission modes.
-func (s *Server) preparePocketTools(ctx context.Context, t *store.Thread, sink *runSink, o *agent.Options) error {
+// pin (an adopted CLI's holdMeta) keeps the key, and here the port, that
+// CLI was started with.
+func (s *Server) preparePocketTools(ctx context.Context, t *store.Thread, sink *runSink, o *agent.Options, pin ...*holdMeta) error {
+	var keep *holdMeta
+	if len(pin) > 0 && pin[0] != nil && pin[0].Cap != "" {
+		keep = pin[0]
+	}
 	token, err := s.askToken(ctx, t.UserID)
 	if err != nil {
 		return err
@@ -268,11 +274,22 @@ func (s *Server) preparePocketTools(ctx context.Context, t *store.Thread, sink *
 	for _, tool := range list.Tools {
 		tools[tool.Name] = tool
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	addr := "127.0.0.1:0"
+	if keep != nil && o.Remote == nil && keep.Port > 0 {
+		addr = "127.0.0.1:" + strconv.Itoa(keep.Port)
+	}
+	listener, err := net.Listen("tcp", addr)
+	if err != nil && addr != "127.0.0.1:0" {
+		s.log.Warn("Pocket tools: the adopted agent's port is taken", "thread", t.ID, "addr", addr, "err", err)
+		listener, err = net.Listen("tcp", "127.0.0.1:0")
+	}
 	if err != nil {
 		return err
 	}
 	cap := uuid.NewString() + uuid.NewString()
+	if keep != nil {
+		cap = keep.Cap
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" || r.Header.Get("Authorization") != "Bearer "+cap || r.Header.Get("Origin") != "" {
