@@ -1113,6 +1113,12 @@ func (k *runSink) Context(c agent.Context) {
 	if c.Window > 0 {
 		t.Usage.ContextWindow = c.Window
 	}
+	if c.Cached {
+		t.Usage.CacheAt, t.Usage.CacheModel = store.Now(), t.Model
+	}
+	if c.CacheTTL > 0 {
+		t.Usage.CacheTTL = c.CacheTTL
+	}
 	_ = k.rt.s.store.UpdateThread(k.rt.ctx, t)
 	k.rt.publishThread(t)
 }

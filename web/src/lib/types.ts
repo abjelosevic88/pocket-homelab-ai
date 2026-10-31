@@ -172,6 +172,9 @@ export interface Usage {
   context_tokens: number
   context_window: number
   turns: number
+  cache_at?: string
+  cache_model?: string
+  cache_ttl?: number
 }
 
 export type ThreadStatus = 'idle' | 'running' | 'waiting' | 'error'

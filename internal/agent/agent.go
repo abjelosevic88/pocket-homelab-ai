@@ -142,6 +142,11 @@ type Task struct {
 type Context struct {
 	Tokens int64
 	Window int64
+	// Cached: this was a model call, so the provider's prompt cache was used
+	// (and kept warm) just now. CacheTTL is how long that cache lives in
+	// seconds when the call said so (Claude: 300 or 3600), 0 = unknown.
+	Cached   bool
+	CacheTTL int64
 }
 
 // Window is one rate-limit window of a provider account.
