@@ -41,7 +41,7 @@ const WHERE: Record<string, string> = { paseo: 'in Paseo', terminal: 'in a termi
 // One row whose height never changes: what is working, the sub-agents (a chip
 // whose list floats above the bar, so opening it or agents coming and going
 // does not move the conversation), fork, run time.
-export function RunBar({ t, items }: { t: Thread; items: Item[] }) {
+export function RunBar({ t, items, reconnecting }: { t: Thread; items: Item[]; reconnecting?: boolean }) {
   const { running } = useApp()
   const fork = useForkNewTab(t.id)
   const now = useNow(1000)
@@ -50,7 +50,7 @@ export function RunBar({ t, items }: { t: Thread; items: Item[] }) {
   const turnOver = t.status !== 'running' && !waiting
   const since = turnOver ? backgroundSince(t) || t.activity_at : t.prompt_at || t.activity_at
   const origin = running.find(r => r.session_id === t.provider_session_id)?.origin || ''
-  const what = waiting ? 'Waiting for you' : t.reattached ? 'Working · reconnected after the restart' : t.external ? `Working ${WHERE[origin] || 'elsewhere'}` : 'Working…'
+  const what = waiting ? 'Waiting for you' : reconnecting || t.reconnecting ? 'Working · reconnecting…' : t.reattached ? 'Working · reconnected after the restart' : t.external ? `Working ${WHERE[origin] || 'elsewhere'}` : 'Working…'
   const tasks = t.background?.length || 0
 
   return (

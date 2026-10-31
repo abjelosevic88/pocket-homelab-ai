@@ -49,6 +49,8 @@ type engine struct {
 	turnBy map[string]int64  // thread id → whose message the running turn answers
 	notes  map[string]string // thread id → said to the agent with the next message (reconnect.go)
 
+	reconnecting sync.Map // thread id → being taken back from its holder after a restart (held.go)
+
 	rcMu sync.Mutex
 	rc   map[string]*rcState // thread id → Remote Control turned on (remote_control.go)
 
@@ -82,6 +84,10 @@ type run struct {
 	tasks     []agent.Task // background shell commands and monitors still running
 	remote    bool         // Claude Remote Control is on: never idle-stopped
 	held      bool         // under pocket-hold: outlives this process (held.go)
+	// replaying: an adopted agent's output that was shown before is read
+	// again; what it changes is shown once at the end (runSink.Replay)
+	replaying bool
+	replayed  map[string]bool
 	// linkDown: a held agent's connection is down and being retried; sent
 	// messages wait in queue until it is back (runSink.Link).
 	linkDown   bool
@@ -158,7 +164,11 @@ func (rt *engine) decorate(t *store.Thread) *store.Thread {
 		if len(r.tasks) > 0 {
 			t.Background = append([]agent.Task(nil), r.tasks...)
 		}
+		t.Reconnecting = r.linkDown
 		r.mu.Unlock()
+	}
+	if _, ok := rt.reconnecting.Load(t.ID); ok {
+		t.Reconnecting = true
 	}
 	t.External = rt.isExternal(t.ID)
 	t.Reattached = rt.s.isReattached(t.ID)
@@ -1019,6 +1029,15 @@ func (k *runSink) Item(it agent.Item) {
 	if it.Kind == "assistant" && it.Text != "" {
 		r.lastText = it.Text
 	}
+	if r.replaying && streaming {
+		// shown before: rebuilt out of view, shown once when the replay ends
+		r.replayed[it.Key] = true
+		r.mu.Unlock()
+		return
+	}
+	if r.replaying {
+		delete(r.replayed, it.Key)
+	}
 	r.mu.Unlock()
 	k.rt.saveItem(r.threadID, it)
 }
@@ -1048,6 +1067,11 @@ func (k *runSink) Delta(key, field, text string) {
 	}
 	r.dirty[key] = true
 	r.lastUsed = time.Now()
+	if r.replaying {
+		r.replayed[key] = true
+		r.mu.Unlock()
+		return
+	}
 	r.mu.Unlock()
 	k.rt.toThread(r.threadID, sseEvent{Name: "delta", Data: map[string]string{"key": key, "field": field, "text": text}})
 }

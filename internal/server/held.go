@@ -204,6 +204,8 @@ func (rt *engine) holdFor(ctx context.Context, t *store.Thread, h *store.Host, o
 		return nil
 	}
 	o.Hold.Adopt = true
+	// left running by the last Pocket AI: it never saw how that turn went
+	o.Hold.FromTurn = t.Status == "running" || t.Status == "waiting"
 	var m holdMeta
 	_ = json.Unmarshal([]byte(hd.Meta), &m)
 	return &m
@@ -355,6 +357,11 @@ func (k *runSink) Link(up bool) {
 	away := time.Since(r.linkDownAt)
 	key := r.linkNotice
 	r.linkDown, r.linkNotice = false, ""
+	defer func() {
+		if t, err := rt.s.store.GetThreadAny(rt.ctx, r.threadID); err == nil {
+			rt.publishThread(t)
+		}
+	}()
 	var late []queued
 	if away > 24*time.Hour {
 		late, r.queue = r.queue, nil
@@ -376,10 +383,52 @@ func (k *runSink) Link(up bool) {
 	go rt.next(r) // what waited goes out now
 }
 
+// Replay: an adopted agent's output from before is read again (link.go).
+// Streaming items it touches are rebuilt out of view and shown once at the
+// end, so the reply on screen does not blank and refill.
+func (k *runSink) Replay(on bool) {
+	if !k.beginEvent() {
+		return
+	}
+	defer k.r.eventMu.Unlock()
+	r := k.r
+	r.mu.Lock()
+	if on {
+		r.replaying, r.replayed = true, map[string]bool{}
+		r.mu.Unlock()
+		return
+	}
+	r.replaying = false
+	var show []agent.Item
+	for key := range r.replayed {
+		if it := r.live[key]; it != nil {
+			show = append(show, *it)
+			delete(r.dirty, key)
+		}
+	}
+	r.replayed = nil
+	r.mu.Unlock()
+	for _, it := range show {
+		k.rt.saveItem(r.threadID, it)
+	}
+}
+
 // linkNotice tells the thread its agent's connection is down.
 func (rt *engine) linkNotice(r *run, key string) {
+	if t, err := rt.s.store.GetThreadAny(rt.ctx, r.threadID); err == nil {
+		rt.publishThread(t) // the run bar says it is reconnecting
+	}
 	rt.saveItem(r.threadID, agent.Item{Key: key, Kind: "notice", Level: "warn",
 		Text: "Lost the connection to " + rt.machineName(r.host) + ". Reconnecting… The agent keeps working there; messages you send wait until it is back."})
+}
+
+// doneReconnecting: thread id's takeover after the restart is over, one way
+// or the other.
+func (rt *engine) doneReconnecting(id string) {
+	rt.reconnecting.Delete(id)
+	if t, err := rt.s.store.GetThreadAny(rt.ctx, id); err == nil {
+		rt.publishThread(t)
+	}
 }
 
 func (rt *engine) machineName(id int64) string {
