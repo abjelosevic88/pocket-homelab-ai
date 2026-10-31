@@ -68,7 +68,7 @@ var (
 
 // reconnectFor is how long a held link tries to get its CLI back after the
 // connection dropped before it reports the loss.
-var reconnectFor = 3 * time.Minute
+var reconnectFor = 15 * time.Minute
 
 // link is a CLI's stdio. Plain, it is the process itself. Held, it is
 // pocket-hold attach, and when the connection drops the link attaches again
