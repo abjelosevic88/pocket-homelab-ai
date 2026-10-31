@@ -79,7 +79,7 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
       <div className="page-scroll">
         <div className="page-inner stack loose">
           <section className="card">
-            <div className="card-head"><div className="grow"><h2>Plan limits</h2><p className="muted small">Read from every Claude Code and Codex login on the server, including per-model limits. Logins signed in to the same account share their limits and show once.</p></div>
+            <div className="card-head"><div className="grow"><h2>Plan limits</h2><p className="muted small">Read from every Claude Code and Codex login on the server and on your other machines, including per-model limits. Logins signed in to the same account share their limits and show once.</p></div>
               <button type="button" className="btn sm ghost icon-only" aria-label="Refresh limits" title="Refresh" disabled={refreshing}
                 onClick={async () => { setRefreshing(true); try { r.setData(await api.get<UsageReport>(`${V1}/usage${qs({ days, refresh: 1 })}`)) } finally { setRefreshing(false) } }}>
                 <Icon name="refresh" size={15} className={refreshing ? 'spin' : ''} /></button></div>
@@ -93,10 +93,11 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
                   return (
                     <div key={src} className="limit-box">
                       <div className="limit-who">
-                        <div className="limit-prov"><span className={`prov-dot prov-${p}`} /><b className="nowrap">{providerName(p)}</b><span className="ellipsis">{label || 'Server login'}</span>
+                        <div className="limit-prov"><span className={`prov-dot prov-${p}`} /><b className="nowrap">{providerName(p)}</b>{l?.host_id ? <Icon name="server" size={13} className="inline-ico" /> : null}<span className="ellipsis">{label || 'Server login'}</span>
                           {l?.updated_at && <span className="muted xsmall nowrap">· {when(l.updated_at)}</span>}</div>
-                        {(who || (label && l?.server_login)) && <div className="muted xsmall limit-acct">
+                        {(who || (label && l?.server_login) || l?.also?.length) && <div className="muted xsmall limit-acct">
                           {label && l?.server_login && <span className="badge" title={`The server's own ${providerName(p)} login is signed in to this same account, so they share these limits.`}>Also the server login</span>}
+                          {l?.also?.length ? <span className="badge" title={`${l.also.join(', ')} ${l.also.length === 1 ? 'is' : 'are'} signed in to this same account, so they share these limits.`}>Also {l.also.join(', ')}</span> : null}
                           {who && <span className="ellipsis">{who}</span>}</div>}
                       </div>
                       {l?.windows?.length ? l.windows.map(w => <LimitBar key={w.id || w.name} w={w}

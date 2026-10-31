@@ -6,19 +6,20 @@ import { useApp } from '../lib/app-context'
 import { resetsIn } from '../lib/format'
 import type { LimitWindow, Limits, ProviderId } from '../lib/types'
 
-/** Pin key of a window; src is the limits key ("claude", "codex:3"). */
+/** Pin key of a window; src is the limits key ("claude", "codex:3", "claude@2" for a login on another machine). */
 export const limitKey = (src: string, w: LimitWindow) => `${src}:${w.id || w.name}`
 export const usedFrac = (w: LimitWindow) => Math.max(0, Math.min(1, w.used > 1 ? w.used / 100 : w.used))
 export const limitTone = (f: number) => f > 0.9 ? 'danger' : f > 0.7 ? 'warn' : ''
 
 /** The logins that have limits, the one the server's own login is first per
- * provider. Logins on the same account arrive as one (with aliases). */
+ * provider, other machines' last. Logins on the same account arrive as one
+ * (with aliases). */
 export function limitSources(limits: Limits) {
   const id = (k: string) => Number(k.split(':')[1] || 0)
-  const rank = (k: string) => limits[k]?.server_login ? -1 : id(k)
+  const rank = (k: string) => limits[k]?.server_login ? -1 : limits[k]?.host_id ? 1e9 + limits[k]!.host_id! : id(k)
   return (['claude', 'codex'] as ProviderId[]).flatMap(p => Object.keys(limits)
-    .filter(k => k === p || k.startsWith(p + ':'))
-    .sort((a, b) => rank(a) - rank(b))
+    .filter(k => k === p || k.startsWith(p + ':') || k.startsWith(p + '@'))
+    .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
     .map(k => ({ src: k, p, label: limits[k]?.label || '', aliases: limits[k]?.aliases || [] })))
 }
 

@@ -8,6 +8,7 @@ import (
 	mathrand "math/rand/v2"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -63,8 +64,9 @@ type run struct {
 	threadID string
 	userID   int64
 	provider string
-	account  int64 // the login it runs on (0 = the server's own)
-	host     int64 // the machine it runs on (0 = this server)
+	account  int64  // the login it runs on (0 = the server's own)
+	host     int64  // the machine it runs on (0 = this server)
+	hostHome string // its login folder there ("" = the default)
 	sess     agent.Session
 	cancel   context.CancelFunc
 
@@ -123,6 +125,12 @@ func (rt *engine) start(ctx context.Context) {
 	if list, err := rt.s.store.ListAccounts(ctx); err == nil {
 		for _, a := range list {
 			keys = append(keys, limitsKey(a.Provider, a.ID))
+		}
+	}
+	// other machines' default logins (their other folders come with the next read)
+	if list, err := rt.s.store.ListHosts(ctx); err == nil {
+		for _, h := range list {
+			keys = append(keys, hostLimitsKey("claude", h.ID, ""), hostLimitsKey("codex", h.ID, ""))
 		}
 	}
 	for _, p := range keys {
@@ -549,7 +557,7 @@ func (rt *engine) startRemote(t *store.Thread, h *store.Host) (*run, error) {
 		}
 	}
 	ctx, cancel := context.WithCancel(rt.ctx)
-	r := &run{threadID: t.ID, userID: t.UserID, provider: t.Provider, host: h.ID, cancel: cancel, pending: map[string]bool{},
+	r := &run{threadID: t.ID, userID: t.UserID, provider: t.Provider, host: h.ID, hostHome: t.HostHome, cancel: cancel, pending: map[string]bool{},
 		live: map[string]*agent.Item{}, dirty: map[string]bool{}, lastUsed: time.Now()}
 	if t.HostHome != "" && !agent.ValidHostHome(t.Provider, h.Info.Home, t.HostHome) {
 		cancel()
@@ -1129,15 +1137,18 @@ type provLimits struct {
 	// the limits keys of the other logins folded into this one (same account).
 	ServerLogin bool     `json:"server_login,omitempty"`
 	Aliases     []string `json:"aliases,omitempty"`
+	HostID      int64    `json:"host_id,omitempty"` // a login on another machine (Label names it)
+	Also        []string `json:"also,omitempty"`    // names of the other logins folded in (not the server's own)
 }
 
 // Limits merges what a running CLI reports (it only reports the windows of
 // the model in use) into the full picture by window id.
 func (k *runSink) Limits(provider string, w []agent.Window) {
+	key := limitsKey(provider, k.r.account)
 	if k.r.host != 0 {
-		return // another machine's login: its windows are not this server's
+		key = hostLimitsKey(provider, k.r.host, k.r.hostHome) // that machine's own login
 	}
-	k.rt.setLimits(limitsKey(provider, k.r.account), w, nil, false, "")
+	k.rt.setLimits(key, w, nil, false, "")
 }
 
 // limitsKey names the limits of one login: "claude", "codex" for the
@@ -1147,6 +1158,45 @@ func limitsKey(provider string, account int64) string {
 		return provider
 	}
 	return provider + ":" + strconv.FormatInt(account, 10)
+}
+
+// hostLimitsKey names the limits of a login on another machine: "claude@2"
+// for its default, "claude@2+claude-max" for ~/.claude-max there.
+func hostLimitsKey(provider string, host int64, dir string) string {
+	k := provider + "@" + strconv.FormatInt(host, 10)
+	if dir != "" {
+		k += "+" + agent.HomeLabel(dir)
+	}
+	return k
+}
+
+// limitsKeyParts splits a limits key: account > 0 for a named login here,
+// host > 0 for another machine's (folder is its login folder's label).
+func limitsKeyParts(k string) (provider string, account, host int64, folder string) {
+	if i := strings.IndexByte(k, '@'); i > 0 {
+		rest := k[i+1:]
+		if j := strings.IndexByte(rest, '+'); j >= 0 {
+			rest, folder = rest[:j], rest[j+1:]
+		}
+		host, _ = strconv.ParseInt(rest, 10, 64)
+		return k[:i], 0, host, folder
+	}
+	if i := strings.IndexByte(k, ':'); i > 0 {
+		account, _ = strconv.ParseInt(k[i+1:], 10, 64)
+		return k[:i], account, 0, ""
+	}
+	return k, 0, 0, ""
+}
+
+// limitsRank: the server's own login, then named logins, then other machines'.
+func limitsRank(k string) int {
+	switch _, account, host, _ := limitsKeyParts(k); {
+	case account > 0:
+		return 1
+	case host > 0:
+		return 2
+	}
+	return 0
 }
 
 // setLimits stores windows: replace=true for a full read, otherwise merge.
@@ -1296,7 +1346,8 @@ func (rt *engine) refreshLimits(wait bool) {
 		if fresh {
 			return
 		}
-		ctx, cancel := context.WithTimeout(rt.ctx, 45*time.Second)
+		// a far-away machine: who its logins are (one ssh round), then the limits
+		ctx, cancel := context.WithTimeout(rt.ctx, 100*time.Second)
 		defer cancel()
 		type login struct {
 			provider string
@@ -1305,6 +1356,8 @@ func (rt *engine) refreshLimits(wait bool) {
 			env      []string
 			key      string
 			st       acctStatus
+			remote   *agent.Remote // a login on another machine (its status comes with hostLogins)
+			bin      string
 		}
 		logins := []*login{{provider: "claude", home: rt.s.defaultHome("claude")}, {provider: "codex", home: rt.s.defaultHome("codex")}}
 		if list, err := rt.s.store.ListAccounts(ctx); err == nil {
@@ -1325,6 +1378,37 @@ func (rt *engine) refreshLimits(wait bool) {
 				defer wg.Done()
 				l.st = rt.s.accountStatus(ctx, l.provider, l.id, l.home, wait)
 			}()
+		}
+		// Other machines' logins that are signed in, of machines that answered
+		// their last check (one that is down would hold everything up).
+		var hostMu sync.Mutex
+		if hosts, err := rt.s.store.ListHosts(ctx); err == nil {
+			for _, h := range hosts {
+				if !h.Info.OK {
+					continue
+				}
+				rt.s.fillHost(ctx, h)
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					for _, v := range rt.s.hostLogins(ctx, h, wait) {
+						key := hostLimitsKey(v.Provider, h.ID, v.Dir)
+						if !v.SignedIn {
+							rt.mu.Lock()
+							_, known := rt.limits[key]
+							rt.mu.Unlock()
+							if known && (v.Error == "" || v.Missing) {
+								rt.dropLimits(key) // signed out or not there: nothing to show
+							}
+							continue // could not ask: keep what is known
+						}
+						hostMu.Lock()
+						logins = append(logins, &login{provider: v.Provider, key: key, st: v.acctStatus, remote: remoteOf(h),
+							bin: hostBin(h, v.Provider), env: agent.HomeEnv(v.Provider, v.Dir)})
+						hostMu.Unlock()
+					}
+				}()
+			}
 		}
 		wg.Wait()
 		groups := map[string][]*login{}
@@ -1370,14 +1454,22 @@ func (rt *engine) refreshLimits(wait bool) {
 			if l.provider == "claude" {
 				go func() {
 					defer wg.Done()
-					w, note, err := agent.ClaudeLimits(ctx, rt.s.cfg.ClaudeBin, rt.s.cfg.Home, l.env)
+					bin := rt.s.cfg.ClaudeBin
+					if l.remote != nil {
+						bin = l.bin
+					}
+					w, note, err := agent.ClaudeLimits(ctx, l.remote, bin, rt.s.cfg.Home, l.env)
 					set(w, &note, nil, err)
 				}()
 				continue
 			}
 			go func() {
 				defer wg.Done()
-				w, resets, err := agent.CodexLimits(ctx, rt.s.cfg.CodexBin, l.env)
+				bin := rt.s.cfg.CodexBin
+				if l.remote != nil {
+					bin = l.bin
+				}
+				w, resets, err := agent.CodexLimits(ctx, l.remote, bin, l.env)
 				none := ""
 				set(w, &none, resets, err)
 			}()
@@ -1455,10 +1547,25 @@ func (rt *engine) limitsSnapshot(uid int64) map[string]any {
 			}
 		}
 	}
+	// the logins of the machines they may use (their own; see hostsFor)
+	hosts := map[int64]src{}
+	if list, err := rt.s.hostsFor(rt.ctx, u); err == nil {
+		for _, h := range list {
+			hosts[h.ID] = src{h.Name, admin || rt.s.hostUser(rt.ctx, h) == uid}
+		}
+	}
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	keys := make([]string, 0, len(rt.limits))
 	for k := range rt.limits {
+		if _, _, host, folder := limitsKeyParts(k); host > 0 {
+			if h, ok := hosts[host]; ok {
+				if folder != "" {
+					h.label += " · " + folder
+				}
+				srcs[k] = h
+			}
+		}
 		if _, ok := srcs[k]; ok {
 			keys = append(keys, k)
 		}
@@ -1471,7 +1578,7 @@ func (rt *engine) limitsSnapshot(uid int64) map[string]any {
 		if id == "" {
 			continue
 		}
-		if cur, ok := lead[id]; !ok || !strings.Contains(cur, ":") && strings.Contains(k, ":") {
+		if cur, ok := lead[id]; !ok || limitsRank(k) == 1 && limitsRank(cur) != 1 || limitsRank(cur) == 0 {
 			lead[id] = k
 		}
 	}
@@ -1482,13 +1589,9 @@ func (rt *engine) limitsSnapshot(uid int64) map[string]any {
 			continue // folded into its group's lead below
 		}
 		cp := *l
-		cp.Provider, cp.Label, cp.Ident = k, srcs[k].label, ""
-		if i := strings.IndexByte(k, ':'); i > 0 {
-			cp.Provider = k[:i]
-			cp.AccountID, _ = strconv.ParseInt(k[i+1:], 10, 64)
-		} else {
-			cp.ServerLogin = true
-		}
+		cp.Label, cp.Ident = srcs[k].label, ""
+		cp.Provider, cp.AccountID, cp.HostID, _ = limitsKeyParts(k)
+		cp.ServerLogin = limitsRank(k) == 0
 		mine := srcs[k].mine
 		if l.Ident != "" {
 			best := l
@@ -1498,8 +1601,10 @@ func (rt *engine) limitsSnapshot(uid int64) map[string]any {
 					continue
 				}
 				cp.Aliases = append(cp.Aliases, o)
-				if !strings.Contains(o, ":") {
+				if limitsRank(o) == 0 {
 					cp.ServerLogin = true
+				} else if n := srcs[o].label; n != "" && !slices.Contains(cp.Also, n) {
+					cp.Also = append(cp.Also, n)
 				}
 				mine = mine || srcs[o].mine
 				if len(ol.Windows) > 0 && (len(best.Windows) == 0 || ol.UpdatedAt > best.UpdatedAt) {
@@ -1517,21 +1622,23 @@ func (rt *engine) limitsSnapshot(uid int64) map[string]any {
 	return out
 }
 
-// limitsLess orders limits keys: server login first, then by account id.
+// limitsLess orders limits keys: server login first, then by account id,
+// then other machines' by machine.
 func limitsLess(a, b string) bool {
-	ia, ib := strings.IndexByte(a, ':'), strings.IndexByte(b, ':')
-	if ia < 0 || ib < 0 {
-		if ia != ib {
-			return ia < 0
-		}
-		return a < b
+	if ra, rb := limitsRank(a), limitsRank(b); ra != rb {
+		return ra < rb
 	}
-	if a[:ia] != b[:ib] {
-		return a[:ia] < b[:ib]
+	pa, aa, ha, fa := limitsKeyParts(a)
+	pb, ab, hb, fb := limitsKeyParts(b)
+	switch {
+	case pa != pb:
+		return pa < pb
+	case aa != ab:
+		return aa < ab
+	case ha != hb:
+		return ha < hb
 	}
-	na, _ := strconv.ParseInt(a[ia+1:], 10, 64)
-	nb, _ := strconv.ParseInt(b[ib+1:], 10, 64)
-	return na < nb
+	return fa < fb
 }
 
 func (k *runSink) Request(req agent.Request) {
