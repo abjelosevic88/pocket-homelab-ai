@@ -31,6 +31,10 @@
 .ctx-bar span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
 .ctx-meter.warn .ctx-bar span { background: var(--warning); }
 .ctx-meter.danger .ctx-bar span { background: var(--danger); }
+.cache-chip { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; height: 26px; padding: 0 7px; border: 0; border-radius: 8px; background: none; font-size: 11.5px; color: var(--muted); cursor: default; }
+.cache-chip:hover { background: var(--surface-2); }
+.cache-chip.warn { color: var(--warning); }
+.cache-chip.cold { color: var(--danger); }
 
 /* ---------- sidebar ---------- */
 .live-off { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; color: var(--warning); white-space: nowrap; }

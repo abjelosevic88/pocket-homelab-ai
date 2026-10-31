@@ -57,6 +57,11 @@ type Usage struct {
 	ContextTokens int64   `json:"context_tokens"` // how full the context window is now
 	ContextWindow int64   `json:"context_window"`
 	Turns         int     `json:"turns"`
+	// The prompt cache: when the agent last called the model (which keeps the
+	// cache warm), with which model, and how long the cache lives (seconds).
+	CacheAt    string `json:"cache_at,omitempty"`
+	CacheModel string `json:"cache_model,omitempty"`
+	CacheTTL   int64  `json:"cache_ttl,omitempty"`
 }
 
 // Thread is one conversation with one agent.

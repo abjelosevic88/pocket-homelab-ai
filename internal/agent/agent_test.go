@@ -22,6 +22,7 @@ type rec struct {
 	turns   []TurnInfo
 	exited  chan error
 	tasks   [][]Task
+	ctx     []Context
 }
 
 func newRec() *rec { return &rec{items: map[string]Item{}, exited: make(chan error, 1)} }
@@ -36,7 +37,7 @@ func (r *rec) Item(it Item) {
 }
 func (r *rec) Delta(key, field, text string) { r.mu.Lock(); r.deltas += text; r.mu.Unlock() }
 func (r *rec) SessionID(id string)           { r.mu.Lock(); r.session = id; r.mu.Unlock() }
-func (r *rec) Context(Context)               {}
+func (r *rec) Context(c Context)             { r.mu.Lock(); r.ctx = append(r.ctx, c); r.mu.Unlock() }
 func (r *rec) Limits(string, []Window)       {}
 func (r *rec) Request(q Request)             { r.mu.Lock(); r.reqs = append(r.reqs, q); r.mu.Unlock() }
 func (r *rec) TurnStarted()                  {}

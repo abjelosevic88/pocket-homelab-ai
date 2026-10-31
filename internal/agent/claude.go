@@ -679,6 +679,19 @@ func (s *claudeSession) keyFor(msgID, kind string) string {
 	return fmt.Sprintf("c-%s-x%d", msgID, s.seq)
 }
 
+// cacheTTL is how long the prompt cache a call wrote lives, in seconds: the
+// CLI writes 1-hour entries on subscription logins and 5-minute ones on
+// some API keys. A call that only read the cache says nothing (0).
+func cacheTTL(fiveMin, oneHour int64) int64 {
+	switch {
+	case oneHour > 0:
+		return 3600
+	case fiveMin > 0:
+		return 300
+	}
+	return 0
+}
+
 func (s *claudeSession) handleAssistant(raw json.RawMessage) {
 	var msg struct {
 		ID      string `json:"id"`
@@ -695,13 +708,17 @@ func (s *claudeSession) handleAssistant(raw json.RawMessage) {
 			OutputTokens         int64 `json:"output_tokens"`
 			CacheReadInputTokens int64 `json:"cache_read_input_tokens"`
 			CacheCreation        int64 `json:"cache_creation_input_tokens"`
+			CacheWrites          struct {
+				FiveMin int64 `json:"ephemeral_5m_input_tokens"`
+				OneHour int64 `json:"ephemeral_1h_input_tokens"`
+			} `json:"cache_creation"`
 		} `json:"usage"`
 	}
 	if json.Unmarshal(raw, &msg) != nil {
 		return
 	}
 	if ctxTokens := msg.Usage.InputTokens + msg.Usage.CacheReadInputTokens + msg.Usage.CacheCreation; ctxTokens > 0 {
-		s.sink.Context(Context{Tokens: ctxTokens + msg.Usage.OutputTokens})
+		s.sink.Context(Context{Tokens: ctxTokens + msg.Usage.OutputTokens, Cached: true, CacheTTL: cacheTTL(msg.Usage.CacheWrites.FiveMin, msg.Usage.CacheWrites.OneHour)})
 	}
 	for _, b := range msg.Content {
 		switch b.Type {
