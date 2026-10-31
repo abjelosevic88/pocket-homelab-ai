@@ -324,7 +324,7 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	t, err := s.createThread(r.Context(), userFrom(r.Context()), in, "web", "")
+	t, err := s.createThread(context.WithValue(r.Context(), startInBackground{}, true), userFrom(r.Context()), in, "web", "")
 	if err != nil && t == nil {
 		s.fail(w, err, "create thread")
 		return
@@ -346,6 +346,8 @@ func (s *Server) postMessage(ctx context.Context, u *store.User, t *store.Thread
 		return false, err
 	}
 	*t = *fresh // a rewind may have replaced the provider session while waiting
+	// still working from before a restart: reconnect to it, this message waits
+	s.checkLeftover(ctx, t)
 	if len(uploadIDs) > 10 {
 		return false, badRequest("Attach at most 10 files per message")
 	}
@@ -406,7 +408,7 @@ func (s *Server) postMessage(ctx context.Context, u *store.User, t *store.Thread
 	}
 	// the worktree is still being set up: send it when that is done
 	key := it.Key
-	held := s.holds().add(t.ID, func() { s.sendHeld(t.ID, key, in) })
+	held := s.holds().add(t.ID, key, func() { s.sendHeld(t.ID, key, in) })
 	if held {
 		it.Queued = true
 	}
@@ -419,13 +421,49 @@ func (s *Server) postMessage(ctx context.Context, u *store.User, t *store.Thread
 	_ = s.store.UpdateThread(ctx, t)
 	if held {
 		s.rt.publishThread(t)
+		if len(sendNow) > 0 && sendNow[0] {
+			go s.sendHeldNow(t.ID, key) // ending a process takes a while; not under the edit lock
+		}
 		return true, nil
+	}
+	if bg, _ := ctx.Value(startInBackground{}).(bool); bg && s.rt.get(t.ID) == nil {
+		// the page shows the new chat now; its agent starts meanwhile (seconds
+		// on another machine) and a failure shows in the thread
+		if th := s.rt.setStatus(t.ID, "running", ""); th != nil {
+			*t = *th
+		}
+		go s.sendStarting(t.ID, it.Key, in)
+		return false, nil
 	}
 	queued, err := s.rt.send(t, it.Key, in, sendNow...)
 	if err != nil {
 		return false, err
 	}
 	return queued, nil
+}
+
+// startInBackground (a context key) lets postMessage return before a
+// thread's agent has started.
+type startInBackground struct{}
+
+// sendStarting hands the first message to an agent that is still to start,
+// after the request that posted it has been answered.
+func (s *Server) sendStarting(threadID, key string, in agent.Input) {
+	t, err := s.store.GetThreadAny(s.rt.ctx, threadID)
+	if err != nil {
+		return
+	}
+	_, err = s.rt.send(t, key, in)
+	var gone *folderGoneError
+	switch {
+	case errors.As(err, &gone):
+		s.rt.setStatus(t.ID, "idle", "")
+		s.rt.holdUnsent(t.ID, "Not sent — its folder is gone.")
+		s.rt.folderGoneNotice(t.ID, gone)
+	case err != nil:
+		s.rt.saveItem(t.ID, agent.Item{Key: "err-" + uuid.NewString()[:8], Kind: "notice", Level: "error", Text: err.Error()})
+		s.rt.setStatus(t.ID, "error", err.Error())
+	}
 }
 
 func (s *Server) handleGetThread(w http.ResponseWriter, r *http.Request) {
@@ -651,7 +689,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "empty message")
 		return
 	}
-	if s.rt.isExternal(t.ID) && s.rt.get(t.ID) == nil {
+	if s.rt.isExternal(t.ID) && s.rt.get(t.ID) == nil && !s.isReattached(t.ID) {
 		writeErr(w, http.StatusConflict, "this session is running somewhere else right now (a terminal or another app); reply when it has finished")
 		return
 	}
@@ -685,6 +723,9 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleClearQueue(w http.ResponseWriter, r *http.Request) {
 	if t := s.threadAs(w, r, accessChat); t != nil {
 		s.rt.clearQueue(t.ID)
+		for _, key := range s.holds().clear(t.ID) {
+			s.rt.dropQueued(t.ID, key)
+		}
 		if t2, err := s.store.GetThreadAny(r.Context(), t.ID); err == nil {
 			s.rt.publishThread(t2)
 		}
@@ -711,6 +752,7 @@ func (s *Server) handleDropQueued(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "that message was already sent")
 		return
 	}
+	s.holds().drop(t.ID, key) // waiting for a setup or a reconnected process: it must not go out later
 	s.rt.dropQueued(t.ID, key)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -721,6 +763,10 @@ func (s *Server) handleSendNow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if t := s.threadAs(w, r, accessChat); t != nil {
+		if s.sendHeldNow(t.ID, chi.URLParam(r, "key")) {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		if err := s.rt.sendNow(t.ID, chi.URLParam(r, "key")); err != nil {
 			s.fail(w, err, "send now")
 			return
@@ -731,6 +777,10 @@ func (s *Server) handleSendNow(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleInterrupt(w http.ResponseWriter, r *http.Request) {
 	if t := s.threadAs(w, r, accessChat); t != nil {
+		if s.stopReattached(t.ID) {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		if err := s.rt.interrupt(t.ID); err != nil {
 			s.fail(w, err, "interrupt")
 			return

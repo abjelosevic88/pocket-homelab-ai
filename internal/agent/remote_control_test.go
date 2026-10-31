@@ -36,8 +36,12 @@ type rcRec struct {
 	cancelled []string
 }
 
-func (r *rcRec) Bridge(state string)        { r.mu.Lock(); r.bridge = append(r.bridge, state); r.mu.Unlock() }
-func (r *rcRec) RequestCancelled(id string) { r.mu.Lock(); r.cancelled = append(r.cancelled, id); r.mu.Unlock() }
+func (r *rcRec) Bridge(state string) { r.mu.Lock(); r.bridge = append(r.bridge, state); r.mu.Unlock() }
+func (r *rcRec) RequestCancelled(id string) {
+	r.mu.Lock()
+	r.cancelled = append(r.cancelled, id)
+	r.mu.Unlock()
+}
 
 func TestClaudeRemoteControl(t *testing.T) {
 	dir := t.TempDir()

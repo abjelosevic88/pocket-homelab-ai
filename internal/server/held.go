@@ -279,6 +279,20 @@ func startSession(ctx context.Context, provider string, o agent.Options, sink ag
 	return s, err
 }
 
+// heldAlive: thread t's agent still runs under its holder (held.go), so the
+// leftover handling of reconnect.go is not for it: it is taken back whole.
+func (rt *engine) heldAlive(ctx context.Context, t *store.Thread, h *store.Host) bool {
+	if os.Getenv("POCKET_HOLD") == "off" {
+		return false
+	}
+	bin := rt.holder(ctx, h)
+	if bin == "" {
+		return false
+	}
+	_, ok := holderStatus(ctx, h, bin, t.ID)
+	return ok
+}
+
 // adopt takes back thread id's agent if it still runs under a holder (Pocket
 // AI restarted while it worked); false when there is none.
 func (rt *engine) adopt(id string) bool {
@@ -299,7 +313,7 @@ func (rt *engine) adopt(id string) bool {
 	if _, ok := holderStatus(ctx, h, bin, id); !ok {
 		return false
 	}
-	if _, err := rt.ensure(t); err != nil {
+	if _, err := rt.ensureRun(t); err != nil {
 		rt.s.log.Warn("could not take back a running agent", "thread", id, "err", err)
 		return false
 	}
