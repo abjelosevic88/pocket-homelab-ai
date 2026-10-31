@@ -20,7 +20,8 @@ Restart=always
 # Quick: an update restarts by exiting (SIGUSR1), and agents under their
 # holders wait meanwhile.
 RestartSec=1
-# Stopping the service stops the agents it started (they are its children).
+# Stopping the service stops what it started in it; agents under pocket-hold
+# run in scopes of their own (systemd-run) and are taken back after a restart.
 KillMode=control-group
 TimeoutStopSec=30
 MemoryMax=8G
