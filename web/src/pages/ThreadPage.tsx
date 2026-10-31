@@ -339,7 +339,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
                 onRewind={owner && canRun ? (item, keepText = true) => setRewindTarget({ item, keepText }) : undefined} rewindDisabled={rewindDisabled}
                 owner={sharedOwner} onMoveFolder={owner && canRun ? () => setMoving(true) : undefined} />
               <ThreadEvidence id={id} revision={visible.filter(i => i.kind === 'turn').length} />
-              {t.status === 'error' && t.error && !(lastItem?.kind === 'notice' && lastItem.text === t.error) && <div className="notice error"><Icon name="alert" size={14} /><span>{t.error}</span></div>}
+              {t.status === 'error' && t.error && !(lastItem?.kind === 'notice' && lastItem.text === t.error) && !(lastItem?.kind === 'turn' && lastItem.turn?.error === t.error) && <div className="notice error"><Icon name="alert" size={14} /><span>{t.error}</span></div>}
             </>
           )}
         </div>

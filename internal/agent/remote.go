@@ -29,6 +29,12 @@ type Remote struct {
 	// theirs: ssh then runs in their jail with their own key, config and
 	// known hosts (home/.ssh), never the server's.
 	Home string
+	// Slot names the agent a connection runs (its Pocket thread). A process
+	// still running in the same slot from an earlier connection is ended
+	// before this one starts: when a link drops, the machine may not notice
+	// (sshd without ClientAliveInterval keeps a dead connection for hours),
+	// and two CLIs on one session would both work on it.
+	Slot string
 }
 
 // PersonKey is a person's ssh key, made by the server (SSHKey).
@@ -113,13 +119,26 @@ func remoteCommand(script string) string {
 	return `exec /bin/sh -c 'eval "$(echo ` + b + ` | base64 -d 2>/dev/null || echo ` + b + ` | base64 -D)"'`
 }
 
-// script builds the remote sh script: profile, PATH, folder, then exec.
-func remoteScript(dir string, env []string, bin string, args []string) string {
+// slotTakeover ends the process left in slot $1 by an earlier connection
+// (SIGHUP to its group, as a dropped session would; SIGKILL after 10 s) and
+// records this one: exec keeps the pid, and through pocket-gui it is the
+// run client, which passes the signal on. The args check skips a pid reused
+// since by something else.
+const slotTakeover = `f="$HOME/.pocket-ai/run/$1"; mkdir -p "${f%/*}"; ` +
+	`if p=$(cat "$f" 2>/dev/null) && [ -n "$p" ] && [ "$p" != $$ ] && ps -o args= -p "$p" 2>/dev/null | grep -qE 'stream-json|app-server'; then ` +
+	`kill -HUP "-$p" 2>/dev/null || kill -HUP "$p" 2>/dev/null; i=0; while kill -0 "$p" 2>/dev/null && [ $i -lt 10 ]; do sleep 1; i=$((i+1)); done; ` +
+	`kill -KILL "-$p" 2>/dev/null || kill -KILL "$p" 2>/dev/null; fi; echo $$ > "$f"; `
+
+// script builds the remote sh script: profile, PATH, folder, slot, then exec.
+func remoteScript(slot, dir string, env []string, bin string, args []string) string {
 	var b strings.Builder
 	b.WriteString(`[ -r /etc/profile ] && . /etc/profile >/dev/null 2>&1 </dev/null; [ -r "$HOME/.profile" ] && . "$HOME/.profile" >/dev/null 2>&1 </dev/null; `)
 	b.WriteString(remotePath + "; ")
 	if dir != "" {
 		b.WriteString("cd -- " + shq(dir) + " || exit 1; ")
+	}
+	if slot != "" {
+		b.WriteString("set -- " + shq(slot) + "; " + slotTakeover)
 	}
 	b.WriteString(guiBridge + "exec ${g:+\"$g\" run --}")
 	if len(env) > 0 {
@@ -151,7 +170,7 @@ func Command(r *Remote, dir string, env []string, bin string, args ...string) (*
 		}
 	}
 	argv = append(argv, r.sshArgs()...)
-	return r.ssh(nil, append(argv, remoteCommand(remoteScript(dir, env, bin, args))))
+	return r.ssh(nil, append(argv, remoteCommand(remoteScript(r.Slot, dir, env, bin, args))))
 }
 
 // Run runs a short sh script on the remote machine (the same profile and
@@ -212,6 +231,32 @@ func notConnected(err error, stderr string) bool {
 		}
 	}
 	return false
+}
+
+// lostLink explains a CLI on another machine ending because its ssh link
+// dropped: ssh exits 255 for its own failures (the CLIs never do), often
+// printing nothing since LogLevel=ERROR hides "Timeout, server not
+// responding". "" when that is not what happened.
+func lostLink(r *Remote, err error, stderr string) string {
+	var ee *exec.ExitError
+	if r == nil || !errors.As(err, &ee) || ee.ExitCode() != 255 {
+		return ""
+	}
+	msg := "Lost the connection to " + r.Target
+	for _, c := range []struct{ in, why string }{
+		{"reset by peer", "connection reset"},
+		{"not responding", "timed out"},
+		{"timed out", "timed out"},
+		{"No route to host", "unreachable"},
+		{"Network is unreachable", "unreachable"},
+		{"Broken pipe", "connection broken"},
+	} {
+		if strings.Contains(stderr, c.in) {
+			msg += " (" + c.why + ")"
+			break
+		}
+	}
+	return msg + ". Send a message to continue."
 }
 
 // muxArgs share one connection per machine between short commands. The
