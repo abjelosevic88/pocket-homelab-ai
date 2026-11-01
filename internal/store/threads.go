@@ -437,6 +437,15 @@ func (s *Store) AddTurn(ctx context.Context, t Turn) error {
 	return err
 }
 
+// HasTurn reports whether a thread has a turn with exactly these token
+// counts already (a replayed result: runtime TurnDone).
+func (s *Store) HasTurn(ctx context.Context, threadID string, in, out, cached int64) bool {
+	var n int
+	_ = s.DB.QueryRowContext(ctx, `SELECT COUNT(1) FROM turns WHERE thread_id = ? AND input_tokens = ? AND output_tokens = ? AND cached_tokens = ?`,
+		threadID, in, out, cached).Scan(&n)
+	return n > 0
+}
+
 // UsageDay is one day of the usage chart.
 type UsageDay struct {
 	Date         string  `json:"date"`
