@@ -107,3 +107,19 @@ func TestSpendingReadsCostStatesAndCodexResponses(t *testing.T) {
 		}
 	}
 }
+
+func TestParseRemoteRestores(t *testing.T) {
+	out := "@@ a\n" + `{"type":"cost-state","sessionId":"a","totalCostUSD":1.5` + "\n" + `"timestamp":"2026-10-30T11:00:00.5Z"` + "\n" +
+		`{"type":"cost-state","sessionId":"a","totalCostUSD":2.25` + "\n@@ b\n@@missing\n@@ c\n"
+	got := ParseRemoteRestores(out)
+	a := got["a"]
+	if a == nil || len(a.Restores) != 1 || a.Restores[0].USD != 1.5 || a.End == nil || *a.End != 2.25 {
+		t.Fatalf("a: %+v", a)
+	}
+	if _, ok := got["b"]; ok {
+		t.Fatal("a missing file is left out")
+	}
+	if c := got["c"]; c == nil || len(c.Restores) != 0 || c.End != nil {
+		t.Fatalf("c: %+v", c)
+	}
+}

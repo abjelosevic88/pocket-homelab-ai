@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -120,4 +122,61 @@ func ClaudeRestores(path string) (out []Restore, end *float64, err error) {
 		}
 	}
 	return out, pending, nil
+}
+
+// RemoteClaudeRestoresSh prints, for pairs of arguments "login folder"
+// "session id" ("" = the default folder), "@@ <id>" and then that session
+// file's cost-state lines (up to the total) each followed by the first
+// timestamp after it: what ClaudeRestores reads, without copying the file.
+const RemoteClaudeRestoresSh = `while [ $# -ge 2 ]; do d="${1:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}}"; sid=$2; shift 2
+echo "@@ $sid"
+f=$(ls -1t "$d"/projects/*/"$sid".jsonl 2>/dev/null | head -n 1)
+[ -n "$f" ] || { echo "@@missing"; continue; }
+LC_ALL=C grep -o -E '^\{"type":"cost-state"[^}]*"totalCostUSD":[-0-9.eE+]+|"timestamp":"[^"]*"' "$f" | awk '/cost-state/{print; p=1; next} p&&/timestamp/{print; p=0}'
+done`
+
+// RemoteRestores is ClaudeRestores of one session on another machine.
+type RemoteRestores struct {
+	Restores []Restore
+	End      *float64
+}
+
+// ParseRemoteRestores reads what RemoteClaudeRestoresSh printed; sessions
+// whose file is missing there are left out.
+func ParseRemoteRestores(out string) map[string]*RemoteRestores {
+	res := map[string]*RemoteRestores{}
+	var cur *RemoteRestores
+	var id string
+	var pending *float64
+	done := func() {
+		if cur != nil {
+			cur.End = pending
+		}
+		pending = nil
+	}
+	for _, line := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(line, "@@missing"):
+			delete(res, id)
+			cur = nil
+		case strings.HasPrefix(line, "@@ "):
+			done()
+			cur, id = &RemoteRestores{}, strings.TrimSpace(line[3:])
+			res[id] = cur
+		case cur == nil:
+		case strings.HasPrefix(line, `{"type":"cost-state"`):
+			if i := strings.Index(line, `"totalCostUSD":`); i >= 0 {
+				if v, err := strconv.ParseFloat(line[i+len(`"totalCostUSD":`):], 64); err == nil {
+					pending = &v
+				}
+			}
+		case strings.HasPrefix(line, `"timestamp":"`) && pending != nil:
+			if at, err := time.Parse(time.RFC3339Nano, strings.TrimSuffix(strings.TrimPrefix(line, `"timestamp":"`), `"`)); err == nil {
+				cur.Restores = append(cur.Restores, Restore{At: at, USD: *pending})
+				pending = nil
+			}
+		}
+	}
+	done()
+	return res
 }

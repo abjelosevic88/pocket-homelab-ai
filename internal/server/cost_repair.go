@@ -202,44 +202,67 @@ func RepairCosts(ctx context.Context, cfg *config.Config, st *store.Store, apply
 		return rep, nil
 	}
 
-	rep.Backup = filepath.Join(filepath.Dir(cfg.DBPath), "pocket-ai.db.bak-costs-"+time.Now().Format("20060102-150405"))
-	if err := st.Backup(ctx, rep.Backup); err != nil {
-		return nil, fmt.Errorf("backup before the repair: %w", err)
-	}
-	tx, err := st.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	less := map[string]float64{}
-	fix := map[string]map[float64][]float64{} // thread → old cost → new costs (the turn footers)
-	for _, t := range changed {
-		if _, err := tx.ExecContext(ctx, `UPDATE turns SET cost_usd = ? WHERE id = ?`, t.new, t.id); err != nil {
-			return nil, err
-		}
-		less[t.thread] += t.old - t.new
-		if fix[t.thread] == nil {
-			fix[t.thread] = map[float64][]float64{}
-		}
-		fix[t.thread][t.old] = append(fix[t.thread][t.old], t.new)
-	}
-	for id, d := range less {
-		if _, err := tx.ExecContext(ctx, `UPDATE threads SET usage = json_set(usage, '$.cost_usd', max(0, coalesce(json_extract(usage, '$.cost_usd'), 0) - ?)) WHERE id = ?`, d, id); err != nil {
-			return nil, err
-		}
-		if err := repairFooters(ctx, tx, id, fix[id]); err != nil {
-			return nil, err
-		}
+	fixes := make([]costFix, len(changed))
+	for i, t := range changed {
+		fixes[i] = costFix{id: t.id, thread: t.thread, cur: t.old, new: t.new}
 	}
 	rep.At = store.Now()
-	b, _ := json.Marshal(rep)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, costRepairKey, string(b)); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(); err != nil {
+	if rep.Backup, err = applyCostFixes(ctx, cfg, st, "costs", fixes, costRepairKey, rep); err != nil {
 		return nil, err
 	}
 	return rep, nil
+}
+
+// costFix is one turn's cost now and what it becomes.
+type costFix struct {
+	id       int64
+	thread   string
+	cur, new float64
+}
+
+// applyCostFixes backs the database up next to it, then changes the turns,
+// their conversations' totals and turn footers, and saves the report under
+// key, all in one transaction. It returns the backup's path.
+func applyCostFixes(ctx context.Context, cfg *config.Config, st *store.Store, tag string, fixes []costFix, key string, report any) (string, error) {
+	backup := filepath.Join(filepath.Dir(cfg.DBPath), "pocket-ai.db.bak-"+tag+"-"+time.Now().Format("20060102-150405"))
+	if err := st.Backup(ctx, backup); err != nil {
+		return "", fmt.Errorf("backup before the repair: %w", err)
+	}
+	tx, err := st.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	less := map[string]float64{}
+	fix := map[string]map[float64][]float64{} // thread → cost now → new costs (the turn footers)
+	for _, t := range fixes {
+		if _, err := tx.ExecContext(ctx, `UPDATE turns SET cost_usd = ? WHERE id = ?`, t.new, t.id); err != nil {
+			return "", err
+		}
+		less[t.thread] += t.cur - t.new
+		if fix[t.thread] == nil {
+			fix[t.thread] = map[float64][]float64{}
+		}
+		fix[t.thread][t.cur] = append(fix[t.thread][t.cur], t.new)
+	}
+	for id, d := range less {
+		if _, err := tx.ExecContext(ctx, `UPDATE threads SET usage = json_set(usage, '$.cost_usd', max(0, coalesce(json_extract(usage, '$.cost_usd'), 0) - ?)) WHERE id = ?`, d, id); err != nil {
+			return "", err
+		}
+		if err := repairFooters(ctx, tx, id, fix[id]); err != nil {
+			return "", err
+		}
+	}
+	if report != nil {
+		if r, ok := report.(*CostRepairReport); ok {
+			r.Backup = backup
+		}
+		b, _ := json.Marshal(report)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, string(b)); err != nil {
+			return "", err
+		}
+	}
+	return backup, tx.Commit()
 }
 
 // repairFooters gives the turn footers on a conversation's timeline the
