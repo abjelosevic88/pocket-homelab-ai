@@ -117,6 +117,7 @@ type TurnInfo struct {
 	CachedTokens int64   `json:"cached_tokens"`
 	Error        string  `json:"error,omitempty"`
 	Interrupted  bool    `json:"interrupted,omitempty"`
+	SessionCost  float64 `json:"-"` // the CLI's running total after this turn (Claude)
 }
 
 // Subagent is a sub-agent at work.
@@ -217,6 +218,12 @@ type Options struct {
 	// Hold: run it under pocket-hold, so it outlives the connection (link.go).
 	Hold *Hold
 	Log  *slog.Logger
+	// Claude Code's running cost does not start at zero: a resumed or
+	// forked session carries what it cost before (restored from its session
+	// file, ClaudeSessionCost), a held process taken back what it has spent
+	// so far. Turn costs are counted from these.
+	CostBase float64 // a new process on ResumeID
+	HeldCost float64 // a held process taken back
 }
 
 // Session is a live CLI process attached to one thread.

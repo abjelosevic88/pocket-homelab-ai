@@ -79,6 +79,21 @@ type sessionScan struct {
 	outTokens map[string]int64 // Claude message id → output tokens
 	offset    int64
 	mod       time.Time
+
+	// what the session cost, when (Spending)
+	spend     []spent
+	costTotal float64 // Claude: the running total of the last cost-state line
+	costSeen  bool
+	lastAt    string // the last timestamp read
+	firstAt   time.Time
+	copied    bool  // Claude: the file starts with history copied from another session (a fork)
+	tokTotal  int64 // Codex: tokens counted so far (a repeated update adds nothing)
+}
+
+// spent is money a session spent at a moment, in API prices.
+type spent struct {
+	At  string
+	USD float64
 }
 
 var (
@@ -117,7 +132,9 @@ func (sc *sessionScan) feedClaude(line []byte) {
 		IsMeta      bool   `json:"isMeta"`
 		IsSidechain bool   `json:"isSidechain"`
 		Entrypoint  string `json:"entrypoint"`
-		Message     struct {
+		// cost-state: the running cost Claude Code saves as a process ends
+		TotalCostUSD *float64 `json:"totalCostUSD"`
+		Message      struct {
 			ID         string          `json:"id"`
 			Model      string          `json:"model"`
 			Content    json.RawMessage `json:"content"`
@@ -139,7 +156,30 @@ func (sc *sessionScan) feedClaude(line []byte) {
 	if m.Entrypoint != "" {
 		sc.entry = m.Entrypoint
 	}
+	if m.Timestamp != "" {
+		at := ts(m.Timestamp)
+		if sc.firstAt.IsZero() {
+			sc.firstAt = at
+		} else if (m.Type == "user" || m.Type == "assistant") && at.Before(sc.firstAt.Add(-time.Minute)) {
+			sc.copied = true
+		}
+		if m.Timestamp > sc.lastAt {
+			sc.lastAt = m.Timestamp
+		}
+	}
 	switch m.Type {
+	case "cost-state":
+		if m.TotalCostUSD == nil {
+			return
+		}
+		// Each process saves the session's running total as it ends; what
+		// it added is the difference. A fork's first total includes what
+		// the session it was copied from had cost: not this one's.
+		total := *m.TotalCostUSD
+		if d := total - sc.costTotal; d > 0 && (sc.costSeen || !sc.copied) && sc.lastAt != "" {
+			sc.spend = append(sc.spend, spent{At: sc.lastAt, USD: d})
+		}
+		sc.costTotal, sc.costSeen = total, true
 	case "user":
 		if m.IsMeta {
 			return
@@ -248,7 +288,14 @@ func (sc *sessionScan) feedCodex(line []byte) {
 			Content    json.RawMessage `json:"content"`
 			DurationMS int64           `json:"duration_ms"`
 			Info       struct {
+				Total struct {
+					InputTokens  int64 `json:"input_tokens"`
+					OutputTokens int64 `json:"output_tokens"`
+				} `json:"total_token_usage"`
 				Last struct {
+					InputTokens  int64 `json:"input_tokens"`
+					Cached       int64 `json:"cached_input_tokens"`
+					Write        int64 `json:"cache_write_input_tokens"`
 					OutputTokens int64 `json:"output_tokens"`
 				} `json:"last_token_usage"`
 			} `json:"info"`
@@ -313,6 +360,14 @@ func (sc *sessionScan) feedCodex(line []byte) {
 		case "token_count":
 			if r != nil {
 				r.OutputTokens += p.Info.Last.OutputTokens
+			}
+			// one update per model response, priced like a live turn (codex.go)
+			if tot := p.Info.Total.InputTokens + p.Info.Total.OutputTokens; tot > sc.tokTotal {
+				sc.tokTotal = tot
+				l := p.Info.Last
+				if usd := codexCost(sc.model, "", codexUsage{Input: l.InputTokens, Cached: l.Cached, Write: l.Write, Output: l.OutputTokens}); usd > 0 {
+					sc.spend = append(sc.spend, spent{At: m.Timestamp, USD: usd})
+				}
 			}
 		case "task_complete":
 			if o := sc.open(); o != nil {
@@ -390,6 +445,7 @@ func (sc *sessionScan) clone() *sessionScan {
 	for k, v := range sc.outTokens {
 		c.outTokens[k] = v
 	}
+	c.spend = append([]spent(nil), sc.spend...)
 	return &c
 }
 
@@ -592,6 +648,44 @@ func accountFiles(h Homes, since time.Time) []accountFile {
 		best[k] = len(out)
 		out = append(out, f)
 	}
+	return out
+}
+
+// Spend is what sessions of one origin spent on one local day, in API prices.
+type Spend struct {
+	Date     string  `json:"date"`
+	Provider string  `json:"provider"`
+	Origin   string  `json:"origin"` // paseo | terminal | app
+	USD      float64 `json:"cost_usd"`
+}
+
+// Spending sums what the sessions `keep` lets through spent per local day
+// since `from`, read from the CLIs' own files: Codex per model response,
+// Claude when a process ends (the total it saves then), so a Claude
+// session still running counts once it stops.
+func Spending(h Homes, paseoHome string, from time.Time, loc *time.Location, keep func(provider, sessionID string, account int64) bool) []Spend {
+	paseo := paseoSessionsWithin(paseoHome, time.Since(from)+48*time.Hour)
+	sum := map[Spend]float64{}
+	for _, f := range accountFiles(h, from) {
+		sc := f.scan
+		if len(sc.spend) == 0 || !keep(f.provider, sc.sessionID, f.account) {
+			continue
+		}
+		origin := sc.originName(paseo)
+		for _, x := range sc.spend {
+			at := ts(x.At)
+			if at.Before(from) {
+				continue
+			}
+			sum[Spend{Date: at.In(loc).Format("2006-01-02"), Provider: f.provider, Origin: origin}] += x.USD
+		}
+	}
+	out := make([]Spend, 0, len(sum))
+	for k, v := range sum {
+		k.USD = v
+		out = append(out, k)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Date < out[j].Date })
 	return out
 }
 

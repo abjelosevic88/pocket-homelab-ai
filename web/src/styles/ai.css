@@ -156,6 +156,11 @@
 .bar { flex: 1; width: 100%; display: flex; align-items: flex-end; }
 .bar span { display: block; width: 100%; min-height: 2px; border-radius: 4px 4px 1px 1px; background: var(--accent); opacity: .85; transition: height .3s var(--ease); }
 .bar-col:hover .bar span { opacity: 1; }
+/* cost outside Pocket AI sits on top of the day's bar, lighter */
+.bar.stack { flex-direction: column; align-items: stretch; justify-content: flex-end; }
+.bar.stack span.else { min-height: 0; background: color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 4px 4px 0 0; }
+.bar.stack span.else + span { border-radius: 0 0 1px 1px; }
+.set-stat .prov-dot.prov-else { background: color-mix(in srgb, var(--accent) 35%, transparent); }
 .bar-l { font-size: 10px; color: var(--faint); font-variant-numeric: tabular-nums; }
 .set-stat .prov-dot { margin-bottom: 6px; }
 

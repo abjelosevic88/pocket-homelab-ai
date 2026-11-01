@@ -62,6 +62,10 @@ type Usage struct {
 	CacheAt    string `json:"cache_at,omitempty"`
 	CacheModel string `json:"cache_model,omitempty"`
 	CacheTTL   int64  `json:"cache_ttl,omitempty"`
+	// Claude Code's running cost of the session at the last turn (it carries
+	// over into a resumed process: runtime costBase), and which session.
+	CLICost    float64 `json:"cli_cost,omitempty"`
+	CLISession string  `json:"cli_session,omitempty"`
 }
 
 // Thread is one conversation with one agent.

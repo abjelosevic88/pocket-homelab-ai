@@ -468,8 +468,10 @@ export interface ProviderLimits {
 export type Limits = Record<string, ProviderLimits | undefined>
 
 export interface UsageReport {
-  days: { date: string; cost_usd: number; input_tokens: number; output_tokens: number; turns: number }[]
+  days: { date: string; cost_usd: number; input_tokens: number; output_tokens: number; turns: number; elsewhere_usd?: number }[]
   providers: Partial<Record<ProviderId, { cost_usd: number; turns: number }>>
+  // what the same logins spent outside Pocket AI (Paseo, the terminal, agents other agents started)
+  elsewhere?: { date: string; provider: ProviderId; origin: string; cost_usd: number }[]
   limits: Limits
 }
 

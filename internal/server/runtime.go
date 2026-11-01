@@ -482,6 +482,7 @@ func (rt *engine) startRun(t *store.Thread) (*run, error) {
 	}
 	sink := &runSink{rt: rt, r: r}
 	pin := rt.holdFor(ctx, t, nil, &o)
+	rt.costBase(ctx, t, nil, &o)
 	if t.Source == "ask" {
 		if err := rt.s.preparePocketTools(ctx, t, sink, &o, pin); err != nil {
 			cancel()
@@ -528,6 +529,53 @@ func (rt *engine) baseOptions(ctx context.Context, t *store.Thread) agent.Option
 		o.ResumeID, o.Fork = strings.TrimPrefix(t.SourceRef, "fork:"), true
 	}
 	return o
+}
+
+// costBase tells a Claude start where the CLI's running cost begins, so a
+// turn is not charged again for everything the session cost before: a new
+// process restores the total its session file saved (also for a fork), a
+// held process taken back goes on from its total at Pocket AI's last turn.
+func (rt *engine) costBase(ctx context.Context, t *store.Thread, h *store.Host, o *agent.Options) {
+	if t.Provider != "claude" || o.ResumeID == "" {
+		return
+	}
+	read := func() (float64, bool) {
+		if h != nil {
+			out, _, err := remoteOf(h).Run(ctx, 20*time.Second, agent.RemoteClaudeCostSh, t.HostHome, o.ResumeID)
+			if err != nil {
+				return 0, false
+			}
+			return agent.ParseCostState(out)
+		}
+		dir, _ := rt.s.accountHome(ctx, t.Provider, t.AccountID)
+		path, err := agent.FindClaude(dir, o.ResumeID)
+		if err != nil {
+			return 0, false
+		}
+		return agent.ClaudeSessionCost(path)
+	}
+	saved, ok := read()
+	last, known := 0.0, t.Usage.CLISession == o.ResumeID && t.Usage.CLICost > 0
+	if known {
+		last = t.Usage.CLICost
+	}
+	// The process of this session that was just stopped saves its total as
+	// it exits: give it a moment rather than count its turns again.
+	for i := 0; h == nil && known && saved < last-1e-6 && i < 20; i++ {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(250 * time.Millisecond):
+		}
+		saved, ok = read()
+	}
+	if ok {
+		o.CostBase = saved
+	}
+	o.HeldCost = o.CostBase // taken back before Pocket AI kept the total: at least not the restored part
+	if known {
+		o.HeldCost = last
+	}
 }
 
 const forkScopePrompt = `
@@ -580,6 +628,7 @@ func (rt *engine) startRemote(t *store.Thread, h *store.Host) (*run, error) {
 		"\nThis conversation runs on the machine \"" + h.Name + "\" (" + firstNonEmpty(h.Info.Hostname, h.Target) + "), reached over ssh from the Pocket AI server."
 	sink := &runSink{rt: rt, r: r}
 	pin := rt.holdFor(ctx, t, h, &o)
+	rt.costBase(ctx, t, h, &o)
 	// Pocket app tools: their endpoint is on this server's loopback, so the
 	// ssh connection carries it to the remote machine's loopback.
 	tools := false
@@ -1858,6 +1907,9 @@ func (k *runSink) TurnDone(ti agent.TurnInfo) {
 	t.Usage.CachedTokens += ti.CachedTokens
 	t.Usage.CostUSD += ti.CostUSD
 	t.Usage.Turns++
+	if t.Provider == "claude" && ti.SessionCost > 0 {
+		t.Usage.CLICost, t.Usage.CLISession = ti.SessionCost, t.ProviderSessionID
+	}
 	if lastText != "" {
 		t.Preview = oneLine(lastText, 200)
 	}
