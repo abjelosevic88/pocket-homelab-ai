@@ -30,7 +30,7 @@ import FileView from './FileView'
 // xterm is big: only loaded once you have a terminal
 const TerminalArea = lazy(() => import('./TerminalArea'))
 import { BriefingPage, MemoryPage, ActionsPage, WorkflowsPage } from './AssistantPages'
-import { actionFor, useShortcuts } from '../lib/shortcuts'
+import { actionFor, comboOf, useShortcuts } from '../lib/shortcuts'
 
 function typing(e: KeyboardEvent) {
   const t = e.target as HTMLElement | null
@@ -99,7 +99,8 @@ function ShellInner() {
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey
-      const action = actionFor(e, keys)
+      // ⌘P opens the palette too (as in editors), unless it is bound to something
+      const action = actionFor(e, keys) || (comboOf(e) === 'mod+p' && !Object.values(keys).includes('mod+p') ? 'palette' : undefined)
       const tabAction = action === 'new_tab' || action === 'reopen_tab' || action === 'close_tab' || action === 'prev_tab' || action === 'next_tab'
       if (action && action !== 'stop' && !(tabAction && !tabsOn)) {
         e.preventDefault()
