@@ -11,7 +11,7 @@ export const SHORTCUTS: { id: ShortcutId; label: string; group: 'Anywhere' | 'Ta
   { id: 'new_thread', label: 'New thread', group: 'Anywhere', keys: 'mod+n' },
   { id: 'new_tab', label: 'New tab', group: 'Tabs', keys: 'mod+t' },
   { id: 'reopen_tab', label: 'Reopen closed tab', group: 'Tabs', keys: 'mod+shift+t' },
-  { id: 'close_tab', label: 'Close tab', group: 'Tabs', keys: '' },
+  { id: 'close_tab', label: 'Close tab', group: 'Tabs', keys: 'mod+w' },
   { id: 'prev_tab', label: 'Previous tab', group: 'Tabs', keys: 'mod+shift+[' },
   { id: 'next_tab', label: 'Next tab', group: 'Tabs', keys: 'mod+shift+]' },
   { id: 'stop', label: 'Stop the agent', group: 'In a thread', keys: 'mod+.' },
