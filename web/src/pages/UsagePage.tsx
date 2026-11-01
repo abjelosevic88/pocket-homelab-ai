@@ -73,6 +73,7 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
     a[k] = (a[k] || 0) + x.cost_usd
     return a
   }, {})).sort((a, b) => b[1] - a[1])
+  const awayProv = providers.map(p => [p, away.filter(x => x.provider === p).reduce((a, x) => a + x.cost_usd, 0)] as const).filter(([, v]) => v > 0)
   const sources = limitSources(limits)
   // Pins pick what the sidebar panel shows. No pins = all; unpinning the
   // last one leaves a marker that matches nothing, so the panel is empty.
@@ -149,12 +150,12 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
                   ))}
                   {awayTotal > 0 && (
                     <div className="set-stat" title={awayBy.map(([k, v]) => `${k}: ${fmtCost(v)}`).join('\n')}><span className="prov-dot prov-else" /><span className="set-stat-n tnum">{fmtCost(awayTotal)}</span>
-                      <span className="set-stat-l">Outside Pocket AI · {awayBy.slice(0, 2).map(([k]) => k.split(' · ')[0]).filter((v, i, a) => a.indexOf(v) === i).join(', ')}</span></div>
+                      <span className="set-stat-l">Outside Pocket AI · {awayProv.map(([p, v]) => `${providerName(p)} ${fmtCost(v)}`).join(' · ')}</span></div>
                   )}
                 </div>
               )}
               <p className="muted xsmall mt-s">Costs are what the same tokens would cost on the API; on a Claude or ChatGPT subscription you pay the plan, and the limits above are what matters.
-                {metric === 'cost' && ' Outside Pocket AI (lighter) is what your logins on this server spent in Paseo, the terminal and agents your agents started, read from the CLIs\' own files; a Claude session counts once its process ends.'}</p>
+                {metric === 'cost' && ' Outside Pocket AI (the faint part of each bar) is what your logins here and on your other machines spent in Paseo, the terminal and agents your agents started, read from the CLIs\' own files; a Claude session counts once its process ends.'}</p>
             </div>
           </section>
         </div>
