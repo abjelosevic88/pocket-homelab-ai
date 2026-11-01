@@ -56,6 +56,7 @@ export function ThreadRow({ t, active, onOpen, onContextMenu }: { t: Thread; act
         <span className="th-meta">
           <ProviderBadge provider={t.provider} size="xs" />
           {t.source === 'schedule' && <Icon name="clock" size={11} />}
+          {t.source === 'quick-chat' && <span className="quick-chat-chip xs" title="Started from Quick Chat in Pocket Launcher"><Icon name="sparkles" size={10} />Quick Chat</span>}
           <PrivacyChip sharedWith={t.shares?.map(s => s.name)} iconOnly />
           <span className="ellipsis">{t.owner_name && user && t.owner_id !== user.id ? `${t.owner_name} · ` : ''}{host ? `${host}: ` : ''}{baseName(t.cwd)}</span>
         </span>

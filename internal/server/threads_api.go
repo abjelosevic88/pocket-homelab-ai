@@ -151,6 +151,8 @@ type newThread struct {
 	Title       string       `json:"title"`
 	Text        string       `json:"text"`
 	UploadIDs   []string     `json:"upload_ids"`
+	// Source: "quick-chat" marks a conversation started from Pocket Launcher's Quick Chat; anything else is "web".
+	Source string `json:"source"`
 }
 
 // createThread validates, stores and starts a thread with its first message.
@@ -217,7 +219,7 @@ func (s *Server) createThread(ctx context.Context, u *store.User, in newThread, 
 		t.Speed = *in.Speed
 	}
 	if err := checkSpeed(prov, t.Model, t.Speed); err != nil {
-		if in.Speed != nil && source == "web" {
+		if in.Speed != nil && (source == "web" || source == "quick-chat") {
 			return nil, err
 		}
 		t.Speed = "" // a saved speed the account cannot use right now: run at standard speed
@@ -318,6 +320,15 @@ func titleFrom(text string) string {
 	return t
 }
 
+// clientSource is where a client says a new thread comes from. Only Quick Chat (Pocket Launcher) may say;
+// sources with their own rules (ask, schedule, link:…) are never taken from the request.
+func clientSource(claimed string) string {
+	if claimed == "quick-chat" {
+		return claimed
+	}
+	return "web"
+}
+
 func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 	if !s.requireRun(w, r) {
 		return
@@ -327,7 +338,7 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	t, err := s.createThread(context.WithValue(r.Context(), startInBackground{}, true), userFrom(r.Context()), in, "web", "")
+	t, err := s.createThread(context.WithValue(r.Context(), startInBackground{}, true), userFrom(r.Context()), in, clientSource(in.Source), "")
 	if err != nil && t == nil {
 		s.fail(w, err, "create thread")
 		return

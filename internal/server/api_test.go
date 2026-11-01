@@ -532,3 +532,11 @@ func TestScheduleHost(t *testing.T) {
 		t.Fatalf("moved back to this server: %+v", sc)
 	}
 }
+
+func TestClientSourceOnlyAllowsQuickChat(t *testing.T) {
+	for claimed, want := range map[string]string{"quick-chat": "quick-chat", "": "web", "ask": "web", "schedule": "web", "link:projects": "web", "Quick-Chat": "web"} {
+		if got := clientSource(claimed); got != want {
+			t.Errorf("clientSource(%q) = %q, want %q", claimed, got, want)
+		}
+	}
+}
