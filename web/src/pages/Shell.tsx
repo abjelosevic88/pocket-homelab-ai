@@ -30,7 +30,7 @@ import FileView from './FileView'
 // xterm is big: only loaded once you have a terminal
 const TerminalArea = lazy(() => import('./TerminalArea'))
 import { BriefingPage, MemoryPage, ActionsPage, WorkflowsPage } from './AssistantPages'
-import { actionFor, comboOf, useShortcuts } from '../lib/shortcuts'
+import { actionFor, comboOf, keyCaps, useShortcuts } from '../lib/shortcuts'
 
 function typing(e: KeyboardEvent) {
   const t = e.target as HTMLElement | null
@@ -59,7 +59,7 @@ function ShellInner() {
   const narrow = useMediaQuery('(max-width: 980px)')
   const drawer = !embedded && (mobile || narrow)
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const [palette, setPalette] = useState(false)
+  const [palette, setPalette] = useState<'' | 'all' | 'recent'>('')
   const [shortcuts, setShortcuts] = useState(false)
   const runRecipe = useRunRecipe()
   const tabsOn = settings?.thread_tabs !== false && !mobile && !embedded
@@ -104,7 +104,8 @@ function ShellInner() {
       const tabAction = action === 'new_tab' || action === 'reopen_tab' || action === 'close_tab' || action === 'prev_tab' || action === 'next_tab'
       if (action && action !== 'stop' && !(tabAction && !tabsOn)) {
         e.preventDefault()
-        if (action === 'palette') setPalette(p => !p)
+        if (action === 'palette') setPalette(p => p === 'all' ? '' : 'all')
+        else if (action === 'recent') setPalette(p => p === 'recent' ? '' : 'recent') // while open, the palette moves down instead
         else if (action === 'new_thread' || action === 'new_tab') navigate('/')
         else if (action === 'reopen_tab') tabs.reopen()
         else if (action === 'close_tab') { if (tabs.active) tabs.close([tabs.active]) }
@@ -133,9 +134,10 @@ function ShellInner() {
     { id: 'settings', label: 'Settings', icon: 'settings', run: () => navigate('/settings') },
     { id: 'agents', label: 'Agent defaults', icon: 'bot', keywords: 'model effort settings', run: () => navigate('/settings/agents') },
     { id: 'theme', label: theme === 'dark' ? 'Light theme' : 'Dark theme', icon: theme === 'dark' ? 'sun' : 'moon', run: () => setThemeMode(theme === 'dark' ? 'light' : 'dark') },
+    { id: 'recent', label: 'Recent conversations', icon: 'history', hint: keyCaps(keys.recent).join(''), keywords: 'switch threads chats', run: () => setPalette('recent') },
     { id: 'keys', label: 'Keyboard shortcuts', icon: 'keyboard', hint: '?', run: () => setShortcuts(true) },
     { id: 'keys-edit', label: 'Change keyboard shortcuts', icon: 'keyboard', keywords: 'keys hotkeys bindings', run: () => navigate('/settings/general#shortcuts') },
-  ], [navigate, theme, setThemeMode])
+  ], [navigate, theme, setThemeMode, keys.recent])
 
   const openMenu = useCallback(() => setDrawerOpen(true), [])
   const onMenu = drawer ? openMenu : undefined
@@ -143,7 +145,7 @@ function ShellInner() {
   return (
     <div className={`app ${drawer ? 'drawer-mode' : ''} ${embedded ? 'embedded' : ''}`}>
       {!embedded && <div className={`sidebar-wrap ${drawerOpen ? 'open' : ''}`}>
-        <Sidebar onNavigate={() => setDrawerOpen(false)} onPalette={() => { setDrawerOpen(false); setPalette(true) }} />
+        <Sidebar onNavigate={() => setDrawerOpen(false)} onPalette={() => { setDrawerOpen(false); setPalette('all') }} />
       </div>}
       {drawer && drawerOpen && <div className="drawer-backdrop" onClick={() => setDrawerOpen(false)} />}
       <main className="main">
@@ -177,7 +179,7 @@ function ShellInner() {
           <Suspense fallback={termShown ? <Loading /> : null}><TerminalArea onMenu={onMenu} shown={termShown} gid={termGid} tabsOn={tabsOn} /></Suspense>
         </ErrorBoundary>}
       </main>
-      {palette && <CommandPalette onClose={() => setPalette(false)} commands={commands} openThread={id => navigate(`/t/${id}`)} runRecipe={runRecipe} />}
+      {palette && <CommandPalette key={palette} mode={palette} onClose={() => setPalette('')} commands={commands} openThread={id => navigate(`/t/${id}`)} runRecipe={runRecipe} />}
       {shortcuts && <ShortcutsSheet onClose={() => setShortcuts(false)} />}
     </div>
   )
