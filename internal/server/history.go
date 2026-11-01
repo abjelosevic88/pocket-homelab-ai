@@ -104,6 +104,8 @@ func threadOrigin(source, origin string) string {
 		return origin
 	case "schedule":
 		return "schedule"
+	case "quick-chat":
+		return "quick-chat" // Pocket Launcher's Quick Chat
 	}
 	return "pocket-ai"
 }

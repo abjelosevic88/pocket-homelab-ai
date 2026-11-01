@@ -9,6 +9,7 @@ export const ORIGINS: { id: Origin; label: string }[] = [
   { id: 'paseo', label: 'Paseo' },
   { id: 'terminal', label: 'Terminal' },
   { id: 'pocket-ai', label: 'Pocket AI' },
+  { id: 'quick-chat', label: 'Quick Chat' },
   { id: 'schedule', label: 'Schedule' },
   { id: 'app', label: 'Other app' },
 ]
