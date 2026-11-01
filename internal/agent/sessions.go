@@ -456,7 +456,8 @@ type sessionFile struct {
 }
 
 // sessionFiles lists the top-level session files of both CLIs changed since
-// `since` (zero = all).
+// `since` (zero = all). Codex moves a session it archives (codex exec runs
+// often end there) to archived_sessions; it still spent what it spent.
 func sessionFiles(claudeHome, codexHome string, since time.Time) []sessionFile {
 	var out []sessionFile
 	if dirs, err := os.ReadDir(filepath.Join(claudeHome, "projects")); claudeHome != "" && err == nil {
@@ -479,15 +480,17 @@ func sessionFiles(claudeHome, codexHome string, since time.Time) []sessionFile {
 	if codexHome == "" {
 		return out
 	}
-	_ = filepath.WalkDir(filepath.Join(codexHome, "sessions"), func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".jsonl") {
+	for _, sub := range []string{"sessions", "archived_sessions"} {
+		_ = filepath.WalkDir(filepath.Join(codexHome, sub), func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".jsonl") {
+				return nil
+			}
+			if info, err := d.Info(); err == nil && info.Size() > 0 && !info.ModTime().Before(since) {
+				out = append(out, sessionFile{"codex", path, info})
+			}
 			return nil
-		}
-		if info, err := d.Info(); err == nil && info.Size() > 0 && !info.ModTime().Before(since) {
-			out = append(out, sessionFile{"codex", path, info})
-		}
-		return nil
-	})
+		})
+	}
 	return out
 }
 

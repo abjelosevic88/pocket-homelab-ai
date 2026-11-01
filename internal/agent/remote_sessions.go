@@ -20,7 +20,7 @@ import (
 // since; a file that got shorter is copied anew.
 //
 // Mirror layout: <dir>/claude/<login>/projects/<folder>/<id>.jsonl and
-// <dir>/codex/<login>/sessions/.../<name>.jsonl, <login> being "default"
+// <dir>/codex/<login>/{sessions,archived_sessions}/.../<name>.jsonl, <login> being "default"
 // or the folder's name (".claude-max"), so MirrorHomes(dir) reads it.
 
 // remoteSessionList prints "<rel>\t<size>\t<mtime>" per session file. One
@@ -35,7 +35,9 @@ homes claude | while IFS= read -r c; do
 done
 homes codex | while IFS= read -r x; do
   b=default; [ "$x" = "$x0" ] || b=${x##*/}
-  [ -d "$x/sessions" ] && (cd "$x" && find sessions -name '*.jsonl' -type f -print0 2>/dev/null | xargs -0 stat -L "$sf" "$fmt" 2>/dev/null) | fix "codex/$b/"
+  for s in sessions archived_sessions; do
+    [ -d "$x/$s" ] && (cd "$x" && find "$s" -name '*.jsonl' -type f -print0 2>/dev/null | xargs -0 stat -L "$sf" "$fmt" 2>/dev/null) | fix "codex/$b/"
+  done
 done
 exit 0
 `
@@ -55,7 +57,7 @@ done
 exit 0
 `
 
-var remoteSessionRel = regexp.MustCompile(`^(claude/(default|\.claude[-_][A-Za-z0-9._-]{1,60})/projects/[^/]+/[A-Za-z0-9_-]{8,80}\.jsonl|codex/(default|\.codex[-_][A-Za-z0-9._-]{1,60})/sessions(/[A-Za-z0-9_.-]+){1,6}\.jsonl)$`)
+var remoteSessionRel = regexp.MustCompile(`^(claude/(default|\.claude[-_][A-Za-z0-9._-]{1,60})/projects/[^/]+/[A-Za-z0-9_-]{8,80}\.jsonl|codex/(default|\.codex[-_][A-Za-z0-9._-]{1,60})/(archived_)?sessions(/[A-Za-z0-9_.-]+){1,6}\.jsonl)$`)
 
 // Per fetch: so the command line and the answer stay a sensible size. A
 // first copy of a busy machine takes a few rounds.
