@@ -1008,10 +1008,10 @@ func (s *claudeSession) handleResult(m map[string]json.RawMessage) {
 	s.mu.Lock()
 	// total_cost_usd adds up over the session, including what it cost before
 	// this process (CostBase); report this turn's share.
-	cost := r.TotalCostUSD - s.cost
-	if cost < 0 {
-		cost = r.TotalCostUSD // it started over: the session file had no cost saved
-	}
+	// Lower than counted so far: a result replayed after the process was
+	// taken back (counted before), or a process that started over; either
+	// way nothing new, and the count goes on from here.
+	cost := max(r.TotalCostUSD-s.cost, 0)
 	s.cost = r.TotalCostUSD
 	wasRunning := s.running
 	s.running = false

@@ -51,7 +51,7 @@ func TestClaudeTurnCostStartsFromRestoredTotal(t *testing.T) {
 		s.running = true
 		s.handleResult(m)
 	}
-	want := []float64{0.4, 0.1, 0.2} // the last: a process that started over
+	want := []float64{0.4, 0.1, 0} // the last: lower than counted (a replay, or a process that started over)
 	for i, ti := range r.turns {
 		if math.Abs(ti.CostUSD-want[i]) > 1e-9 {
 			t.Fatalf("turn %d: cost %v, want %v", i, ti.CostUSD, want[i])

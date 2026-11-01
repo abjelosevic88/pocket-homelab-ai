@@ -213,11 +213,14 @@ func RepairCosts(ctx context.Context, cfg *config.Config, st *store.Store, apply
 	return rep, nil
 }
 
-// costFix is one turn's cost now and what it becomes.
+// costFix is one turn's cost now and what it becomes, or (drop) a
+// replayed copy of an earlier turn to remove.
 type costFix struct {
 	id       int64
 	thread   string
 	cur, new float64
+	drop     bool
+	tok      tokens // a dropped copy's token counts
 }
 
 // applyCostFixes backs the database up next to it, then changes the turns,
@@ -235,7 +238,27 @@ func applyCostFixes(ctx context.Context, cfg *config.Config, st *store.Store, ta
 	defer tx.Rollback()
 	less := map[string]float64{}
 	fix := map[string]map[float64][]float64{} // thread → cost now → new costs (the turn footers)
+	drops := map[string]map[tokens]int{}      // thread → a dropped copy's tokens → how many
 	for _, t := range fixes {
+		if t.drop {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM turns WHERE id = ?`, t.id); err != nil {
+				return "", err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE threads SET usage = json_set(usage,
+				'$.turns', max(0, coalesce(json_extract(usage, '$.turns'), 0) - 1),
+				'$.input_tokens', max(0, coalesce(json_extract(usage, '$.input_tokens'), 0) - ?),
+				'$.output_tokens', max(0, coalesce(json_extract(usage, '$.output_tokens'), 0) - ?),
+				'$.cached_tokens', max(0, coalesce(json_extract(usage, '$.cached_tokens'), 0) - ?)) WHERE id = ?`,
+				t.tok.in, t.tok.out, t.tok.cached, t.thread); err != nil {
+				return "", err
+			}
+			less[t.thread] += t.cur
+			if drops[t.thread] == nil {
+				drops[t.thread] = map[tokens]int{}
+			}
+			drops[t.thread][t.tok]++
+			continue
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE turns SET cost_usd = ? WHERE id = ?`, t.new, t.id); err != nil {
 			return "", err
 		}
@@ -249,7 +272,7 @@ func applyCostFixes(ctx context.Context, cfg *config.Config, st *store.Store, ta
 		if _, err := tx.ExecContext(ctx, `UPDATE threads SET usage = json_set(usage, '$.cost_usd', max(0, coalesce(json_extract(usage, '$.cost_usd'), 0) - ?)) WHERE id = ?`, d, id); err != nil {
 			return "", err
 		}
-		if err := repairFooters(ctx, tx, id, fix[id]); err != nil {
+		if err := repairFooters(ctx, tx, id, fix[id], drops[id]); err != nil {
 			return "", err
 		}
 	}
@@ -266,8 +289,9 @@ func applyCostFixes(ctx context.Context, cfg *config.Config, st *store.Store, ta
 }
 
 // repairFooters gives the turn footers on a conversation's timeline the
-// same costs: a footer is the turn whose recorded cost it shows.
-func repairFooters(ctx context.Context, tx *sql.Tx, thread string, fix map[float64][]float64) error {
+// same costs (a footer is the turn whose recorded cost it shows) and
+// removes those of dropped copies (all but the first with their tokens).
+func repairFooters(ctx context.Context, tx *sql.Tx, thread string, fix map[float64][]float64, drops map[tokens]int) error {
 	rows, err := tx.QueryContext(ctx, `SELECT id, data FROM items WHERE thread_id = ? AND kind = 'turn' ORDER BY id`, thread)
 	if err != nil {
 		return err
@@ -277,6 +301,8 @@ func repairFooters(ctx context.Context, tx *sql.Tx, thread string, fix map[float
 		data string
 	}
 	var ups []upd
+	var gone []int64
+	first := map[tokens]bool{}
 	for rows.Next() {
 		var id int64
 		var data string
@@ -287,6 +313,15 @@ func repairFooters(ctx context.Context, tx *sql.Tx, thread string, fix map[float
 		var turn map[string]any
 		if json.Unmarshal([]byte(data), &it) != nil || json.Unmarshal(it["turn"], &turn) != nil {
 			continue
+		}
+		num := func(k string) int64 { v, _ := turn[k].(float64); return int64(v) }
+		if k := (tokens{num("input_tokens"), num("output_tokens"), num("cached_tokens")}); k.in > 0 {
+			if first[k] && drops[k] > 0 {
+				drops[k]--
+				gone = append(gone, id)
+				continue
+			}
+			first[k] = true
 		}
 		old, _ := turn["cost_usd"].(float64)
 		news := fix[old]
@@ -301,6 +336,11 @@ func repairFooters(ctx context.Context, tx *sql.Tx, thread string, fix map[float
 	rows.Close()
 	for _, u := range ups {
 		if _, err := tx.ExecContext(ctx, `UPDATE items SET data = ? WHERE id = ?`, u.data, u.id); err != nil {
+			return err
+		}
+	}
+	for _, id := range gone {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM items WHERE id = ?`, id); err != nil {
 			return err
 		}
 	}

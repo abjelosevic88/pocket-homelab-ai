@@ -1889,24 +1889,32 @@ func (k *runSink) TurnDone(ti agent.TurnInfo) {
 			}
 		}
 	}
+	// A held agent taken back replays its recent output, results this thread
+	// recorded already among it (the same token counts): such a turn is not
+	// counted, footed or announced again.
+	dup := ti.InputTokens > 0 && rt.s.store.HasTurn(rt.ctx, r.threadID, ti.InputTokens, ti.OutputTokens, ti.CachedTokens)
 	// Keyed by the CLI's turn id where there is one, so re-reading the session
 	// later (follow.go) finds this footer instead of adding a second one.
 	turnKey := "turn-" + uuid.NewString()[:8]
 	if ti.ID != "" {
 		turnKey = "turn-" + ti.ID
 	}
-	rt.saveItem(r.threadID, agent.Item{Key: turnKey, Kind: "turn", Turn: &ti})
+	if !dup {
+		rt.saveItem(r.threadID, agent.Item{Key: turnKey, Kind: "turn", Turn: &ti})
+	}
 
 	t, err := rt.s.store.GetThreadAny(rt.ctx, r.threadID)
 	if err != nil {
 		return
 	}
 	rt.endOffset(t) // the turn is on the timeline: never read its lines again
-	t.Usage.InputTokens += ti.InputTokens
-	t.Usage.OutputTokens += ti.OutputTokens
-	t.Usage.CachedTokens += ti.CachedTokens
-	t.Usage.CostUSD += ti.CostUSD
-	t.Usage.Turns++
+	if !dup {
+		t.Usage.InputTokens += ti.InputTokens
+		t.Usage.OutputTokens += ti.OutputTokens
+		t.Usage.CachedTokens += ti.CachedTokens
+		t.Usage.CostUSD += ti.CostUSD
+		t.Usage.Turns++
+	}
 	if t.Provider == "claude" && ti.SessionCost > 0 {
 		t.Usage.CLICost, t.Usage.CLISession = ti.SessionCost, t.ProviderSessionID
 	}
@@ -1917,19 +1925,23 @@ func (k *runSink) TurnDone(ti agent.TurnInfo) {
 	if !ti.OK && !ti.Interrupted {
 		t.Status, t.Error = "error", ti.Error
 	}
-	viewing := rt.viewing(t)
-	t.CompletedUnread = ti.OK && !viewing
-	if !viewing {
-		t.Unread = true
+	if !dup {
+		viewing := rt.viewing(t)
+		t.CompletedUnread = ti.OK && !viewing
+		if !viewing {
+			t.Unread = true
+		}
+		t.ActivityAt = store.Now()
 	}
-	t.ActivityAt = store.Now()
 	_ = rt.s.store.UpdateThread(rt.ctx, t)
-	_ = rt.s.store.AddTurn(rt.ctx, store.Turn{UserID: t.UserID, ThreadID: t.ID, Provider: t.Provider, Model: t.Model, OK: ti.OK,
-		DurationMS: ti.DurationMS, InputTokens: ti.InputTokens, OutputTokens: ti.OutputTokens, CachedTokens: ti.CachedTokens, CostUSD: ti.CostUSD})
+	if !dup {
+		_ = rt.s.store.AddTurn(rt.ctx, store.Turn{UserID: t.UserID, ThreadID: t.ID, Provider: t.Provider, Model: t.Model, OK: ti.OK,
+			DurationMS: ti.DurationMS, InputTokens: ti.InputTokens, OutputTokens: ti.OutputTokens, CachedTokens: ti.CachedTokens, CostUSD: ti.CostUSD})
+	}
 	rt.publishThread(t)
 
-	scheduled := (t.Source == "schedule" && rt.s.scheduleFinished(t, ti, lastText)) || rt.s.workflowFinished(t, ti, lastText)
-	if !scheduled && queuedN == 0 {
+	scheduled := !dup && ((t.Source == "schedule" && rt.s.scheduleFinished(t, ti, lastText)) || rt.s.workflowFinished(t, ti, lastText))
+	if !dup && !scheduled && queuedN == 0 {
 		switch {
 		case !ti.OK && !ti.Interrupted:
 			rt.notify(t, "failed", providerName(t.Provider)+" stopped with an error", oneLine(t.Title+"\n"+ti.Error, 200))
@@ -1942,8 +1954,10 @@ func (k *runSink) TurnDone(ti agent.TurnInfo) {
 	if queuedN == 0 {
 		go rt.s.awayCheckDone(t.UserID)
 	}
-	rt.s.publish(t.UserID, "ai.turn_finished", t.ID, map[string]any{"thread_id": t.ID, "title": t.Title, "ok": ti.OK,
-		"provider": t.Provider, "cost_usd": ti.CostUSD, "duration_ms": ti.DurationMS})
+	if !dup {
+		rt.s.publish(t.UserID, "ai.turn_finished", t.ID, map[string]any{"thread_id": t.ID, "title": t.Title, "ok": ti.OK,
+			"provider": t.Provider, "cost_usd": ti.CostUSD, "duration_ms": ti.DurationMS})
+	}
 
 	if queuedN > 0 {
 		// next() starts a turn and TurnStarted takes eventMu, which this event
