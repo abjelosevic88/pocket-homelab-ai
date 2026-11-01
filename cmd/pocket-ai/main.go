@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -41,6 +42,9 @@ func main() {
 		case "reset-password":
 			runResetPassword(os.Args[2:])
 			return
+		case "repair-costs":
+			runRepairCosts()
+			return
 		case "help", "--help", "-h":
 			fmt.Println(`pocket-ai — Claude Code and Codex on your server, from any browser or phone
 
@@ -49,6 +53,9 @@ Usage:
   pocket-ai backup [-o FILE]    write a consistent SQLite backup
   pocket-ai reset-password [-email USER] [-password NEW]
                                        set a user's password (default: first user, random password printed)
+  pocket-ai repair-costs        show what the one-time repair of Claude turn costs
+                                       counted twice before 0.48.0 changes (changes nothing;
+                                       the server applies it once when it starts)
   pocket-ai version             print version
 
 Configuration is read from environment variables, see docs/configuration.md.`)
@@ -255,4 +262,27 @@ func runResetPassword(args []string) {
 		fmt.Printf(": %s", pw)
 	}
 	fmt.Println()
+}
+
+// runRepairCosts shows what the cost repair changes, without changing it.
+func runRepairCosts() {
+	cfg, _, st := mustLoad()
+	defer st.Close()
+	ctx := context.Background()
+	if done := st.BoxSetting(ctx, "cost_repair_v1"); done != "" {
+		var r struct {
+			Turns  int     `json:"turns"`
+			Before float64 `json:"before_usd"`
+			After  float64 `json:"after_usd"`
+			At     string  `json:"at"`
+		}
+		_ = json.Unmarshal([]byte(done), &r)
+		fmt.Printf("Already repaired %s: %d turns, $%.2f → $%.2f. Below: what another pass would change (it never runs again by itself).\n\n", r.At, r.Turns, r.Before, r.After)
+	}
+	rep, err := server.RepairCosts(ctx, cfg, st, false)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "repair-costs:", err)
+		os.Exit(1)
+	}
+	fmt.Print(rep.String())
 }

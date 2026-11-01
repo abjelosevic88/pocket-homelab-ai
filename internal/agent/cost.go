@@ -1,10 +1,12 @@
 package agent
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"io"
 	"os"
+	"time"
 )
 
 // costStateMark starts the line Claude Code appends to a session file when a
@@ -74,4 +76,48 @@ tail -c 4194304 "$f" | grep '^{"type":"cost-state"' | tail -n 1`
 // ParseCostState reads the line RemoteClaudeCostSh prints.
 func ParseCostState(out string) (float64, bool) {
 	return lastCostState([]byte(out))
+}
+
+// Restore is a Claude process of a session starting from a saved total.
+type Restore struct {
+	At  time.Time // its first line
+	USD float64   // the running cost it restored
+}
+
+// ClaudeRestores lists when each process of a session (after the first)
+// began and the total it started from: every cost-state line, timed by the
+// first line written after it. Forks and rewinds copy their source's lines,
+// so their file holds the totals they started from too. end is the total the
+// last process saved as it ended (nil: it has not ended, or never saved).
+func ClaudeRestores(path string) (out []Restore, end *float64, err error) {
+	f, err := OpenConfined(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer f.Close()
+	var pending *float64
+	r := bufio.NewReaderSize(f, 1<<20)
+	tsMark := []byte(`"timestamp":"`)
+	for {
+		line, err := r.ReadBytes('\n')
+		if len(line) > 0 {
+			if bytes.HasPrefix(line, costStateMark) {
+				if v, ok := lastCostState(line); ok {
+					pending = &v
+				}
+			} else if i := bytes.Index(line, tsMark); i >= 0 && pending != nil {
+				rest := line[i+len(tsMark):]
+				if j := bytes.IndexByte(rest, '"'); j > 0 {
+					if at, e := time.Parse(time.RFC3339Nano, string(rest[:j])); e == nil {
+						out = append(out, Restore{At: at, USD: *pending})
+						pending = nil
+					}
+				}
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+	return out, pending, nil
 }
