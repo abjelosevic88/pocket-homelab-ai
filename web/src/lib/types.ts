@@ -388,7 +388,7 @@ export interface SchedulePreview { ok: boolean; next: string[]; error: string }
 
 // ---------- history, search, usage ----------
 
-export type Origin = 'pocket-ai' | 'schedule' | 'paseo' | 'terminal' | 'app'
+export type Origin = 'pocket-ai' | 'quick-chat' | 'schedule' | 'paseo' | 'terminal' | 'app'
 
 /** A session either CLI keeps on the server ("On this server"). */
 export interface ServerSession {

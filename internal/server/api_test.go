@@ -540,3 +540,11 @@ func TestClientSourceOnlyAllowsQuickChat(t *testing.T) {
 		}
 	}
 }
+
+func TestQuickChatRunsHaveTheirOwnOrigin(t *testing.T) {
+	for source, want := range map[string]string{"quick-chat": "quick-chat", "web": "pocket-ai", "schedule": "schedule", "": "terminal"} {
+		if got := threadOrigin(source, "terminal"); got != want {
+			t.Errorf("threadOrigin(%q) = %q, want %q", source, got, want)
+		}
+	}
+}
