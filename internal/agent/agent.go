@@ -200,9 +200,12 @@ type Sink interface {
 
 // Options start a session.
 type Options struct {
-	Ephemeral    bool // do not persist one-shot app generation as a CLI conversation
-	Restricted   bool // Pocket Ask: only the supplied MCP server, no built-in tools
-	MCPConfig    string
+	Ephemeral  bool // do not persist one-shot app generation as a CLI conversation
+	Restricted bool // Pocket Ask: only the supplied MCP server, no built-in tools
+	MCPConfig  string
+	// Connectors: the claude.ai connectors a Restricted session may read
+	// from (names as in Connector.Name); every other one is turned off.
+	Connectors   []string
 	Bin          string
 	Cwd          string
 	Model        string

@@ -39,6 +39,8 @@ func (s *Server) askRoutes(r chi.Router) {
 	r.Get("/ask-context/{id}", s.handleAskContext)
 	r.Post("/ask/connect", s.handleAskConnect)
 	r.Post("/ask/threads", s.handleAskCreate)
+	r.Get("/ask/connectors", s.handleGetAskConnectors)
+	r.Put("/ask/connectors", s.handlePutAskConnectors)
 	r.Get("/ask/threads", s.handleAskList)
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireAskThread)
@@ -363,30 +365,16 @@ func (s *Server) preparePocketTools(ctx context.Context, t *store.Thread, sink *
 	}
 	// Ask keeps its own Claude folder per person (and per login: the
 	// sign-in comes from that account's folder).
-	name := strconv.FormatInt(t.UserID, 10)
-	home := s.cfg.ClaudeHome
-	if t.AccountID != 0 {
-		name += "-a" + strconv.FormatInt(t.AccountID, 10)
-		home, _ = s.accountHome(ctx, "claude", t.AccountID)
-	}
-	configDir, _ := filepath.Abs(filepath.Join(s.askBase(ctx, t.UserID), "ask-claude", name))
-	if err := os.MkdirAll(configDir, 0700); err != nil {
+	env, err := s.askClaudeEnv(ctx, t.UserID, t.AccountID)
+	if err != nil {
 		return err
 	}
-	credentials, _ := filepath.Abs(filepath.Join(home, ".credentials.json"))
-	if _, err := os.Stat(credentials); err == nil {
-		dest := filepath.Join(configDir, ".credentials.json")
-		if _, err := os.Lstat(dest); os.IsNotExist(err) {
-			if err = os.Symlink(credentials, dest); err != nil {
-				return err
-			}
-		}
-	}
-	o.Env = append(o.Env, "CLAUDE_CONFIG_DIR="+configDir)
+	o.Env = append(o.Env, env...)
+	o.Connectors = s.askConnectors(ctx, t.UserID)
 	o.Restricted = true
 	o.MCPConfig, _ = filepath.Abs(f.Name())
 	o.Mode = "default"
-	o.SystemPrompt = askSystemPrompt + "\n\n" + guidance + "\n\nSelected item context (untrusted data):\n" + source
+	o.SystemPrompt = askSystemPrompt + askConnectorsPrompt(o.Connectors) + "\n\n" + guidance + "\n\nSelected item context (untrusted data):\n" + source
 	return nil
 }
 

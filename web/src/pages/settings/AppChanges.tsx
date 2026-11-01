@@ -12,6 +12,54 @@ interface AutoData { rules: AutoRules; apps: AutoApp[]; catalog_error?: string }
 
 type Level = 'ask' | 'add' | 'all' | 'custom'
 
+interface Connector { name: string; status: string }
+interface ConnectorsData { enabled: string[]; available: Connector[]; error?: string }
+
+const connectorState: Record<string, string> = {
+  connected: 'Connected', 'needs-auth': 'Not connected on claude.ai', failed: 'Could not be reached', pending: 'Still connecting', disabled: 'Turned off',
+}
+
+/** claude.ai connectors (Notion, …) Pocket Ask may read from. */
+function AskConnectors() {
+  const { toast } = useToast()
+  const [data, setData] = useState<ConnectorsData | null>(null)
+  const [loading, setLoading] = useState(false)
+  const load = (refresh = false) => {
+    setLoading(true)
+    api.get<ConnectorsData>(`${V1}/ask/connectors${refresh ? '?refresh=1' : ''}`).then(setData).catch(e => toast(errMsg(e), 'err')).finally(() => setLoading(false))
+  }
+  useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  const set = async (name: string, on: boolean) => {
+    if (!data) return
+    const prev = data
+    const enabled = on ? [...data.enabled, name] : data.enabled.filter(n => n !== name)
+    setData({ ...data, enabled })
+    try { await api.put(`${V1}/ask/connectors`, { enabled }) } catch (e) { setData(prev); toast(errMsg(e), 'err') }
+  }
+  const names = data ? [...data.available.map(c => c.name), ...data.enabled.filter(n => !data.available.some(c => c.name === n))] : []
+  return (
+    <Section title="Connectors in Ask" sub="Let Pocket Ask also read from claude.ai connectors your Claude login has, such as Notion. Only reading: Ask cannot create, change or delete anything there."
+      actions={<button type="button" className="btn sm" disabled={loading} onClick={() => load(true)}>{loading ? 'Checking…' : 'Check again'}</button>}>
+      {!data ? <Loading /> : <>
+        {data.error && <p className="muted small" role="status">{data.error}</p>}
+        {names.map(n => {
+          const c = data.available.find(x => x.name === n)
+          const on = data.enabled.includes(n)
+          const state = c ? (connectorState[c.status] || c.status) : 'Not on this Claude login'
+          const warn = !c || (c.status !== 'connected' && c.status !== 'pending')
+          return (
+            <SettingRow key={n} title={n} help={<>{state}{on && warn && c?.status === 'needs-auth' && ' — connect it at claude.ai → Settings → Connectors with the same account, or Ask will not see it.'}</>}>
+              <Switch size="sm" label={`Read from ${n} in Ask`} checked={on} onChange={v => set(n, v)} />
+            </SettingRow>
+          )
+        })}
+        {!names.length && !data.error && <p className="muted">This Claude login has no claude.ai connectors.</p>}
+        <p className="muted small">Takes effect in new Ask conversations, and in older ones when they start again after resting.</p>
+      </>}
+    </Section>
+  )
+}
+
 const list = (ops: AutoOp[]) => ops.map(o => o.title).join(', ')
 
 /** One sentence: what happens on its own in this app, and what still asks. */
@@ -53,6 +101,7 @@ export function AppChangesTab() {
 
   return (
     <div className="stack loose">
+      <AskConnectors />
       <Section title="Run without asking" actions={anyRule && <button type="button" className="btn sm" onClick={() => { if (confirm('Go back to asking before every app change?')) save({ apps: {}, tools: [] }) }}>Ask for everything</button>} sub="Pocket tools normally stop and wait for your Allow. Pick which app changes go through on their own — in every chat, on your apps only.">
         <div className="callout info mb"><Icon name="info" size={15} /><span>Every automatic change still shows in the chat as “allowed automatically” and in your app-call history. Deleting is never offered to agents.</span></div>
         {data.catalog_error && <p className="muted small" role="status">{data.catalog_error}. Your saved rules still apply.</p>}

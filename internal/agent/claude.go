@@ -58,6 +58,10 @@ type claudeSession struct {
 	waiters map[string]chan controlReply
 	remote  bool
 	sent    []string
+
+	// Pocket Ask with connectors: closed once they are set up (connectors.go);
+	// the first message waits for it. nil = nothing to wait for.
+	ready chan struct{}
 }
 
 type controlReply struct {
@@ -101,7 +105,12 @@ func StartClaude(ctx context.Context, o Options, sink Sink) (Session, error) {
 		mode = "default"
 	}
 	if o.Restricted {
-		args = append(args, "--restricted", "--permission-mode", "manual", "--tools", "", "--strict-mcp-config", "--mcp-config", o.MCPConfig, "--setting-sources", "", "--disable-slash-commands", "--settings", `{"disableAllHooks":true}`, "--allowedTools", "mcp__pocket__*")
+		args = append(args, "--restricted", "--permission-mode", "manual", "--tools", "")
+		if len(o.Connectors) == 0 {
+			// no claude.ai connectors either (they load with the login)
+			args = append(args, "--strict-mcp-config")
+		}
+		args = append(args, "--mcp-config", o.MCPConfig, "--setting-sources", "", "--disable-slash-commands", "--settings", `{"disableAllHooks":true}`, "--allowedTools", "mcp__pocket__*")
 	} else if mode == "bypassPermissions" {
 		args = append(args, "--dangerously-skip-permissions")
 	} else {
@@ -151,6 +160,10 @@ func StartClaude(ctx context.Context, o Options, sink Sink) (Session, error) {
 	}()
 	if !adopted {
 		_ = s.write(map[string]any{"type": "control_request", "request_id": "init", "request": map[string]any{"subtype": "initialize"}})
+		if o.Restricted && len(o.Connectors) > 0 {
+			s.ready = make(chan struct{})
+			go s.setupConnectors()
+		}
 	}
 	return s, nil
 }
@@ -199,8 +212,27 @@ func (s *claudeSession) Send(in Input) error {
 	} else {
 		s.mu.Unlock()
 	}
-	return s.write(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": content},
-		"parent_tool_use_id": nil, "session_id": ""})
+	msg := map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": content},
+		"parent_tool_use_id": nil, "session_id": ""}
+	if s.ready != nil {
+		select {
+		case <-s.ready:
+		default:
+			// the turn shows as started; the message goes out once the
+			// connectors are set up (seconds), so the sender does not wait
+			go func() {
+				select {
+				case <-s.ready:
+					if err := s.write(msg); err != nil {
+						s.notice("error", "Could not send the message: "+err.Error())
+					}
+				case <-s.done:
+				}
+			}()
+			return nil
+		}
+	}
+	return s.write(msg)
 }
 
 func (s *claudeSession) Interrupt() error {
@@ -1103,11 +1135,15 @@ func (s *claudeSession) handleControl(id string, raw json.RawMessage) {
 		return
 	}
 	if s.opts.Restricted {
-		behavior := "deny"
+		behavior, why := "deny", "Pocket Ask only permits Pocket tools"
 		if strings.HasPrefix(req.ToolName, "mcp__pocket__") {
 			behavior = "allow"
+		} else if name, ok := ConnectorReadTool(req.ToolName, s.opts.Connectors); ok {
+			behavior = "allow"
+		} else if name != "" {
+			why = "Pocket Ask only reads from " + name + "; it cannot change anything there. Tell the user what to change instead."
 		}
-		_ = s.write(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": id, "response": map[string]any{"behavior": behavior, "updatedInput": req.Input, "message": "Pocket Ask only permits Pocket tools"}}})
+		_ = s.write(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": id, "response": map[string]any{"behavior": behavior, "updatedInput": req.Input, "message": why}}})
 		return
 	}
 	p := claudePending{toolName: req.ToolName, input: req.Input, suggestions: req.Suggestions, kind: "permission", toolUseID: req.ToolUseID}
