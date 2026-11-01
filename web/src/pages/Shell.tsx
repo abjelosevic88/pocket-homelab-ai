@@ -30,7 +30,7 @@ import FileView from './FileView'
 // xterm is big: only loaded once you have a terminal
 const TerminalArea = lazy(() => import('./TerminalArea'))
 import { BriefingPage, MemoryPage, ActionsPage, WorkflowsPage } from './AssistantPages'
-import { actionFor, comboOf, keyCaps, useShortcuts } from '../lib/shortcuts'
+import { actionFor, comboOf, isMac, keyCaps, useShortcuts } from '../lib/shortcuts'
 
 function typing(e: KeyboardEvent) {
   const t = e.target as HTMLElement | null
@@ -101,14 +101,21 @@ function ShellInner() {
       const mod = e.metaKey || e.ctrlKey
       // ⌘P opens the palette too (as in editors), unless it is bound to something
       const action = actionFor(e, keys) || (comboOf(e) === 'mod+p' && !Object.values(keys).includes('mod+p') ? 'palette' : undefined)
-      const tabAction = action === 'new_tab' || action === 'reopen_tab' || action === 'close_tab' || action === 'prev_tab' || action === 'next_tab'
+      // ⌘W closes the tab, never the app window — even with no tab open or tabs off
+      // (Ctrl+W off a Mac is the shell's delete-word inside a terminal: left to it)
+      if (action === 'close_tab') {
+        if (!isMac && (e.target as Element | null)?.closest?.('.xterm')) return
+        e.preventDefault()
+        if (tabsOn && tabs.active) tabs.close([tabs.active])
+        return
+      }
+      const tabAction = action === 'new_tab' || action === 'reopen_tab' || action === 'prev_tab' || action === 'next_tab'
       if (action && action !== 'stop' && !(tabAction && !tabsOn)) {
         e.preventDefault()
         if (action === 'palette') setPalette(p => p === 'all' ? '' : 'all')
         else if (action === 'recent') setPalette(p => p === 'recent' ? '' : 'recent') // while open, the palette moves down instead
         else if (action === 'new_thread' || action === 'new_tab') navigate('/')
         else if (action === 'reopen_tab') tabs.reopen()
-        else if (action === 'close_tab') { if (tabs.active) tabs.close([tabs.active]) }
         else if (action === 'prev_tab') tabs.step(-1)
         else if (action === 'next_tab') tabs.step(1)
         return
