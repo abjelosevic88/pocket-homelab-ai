@@ -9,6 +9,8 @@ import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
 import { Loading, Segmented, useAsync } from '../components/ui'
 
+const originName = (o: string) => ({ paseo: 'Paseo', terminal: 'Terminal', app: 'Agents & apps' } as Record<string, string>)[o] || o
+
 function LimitBar({ w, pinned, onPin }: { w: LimitWindow; pinned?: boolean; onPin?: () => void }) {
   const used = usedFrac(w)
   return (
@@ -57,12 +59,20 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
   const r = useAsync(() => api.get<UsageReport>(`${V1}/usage${qs({ days })}`), [days])
   const d = r.data
   const limits = { ...(d?.limits || {}), ...liveLimits }
-  const val = (x: UsageReport['days'][number]) => metric === 'cost' ? x.cost_usd : metric === 'turns' ? x.turns : x.input_tokens + x.output_tokens
+  const val = (x: UsageReport['days'][number]) => metric === 'cost' ? x.cost_usd + (x.elsewhere_usd || 0) : metric === 'turns' ? x.turns : x.input_tokens + x.output_tokens
   const fmt = (n: number) => metric === 'cost' ? fmtCost(n) : metric === 'turns' ? String(n) : fmtTokens(n)
   const series = d?.days || []
   const max = Math.max(1e-9, ...series.map(val))
   const total = series.reduce((a, x) => a + val(x), 0)
   const providers = (['claude', 'codex'] as ProviderId[])
+  // Outside Pocket AI: only money (the CLIs' files have no turn count to match)
+  const away = d?.elsewhere || []
+  const awayTotal = away.reduce((a, x) => a + x.cost_usd, 0)
+  const awayBy = Object.entries(away.reduce<Record<string, number>>((a, x) => {
+    const k = `${originName(x.origin)} · ${providerName(x.provider)}`
+    a[k] = (a[k] || 0) + x.cost_usd
+    return a
+  }, {})).sort((a, b) => b[1] - a[1])
   const sources = limitSources(limits)
   // Pins pick what the sidebar panel shows. No pins = all; unpinning the
   // last one leaves a marker that matches nothing, so the panel is empty.
@@ -123,8 +133,10 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
               {r.error ? <div className="callout danger"><Icon name="alert" size={15} /><span>{r.error}</span></div> : !d ? <Loading /> : series.length === 0 ? <p className="muted">No turns in this range.</p> : (
                 <div className="bars" role="img" aria-label={`${metric} per day`}>
                   {series.map((x, i) => (
-                    <div key={x.date} className="bar-col" title={`${x.date}: ${fmt(val(x))} · ${x.turns} turns`}>
-                      <div className="bar"><span style={{ height: `${(val(x) / max) * 100}%` }} /></div>
+                    <div key={x.date} className="bar-col" title={`${x.date}: ${fmt(val(x))} · ${x.turns} turns${metric === 'cost' && x.elsewhere_usd ? ` · ${fmtCost(x.elsewhere_usd)} outside Pocket AI` : ''}`}>
+                      {metric === 'cost' && x.elsewhere_usd
+                        ? <div className="bar stack"><span className="else" style={{ height: `${(x.elsewhere_usd / max) * 100}%` }} /><span style={{ height: `${(x.cost_usd / max) * 100}%` }} /></div>
+                        : <div className="bar"><span style={{ height: `${(val(x) / max) * 100}%` }} /></div>}
                       {series.length <= 31 && <span className={`bar-l ${series.length > 14 && i % 5 !== (series.length - 1) % 5 ? 'bar-l-minor' : ''}`}>{new Date(x.date + 'T12:00:00').getDate()}</span>}
                     </div>
                   ))}
@@ -135,9 +147,14 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
                   {providers.map(p => (
                     <div key={p} className="set-stat"><span className={`prov-dot prov-${p}`} /><span className="set-stat-n tnum">{fmtCost(d.providers?.[p]?.cost_usd || 0)}</span><span className="set-stat-l">{providerName(p)} · {d.providers?.[p]?.turns || 0} turns</span></div>
                   ))}
+                  {awayTotal > 0 && (
+                    <div className="set-stat" title={awayBy.map(([k, v]) => `${k}: ${fmtCost(v)}`).join('\n')}><span className="prov-dot prov-else" /><span className="set-stat-n tnum">{fmtCost(awayTotal)}</span>
+                      <span className="set-stat-l">Outside Pocket AI · {awayBy.slice(0, 2).map(([k]) => k.split(' · ')[0]).filter((v, i, a) => a.indexOf(v) === i).join(', ')}</span></div>
+                  )}
                 </div>
               )}
-              <p className="muted xsmall mt-s">Costs are what the same tokens would cost on the API; on a Claude or ChatGPT subscription you pay the plan, and the limits above are what matters.</p>
+              <p className="muted xsmall mt-s">Costs are what the same tokens would cost on the API; on a Claude or ChatGPT subscription you pay the plan, and the limits above are what matters.
+                {metric === 'cost' && ' Outside Pocket AI (lighter) is what your logins on this server spent in Paseo, the terminal and agents your agents started, read from the CLIs\' own files; a Claude session counts once its process ends.'}</p>
             </div>
           </section>
         </div>

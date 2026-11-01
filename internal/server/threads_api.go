@@ -953,14 +953,20 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 	for _, d := range byDay {
 		have[d.Date] = d
 	}
+	spend := s.spentElsewhere(ctx, userFrom(ctx), start, loc)
+	extra := map[string]float64{}
+	for _, x := range spend {
+		extra[x.Date] += x.USD
+	}
 	all := make([]store.UsageDay, 0, days)
 	for i := 0; i < days; i++ {
 		d := start.AddDate(0, 0, i).Format("2006-01-02")
-		if v, ok := have[d]; ok {
-			all = append(all, v)
-		} else {
-			all = append(all, store.UsageDay{Date: d})
+		v, ok := have[d]
+		if !ok {
+			v = store.UsageDay{Date: d}
 		}
+		v.Elsewhere = extra[d]
+		all = append(all, v)
 	}
 	prov, err := s.store.UsageByProvider(ctx, me(r), store.FormatTime(start))
 	if err != nil {
@@ -976,7 +982,23 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 			s.rt.refreshLimits(false)
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"days": all, "providers": prov, "limits": s.rt.limitsSnapshot(me(r))})
+	writeJSON(w, http.StatusOK, map[string]any{"days": all, "providers": prov, "elsewhere": spend, "limits": s.rt.limitsSnapshot(me(r))})
+}
+
+// spentElsewhere is what a person's logins on this server spent outside
+// Pocket AI since `from`: Paseo, the terminal, and agents that other agents
+// started (codex exec, claude -p). Sessions any Pocket AI thread used are
+// left out, their turns are counted already.
+func (s *Server) spentElsewhere(ctx context.Context, u *store.User, from time.Time, loc *time.Location) []agent.Spend {
+	if !u.MayRun() {
+		return []agent.Spend{}
+	}
+	owned := s.store.SessionOwners(ctx)
+	visible := s.sessionFilter(ctx, u)
+	return agent.Spending(s.homesFor(ctx, u), s.cfg.PaseoHome, from, loc, func(provider, sid string, account int64) bool {
+		_, mine := owned[provider+":"+sid]
+		return !mine && visible(provider, sid, account)
+	})
 }
 
 // handleLimits is the plan limits alone, for the always-on usage panel: it

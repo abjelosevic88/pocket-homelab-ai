@@ -136,6 +136,10 @@ func StartClaude(ctx context.Context, o Options, sink Sink) (Session, error) {
 	// thread's last connection dropped) knows its session: no initialize,
 	// and a turn it is in the middle of is on.
 	adopted := l.h != nil && !l.Header.Started
+	s.cost = o.CostBase
+	if adopted {
+		s.cost = o.HeldCost
+	}
 	if adopted && l.Header.Busy {
 		s.running, s.turnFrom = true, time.Now()
 		sink.TurnStarted()
@@ -1002,10 +1006,11 @@ func (s *claudeSession) handleResult(m map[string]json.RawMessage) {
 		return
 	}
 	s.mu.Lock()
-	// total_cost_usd adds up over the life of the process; report this turn's share.
+	// total_cost_usd adds up over the session, including what it cost before
+	// this process (CostBase); report this turn's share.
 	cost := r.TotalCostUSD - s.cost
 	if cost < 0 {
-		cost = r.TotalCostUSD
+		cost = r.TotalCostUSD // it started over: the session file had no cost saved
 	}
 	s.cost = r.TotalCostUSD
 	wasRunning := s.running
@@ -1024,7 +1029,7 @@ func (s *claudeSession) handleResult(m map[string]json.RawMessage) {
 	if window > 0 {
 		s.sink.Context(Context{Window: window})
 	}
-	t := TurnInfo{OK: r.Subtype == "success" && !r.IsError, DurationMS: dur, CostUSD: cost,
+	t := TurnInfo{OK: r.Subtype == "success" && !r.IsError, DurationMS: dur, CostUSD: cost, SessionCost: r.TotalCostUSD,
 		InputTokens:  r.Usage.InputTokens + r.Usage.CacheCreation + r.Usage.CacheReadInputTokens,
 		OutputTokens: r.Usage.OutputTokens, CachedTokens: r.Usage.CacheReadInputTokens}
 	if !t.OK {

@@ -446,6 +446,7 @@ type UsageDay struct {
 	Turns        int     `json:"turns"`
 	Claude       float64 `json:"claude_cost_usd"`
 	Codex        int     `json:"codex_turns"`
+	Elsewhere    float64 `json:"elsewhere_usd"` // sessions outside Pocket AI (filled in by the server)
 }
 
 // UsageByDay sums a person's turns per local day since `since` (UTC ISO).
