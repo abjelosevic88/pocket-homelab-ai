@@ -1,9 +1,12 @@
 // ⌘K — jump to a thread, run a recipe, or go anywhere.
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useNavigate } from 'react-router-dom'
+import { api, qs, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { baseName, stamp, threadTitle } from '../lib/format'
-import type { Recipe } from '../lib/types'
+import { safeSnippet } from '../lib/markdown'
+import type { Recipe, SearchHit } from '../lib/types'
 import { ProviderBadge, ThreadStatus } from './bits'
 import { Icon } from './icons'
 
@@ -13,7 +16,20 @@ export function CommandPalette({ onClose, commands, openThread, runRecipe }: { o
   const { threads, recipes } = useApp()
   const [q, setQ] = useState('')
   const [hi, setHi] = useState(0)
+  const [hits, setHits] = useState<SearchHit[]>([])
   const list = useRef<HTMLDivElement>(null)
+  const navigate = useNavigate()
+
+  // what was said in every conversation (full-text), a beat after typing stops
+  useEffect(() => {
+    const n = q.trim()
+    if (n.length < 2) { setHits([]); return }
+    let live = true
+    const t = setTimeout(() => {
+      api.get<SearchHit[]>(`${V1}/search${qs({ q: n })}`).then(h => { if (live) setHits(h || []) }).catch(() => { if (live) setHits([]) })
+    }, 180)
+    return () => { live = false; clearTimeout(t) }
+  }, [q])
 
   type Row = { key: string; group: string; icon: React.ReactNode; label: React.ReactNode; sub?: React.ReactNode; hint?: React.ReactNode; run: () => void }
   const rows = useMemo<Row[]>(() => {
@@ -21,18 +37,24 @@ export function CommandPalette({ onClose, commands, openThread, runRecipe }: { o
     const n = q.trim().toLowerCase()
     const match = (s: string) => !n || n.split(/\s+/).every(w => s.toLowerCase().includes(w))
     for (const c of commands) if (match(`${c.label} ${c.keywords || ''}`)) out.push({ key: c.id, group: 'Go to', icon: <Icon name={c.icon} size={16} />, label: c.label, hint: c.hint ? <kbd>{c.hint}</kbd> : undefined, run: c.run })
-    for (const r of recipes) if (match(`${r.name} ${r.prompt}`)) out.push({ key: 'r' + r.id, group: 'Run a recipe', icon: <span className="pal-emoji">{r.icon || '✦'}</span>, label: r.name, sub: r.prompt.slice(0, 100), run: () => runRecipe(r) })
+    for (const r of recipes) if (match(r.name)) out.push({ key: 'r' + r.id, group: 'Run a recipe', icon: <span className="pal-emoji">{r.icon || '✦'}</span>, label: r.name, sub: r.prompt.slice(0, 100), run: () => runRecipe(r) })
     let nThreads = 0
+    const shown = new Set<string>()
     for (const t of threads || []) {
-      if (nThreads >= (n ? 20 : 8)) break
-      if (!match(`${t.title} ${t.preview} ${t.cwd}`)) continue
+      if (nThreads >= 8) break
+      if (!match(`${threadTitle(t)} ${baseName(t.cwd)}`)) continue
       nThreads++
+      shown.add(t.id)
       out.push({ key: 't' + t.id, group: n ? 'Threads' : 'Recent threads', icon: (t.status !== 'idle' || t.unread || t.pending > 0) ? <ThreadStatus t={t} /> : <Icon name="message" size={16} />, label: threadTitle(t), sub: <span className="row" style={{ gap: 6 }}><ProviderBadge provider={t.provider} size="xs" />{baseName(t.cwd)} · {stamp(t.activity_at)}</span>, run: () => openThread(t.id) })
+    }
+    if (n) for (const h of hits.slice(0, 15)) {
+      if (shown.has(h.thread_id)) continue
+      out.push({ key: 'h' + h.thread_id, group: 'In conversations', icon: <Icon name="search" size={16} />, label: h.title || 'Untitled', sub: <span dangerouslySetInnerHTML={{ __html: safeSnippet(h.snippet) }} />, hint: <span className="muted" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{stamp(h.activity_at)}</span>, run: () => navigate(`/t/${h.thread_id}${h.item_key ? `#item-${h.item_key}` : ''}`) })
     }
     // recent threads first when nothing is typed
     if (!n) out.sort((a, b) => (a.group === 'Recent threads' ? 0 : 1) - (b.group === 'Recent threads' ? 0 : 1))
     return out
-  }, [q, commands, recipes, threads, openThread, runRecipe])
+  }, [q, hits, commands, recipes, threads, openThread, runRecipe, navigate])
   useEffect(() => setHi(0), [q])
   useEffect(() => { list.current?.querySelector(`[data-i="${hi}"]`)?.scrollIntoView({ block: 'nearest' }) }, [hi])
 
