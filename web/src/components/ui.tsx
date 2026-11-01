@@ -6,7 +6,7 @@ import { Icon } from './icons'
 
 type ToastItem = { id: number; msg: React.ReactNode; kind: 'ok' | 'err'; action?: { label: string; run: () => void }; ms: number }
 /** ms: how long it stays (an action, e.g. Undo, shows the time it has left). */
-type ToastFn = (msg: React.ReactNode, kind?: 'ok' | 'err', action?: { label: string; run: () => void }, ms?: number) => void
+export type ToastFn = (msg: React.ReactNode, kind?: 'ok' | 'err', action?: { label: string; run: () => void }, ms?: number) => void
 const ToastCtx = createContext<{ toast: ToastFn }>({ toast: () => {} })
 export function useToast() { return useContext(ToastCtx) }
 /** The seconds an action toast has left, beside its button. */

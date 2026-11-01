@@ -1,6 +1,11 @@
 package server
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
+)
 
 func TestIsAutoTitle(t *testing.T) {
 	first := "So check my other pocket apps and tell me, can we build something like this? Something that will replace SearXNG for me"
@@ -29,5 +34,27 @@ func TestCleanTitle(t *testing.T) {
 	}
 	if _, err := cleanTitle("   "); err == nil {
 		t.Fatal("empty title accepted")
+	}
+}
+
+func TestRetitleConversation(t *testing.T) {
+	if retitleConversation(nil) != "" {
+		t.Fatal("empty conversation quoted")
+	}
+	items := []*store.Item{
+		{Kind: "user", Body: "Check my Pocket apps"},
+		{Kind: "assistant", Body: "Looked at them."},
+		{Kind: "user", Body: "<cross-session-message from-name=\"x\">hi</cross-session-message>"},
+		{Kind: "user", Body: "Now add rename to the palette"},
+		{Kind: "assistant", Body: "Palette actions deployed."},
+	}
+	got := retitleConversation(items)
+	for _, want := range []string{"Check my Pocket apps", "- Now add rename to the palette", "Palette actions deployed.", "as a whole"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "cross-session") || strings.Contains(got, "Looked at them") {
+		t.Fatalf("quoted what it should skip:\n%s", got)
 	}
 }

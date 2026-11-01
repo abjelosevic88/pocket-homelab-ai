@@ -8,9 +8,19 @@ import { threadTitle } from '../lib/format'
 import { accessOf } from '../lib/share'
 import type { Thread } from '../lib/types'
 import { ShareDialog } from './ShareDialog'
-import { Confirm, copyText, download, errMsg, type MenuItem, Modal, useToast } from './ui'
+import { Confirm, copyText, download, errMsg, type MenuItem, Modal, type ToastFn, useToast } from './ui'
 
 type Patch = Partial<Pick<Thread, 'title' | 'pinned' | 'archived'>>
+
+/** "Regenerate title": the server names the thread from the whole conversation (a model call, a few seconds). */
+export async function retitleThread(id: string, toast: ToastFn): Promise<Thread | undefined> {
+  toast('Reading the conversation for a better title…')
+  try {
+    const th = await api.post<Thread>(`${V1}/threads/${id}/retitle`)
+    toast(`Renamed to “${th.title}”`, 'ok')
+    return th
+  } catch (e) { toast(errMsg(e), 'err') }
+}
 
 export function useThreadMenu() {
   const { user, upsertThread, dropThread } = useApp()
@@ -46,6 +56,7 @@ export function useThreadMenu() {
     if (!owner) return [{ label: 'Copy link', icon: 'link', onSelect: link }, exp]
     return [
       { label: 'Rename…', icon: 'edit', onSelect: () => setRenaming(t) },
+      { label: 'Regenerate title', icon: 'sparkles', onSelect: async () => { const th = await retitleThread(t.id, toast); if (th) upsertThread(th) } },
       { label: t.pinned ? 'Unpin' : 'Pin to top', icon: 'bookmark', onSelect: () => patch(t, { pinned: !t.pinned }) },
       { label: t.shares?.length ? 'Sharing…' : 'Share…', icon: 'users', onSelect: () => setSharing(t) },
       'sep',
