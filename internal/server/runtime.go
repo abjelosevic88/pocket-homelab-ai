@@ -1891,8 +1891,12 @@ func (k *runSink) TurnDone(ti agent.TurnInfo) {
 	}
 	// A held agent taken back replays its recent output, results this thread
 	// recorded already among it (the same token counts): such a turn is not
-	// counted, footed or announced again.
-	dup := ti.InputTokens > 0 && rt.s.store.HasTurn(rt.ctx, r.threadID, ti.InputTokens, ti.OutputTokens, ti.CachedTokens)
+	// counted, footed or announced again. Only in a replay: live turns always
+	// count.
+	r.mu.Lock()
+	replaying := r.replaying
+	r.mu.Unlock()
+	dup := replaying && ti.InputTokens > 0 && rt.s.store.HasTurn(rt.ctx, r.threadID, ti.InputTokens, ti.OutputTokens, ti.CachedTokens)
 	// Keyed by the CLI's turn id where there is one, so re-reading the session
 	// later (follow.go) finds this footer instead of adding a second one.
 	turnKey := "turn-" + uuid.NewString()[:8]
