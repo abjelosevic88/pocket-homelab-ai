@@ -32,7 +32,7 @@ export function CommandPalette({ mode = 'all', onClose, commands, openThread, ru
   // what was said in every conversation (full-text), a beat after typing stops
   useEffect(() => {
     const n = q.trim()
-    if (n.length < 2 || recent) { setHits([]); return }
+    if (n.length < 2) { setHits([]); return }
     let live = true
     const t = setTimeout(() => {
       api.get<SearchHit[]>(`${V1}/search${qs({ q: n })}`).then(h => { if (live) setHits(h || []) }).catch(() => { if (live) setHits([]) })
@@ -45,6 +45,13 @@ export function CommandPalette({ mode = 'all', onClose, commands, openThread, ru
     const out: Row[] = []
     const n = q.trim().toLowerCase()
     const match = (s: string) => !n || n.split(/\s+/).every(w => s.toLowerCase().includes(w))
+    // what was said, in threads not already listed by name
+    const inConversations = (shown: Set<string>, skip?: string) => {
+      for (const h of hits.slice(0, 15)) {
+        if (shown.has(h.thread_id) || h.thread_id === skip) continue
+        out.push({ key: 'h' + h.thread_id, group: 'In conversations', icon: <Icon name="search" size={16} />, label: h.title || 'Untitled', sub: <span dangerouslySetInnerHTML={{ __html: safeSnippet(h.snippet) }} />, hint: <span className="muted" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{stamp(h.activity_at)}</span>, run: () => navigate(`/t/${h.thread_id}${h.item_key ? `#item-${h.item_key}` : ''}`) })
+      }
+    }
     const hereGroup = here ? `This thread · ${here.title}` : ''
     if (here) {
       const group = hereGroup
@@ -55,11 +62,15 @@ export function CommandPalette({ mode = 'all', onClose, commands, openThread, ru
     }
     if (recent) {
       // latest first (pins don't jump ahead here), the one you are in left out
+      const shown = new Set<string>()
       const list = [...(threads || [])].filter(t => t.id !== openId).sort((a, b) => (b.activity_at || '').localeCompare(a.activity_at || ''))
       for (const t of list) {
         if (out.length >= 50) break
-        if (match(`${threadTitle(t)} ${baseName(t.cwd)}`)) out.push({ key: 't' + t.id, group: 'Recent conversations', icon: (t.status !== 'idle' || t.unread || t.pending > 0) ? <ThreadStatus t={t} /> : <Icon name="message" size={16} />, label: threadTitle(t), sub: <span className="row" style={{ gap: 6 }}><ProviderBadge provider={t.provider} size="xs" />{baseName(t.cwd)} · {stamp(t.activity_at)}</span>, run: () => openThread(t.id) })
+        if (!match(`${threadTitle(t)} ${baseName(t.cwd)}`)) continue
+        shown.add(t.id)
+        out.push({ key: 't' + t.id, group: 'Recent conversations', icon: (t.status !== 'idle' || t.unread || t.pending > 0) ? <ThreadStatus t={t} /> : <Icon name="message" size={16} />, label: threadTitle(t), sub: <span className="row" style={{ gap: 6 }}><ProviderBadge provider={t.provider} size="xs" />{baseName(t.cwd)} · {stamp(t.activity_at)}</span>, run: () => openThread(t.id) })
       }
+      if (n) inConversations(shown, openId)
       return out
     }
     for (const c of commands) if (match(`${c.label} ${c.keywords || ''}`)) out.push({ key: c.id, group: 'Go to', icon: <Icon name={c.icon} size={16} />, label: c.label, hint: c.hint ? <kbd>{c.hint}</kbd> : undefined, run: c.run })
@@ -73,10 +84,7 @@ export function CommandPalette({ mode = 'all', onClose, commands, openThread, ru
       shown.add(t.id)
       out.push({ key: 't' + t.id, group: n ? 'Threads' : 'Recent threads', icon: (t.status !== 'idle' || t.unread || t.pending > 0) ? <ThreadStatus t={t} /> : <Icon name="message" size={16} />, label: threadTitle(t), sub: <span className="row" style={{ gap: 6 }}><ProviderBadge provider={t.provider} size="xs" />{baseName(t.cwd)} · {stamp(t.activity_at)}</span>, run: () => openThread(t.id) })
     }
-    if (n) for (const h of hits.slice(0, 15)) {
-      if (shown.has(h.thread_id)) continue
-      out.push({ key: 'h' + h.thread_id, group: 'In conversations', icon: <Icon name="search" size={16} />, label: h.title || 'Untitled', sub: <span dangerouslySetInnerHTML={{ __html: safeSnippet(h.snippet) }} />, hint: <span className="muted" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{stamp(h.activity_at)}</span>, run: () => navigate(`/t/${h.thread_id}${h.item_key ? `#item-${h.item_key}` : ''}`) })
-    }
+    if (n) inConversations(shown)
     // the open thread's actions first, then recent threads when nothing is typed
     const rank = (r: Row) => r.group === hereGroup ? 0 : !n && r.group === 'Recent threads' ? 1 : 2
     out.sort((a, b) => rank(a) - rank(b))
@@ -92,7 +100,7 @@ export function CommandPalette({ mode = 'all', onClose, commands, openThread, ru
       <div className="palette-box" role="dialog" aria-label="Search and commands">
         <div className="pal-input">
           <Icon name="search" size={18} />
-          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={recent ? 'Switch to a recent conversation…' : here ? 'Rename, archive, find a thread, go somewhere…' : 'Find a thread, run a recipe, go somewhere…'} aria-label="Search"
+          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={recent ? 'Switch to a recent conversation, or search what was said…' : here ? 'Rename, archive, find a thread, go somewhere…' : 'Find a thread, run a recipe, go somewhere…'} aria-label="Search"
             onKeyDown={e => {
               // ⌘E again while switching: the next one down, as in editors
               const again = recent && actionFor(e.nativeEvent, keys) === 'recent'
