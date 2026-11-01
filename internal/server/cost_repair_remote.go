@@ -104,7 +104,7 @@ func (s *Server) repairRemoteCostsOnce(ctx context.Context) {
 	var got []fetched
 	var wg sync.WaitGroup
 	for host, ths := range byHost {
-		h, err := s.store.GetHost(ctx, host)
+		h, err := s.host(ctx, host) // reached as its agents are: with its person's own key
 		if err != nil { // the machine was removed: nothing to fetch, ever
 			got = append(got, fetched{host: host, ok: true})
 			continue
