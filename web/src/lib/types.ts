@@ -331,7 +331,8 @@ export interface Item {
   by_id?: number
 }
 
-export interface ThreadDetail { thread: Thread; items: Item[] }
+/** earlier: how many older items were left out (GET /threads/{id}?tail=1). */
+export interface ThreadDetail { thread: Thread; items: Item[]; earlier?: number }
 
 export interface Upload { id: string; name: string; mime: string; size: number; url: string; created_at: string }
 

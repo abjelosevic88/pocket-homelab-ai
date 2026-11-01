@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ func (s *Server) threadRoutes(r chi.Router) {
 	r.Get("/threads", s.handleListThreads)
 	r.Post("/threads", s.handleCreateThread)
 	r.Get("/threads/{id}", s.handleGetThread)
+	r.Get("/threads/{id}/items", s.handleEarlierItems)
 	r.Get("/threads/{id}/review", s.handleGitReview)
 	s.mobileRoutes(r)
 	r.Patch("/threads/{id}", s.handlePatchThread)
@@ -466,17 +468,55 @@ func (s *Server) sendStarting(threadID, key string, in agent.Input) {
 	}
 }
 
+// A long conversation opens with its last turns (?tail=1); the older items
+// come a page at a time from /threads/{id}/items?before=<item id>.
+const (
+	tailTurns = 10
+	tailItems = 400
+)
+
 func (s *Server) handleGetThread(w http.ResponseWriter, r *http.Request) {
 	t := s.threadAs(w, r, accessView)
 	if t == nil {
 		return
 	}
-	items, err := s.store.ListItems(r.Context(), t.ID)
+	var items []*store.Item
+	earlier := 0
+	var err error
+	if queryBool(r, "tail") {
+		items, earlier, err = s.store.ListItemsTail(r.Context(), t.ID, 0, tailTurns, tailItems)
+	} else {
+		items, err = s.store.ListItems(r.Context(), t.ID)
+	}
 	if err != nil {
 		s.fail(w, err, "items")
 		return
 	}
-	live := s.rt.liveItems(t.ID)
+	writeJSON(w, http.StatusOK, map[string]any{"thread": t, "items": s.itemsOut(t.ID, items), "earlier": earlier})
+}
+
+func (s *Server) handleEarlierItems(w http.ResponseWriter, r *http.Request) {
+	t := s.threadAs(w, r, accessView)
+	if t == nil {
+		return
+	}
+	before, err := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
+	if err != nil || before <= 0 {
+		writeErr(w, http.StatusBadRequest, "before: an item id")
+		return
+	}
+	items, earlier, err := s.store.ListItemsTail(r.Context(), t.ID, before, tailTurns, tailItems)
+	if err != nil {
+		s.fail(w, err, "items")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": s.itemsOut(t.ID, items), "earlier": earlier})
+}
+
+// itemsOut is items as the API shows them, with what a running turn has
+// streamed since it was saved.
+func (s *Server) itemsOut(threadID string, items []*store.Item) []map[string]any {
+	live := s.rt.liveItems(threadID)
 	out := make([]map[string]any, 0, len(items))
 	for _, it := range items {
 		if l, ok := live[it.Key]; ok {
@@ -485,7 +525,7 @@ func (s *Server) handleGetThread(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, itemJSON(it))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"thread": t, "items": out})
+	return out
 }
 
 func (s *Server) handlePatchThread(w http.ResponseWriter, r *http.Request) {

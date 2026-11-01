@@ -60,6 +60,12 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const [thread, setThread] = useState<Thread | null>(null)
   const [rcBusy, setRcBusy] = useState(false)
   const [items, setItems] = useState<Item[] | null>(null)
+  // a long conversation opens with its last turns; older ones load on request
+  const [earlier, setEarlier] = useState(0)
+  const [loadingEarlier, setLoadingEarlier] = useState(false)
+  const loadedRef = useRef<Item[] | null>(null)
+  loadedRef.current = items
+  const prependRef = useRef<number | null>(null) // distance from the bottom to keep while older items go in above
   const [missing, setMissing] = useState(false)
   const [streamDown, setStreamDown] = useState(false) // live updates dropped (Pocket AI restarting, network)
   const [editingTitle, setEditingTitle] = useState(false)
@@ -90,9 +96,15 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
 
   const load = useCallback(async () => {
     try {
-      const d = await api.get<ThreadDetail>(`${V1}/threads/${id}`)
+      // a link to one message (#item-…) may point before the last turns: all of it then
+      const all = window.location.hash.startsWith('#item-')
+      const d = await api.get<ThreadDetail>(`${V1}/threads/${id}${all ? '' : '?tail=1'}`)
       setThread(d.thread)
-      setItems(prev => keepStreamed(prev, d.items || []))
+      // reloaded (live updates came back): keep the older pages already shown
+      const first = (d.items || []).find(i => i.id > 0)?.id
+      const kept = first ? (loadedRef.current || []).filter(i => i.id > 0 && i.id < first) : []
+      if (!kept.length) setEarlier(d.earlier || 0)
+      setItems(prev => [...kept, ...keepStreamed(prev, d.items || [])])
       setMissing(false)
       upsertThread(d.thread)
     } catch (e) {
@@ -102,7 +114,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   }, [id, upsertThread, toast])
 
   useEffect(() => {
-    setThread(null); setItems(null); setMissing(false); setEditingTitle(false); atBottomRef.current = true; setAtBottom(true); setNewBelow(false)
+    setThread(null); setItems(null); setEarlier(0); setMissing(false); setEditingTitle(false); atBottomRef.current = true; setAtBottom(true); setNewBelow(false)
     load()
     setViewing(id)
     return () => setViewing(null)
@@ -127,7 +139,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
           return next
         })
       },
-      history_reset: d => { setItems(d as Item[]); atBottomRef.current = true; setAtBottom(true); setNewBelow(false) },
+      history_reset: d => { setItems(d as Item[]); setEarlier(0); atBottomRef.current = true; setAtBottom(true); setNewBelow(false) },
       item_removed: d => { const { key } = d as { key: string }; setItems(list => list ? list.filter(x => x.key !== key) : list) },
       thread: d => { const th = d as Thread; if (th?.id === id) { setThread(th); upsertThread(th) } },
       revoked: () => { setMissing(true); dropThread(id) }, // no longer shared with you
@@ -161,6 +173,12 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   useEffect(() => { firstPaint.current = true }, [id])
   useLayoutEffect(() => {
     if (!items) return
+    if (prependRef.current !== null) {
+      const el = scroller.current
+      if (el) el.scrollTop = el.scrollHeight - prependRef.current
+      prependRef.current = null
+      return
+    }
     const hash = loc.hash.startsWith('#item-') ? loc.hash.slice(1) : ''
     if (firstPaint.current) {
       firstPaint.current = false
@@ -172,6 +190,23 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
     if (atBottomRef.current) toBottom()
     else setNewBelow(true)
   }, [items]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const loadEarlier = async () => {
+    const first = items?.find(i => i.id > 0)?.id
+    if (!first || loadingEarlier) return
+    setLoadingEarlier(true)
+    try {
+      const d = await api.get<{ items: Item[]; earlier: number }>(`${V1}/threads/${id}/items?before=${first}`)
+      const el = scroller.current
+      prependRef.current = el ? el.scrollHeight - el.scrollTop : null
+      setItems(list => {
+        const have = new Set((list || []).map(i => i.key))
+        return [...d.items.filter(i => !have.has(i.key)), ...(list || [])]
+      })
+      setEarlier(d.earlier)
+    } catch (e) { toast(errMsg(e), 'err') }
+    finally { setLoadingEarlier(false) }
+  }
 
   const allPending = useMemo(() => (items || []).filter(i => i.kind === 'request' && i.request?.status === 'pending'), [items])
   // a Pocket app change in a shared chat is answered by the person whose apps it touches
@@ -240,6 +275,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
       if (result.thread.id !== id) throw new Error('Update the server to rewind within this conversation')
       setThread(result.thread)
       setItems(result.items)
+      setEarlier(0)
       upsertThread(result.thread)
       if (keepText) composer.current?.restoreDraft(result.draft.text, result.draft.uploads)
       atBottomRef.current = true
@@ -344,6 +380,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
           {items === null ? <Loading /> : (
             <>
               {items.length === 0 && <div className="muted center small" style={{ padding: 30 }}>Nothing here yet.</div>}
+              {earlier > 0 && <div className="center" style={{ padding: '6px 0 12px' }}><button type="button" className="btn ghost sm" onClick={loadEarlier} disabled={loadingEarlier}>{loadingEarlier ? 'Loading…' : 'Load earlier messages'}</button></div>}
               {paused && <div className="notice warn"><Icon name="alert" size={14} /><span>{paused} You can still read and chat here; its Pocket Projects tools are off.</span></div>}
               {t.source === 'rewind' && <div className="notice info"><Icon name="undo" size={14} /><span>Continued from an earlier message. <button type="button" className="link-btn" onClick={() => navigate(`/t/${t.source_ref}`)}>Open original conversation</button>. Files and app changes already made are unchanged.</span></div>}
               {t.source === 'import' && items.length > 0 && <div className="notice info"><Icon name="history" size={14} /><span>Imported from the server’s {providerName(t.provider)} history — sending a message continues that session.</span></div>}
