@@ -29,6 +29,7 @@ func TestMirrorSessions(t *testing.T) {
 	claude := filepath.Join(remote, ".claude", "projects", "-home-x-Projects-core", sid+".jsonl")
 	sub := filepath.Join(remote, ".claude", "projects", "-home-x-Projects-core", sid, "subagents", "agent-a1.jsonl")
 	codex := filepath.Join(remote, ".codex", "sessions", "2026", "10", "29", "rollout-2026-10-29T13-00-00-abc.jsonl")
+	archived := filepath.Join(remote, ".codex", "archived_sessions", "rollout-2026-10-29T14-00-00-def.jsonl")
 	write := func(p, s string) {
 		t.Helper()
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -42,6 +43,7 @@ func TestMirrorSessions(t *testing.T) {
 	write(claude, line)
 	write(sub, "{}\n")
 	write(codex, "{\"type\":\"session_meta\"}\n")
+	write(archived, "{\"type\":\"session_meta\"}\n")
 	old := time.Date(2026, 10, 29, 13, 3, 0, 0, time.UTC)
 	_ = os.Chtimes(claude, old, old)
 	run := localRun(remote)
@@ -63,6 +65,7 @@ func TestMirrorSessions(t *testing.T) {
 	}
 	check(claude)
 	check(codex)
+	check(archived) // codex exec runs often end up archived
 	if info, _ := os.Stat(mirrored(claude)); !info.ModTime().Equal(old) {
 		t.Fatalf("mtime %v, want the remote's %v", info.ModTime(), old)
 	}

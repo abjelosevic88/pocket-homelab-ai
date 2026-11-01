@@ -94,13 +94,20 @@ func TestSpendingReadsCostStatesAndCodexResponses(t *testing.T) {
 		`{"timestamp":"2026-10-31T08:00:02Z","type":"event_msg","payload":{"type":"token_count","info":` + strings.Replace(usage, "%d", "100000", 1) + `}}`,
 		`{"timestamp":"2026-10-31T08:00:03Z","type":"event_msg","payload":{"type":"token_count","info":` + strings.Replace(usage, "%d", "100000", 1) + `}}`,
 	}, "\n")+"\n"), 0o600)
+	// an archived one (where codex exec runs often end up) counts too
+	_ = os.MkdirAll(filepath.Join(codex, "archived_sessions"), 0o700)
+	_ = os.WriteFile(filepath.Join(codex, "archived_sessions", "rollout-d.jsonl"), []byte(strings.Join([]string{
+		`{"timestamp":"2026-10-31T09:00:00Z","type":"session_meta","payload":{"id":"d","originator":"codex_exec","cwd":"/x"}}`,
+		`{"timestamp":"2026-10-31T09:00:01Z","type":"turn_context","payload":{"model":"gpt-6.1-sol"}}`,
+		`{"timestamp":"2026-10-31T09:00:02Z","type":"event_msg","payload":{"type":"token_count","info":` + strings.Replace(usage, "%d", "100000", 1) + `}}`,
+	}, "\n")+"\n"), 0o600)
 	h := Homes{Claude: []AccountHome{{Dir: home}}, Codex: []AccountHome{{Dir: codex}}}
 	from := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	got := map[string]float64{}
 	for _, x := range Spending(h, "", from, time.UTC, func(p, sid string, _ int64) bool { return sid != "skip" }) {
 		got[x.Provider+" "+x.Date] += x.USD
 	}
-	want := map[string]float64{"claude 2026-10-30": 1, "claude 2026-10-31": 0.75, "codex 2026-10-31": 0.2} // 0.5 + the fork's own 0.25; one response of 100K at $2/M (the repeat adds nothing)
+	want := map[string]float64{"claude 2026-10-30": 1, "claude 2026-10-31": 0.75, "codex 2026-10-31": 0.4} // 0.5 + the fork's own 0.25; one response of 100K at $2/M per session (the repeat adds nothing)
 	for k, v := range want {
 		if math.Abs(got[k]-v) > 1e-9 {
 			t.Fatalf("%s: got %v, want %v (all: %v)", k, got[k], v, got)

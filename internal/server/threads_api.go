@@ -985,20 +985,29 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"days": all, "providers": prov, "elsewhere": spend, "limits": s.rt.limitsSnapshot(me(r))})
 }
 
-// spentElsewhere is what a person's logins on this server spent outside
-// Pocket AI since `from`: Paseo, the terminal, and agents that other agents
-// started (codex exec, claude -p). Sessions any Pocket AI thread used are
-// left out, their turns are counted already.
+// spentElsewhere is what a person's logins on this server, and on the other
+// machines they may use, spent outside Pocket AI since `from`: Paseo, the
+// terminal, and agents that other agents started (codex exec, claude -p).
+// Sessions any Pocket AI thread used are left out, their turns are counted
+// already.
 func (s *Server) spentElsewhere(ctx context.Context, u *store.User, from time.Time, loc *time.Location) []agent.Spend {
 	if !u.MayRun() {
 		return []agent.Spend{}
 	}
 	owned := s.store.SessionOwners(ctx)
 	visible := s.sessionFilter(ctx, u)
-	return agent.Spending(s.homesFor(ctx, u), s.cfg.PaseoHome, from, loc, func(provider, sid string, account int64) bool {
+	out := agent.Spending(s.homesFor(ctx, u), s.cfg.PaseoHome, from, loc, func(provider, sid string, account int64) bool {
 		_, mine := owned[provider+":"+sid]
 		return !mine && visible(provider, sid, account)
 	})
+	remoteVisible := s.remoteFilter(ctx, u)
+	for _, hh := range s.remoteHomes(ctx, u) {
+		out = append(out, agent.Spending(hh.homes, "", from, loc, func(provider, sid string, _ int64) bool {
+			_, mine := owned[provider+":"+sid]
+			return !mine && remoteVisible(hh.host, provider, sid)
+		})...)
+	}
+	return out
 }
 
 // handleLimits is the plan limits alone, for the always-on usage panel: it
