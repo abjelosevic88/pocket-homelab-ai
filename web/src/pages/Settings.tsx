@@ -21,7 +21,7 @@ type TabId = 'general' | 'app-defaults' | 'app-changes' | 'agents' | 'notificati
 const TABS: { id: TabId; label: string; icon: string; sub: string; admin?: boolean }[] = [
   { id: 'general', label: 'General', icon: 'settings', sub: 'How the app looks and how the composer behaves.' },
   { id: 'app-defaults', label: 'App defaults', icon: 'sparkles', sub: 'Your default model for text generation across connected Pocket apps.' },
-  { id: 'app-changes', label: 'App changes', icon: 'shield', sub: 'Which changes to your Pocket apps run without waiting for your Allow.' },
+  { id: 'app-changes', label: 'App changes', icon: 'shield', sub: 'Which connectors Ask may read, and which changes to your Pocket apps run without waiting for your Allow.' },
   { id: 'agents', label: 'Agents', icon: 'bot', sub: 'Which agent, model, effort and permissions new threads start with — and what the server has installed.' },
   { id: 'notifications', label: 'Notifications', icon: 'bell', sub: 'A push when an agent finishes, gets stuck or needs your answer.' },
   { id: 'workspaces', label: 'Folders', icon: 'folder', sub: 'Folders on the server agents start in, one tap away.' },
