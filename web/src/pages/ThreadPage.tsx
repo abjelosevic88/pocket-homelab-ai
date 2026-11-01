@@ -365,6 +365,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
             <PrivacyBadge thread={t} access={access} onShare={owner ? () => setSharing(true) : undefined} />
             <ProviderBadge provider={t.provider} size="xs" />
             <ThreadRefChip threadId={t.id} source={t.source} owner={owner} />
+            {t.source === 'quick-chat' && <span className="quick-chat-chip" title="Started from Quick Chat in Pocket Launcher"><Icon name="sparkles" size={12} />Quick Chat</span>}
             {!!t.worktree_id && <WorktreeChip id={t.worktree_id} threadId={t.id} onAsk={owner && canRun ? text => { void send(text, []) } : undefined} />}
             {t.remote_control && <RemoteChip rc={t.remote_control} />}
             {hostName && <span className="host-chip" title={`Runs on ${hostName} over ssh`}><Icon name="server" size={12} />{hostName}</span>}
