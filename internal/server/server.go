@@ -153,6 +153,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	// else reconnect to the agent where it still works, continue it where it
 	// does not (reconnect.go, held.go)
 	s.reconnectCut(cut)
+	s.repairCostsOnce(ctx) // before any agent runs: turns recorded before 0.48.0 (cost_repair.go)
 	go s.housekeeping(ctx)
 	go s.scheduleLoop(ctx)
 	_, _ = s.store.DB.ExecContext(ctx, `UPDATE workflows SET last_status='interrupted' WHERE last_status='running'`)
