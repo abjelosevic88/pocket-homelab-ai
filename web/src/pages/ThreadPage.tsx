@@ -29,6 +29,7 @@ import { accessOf } from '../lib/share'
 import { actionFor, useShortcuts } from '../lib/shortcuts'
 import { type PageActions, usePageActions } from '../lib/palette'
 import { FolderPicker } from '../components/FolderPicker'
+import { retitleThread } from '../components/ThreadMenu'
 import { Confirm, download, Empty, errMsg, Loading, type MenuItem, MenuButton, useContextMenu, useToast } from '../components/ui'
 
 // A reload after the stream came back: the server keeps a streaming reply's
@@ -334,6 +335,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
     ...(document.querySelector('pocket-ask-launcher') ? [{ label: 'Ask about an item…', icon: 'sparkles' as const, onSelect: () => window.dispatchEvent(new Event('pocket-ask-pick')) }] : []),
     { label: t.pinned ? 'Unpin' : 'Pin to top', icon: 'bookmark', onSelect: () => patch({ pinned: !t.pinned }) },
     { label: 'Rename', icon: 'edit', onSelect: () => { setTitleDraft(t.title || threadTitle(t)); setEditingTitle(true) } },
+    { label: 'Regenerate title', icon: 'sparkles', onSelect: async () => { const th = await retitleThread(id, toast); if (th) { setThread(th); upsertThread(th) } } },
     { label: 'Move to another folder…', icon: 'folder', disabled: t.source === 'ask' || !canRun || running, onSelect: () => setMoving(true) },
     ...(t.provider === 'claude' && t.source !== 'ask' && canRun ? [{ label: t.remote_control ? 'Turn off Remote Control' : 'Turn on Remote Control', icon: 'smartphone' as const, onSelect: () => remoteControl(!t.remote_control) }] : []),
     { label: 'Fork into a new thread', icon: 'fork', disabled: t.source === 'ask' || !t.provider_session_id || !canRun, onSelect: fork },
