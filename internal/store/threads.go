@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"html"
 	"strings"
 )
@@ -288,6 +289,54 @@ func (s *Store) ListItems(ctx context.Context, threadID string) ([]*Item, error)
 		out = append(out, &it)
 	}
 	return out, rows.Err()
+}
+
+// ListItemsTail returns the newest part of a thread's timeline, older than
+// item id `before` (0 = up to the newest): its last `turns` messages of the
+// person with what followed them, at most `max` items, and how many older
+// items there are. Long conversations open with this instead of all of
+// it; the rest comes a page at a time.
+func (s *Store) ListItemsTail(ctx context.Context, threadID string, before int64, turns, max int) ([]*Item, int, error) {
+	const visible = `thread_id = ? AND key NOT LIKE 'acct-%' AND (? = 0 OR id < ?)`
+	cut := int64(0)
+	for _, q := range []struct {
+		where string
+		n     int
+	}{{visible + ` AND kind = 'user'`, turns}, {visible, max}} {
+		var id int64
+		err := s.DB.QueryRowContext(ctx, `SELECT id FROM items WHERE `+q.where+` ORDER BY id DESC LIMIT 1 OFFSET ?`, threadID, before, before, q.n-1).Scan(&id)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, 0, err
+		}
+		if id > cut {
+			cut = id
+		}
+	}
+	rows, err := s.DB.QueryContext(ctx, `SELECT id, thread_id, key, kind, data, body, created_at, updated_at FROM items WHERE `+visible+` AND id >= ? ORDER BY id`, threadID, before, before, cut)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	out := []*Item{}
+	for rows.Next() {
+		var it Item
+		var data string
+		if err := rows.Scan(&it.ID, &it.ThreadID, &it.Key, &it.Kind, &data, &it.Body, &it.CreatedAt, &it.UpdatedAt); err != nil {
+			return nil, 0, err
+		}
+		it.Data = json.RawMessage(data)
+		out = append(out, &it)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	earlier := 0
+	if cut > 0 {
+		if err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM items WHERE thread_id = ? AND key NOT LIKE 'acct-%' AND id < ?`, threadID, cut).Scan(&earlier); err != nil {
+			return nil, 0, err
+		}
+	}
+	return out, earlier, nil
 }
 
 // DeleteItem removes one item.
