@@ -438,7 +438,7 @@ func (rt *engine) ensureRun(t *store.Thread) (*run, error) {
 		rt.mu.Unlock()
 		close(done)
 		if err == nil {
-			rt.enforceMax()
+			rt.enforceMax(t.ID)
 			if rt.remoteWanted(t.ID) {
 				go func() { _ = rt.attachRemote(t.ID) }()
 			}
@@ -721,7 +721,11 @@ func (rt *engine) idle(d time.Duration) []string {
 	return out
 }
 
-func (rt *engine) enforceMax() {
+// enforceMax stops the oldest idle agents while more than MaxLive run. keep
+// is the one just started: it has not had its first message yet, so it looks
+// idle, and when every other agent is busy or remote-controlled it would be
+// the only candidate and end the moment it starts.
+func (rt *engine) enforceMax(keep string) {
 	max := rt.s.cfg.MaxLive
 	if max <= 0 {
 		return
@@ -733,6 +737,9 @@ func (rt *engine) enforceMax() {
 	for _, id := range rt.idle(0) {
 		if over <= 0 {
 			break
+		}
+		if id == keep {
+			continue
 		}
 		rt.stop(id)
 		over--
