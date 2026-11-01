@@ -1,4 +1,4 @@
-// ⌘K — jump to a thread, run a recipe, or go anywhere.
+// ⌘K — act on the open thread, jump to a thread, run a recipe, or go anywhere.
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
@@ -6,6 +6,7 @@ import { api, qs, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { baseName, stamp, threadTitle } from '../lib/format'
 import { safeSnippet } from '../lib/markdown'
+import { pageActions } from '../lib/palette'
 import type { Recipe, SearchHit } from '../lib/types'
 import { ProviderBadge, ThreadStatus } from './bits'
 import { Icon } from './icons'
@@ -19,6 +20,7 @@ export function CommandPalette({ onClose, commands, openThread, runRecipe }: { o
   const [hits, setHits] = useState<SearchHit[]>([])
   const list = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
+  const [here] = useState(pageActions)
 
   // what was said in every conversation (full-text), a beat after typing stops
   useEffect(() => {
@@ -31,11 +33,19 @@ export function CommandPalette({ onClose, commands, openThread, runRecipe }: { o
     return () => { live = false; clearTimeout(t) }
   }, [q])
 
-  type Row = { key: string; group: string; icon: React.ReactNode; label: React.ReactNode; sub?: React.ReactNode; hint?: React.ReactNode; run: () => void }
+  type Row = { key: string; group: string; icon: React.ReactNode; label: React.ReactNode; sub?: React.ReactNode; hint?: React.ReactNode; danger?: boolean; run: () => void }
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = []
     const n = q.trim().toLowerCase()
     const match = (s: string) => !n || n.split(/\s+/).every(w => s.toLowerCase().includes(w))
+    const hereGroup = here ? `This thread · ${here.title}` : ''
+    if (here) {
+      const group = hereGroup
+      here.items.forEach((m, i) => {
+        if (typeof m !== 'object' || !('label' in m) || typeof m.label !== 'string' || m.disabled || !m.onSelect) return
+        if (match(`${m.label} thread conversation chat`)) out.push({ key: 'a' + i, group, icon: <Icon name={m.icon || 'chevron-right'} size={16} />, label: m.label, danger: m.danger, run: m.onSelect })
+      })
+    }
     for (const c of commands) if (match(`${c.label} ${c.keywords || ''}`)) out.push({ key: c.id, group: 'Go to', icon: <Icon name={c.icon} size={16} />, label: c.label, hint: c.hint ? <kbd>{c.hint}</kbd> : undefined, run: c.run })
     for (const r of recipes) if (match(r.name)) out.push({ key: 'r' + r.id, group: 'Run a recipe', icon: <span className="pal-emoji">{r.icon || '✦'}</span>, label: r.name, sub: r.prompt.slice(0, 100), run: () => runRecipe(r) })
     let nThreads = 0
@@ -51,10 +61,11 @@ export function CommandPalette({ onClose, commands, openThread, runRecipe }: { o
       if (shown.has(h.thread_id)) continue
       out.push({ key: 'h' + h.thread_id, group: 'In conversations', icon: <Icon name="search" size={16} />, label: h.title || 'Untitled', sub: <span dangerouslySetInnerHTML={{ __html: safeSnippet(h.snippet) }} />, hint: <span className="muted" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{stamp(h.activity_at)}</span>, run: () => navigate(`/t/${h.thread_id}${h.item_key ? `#item-${h.item_key}` : ''}`) })
     }
-    // recent threads first when nothing is typed
-    if (!n) out.sort((a, b) => (a.group === 'Recent threads' ? 0 : 1) - (b.group === 'Recent threads' ? 0 : 1))
+    // the open thread's actions first, then recent threads when nothing is typed
+    const rank = (r: Row) => r.group === hereGroup ? 0 : !n && r.group === 'Recent threads' ? 1 : 2
+    out.sort((a, b) => rank(a) - rank(b))
     return out
-  }, [q, hits, commands, recipes, threads, openThread, runRecipe, navigate])
+  }, [q, hits, here, commands, recipes, threads, openThread, runRecipe, navigate])
   useEffect(() => setHi(0), [q])
   useEffect(() => { list.current?.querySelector(`[data-i="${hi}"]`)?.scrollIntoView({ block: 'nearest' }) }, [hi])
 
@@ -65,7 +76,7 @@ export function CommandPalette({ onClose, commands, openThread, runRecipe }: { o
       <div className="palette-box" role="dialog" aria-label="Search and commands">
         <div className="pal-input">
           <Icon name="search" size={18} />
-          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Find a thread, run a recipe, go somewhere…" aria-label="Search"
+          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={here ? "Rename, archive, find a thread, go somewhere…" : "Find a thread, run a recipe, go somewhere…"} aria-label="Search"
             onKeyDown={e => {
               if (e.key === 'ArrowDown') { e.preventDefault(); setHi(h => Math.min(rows.length - 1, h + 1)) }
               else if (e.key === 'ArrowUp') { e.preventDefault(); setHi(h => Math.max(0, h - 1)) }
@@ -82,7 +93,7 @@ export function CommandPalette({ onClose, commands, openThread, runRecipe }: { o
             return (
               <React.Fragment key={r.key}>
                 {head}
-                <div data-i={i} role="option" aria-selected={i === hi} className={`pal-row ${i === hi ? 'hi' : ''}`} onMouseEnter={() => setHi(i)} onClick={() => run(r)}>
+                <div data-i={i} role="option" aria-selected={i === hi} className={`pal-row ${i === hi ? 'hi' : ''} ${r.danger ? 'danger' : ''}`} onMouseEnter={() => setHi(i)} onClick={() => run(r)}>
                   <span className="pal-ico">{r.icon}</span>
                   <span className="grow" style={{ minWidth: 0 }}><span className="pal-label ellipsis">{r.label}</span>{r.sub && <span className="pal-sub">{r.sub}</span>}</span>
                   {r.hint}

@@ -27,6 +27,7 @@ import { Timeline } from '../components/Timeline'
 import { PrivacyBadge, ShareDialog } from '../components/ShareDialog'
 import { accessOf } from '../lib/share'
 import { actionFor, useShortcuts } from '../lib/shortcuts'
+import { type PageActions, usePageActions } from '../lib/palette'
 import { FolderPicker } from '../components/FolderPicker'
 import { Confirm, download, Empty, errMsg, Loading, type MenuItem, MenuButton, useContextMenu, useToast } from '../components/ui'
 
@@ -83,6 +84,10 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const canRun = !!user && (user.role === 'admin' || user.can_run || thread?.source === 'ask')
   const forkNewTab = useForkNewTab(id)
   const ctx = useContextMenu()
+  // this thread's menu, offered in the palette (set below once the menu is built)
+  const palette = useRef<PageActions | null>(null)
+  palette.current = null
+  usePageActions(useCallback(() => palette.current, []))
   const { running: runningNow } = useApp()
   const otherRunning = runningNow.filter(r => r.thread_id !== id).length
 
@@ -337,6 +342,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
     { label: t.archived ? 'Move out of archive' : 'Archive', icon: 'archive', onSelect: async () => { const th = await patch({ archived: !t.archived }); if (th?.archived) { dropThread(id); toast('Archived') } } },
     { label: 'Delete…', icon: 'trash', danger: true, onSelect: () => setConfirmDelete(true) },
   ]
+  palette.current = { title: threadTitle(t), items: menu }
 
   return (
     <div className="thread-page">
