@@ -829,6 +829,9 @@ func (s *Server) watchDeploy(d *store.Deploy) {
 					}
 				} else {
 					d.Status, d.Error = "failed", "the deploy command failed (exit "+strings.TrimSpace(m["exit"])+")"
+					if why := failureReason(body); why != "" {
+						d.Error += ": " + why
+					}
 				}
 			case m["alive"] == "" && (m["nopid"] == "" || time.Since(started) > time.Minute):
 				d.Status, d.Error = "failed", "the deploy stopped without finishing (was the machine restarted?)"
@@ -847,6 +850,35 @@ func (s *Server) watchDeploy(d *store.Deploy) {
 			}
 		}
 	}()
+}
+
+var (
+	failureLineRe  = regexp.MustCompile(`(?i)^!\s|error|refusing|fatal|failed`)
+	failureNoiseRe = regexp.MustCompile(`ELIFECYCLE|ERR_PNPM|^Exit status|^"stack"`) // "a step failed" wrappers and stack traces
+	failureKeyRe   = regexp.MustCompile(`^"(errorMessage|message|error)":\s*"?`)
+)
+
+// failureReason: the line of a failed deploy's log that says why, so the
+// person sees the cause rather than an exit code. Read from the end: the last
+// error line that is not a package manager's wrapper around it.
+func failureReason(log string) string {
+	lines := strings.Split(log, "\n")
+	for i := len(lines) - 1; i >= 0 && i >= len(lines)-80; i-- {
+		l := strings.TrimSpace(lines[i])
+		if l == "" || !failureLineRe.MatchString(l) || failureNoiseRe.MatchString(l) {
+			continue
+		}
+		l = failureKeyRe.ReplaceAllString(l, "")
+		l = strings.TrimSuffix(strings.TrimSuffix(l, ","), `"`)
+		for _, p := range []string{"! ", "Error: ", "Error: "} {
+			l = strings.TrimPrefix(l, p)
+		}
+		if r := []rune(l); len(r) > 300 {
+			l = string(r[:299]) + "…"
+		}
+		return l
+	}
+	return ""
 }
 
 var urlLineRe = regexp.MustCompile(`^\s*(https?://\S+)\s*$`)
