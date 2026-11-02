@@ -265,7 +265,12 @@ function TermView({ term, shade, visible, focused, onEnded, onAgain, onClose }: 
     document.fonts?.load('13px "Symbols Nerd Font Mono"', '\uf07b').then(() => { if (xt.current === t) t.refresh(0, t.rows - 1) }).catch(() => {})
     xt.current = t
     fit.current = f
+    // replayed output is printed only: xterm's answers to the queries in it
+    // (cursor position, colours, device attributes) would reach whatever runs
+    // now as typing, e.g. vim or zsh's line editor
+    let replaying = false
     t.onData(d => {
+      if (replaying) return
       if (ctrl.current && d.length === 1) {
         const c = d.toLowerCase().charCodeAt(0)
         if (c >= 97 && c <= 122) d = String.fromCharCode(c - 96)
@@ -276,7 +281,7 @@ function TermView({ term, shade, visible, focused, onEnded, onAgain, onClose }: 
       }
       send(d)
     })
-    t.onBinary(d => { const w = ws.current; if (w?.readyState === WebSocket.OPEN) w.send(Uint8Array.from(d, c => c.charCodeAt(0))) })
+    t.onBinary(d => { if (replaying) return; const w = ws.current; if (w?.readyState === WebSocket.OPEN) w.send(Uint8Array.from(d, c => c.charCodeAt(0))) })
     // selecting text copies it, like tmux: once the mouse is let go (the
     // drag may end outside the terminal), not on every step of the drag
     let selecting = false
@@ -301,18 +306,20 @@ function TermView({ term, shade, visible, focused, onEnded, onAgain, onClose }: 
       const w = new WebSocket(wsURL(term.id))
       w.binaryType = 'arraybuffer'
       ws.current = w
-      let fresh = true, opened = false
+      let fresh = true, opened = false, replayNext = false
       w.onopen = () => { opened = true; tries = 0; setState('live'); resize() }
       w.onmessage = ev => {
         if (typeof ev.data === 'string') {
           try {
             const m = JSON.parse(ev.data)
+            if (m.type === 'replay') replayNext = true
             if (m.type === 'end') { dead = true; setCode(m.code); setState('ended'); onEnded(term.id, m.code) }
           } catch { /* not ours */ }
           return
         }
         if (fresh) { t.reset(); fresh = false } // a reconnect replays the scrollback
-        t.write(new Uint8Array(ev.data))
+        if (replayNext) { replayNext = false; replaying = true; t.write(new Uint8Array(ev.data), () => { replaying = false }) }
+        else t.write(new Uint8Array(ev.data))
       }
       w.onclose = ev => {
         if (ws.current === w) ws.current = null

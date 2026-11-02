@@ -540,6 +540,12 @@ func (s *Server) handleTerminalSocket(w http.ResponseWriter, r *http.Request) {
 		_ = c.Write(ctx, websocket.MessageText, b)
 	}
 	if len(snap) > 0 {
+		// said first: the page must not answer the terminal queries in what
+		// is replayed (they were answered long ago; the answers would land in
+		// whatever runs now, as typing)
+		if err := c.Write(ctx, websocket.MessageText, []byte(`{"type":"replay"}`)); err != nil {
+			return
+		}
 		if err := c.Write(ctx, websocket.MessageBinary, snap); err != nil {
 			return
 		}
