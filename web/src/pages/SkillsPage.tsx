@@ -5,6 +5,7 @@ import { api, qs, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { providerName } from '../lib/format'
 import type { ProviderId, Skill } from '../lib/types'
+import { accountOptions } from '../components/AgentPicker'
 import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
 import { Select } from '../components/Select'
@@ -103,7 +104,7 @@ export default function SkillsPage({ onMenu }: { onMenu?: () => void }) {
     for (const p of PROVIDERS) if (r[p]) items.push({ label: `Remove from ${providerName(p)}`, icon: 'trash', danger: true, onSelect: () => setDel({ name: r.name, provider: p }) })
     return items
   }
-  const logins = (p: ProviderId) => accounts.filter(a => a.provider === p)
+  const logins = (p: ProviderId) => accountOptions(accounts, p, acct[p])
 
   return <div className="page">
     <PageHead title="Skills" icon="sparkles" onMenu={onMenu} sub={<>What the agents can use. Type <code>/name</code> (Claude Code) or <code>$name</code> (Codex) in a message, or let the agent pick one when the task fits.</>}
@@ -121,8 +122,8 @@ export default function SkillsPage({ onMenu }: { onMenu?: () => void }) {
         <button type="button" className="btn ghost sm" onClick={reload} disabled={cli.loading || own.loading}><Icon name="refresh" size={14} />Refresh</button>
       </div>
       {PROVIDERS.some(p => logins(p).length > 0) && <div className="row wrap">
-        {PROVIDERS.filter(p => logins(p).length > 0).map(p => <Select key={p} size="sm" value={acct[p]} onChange={v => setAcct({ ...acct, [p]: v })} label={`${providerName(p)} login`} width={240}
-          options={[{ value: 0, label: `${providerName(p)}: server login` }, ...logins(p).map(a => ({ value: a.id, label: `${providerName(p)}: ${a.label || a.email || `login ${a.id}`}`, description: a.home }))]} />)}
+        {PROVIDERS.filter(p => logins(p).length > 0).map(p => <Select key={p} size="sm" value={acct[p]} onChange={v => setAcct({ ...acct, [p]: v })} label={`${providerName(p)} login`} width={280}
+          options={logins(p).map(o => ({ ...o, label: `${providerName(p)}: ${o.label}` }))} />)}
       </div>}
 
       <section className="stack">
