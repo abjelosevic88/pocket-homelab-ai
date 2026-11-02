@@ -165,9 +165,34 @@ func openLink(ctx context.Context, o Options, m marks, bin string, args []string
 	return l, nil
 }
 
-// connect starts the CLI (or attach to it) and, held, reads the header.
+// connect starts the CLI (or attach to it) and, held, reads the header. A
+// held CLI on another machine is reached on the same forwarded port every
+// time (it was started with it); when a dropped connection the machine has
+// not noticed still holds that port, ssh refuses the forward (exit 255):
+// that connection is ended and this one tried once more.
 func (l *link) connect(from int64, only bool) (*exec.Cmd, io.WriteCloser, *bufio.Reader, hold.Header, error) {
+	cmd, stdin, r, hd, stderr, err := l.connectOnce(from, only)
+	if err != nil && l.h != nil && l.o.Remote != nil && strings.Contains(stderr, "remote port forwarding failed") {
+		l.log.Warn("agent port still held by an old connection; ending it", "slot", l.h.Slot, "machine", l.o.Remote.Target)
+		ctx, cancel := context.WithTimeout(l.ctx, 30*time.Second)
+		ferr := l.o.Remote.FreeForwards(ctx)
+		cancel()
+		if ferr != nil {
+			l.log.Warn("could not free the agent port", "slot", l.h.Slot, "err", ferr)
+		}
+		cmd, stdin, r, hd, _, err = l.connectOnce(from, only)
+	}
+	return cmd, stdin, r, hd, err
+}
+
+func (l *link) connectOnce(from int64, only bool) (*exec.Cmd, io.WriteCloser, *bufio.Reader, hold.Header, string, error) {
+	cmd, stdin, r, hd, own, err := l.dial(from, only)
+	return cmd, stdin, r, hd, own.String(), err
+}
+
+func (l *link) dial(from int64, only bool) (*exec.Cmd, io.WriteCloser, *bufio.Reader, hold.Header, *tail, error) {
 	var hd hold.Header
+	own := &tail{n: 4096} // this connection's stderr, for why it failed
 	var wrap []string
 	if l.h != nil {
 		wrap = []string{l.h.Bin, "attach", "-from", strconv.FormatInt(from, 10), "-start-mark", l.m.start, "-end-mark", l.m.end}
@@ -187,24 +212,27 @@ func (l *link) connect(from int64, only bool) (*exec.Cmd, io.WriteCloser, *bufio
 	}
 	cmd, err := cliCommand(l.o, wrap, l.bin, l.args)
 	if err != nil {
-		return nil, nil, nil, hd, err
+		return nil, nil, nil, hd, own, err
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Stderr = l.errb
+	cmd.Stderr = own
+	if l.errb != nil {
+		cmd.Stderr = io.MultiWriter(l.errb, own)
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, nil, nil, hd, err
+		return nil, nil, nil, hd, own, err
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, nil, nil, hd, err
+		return nil, nil, nil, hd, own, err
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, nil, nil, hd, fmt.Errorf("start %s: %w", l.bin, err)
+		return nil, nil, nil, hd, own, fmt.Errorf("start %s: %w", l.bin, err)
 	}
 	r := bufio.NewReaderSize(stdout, 1<<20)
 	if l.h == nil {
-		return cmd, stdin, r, hd, nil
+		return cmd, stdin, r, hd, own, nil
 	}
 	type res struct {
 		line []byte
@@ -222,7 +250,7 @@ func (l *link) connect(from int64, only bool) (*exec.Cmd, io.WriteCloser, *bufio
 		x.err = errors.New("no answer from pocket-hold")
 	}
 	if x.err == nil && json.Unmarshal(x.line, &hd) == nil && hd.Type == hold.HeaderType {
-		return cmd, stdin, r, hd, nil
+		return cmd, stdin, r, hd, own, nil
 	}
 	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	werr := cmd.Wait()
@@ -230,8 +258,11 @@ func (l *link) connect(from int64, only bool) (*exec.Cmd, io.WriteCloser, *bufio
 		x.err = fmt.Errorf("unexpected output from pocket-hold: %s", oneLine(string(x.line), 200))
 	} else if werr != nil {
 		x.err = werr
+		if msg := own.String(); msg != "" {
+			x.err = fmt.Errorf("%s (%w)", oneLine(msg, 200), werr) // not a bare "exit status 255"
+		}
 	}
-	return nil, nil, nil, hd, x.err
+	return nil, nil, nil, hd, own, x.err
 }
 
 // Lines calls fn with each line of the CLI's stdout (no newline) until it

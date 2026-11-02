@@ -271,6 +271,33 @@ func lostLink(r *Remote, err error, stderr string) string {
 // muxArgs share one connection per machine between short commands. The
 // shared link notices a dead network within ~15 s (agents: 2 min), and closes
 // 5 minutes after its last use. They come first: ssh keeps the first value.
+// freePorts ends this account's sshd processes listening on the ports given
+// ($@): connections that dropped without the machine noticing, still holding
+// a forward. Then it waits a few seconds for the ports to come free.
+const freePorts = `for port; do for p in $(lsof -t -nP -iTCP@127.0.0.1:"$port" -sTCP:LISTEN 2>/dev/null); do ` +
+	`case "$(ps -o comm= -p "$p" 2>/dev/null)" in *sshd*) kill "$p" 2>/dev/null;; esac; done; done; ` +
+	`i=0; while [ $i -lt 10 ]; do busy=; for port; do lsof -t -nP -iTCP@127.0.0.1:"$port" -sTCP:LISTEN >/dev/null 2>&1 && busy=1; done; ` +
+	`[ -z "$busy" ] && exit 0; sleep 0.5; i=$((i+1)); done; exit 1`
+
+// FreeForwards ends the old connections on the remote machine that still
+// hold this connection's forwarded ports.
+func (r *Remote) FreeForwards(ctx context.Context) error {
+	var ports []string
+	for _, f := range r.Forwards {
+		if p := strings.Split(f, ":"); len(p) == 4 {
+			ports = append(ports, p[1])
+		}
+	}
+	if len(ports) == 0 {
+		return nil
+	}
+	_, stderr, err := r.Run(ctx, 20*time.Second, freePorts, ports...)
+	if err != nil && stderr != "" {
+		return errors.New(stderr)
+	}
+	return err
+}
+
 // Put writes data to path on the remote machine (mode 600, replaced in one
 // step: a half-written file never takes its place).
 func (r *Remote) Put(ctx context.Context, timeout time.Duration, path string, data []byte) error {
