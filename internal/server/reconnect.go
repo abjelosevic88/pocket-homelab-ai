@@ -744,6 +744,7 @@ type leftoverApplier struct {
 	log     *agent.ClaudeLog
 	have    map[string]bool // item keys
 	texts   map[string]bool // kind + text of recent messages
+	sent    []agent.Item    // recent messages of the person (the log adds to them at dispatch)
 	ended   bool
 	prompt  bool            // the next prompt line is the cut-off turn's own: already there
 	turns   int             // footers of that turn Pocket AI already has (it ended before the restart)
@@ -778,6 +779,9 @@ func (s *Server) newLeftoverApplier(ctx context.Context, t *store.Thread) *lefto
 			var x agent.Item
 			if json.Unmarshal(it.Data, &x) == nil {
 				ap.texts[it.Kind+"\x00"+strings.TrimSpace(x.Text)] = true
+				if it.Kind == "user" {
+					ap.sent = append(ap.sent, x)
+				}
 			}
 		}
 	}
@@ -840,6 +844,16 @@ func (ap *leftoverApplier) feed(data []byte, off int64) int64 {
 	return next
 }
 
+// wasSent: a log prompt is one of the recent messages sent from here.
+func (ap *leftoverApplier) wasSent(prompt agent.Item) bool {
+	for _, x := range ap.sent {
+		if agent.SamePrompt(prompt, x) {
+			return true
+		}
+	}
+	return false
+}
+
 func (ap *leftoverApplier) apply(line []byte) {
 	unlock := ap.s.lockThreadEdit(ap.t.ID)
 	defer unlock()
@@ -871,7 +885,7 @@ func (ap *leftoverApplier) apply(line []byte) {
 				continue
 			}
 			k := it.Kind + "\x00" + strings.TrimSpace(it.Text)
-			if ap.texts[k] || ap.have[it.Key] {
+			if ap.texts[k] || ap.have[it.Key] || (it.Kind == "user" && ap.wasSent(*it)) {
 				continue
 			}
 			ap.texts[k] = true

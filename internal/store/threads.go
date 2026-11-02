@@ -262,6 +262,19 @@ func (s *Store) GetItem(ctx context.Context, threadID, key string) (*Item, error
 	return &it, nil
 }
 
+// LastMessage loads the newest user or assistant item of a thread.
+func (s *Store) LastMessage(ctx context.Context, threadID string) (*Item, error) {
+	var it Item
+	var data string
+	err := s.DB.QueryRowContext(ctx, `SELECT id, thread_id, key, kind, data, body, created_at, updated_at FROM items WHERE thread_id = ? AND kind IN ('user', 'assistant') ORDER BY id DESC LIMIT 1`, threadID).
+		Scan(&it.ID, &it.ThreadID, &it.Key, &it.Kind, &data, &it.Body, &it.CreatedAt, &it.UpdatedAt)
+	if err != nil {
+		return nil, notFound(err)
+	}
+	it.Data = json.RawMessage(data)
+	return &it, nil
+}
+
 // HasUserItems reports whether a user message has been saved in this chat.
 func (s *Store) HasUserItems(ctx context.Context, threadID string) (bool, error) {
 	var exists bool

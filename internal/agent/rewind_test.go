@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -378,5 +379,30 @@ func TestForkCodexCreatesIndependentSessionWithoutInference(t *testing.T) {
 	}
 	if _, err := ForkCodex(t.Context(), o); err == nil {
 		t.Fatal("accepted shared provider session")
+	}
+}
+
+// A send that raced a restart shows twice here but is one prompt in the log:
+// rewinding later messages still finds the right place, real repeats stay exact.
+func TestPromptCheckpointToleratesARestartDuplicate(t *testing.T) {
+	native := []Item{{Text: "one"}, {Text: "again\nNo saved preferences are currently enabled. Earlier preferences may have been forgotten; do not rely on them.\n"}, {Text: "three"}}
+	visible := []Item{{Key: "p1", Text: "one"}, {Key: "p2", Text: "again"}, {Key: "p3", Text: "again"}, {Key: "p4", Text: "three"}}
+	for n, want := range map[int]int{2: 1, 3: 1, 4: 2} {
+		if index, err := promptCheckpoint(native, visible[:n], nil); err != nil || index != want {
+			t.Fatal(n, index, err)
+		}
+	}
+	if _, err := checkpointIndex(native, visible); !errors.Is(err, errHistoryMismatch) {
+		t.Fatal("strict match should still see the mismatch", err)
+	}
+	// sent twice for real: the exact match wins
+	twice := []Item{{Text: "one"}, {Text: "again"}, {Text: "again"}, {Text: "three"}}
+	if index, err := promptCheckpoint(twice, visible[:3], nil); err != nil || index != 2 {
+		t.Fatal(index, err)
+	}
+	// anything else that differs is still refused
+	other := []Item{{Key: "p1", Text: "one"}, {Key: "p2", Text: "different"}, {Key: "p4", Text: "three"}}
+	if _, err := promptCheckpoint(native, other, nil); !errors.Is(err, errHistoryMismatch) {
+		t.Fatal("unrelated history accepted", err)
 	}
 }
