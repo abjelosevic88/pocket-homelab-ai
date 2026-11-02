@@ -14,7 +14,7 @@ import { PageHead } from '../components/PageHead'
 import { RunDots } from '../components/RunningList'
 import { type FileListing, filesPath, shq, uploadFiles } from '../lib/files'
 import { idsOf, isLeaf, type Node as Layout, type Term, type TermGroup, useMachineItems, useTerminals } from '../lib/terminals'
-import { Empty, errMsg, Loading, type MenuItem, MenuButton, Modal, Spinner, useMediaQuery, useToast } from '../components/ui'
+import { copyText, Empty, errMsg, Loading, type MenuItem, MenuButton, Modal, Spinner, useMediaQuery, useToast } from '../components/ui'
 
 
 const dark = {
@@ -277,6 +277,22 @@ function TermView({ term, shade, visible, focused, onEnded, onAgain, onClose }: 
       send(d)
     })
     t.onBinary(d => { const w = ws.current; if (w?.readyState === WebSocket.OPEN) w.send(Uint8Array.from(d, c => c.charCodeAt(0))) })
+    // selecting text copies it, like tmux: once the mouse is let go (the
+    // drag may end outside the terminal), not on every step of the drag
+    let selecting = false
+    const down = () => { selecting = true }
+    const up = () => {
+      if (!selecting) return
+      selecting = false
+      const s = t.getSelection()
+      if (!s.trim()) return
+      copyText(s).then(ok => {
+        toast(ok ? 'Copied to clipboard' : 'The browser did not allow copying', ok ? 'ok' : 'err')
+        if (xt.current === t) t.focus()
+      })
+    }
+    box.current!.addEventListener('mousedown', down)
+    document.addEventListener('mouseup', up)
 
     let dead = false, tries = 0, timer = 0
     const connect = () => {
@@ -315,7 +331,7 @@ function TermView({ term, shade, visible, focused, onEnded, onAgain, onClose }: 
     connect()
     const ro = new ResizeObserver(() => resize())
     ro.observe(box.current!)
-    return () => { dead = true; clearTimeout(timer); ro.disconnect(); ws.current?.close(); t.dispose(); xt.current = null }
+    return () => { dead = true; clearTimeout(timer); ro.disconnect(); document.removeEventListener('mouseup', up); ws.current?.close(); t.dispose(); xt.current = null }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [term.id])
 
