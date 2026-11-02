@@ -36,6 +36,8 @@ func (s *Server) threadRoutes(r chi.Router) {
 	r.Post("/threads/{id}/queue/{key}/edit", s.handleEditQueued)
 	r.Post("/threads/{id}/interrupt", s.handleInterrupt)
 	r.Post("/threads/{id}/restart", s.handleRestartSession)
+	r.Get("/threads/{id}/mcp", s.handleMCPStatus) // mcp_api.go
+	r.Post("/threads/{id}/mcp", s.handleMCPAction)
 	r.Post("/threads/{id}/remote-control", s.handleRemoteControl)
 	r.Post("/threads/{id}/requests/{rid}", s.handleRespond)
 	r.Post("/threads/{id}/read", s.handleMarkRead)

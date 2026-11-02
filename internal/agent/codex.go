@@ -266,6 +266,7 @@ type codexSession struct {
 	cost        float64
 	closed      bool
 	exited      chan struct{}
+	mcpErrs     map[string]string // MCP server → why it failed to start
 }
 
 type codexPending struct {
@@ -424,6 +425,9 @@ func (s *codexSession) Close() error {
 }
 
 func (s *codexSession) Send(in Input) error {
+	if handled, err := s.command(in); handled {
+		return err
+	}
 	input := []map[string]any{}
 	text := in.Text
 	if strings.TrimSpace(text) == "" && len(in.Images) > 0 {
@@ -830,6 +834,24 @@ func (s *codexSession) notify(method string, params json.RawMessage) {
 			}
 			s.sink.Item(Item{Key: fmt.Sprintf("err-%d", time.Now().UnixNano()), Kind: "notice", Level: level, Text: p.Error.Message})
 		}
+	case "mcpServer/startupStatus/updated":
+		var p struct {
+			Name   string  `json:"name"`
+			Status string  `json:"status"`
+			Error  *string `json:"error"`
+		}
+		if json.Unmarshal(params, &p) == nil && p.Name != "" {
+			s.mu.Lock()
+			if s.mcpErrs == nil {
+				s.mcpErrs = map[string]string{}
+			}
+			if p.Error != nil && *p.Error != "" {
+				s.mcpErrs[p.Name] = *p.Error
+			} else {
+				delete(s.mcpErrs, p.Name)
+			}
+			s.mu.Unlock()
+		}
 	case "thread/compacted":
 		s.sink.Item(Item{Key: fmt.Sprintf("cmp-%d", time.Now().UnixNano()), Kind: "notice", Level: "info", Text: "Context compacted — older messages were summarised."})
 	}
@@ -862,6 +884,7 @@ func CodexItem(raw json.RawMessage) (Item, bool) {
 		Type           string          `json:"type"`
 		ID             string          `json:"id"`
 		Text           string          `json:"text"`
+		Review         string          `json:"review"`
 		Summary        []string        `json:"summary"`
 		Content        json.RawMessage `json:"content"`
 		Command        string          `json:"command"`
@@ -985,6 +1008,13 @@ func CodexItem(raw json.RawMessage) (Item, bool) {
 		return Item{Key: it.ID, Kind: "tool", Tool: t}, true
 	case "contextCompaction":
 		return Item{Key: it.ID, Kind: "notice", Level: "info", Text: "Context compacted — older messages were summarised."}, true
+	case "enteredReviewMode":
+		return Item{Key: it.ID, Kind: "notice", Level: "info", Text: "Reviewing: " + oneLine(firstNonEmpty(it.Review, "the current changes"), 200)}, true
+	case "exitedReviewMode":
+		if strings.TrimSpace(it.Review) == "" {
+			return Item{}, false
+		}
+		return Item{Key: it.ID, Kind: "assistant", Text: it.Review}, true
 	}
 	return Item{}, false
 }

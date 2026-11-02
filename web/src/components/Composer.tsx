@@ -80,26 +80,29 @@ function strayPaste(e: ClipboardEvent) {
 /** Where a message would run: decides which skills the CLI offers. */
 export interface SkillScope { provider: ProviderId; cwd?: string; account_id?: number; host_id?: number }
 
-const skillCache = new Map<string, { at: number; skills: Skill[] }>()
+type SkillList = { skills: Skill[]; commands: Skill[] }
+const noSkills: SkillList = { skills: [], commands: [] }
+const skillCache = new Map<string, { at: number } & SkillList>()
 
-/** The skills for a scope, fetched once the slash menu opens (cached a minute). */
-function useSkills(scope: SkillScope | undefined, wanted: boolean): Skill[] {
+/** The skills and built-in commands for a scope, fetched once the slash menu opens (cached a minute). */
+function useSkills(scope: SkillScope | undefined, wanted: boolean): SkillList {
   const key = scope ? `${scope.provider}|${scope.cwd || ''}|${scope.account_id || 0}|${scope.host_id || 0}` : ''
-  const [skills, setSkills] = useState<Skill[]>(() => skillCache.get(key)?.skills || [])
+  const [skills, setSkills] = useState<SkillList>(() => skillCache.get(key) || noSkills)
   useEffect(() => {
     if (!scope || !wanted) return
     const hit = skillCache.get(key)
-    if (hit) setSkills(hit.skills)
+    if (hit) setSkills(hit)
     if (hit && Date.now() - hit.at < 60_000) return
     let live = true
     const q = new URLSearchParams({ provider: scope.provider, cwd: scope.cwd || '', account: String(scope.account_id || 0), host: String(scope.host_id || 0) })
-    api.get<{ skills: Skill[] }>(`${V1}/skills?${q}`).then(r => {
-      skillCache.set(key, { at: Date.now(), skills: r.skills || [] })
-      if (live) setSkills(r.skills || [])
+    api.get<{ skills: Skill[]; commands?: Skill[] }>(`${V1}/skills?${q}`).then(r => {
+      const got = { skills: r.skills || [], commands: r.commands || [] }
+      skillCache.set(key, { at: Date.now(), ...got })
+      if (live) setSkills(got)
     }).catch(() => {})
     return () => { live = false }
   }, [key, wanted]) // eslint-disable-line react-hooks/exhaustive-deps
-  return scope ? skills : []
+  return scope ? skills : noSkills
 }
 
 function draftAttachments(key?: string): Attachment[] {
@@ -124,7 +127,9 @@ export const Composer = React.forwardRef<ComposerHandle, {
   big?: boolean
   /** Offer this agent's skills in the slash menu. */
   skills?: SkillScope
-}>(function Composer({ onSend, placeholder = 'Ask anything…', autoFocus, running, onStop, disabled, footer, draftKey, big, skills: skillScope }, ref) {
+  /** A slash command Pocket AI runs itself (/mcp): true when handled, so it is not sent. */
+  onCommand?: (name: string, args: string) => boolean
+}>(function Composer({ onSend, placeholder = 'Ask anything…', autoFocus, running, onStop, disabled, footer, draftKey, big, skills: skillScope, onCommand }, ref) {
   const { settings, recipes } = useApp()
   const { toast } = useToast()
   const [text, setText] = useState(() => (draftKey && sessionStorage.getItem('pai-draft-' + draftKey)) || '')
@@ -298,6 +303,8 @@ export const Composer = React.forwardRef<ComposerHandle, {
   const send = async (sendNow = defaultNow) => {
     if (!canSend) return
     stopDictation()
+    const cmd = !ready.length && /^\/(\S+)\s*([\s\S]*)$/.exec(text.trim())
+    if (cmd && onCommand?.(cmd[1], cmd[2].trim())) { setText(''); return }
     setSending(true)
     // Empty the box right away (starting an agent can take seconds); the
     // message comes back only if it did not go, above anything typed since.
@@ -314,19 +321,24 @@ export const Composer = React.forwardRef<ComposerHandle, {
     } finally { setSending(false) }
   }
 
-  // "/" at the start: recipes and skills by name ("$" too for Codex, its own skill syntax)
-  const trigger = text[0] === '/' || (text[0] === '$' && skillScope?.provider === 'codex')
+  // At the start: "/" the agent's commands and skills, then recipes; "#" recipes only; "$" Codex skills (its own syntax)
+  const lead = text[0]
+  const trigger = lead === '/' || lead === '#' || (lead === '$' && skillScope?.provider === 'codex')
   const slash = trigger && !/\s/.test(text) ? text.slice(1).toLowerCase() : null
-  const allSkills = useSkills(skillScope, slash !== null)
-  const recipeList: Recipe[] = slash === null || text[0] === '$' ? [] : recipes.filter(r => r.name.toLowerCase().includes(slash)).slice(0, 6)
-  const skillList: Skill[] = slash === null ? [] : allSkills
+  const { skills: allSkills, commands: allCommands } = useSkills(skillScope, slash !== null && lead !== '#')
+  const byName = (list: Skill[], max: number) => slash === null ? [] : list
     .filter(k => k.name.toLowerCase().includes(slash) || (slash.length > 2 && k.description.toLowerCase().includes(slash)))
     .sort((a, b) => Number(!a.name.toLowerCase().startsWith(slash)) - Number(!b.name.toLowerCase().startsWith(slash)))
-    .slice(0, 8)
-  type SlashPick = { recipe: Recipe } | { skill: Skill }
-  const slashList: SlashPick[] = [...recipeList.map(recipe => ({ recipe })), ...skillList.map(skill => ({ skill }))]
-  useEffect(() => setSlashHi(0), [slash])
+    .slice(0, max)
+  const commandList: Skill[] = lead === '/' ? byName(allCommands, 8) : []
+  const skillList: Skill[] = lead === '/' || lead === '$' ? byName(allSkills, 8) : []
+  const recipeList: Recipe[] = slash === null || lead === '$' ? [] : recipes.filter(r => r.name.toLowerCase().includes(slash)).slice(0, lead === '#' ? 12 : 6)
+  type SlashPick = { recipe: Recipe } | { skill: Skill; command?: boolean }
+  const slashList: SlashPick[] = [...commandList.map(skill => ({ skill, command: true })), ...skillList.map(skill => ({ skill })), ...recipeList.map(recipe => ({ recipe }))]
+  const group = (p: SlashPick) => 'recipe' in p ? 'Recipes' : p.command ? 'Commands' : 'Skills'
+  useEffect(() => setSlashHi(0), [slash, lead])
   const pick = (p: SlashPick) => {
+    if ('skill' in p && p.command && !p.skill.argument_hint && onCommand?.(p.skill.name, '')) { setText(''); return }
     setText('recipe' in p ? p.recipe.prompt : p.skill.invoke + ' ')
     setTimeout(() => ta.current?.focus(), 0)
   }
@@ -411,18 +423,18 @@ export const Composer = React.forwardRef<ComposerHandle, {
   return (
     <div ref={box} className={`composer ${big ? 'big' : ''} ${disabled ? 'disabled' : ''}`}>
       {slashList.length > 0 && (
-        <div className={`slash-menu ${menuInside ? 'inside' : ''}`} role="listbox" aria-label="Recipes and skills">
+        <div className={`slash-menu ${menuInside ? 'inside' : ''}`} role="listbox" aria-label="Commands, skills and recipes">
           {slashList.map((p, i) => {
-            const first = i === 0 || ('recipe' in p) !== ('recipe' in slashList[i - 1])
+            const first = i === 0 || group(p) !== group(slashList[i - 1])
             return (
-              <React.Fragment key={'recipe' in p ? 'r' + p.recipe.id : 's' + p.skill.name}>
-                {first && <div className="slash-h">{'recipe' in p ? 'Recipes' : 'Skills'}</div>}
+              <React.Fragment key={'recipe' in p ? 'r' + p.recipe.id : (p.command ? 'c' : 's') + p.skill.name}>
+                {first && <div className="slash-h">{group(p)}{group(p) === 'Recipes' && lead === '/' ? <span className="slash-hint"> · or type #</span> : null}</div>}
                 <button type="button" role="option" aria-selected={i === slashHi} className={`slash-row ${i === slashHi ? 'hi' : ''}`} onMouseEnter={() => setSlashHi(i)} onMouseDown={e => e.preventDefault()} onClick={() => pick(p)}>
                   {'recipe' in p ? <>
                     <span className="slash-ico">{p.recipe.icon || '✦'}</span>
                     <span className="grow"><span className="slash-name">{p.recipe.name}</span><span className="slash-sub">{p.recipe.prompt.slice(0, 90)}</span></span>
                   </> : <>
-                    <span className="slash-ico"><Icon name="sparkles" size={14} /></span>
+                    <span className="slash-ico"><Icon name={p.command ? 'terminal' : 'sparkles'} size={14} /></span>
                     <span className="grow"><span className="slash-name">{p.skill.invoke}{p.skill.argument_hint ? <span className="slash-hint"> {p.skill.argument_hint}</span> : null}</span><span className="slash-sub">{p.skill.description.slice(0, 110)}</span></span>
                   </>}
                 </button>
