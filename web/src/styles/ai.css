@@ -295,6 +295,13 @@
 .dir-row { display: flex; align-items: center; gap: 9px; padding: 7px 8px; border: 0; border-radius: 7px; background: none; text-align: left; cursor: pointer; font: inherit; color: inherit; width: 100%; }
 .dir-row:hover { background: var(--hover); }
 .dir-row > .icon:first-child { color: var(--muted); }
+/* Attach to an issue: a state dot like Projects' (open ring, started half, done full) */
+.attach-issue .dir-row:disabled { cursor: default; opacity: .6; }
+.attach-key { color: var(--muted); flex: none; }
+.attach-state { width: 10px; height: 10px; border-radius: 50%; flex: none; border: 1.5px solid var(--faint); }
+.attach-state.st-started { border-color: var(--warning); background: linear-gradient(90deg, var(--warning) 50%, transparent 50%); }
+.attach-state.st-completed { border-color: var(--success); background: var(--success); }
+.attach-state.st-canceled { border-color: var(--faint); background: var(--faint); }
 
 /* ---------- thread page ---------- */
 .thread-page { height: 100%; display: flex; flex-direction: column; min-height: 0; position: relative; }

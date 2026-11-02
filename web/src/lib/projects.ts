@@ -23,7 +23,7 @@ export interface ProjectsLink {
 
 let state: ProjectsLink | null = null
 
-/** A conversation a Projects issue started: its issue key (AS-7), else ''. */
+/** A conversation that belongs to a Projects issue (started there or attached): its issue key (AS-7), else ''. */
 export const projectsRef = (t?: Thread) => !t ? '' : state?.threads?.[t.id] || ((t.source as string) === 'link:projects' ? (t.source_ref || '').toUpperCase() : '')
 
 /** An issue ref as it reads on screen: AS-7, and ATH-12 for a connected
@@ -47,6 +47,9 @@ function load(refs: string) {
     .catch(() => { state = state || { configured: false, on: false, issues: {} }; at = Date.now() })
     .finally(() => { inflight = null; subs.forEach(f => f()) })
 }
+
+/** Ask again now (a conversation was attached to or detached from an issue). */
+export function reloadProjectsLink() { inflight = null; load(asked) }
 
 /** The link's state, with the issues of `refs` filled in. */
 export function useProjectsLink(refs: string[] = []): ProjectsLink | null {

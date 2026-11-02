@@ -22,7 +22,8 @@ import { BatchReview, ThreadEvidence } from '../components/AppEvidence'
 import { RequestCard } from '../components/RequestCard'
 import { Select } from '../components/Select'
 import { ThreadRefChip } from '../components/ThreadRefChip'
-import { projectsPaused, projectsRef, useProjectsLink } from '../lib/projects'
+import { projectsPaused, projectsRef, refKey, reloadProjectsLink, useProjectsLink } from '../lib/projects'
+import { AttachIssueDialog } from '../components/AttachIssueDialog'
 import { Timeline } from '../components/Timeline'
 import { PrivacyBadge, ShareDialog } from '../components/ShareDialog'
 import { accessOf } from '../lib/share'
@@ -76,6 +77,8 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const [rewinding, setRewinding] = useState(false)
   const [rewindTarget, setRewindTarget] = useState<{ item: Item; keepText: boolean } | null>(null)
   const [sharing, setSharing] = useState(false)
+  const [attaching, setAttaching] = useState(false)
+  const [refRev, setRefRev] = useState(0) // the header's issue chip loads again after an attach or detach
   const [moving, setMoving] = useState(false)
   const [atBottom, setAtBottom] = useState(true)
   const [newBelow, setNewBelow] = useState(false)
@@ -97,7 +100,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const t = thread || listCopy
   const hostName = useHostName(t?.host_id)
   // a Projects conversation whose workspace isn't the one open in Projects
-  useProjectsLink(useMemo(() => [projectsRef(t || undefined)].filter(Boolean), [t?.id]))
+  const projectsLink = useProjectsLink(useMemo(() => [projectsRef(t || undefined)].filter(Boolean), [t?.id]))
   const paused = projectsPaused(t || undefined)
 
   const load = useCallback(async () => {
@@ -326,6 +329,15 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
       toast(on ? 'Remote Control is on — open it in the Claude app' : 'Remote Control is off', 'ok')
     } catch (e) { toast(errMsg(e), 'err') } finally { setRcBusy(false) }
   }
+  const issueRef = projectsRef(t)
+  const issueChanged = () => { setRefRev(n => n + 1); reloadProjectsLink() }
+  const detach = async () => {
+    try {
+      await api.del(`${V1}/threads/${id}/attach`)
+      issueChanged()
+      toast(`Detached from ${refKey(issueRef)}`)
+    } catch (e) { toast(errMsg(e), 'err') }
+  }
   const menu: MenuItem[] = !owner ? [
     { label: 'Export as Markdown', icon: 'download', onSelect: () => download(`${V1}/threads/${id}/export.md`) },
   ] : [
@@ -337,6 +349,12 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
     { label: 'Rename', icon: 'edit', onSelect: () => { setTitleDraft(t.title || threadTitle(t)); setEditingTitle(true) } },
     { label: 'Regenerate title', icon: 'sparkles', onSelect: async () => { const th = await retitleThread(id, toast); if (th) { setThread(th); upsertThread(th) } } },
     { label: 'Move to another folder…', icon: 'folder', disabled: t.source === 'ask' || !canRun || running, onSelect: () => setMoving(true) },
+    ...(projectsLink?.configured && t.source !== 'ask' ? issueRef ? [
+      { label: 'Move to another issue…', icon: 'link' as const, disabled: !projectsLink.on, onSelect: () => setAttaching(true) },
+      { label: `Detach from ${refKey(issueRef)}`, icon: 'x' as const, disabled: !projectsLink.on, onSelect: detach },
+    ] : [
+      { label: 'Attach to issue…', icon: 'link' as const, disabled: !projectsLink.on, hint: projectsLink.on ? undefined : 'Turn on Pocket AI → Pocket Projects in Pocket Core', onSelect: () => setAttaching(true) },
+    ] : []),
     ...(t.provider === 'claude' && t.source !== 'ask' && canRun ? [{ label: t.remote_control ? 'Turn off Remote Control' : 'Turn on Remote Control', icon: 'smartphone' as const, onSelect: () => remoteControl(!t.remote_control) }] : []),
     { label: 'Fork into a new thread', icon: 'fork', disabled: t.source === 'ask' || !t.provider_session_id || !canRun, onSelect: fork },
     { label: 'Export as Markdown', icon: 'download', onSelect: () => download(`${V1}/threads/${id}/export.md`) },
@@ -364,7 +382,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
           <div className="thread-sub">
             <PrivacyBadge thread={t} access={access} onShare={owner ? () => setSharing(true) : undefined} />
             <ProviderBadge provider={t.provider} size="xs" />
-            <ThreadRefChip threadId={t.id} source={t.source} owner={owner} />
+            <ThreadRefChip threadId={t.id} source={t.source} owner={owner} attached={!!issueRef} rev={refRev} />
             {t.source === 'quick-chat' && <span className="quick-chat-chip" title="Started from Quick Chat in Pocket Launcher"><Icon name="sparkles" size={12} />Quick Chat</span>}
             {!!t.worktree_id && <WorktreeChip id={t.worktree_id} threadId={t.id} onAsk={owner && canRun ? text => { void send(text, []) } : undefined} />}
             {t.remote_control && <RemoteChip rc={t.remote_control} />}
@@ -449,6 +467,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
       {moving && <FolderPicker value={t.cwd} host={t.host_id || 0} onClose={() => setMoving(false)} onPick={async cwd => {
         try { const th = await api.post<Thread>(`${V1}/threads/${id}/folder`, { cwd }); setThread(th); upsertThread(th); toast(`Moved to ${shortPath(th.cwd)}`) } catch (e) { toast(errMsg(e), 'err') }
       }} />}
+      {attaching && <AttachIssueDialog threadId={t.id} current={issueRef || undefined} onClose={() => setAttaching(false)} onAttached={issueChanged} />}
       {sharing && <ShareDialog thread={t} onClose={() => setSharing(false)} onSaved={th => { setThread(th); upsertThread(th) }} />}
       {ctx.menu}
       {rewindTarget && <Confirm title="Rewind this chat?" message={(rewindTarget.keepText ? 'Removes this message and everything after it from this chat, and restores it in the composer.' : 'Removes all messages after this reply from this chat.') + ' This cannot be undone. Files and app changes already made remain in place.'} confirmLabel="Rewind" onCancel={() => setRewindTarget(null)} onConfirm={() => { const target = rewindTarget; setRewindTarget(null); void rewind(target.item, target.keepText) }} />}
