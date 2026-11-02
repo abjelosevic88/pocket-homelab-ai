@@ -327,6 +327,9 @@ func (rt *engine) saveItem(threadID string, it agent.Item) *store.Item {
 		return nil
 	}
 	rt.toThread(threadID, sseEvent{Name: "item", Data: itemJSON(st)})
+	if it.Kind == "tool" && it.Tool != nil && it.Tool.Kind == "file" && it.Tool.Status == "done" {
+		go rt.s.keepSent(threadID, it) // a copy before the agent changes or removes it
+	}
 	return st
 }
 

@@ -239,7 +239,7 @@ export interface SharePerson { id: number; name: string; email: string; can_run:
 
 export interface ItemImage { id: string; name: string; url: string }
 
-export type ToolKind = 'bash' | 'edit' | 'write' | 'read' | 'search' | 'web' | 'task' | 'mcp' | 'skill' | 'other'
+export type ToolKind = 'bash' | 'edit' | 'write' | 'read' | 'search' | 'web' | 'task' | 'mcp' | 'skill' | 'file' | 'other'
 
 /** A skill or custom command the CLI loads in a folder (GET /skills). */
 export interface Skill { name: string; description: string; argument_hint?: string; scope?: string; invoke: string }
@@ -254,7 +254,12 @@ export interface ToolInfo {
   exit_code?: number
   diff?: string
   images?: number
+  /** SendUserFile: the files the agent sent (cards, served from Pocket AI's copy) */
+  files?: SentFile[]
+  display?: 'render' | 'attach' | ''
 }
+
+export interface SentFile { name: string; path: string; size?: number; mime?: string; image?: boolean }
 
 export interface Todo { text: string; status: 'pending' | 'in_progress' | 'completed' }
 

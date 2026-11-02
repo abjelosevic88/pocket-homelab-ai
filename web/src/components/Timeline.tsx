@@ -1,9 +1,9 @@
 // A thread's items, in order: what you said, what the agent said and did.
 import { useApp } from '../lib/app-context'
 import { memo, useRef, useState } from 'react'
-import { fmtCost, fmtDuration, fmtTokens } from '../lib/format'
+import { fmtBytes, fmtCost, fmtDuration, fmtTokens } from '../lib/format'
 import { V1 } from '../lib/api'
-import type { Item, ItemImage, Todo, ToolInfo, TurnInfo } from '../lib/types'
+import type { Item, ItemImage, SentFile, Todo, ToolInfo, TurnInfo } from '../lib/types'
 import { Icon } from './icons'
 import { Markdown } from './Markdown'
 import { RequestSummary } from './RequestCard'
@@ -73,6 +73,77 @@ function logImages(threadId: string | undefined, key: string, n: number): ItemIm
   return Array.from({ length: Math.min(n, 12) }, (_, i) => ({
     id: `${key}-${i}`, name: `image ${i + 1}`, url: `${V1}/threads/${threadId}/log-image?key=${encodeURIComponent(key)}&n=${i}`,
   }) as ItemImage)
+}
+
+// Files the agent sent (Claude Code's SendUserFile), as cards like in the
+// Claude apps. Pocket AI keeps a copy of each and serves it: pictures show
+// right away, pages/PDFs/text open in a viewer, the rest downloads.
+function sentURL(threadId: string, key: string, n: number, download = false) {
+  return `${V1}/threads/${threadId}/sent-file?key=${encodeURIComponent(key)}&n=${n}${download ? '&download=1' : ''}`
+}
+const fileExt = (name: string) => { const m = name.match(/\.([A-Za-z0-9]{1,5})$/); return m ? m[1].toUpperCase() : 'FILE' }
+const isImage = (f: SentFile) => f.image || (f.mime || '').startsWith('image/') || /\.(png|jpe?g|gif|webp|avif)$/i.test(f.name)
+type View = 'page' | 'pdf' | 'text' | 'audio' | 'video' | ''
+function viewOf(f: SentFile): View {
+  const m = f.mime || '', n = f.name.toLowerCase()
+  if (m === 'text/html' || /\.(html?|svg)$/.test(n) || m === 'image/svg+xml') return 'page'
+  if (m === 'application/pdf' || n.endsWith('.pdf')) return 'pdf'
+  if (m.startsWith('audio/')) return 'audio'
+  if (m.startsWith('video/')) return 'video'
+  if (m.startsWith('text/') || m === 'application/json' || /\.(md|txt|log|csv|tsv|json|jsonl|ya?ml|toml|ini|conf|xml|go|py|js|mjs|ts|tsx|jsx|css|sh|sql|rs|rb|java|kt|swift|c|h|cpp|cs|php|lua|nix|diff|patch)$/.test(n)) return 'text'
+  return ''
+}
+
+function SentFiles({ tool, itemKey, threadId }: { tool: ToolInfo; itemKey: string; threadId?: string }) {
+  const [open, setOpen] = useState<number | null>(null)
+  const files = tool.files || []
+  const caption = typeof (tool.input as { caption?: unknown } | null)?.caption === 'string' ? tool.title : ''
+  if (tool.status === 'error' || tool.status === 'denied' || !threadId) {
+    return <ToolRow tool={tool} />
+  }
+  const attach = tool.display === 'attach'
+  const pics = attach ? [] : files.map((f, n) => ({ f, n })).filter(x => isImage(x.f))
+  const cards = files.map((f, n) => ({ f, n })).filter(x => !pics.includes(x))
+  const shown = open === null ? null : files[open]
+  return (
+    <div className="sent-files" id={`item-${itemKey}`}>
+      {caption && <div className="sent-caption">{caption}</div>}
+      {tool.status === 'running' && <div className="sent-card busy"><span className="sent-ext">{files[0] ? fileExt(files[0].name) : 'FILE'}</span><span className="sent-name ellipsis">{files.map(f => f.name).join(', ') || 'File'}</span><span className="muted small">sending…</span></div>}
+      {tool.status === 'done' && pics.length > 0 && <Images images={pics.map(({ f, n }) => ({ id: `${itemKey}-${n}`, name: f.name, url: sentURL(threadId, itemKey, n) }) as ItemImage)} />}
+      {tool.status === 'done' && cards.map(({ f, n }) => {
+        const view = attach ? '' : viewOf(f)
+        const body = <>
+          <span className="sent-ext">{fileExt(f.name)}</span>
+          <span className="sent-name ellipsis" title={f.path}>{f.name}</span>
+          {f.size ? <span className="sent-size tnum">{fmtBytes(f.size)}</span> : null}
+          <Icon name={view ? 'eye' : 'download'} size={14} className="sent-act" />
+        </>
+        return view
+          ? <button key={n} type="button" className="sent-card" onClick={() => setOpen(n)} aria-label={`Open ${f.name}`}>{body}</button>
+          : <a key={n} className="sent-card" href={sentURL(threadId, itemKey, n, true)} download={f.name} aria-label={`Download ${f.name}`}>{body}</a>
+      })}
+      {shown && open !== null && (
+        <Modal size="xl" className="sent-view" onClose={() => setOpen(null)} title={<span className="sent-view-head">
+          <span className="sent-ext">{fileExt(shown.name)}</span><span className="ellipsis">{shown.name}</span>
+          <span className="grow" />
+          <a className="btn ghost icon-only sm" href={sentURL(threadId, itemKey, open)} target="_blank" rel="noopener" title="Open in a new tab" aria-label="Open in a new tab"><Icon name="external" size={15} /></a>
+          <a className="btn ghost icon-only sm" href={sentURL(threadId, itemKey, open, true)} download={shown.name} title="Download" aria-label="Download"><Icon name="download" size={15} /></a>
+        </span>}>
+          <SentView f={shown} url={sentURL(threadId, itemKey, open)} />
+        </Modal>
+      )}
+    </div>
+  )
+}
+
+function SentView({ f, url }: { f: SentFile; url: string }) {
+  switch (viewOf(f)) {
+    case 'audio': return <audio className="sent-media" src={url} controls autoPlay />
+    case 'video': return <video className="sent-media" src={url} controls playsInline />
+    // The server fences pages off too (CSP sandbox): no cookies, no API.
+    case 'page': return <iframe className="sent-frame" src={url} title={f.name} sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-modals allow-downloads" />
+    default: return <iframe className="sent-frame" src={url} title={f.name} />
+  }
 }
 
 // Older tool rows only have "[image]" lines in their output.
@@ -149,6 +220,7 @@ export const ItemView = memo(function ItemView({ item, showThinking, threadId, o
       return <Thinking text={item.text || ''} defaultOpen={showThinking} />
     case 'tool':
       if (!item.tool) return null
+      if (item.tool.kind === 'file') return <SentFiles tool={item.tool} itemKey={item.key} threadId={threadId} />
       return (
         <>
           <ToolRow tool={item.tool} />

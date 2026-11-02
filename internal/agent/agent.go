@@ -52,13 +52,26 @@ type Image struct {
 type Tool struct {
 	Name     string          `json:"name"`
 	Title    string          `json:"title"`
-	Kind     string          `json:"kind"` // bash | edit | write | read | search | web | task | mcp | other
+	Kind     string          `json:"kind"` // bash | edit | write | read | search | web | task | mcp | file | other
 	Input    json.RawMessage `json:"input,omitempty"`
 	Output   string          `json:"output,omitempty"`
 	Status   string          `json:"status"` // running | done | error | denied
 	ExitCode *int            `json:"exit_code,omitempty"`
 	Diff     string          `json:"diff,omitempty"`
 	Images   int             `json:"images,omitempty"` // images in the result (Read of a picture), served from the session file
+	// Files the agent sent the person (Claude Code's SendUserFile): shown as
+	// cards, served by Pocket AI from a copy it keeps.
+	Files   []SentFile `json:"files,omitempty"`
+	Display string     `json:"display,omitempty"` // SendUserFile: "render" | "attach" | "" (by file type)
+}
+
+// SentFile is one file the agent sent the person.
+type SentFile struct {
+	Name  string `json:"name"`
+	Path  string `json:"path"` // as the agent's machine knows it (absolute once the CLI resolved it)
+	Size  int64  `json:"size,omitempty"`
+	Mime  string `json:"mime,omitempty"`
+	Image bool   `json:"image,omitempty"`
 }
 
 // Todo is one line of the agent's plan / to-do list.
