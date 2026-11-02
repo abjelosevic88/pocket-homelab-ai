@@ -130,3 +130,16 @@
 /* a sample of the conversation under the display options */
 .display-preview { margin-top: 12px; padding: 12px 14px; border: 1px solid var(--hairline); border-radius: 12px; background: var(--bg); pointer-events: none; }
 .display-preview .msg.user { margin: 0; }
+
+/* Settings → General → Sidebar: drag the grips to reorder */
+.sbset-list { display: grid; gap: 2px; user-select: none; -webkit-user-select: none; }
+.sbset-row { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 0 4px 0 2px; border-radius: 9px; color: var(--text-2); font-size: 13.5px; font-weight: 550; }
+.sbset-row > .icon { color: var(--muted); }
+.sbset-row:hover { background: var(--hover); }
+.sbset-row.dragging { background: var(--active); color: var(--text); box-shadow: 0 0 0 1px var(--border-strong); }
+.sbset-row.dragging > .icon { color: var(--accent); }
+.sbset-row.off { color: var(--muted); }
+.sbset-grip { display: grid; place-items: center; width: 26px; height: 30px; flex-shrink: 0; border: 0; border-radius: 6px; background: none; color: var(--faint); cursor: grab; touch-action: none; padding: 0; }
+button.sbset-grip:hover, button.sbset-grip:focus-visible { color: var(--text-2); background: var(--hover); }
+.sbset-row.dragging .sbset-grip { cursor: grabbing; color: var(--accent); }
+.sbset-h { margin: 14px 0 4px 2px; color: var(--muted); font-size: 11.5px; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; }

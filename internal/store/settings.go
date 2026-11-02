@@ -56,6 +56,10 @@ type Settings struct {
 	// browser).
 	ThreadTabs bool `json:"thread_tabs"`
 
+	// The sidebar menu: item ids in the person's order, "-id" = removed.
+	// Empty = the default menu; ids missing here keep their default place.
+	Sidebar []string `json:"sidebar"`
+
 	// Keyboard shortcuts changed from their defaults: action id → keys
 	// ("mod+shift+t"; "" = turned off). The defaults live in the web app.
 	Shortcuts map[string]string `json:"shortcuts"`
@@ -70,6 +74,7 @@ func defaults() Settings {
 		EnterSends:  true,
 		UsageWidget: true,
 		ThreadTabs:  true,
+		Sidebar:     []string{},
 		Shortcuts:   map[string]string{},
 	}
 }
@@ -156,6 +161,8 @@ func (s *Store) GetSettings(ctx context.Context, userID int64) (Settings, error)
 			st.ThreadTabs = v != "0"
 		case "usage_pinned":
 			st.UsagePinned = splitList(v)
+		case "sidebar":
+			st.Sidebar = splitList(v)
 		case "shortcuts":
 			_ = json.Unmarshal([]byte(v), &st.Shortcuts)
 		}
@@ -183,6 +190,7 @@ func (s *Store) SaveSettings(ctx context.Context, userID int64, st Settings) err
 		"notify_input": b2s(st.NotifyInput), "notify_failed": b2s(st.NotifyFailed), "notify_only_away": b2s(st.NotifyOnlyAway),
 		"enter_send_now": b2s(st.EnterSendNow), "enter_sends": b2s(st.EnterSends), "show_thinking": b2s(st.ShowThinking),
 		"usage_widget": b2s(st.UsageWidget), "thread_tabs": b2s(st.ThreadTabs), "usage_pinned": strings.Join(st.UsagePinned, ","),
+		"sidebar":   strings.Join(st.Sidebar, ","),
 		"shortcuts": shortcutsJSON(st.Shortcuts),
 	})
 }

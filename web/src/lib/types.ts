@@ -114,6 +114,8 @@ export interface Settings {
   show_thinking: boolean
   usage_widget: boolean
   thread_tabs: boolean
+  /** The sidebar menu in the person's order, "-id" = removed; [] = default (lib/sidebar.ts). */
+  sidebar?: string[]
   /** Keyboard shortcuts changed from their defaults (lib/shortcuts.ts); "" = off. */
   shortcuts?: Record<string, string>
   usage_pinned: string[]

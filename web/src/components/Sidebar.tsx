@@ -3,7 +3,7 @@ import type React from 'react'
 import { RunDots, RunningList, elapsed, useNow } from './RunningList'
 import { idsOf, useTerminals } from '../lib/terminals'
 import { UsageWidget } from './UsageWidget'
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { api, qs, V1 } from '../lib/api'
 import { sortThreads, useApp } from '../lib/app-context'
@@ -17,6 +17,7 @@ import { type Option, Select } from './Select'
 import { Avatar, Kbd, Spinner, useContextMenu } from './ui'
 import { useThreadMenu } from './ThreadMenu'
 import { PrivacyChip } from './ShareDialog'
+import { SHOW_ARCHIVE, sidebarLayout, sidebarSetting } from '../lib/sidebar'
 import { projectsPaused, projectsRef, refHost, refKey, useProjectsLink } from '../lib/projects'
 
 function groupOf(t: Thread): string {
@@ -73,7 +74,7 @@ export function ThreadRow({ t, active, onOpen, onContextMenu }: { t: Thread; act
 }
 
 export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onPalette: () => void }) {
-  const { threads, workspaces, worktrees, user, settings, live, status, updateReady, terms, away, setAway } = useApp()
+  const { threads, workspaces, worktrees, user, settings, saveSettings, live, status, updateReady, terms, away, setAway } = useApp()
   const navigate = useNavigate()
   const loc = useLocation()
   const [q, setQ] = useState('')
@@ -86,6 +87,11 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
   const tm = useThreadMenu()
   useEffect(() => { localStorage.setItem('pai-ws', String(ws)) }, [ws])
   useEffect(() => { if (!q.trim()) setHits(null) }, [q])
+  useEffect(() => {
+    const show = () => { setShowArchive(true); setHits(null) }
+    window.addEventListener(SHOW_ARCHIVE, show)
+    return () => window.removeEventListener(SHOW_ARCHIVE, show)
+  }, [])
   useEffect(() => {
     if (!showArchive) return
     api.get<Thread[]>(`${V1}/threads${qs({ archived: 1 })}`).then(l => setArchived(sortThreads((l || []).filter(t => t.archived)))).catch(() => setArchived([]))
@@ -151,9 +157,13 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
     try { setHits((await api.get<SearchHit[]>(`${V1}/search${qs({ q: n })}`)) || []) } catch { setHits([]) } finally { setSearching(false) }
   }
   const wsOpts: Option<number>[] = [{ value: 0, label: 'All folders' }, ...workspaces.map(w => ({ value: w.id, label: w.name, color: w.color || 'var(--accent)', description: w.path }))]
-  const nav = (path: string, icon: string, label: string, extra?: React.ReactNode) => (
-    <button type="button" className={`sb-item ${loc.pathname.startsWith(path) ? 'active' : ''}`} onClick={() => go(path)}><Icon name={icon} size={16} /><span className="grow">{label}</span>{extra}</button>
+  const nav = (path: string, icon: string, label: string, extra?: React.ReactNode, onContextMenu?: (e: React.MouseEvent) => void) => (
+    <button type="button" className={`sb-item ${loc.pathname.startsWith(path) ? 'active' : ''}`} onClick={() => go(path)} onContextMenu={onContextMenu}><Icon name={icon} size={16} /><span className="grow">{label}</span>{extra}</button>
   )
+  // the menu items this person keeps, in their order (Settings → General → Sidebar)
+  const layout = useMemo(() => sidebarLayout(settings?.sidebar, user), [settings?.sidebar, user])
+  const menu = layout.filter(e => e.on)
+  const removeItem = (id: string) => { void saveSettings({ sidebar: sidebarSetting(layout.map(e => e.item.id === id ? { ...e, on: false } : e)) }).catch(() => {}) }
 
   return (
     <aside className="sidebar" aria-label="Threads">
@@ -171,44 +181,43 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
         <button type="button" className="btn primary create-btn" onClick={() => go('/')}><Icon name="plus" size={16} />New thread<Kbd>⌘ N</Kbd></button>
       </div>
       <nav className="sb-nav">
-        {nav('/briefing', 'sun', 'Briefing')}
-        {nav('/workflows', 'zap', 'Workflows')}
-        {nav('/memory', 'bookmark', 'Memory')}
-        {nav('/actions', 'list-checks', 'Action history')}
-        {(user?.role === 'admin' || user?.can_run) && nav('/today', 'today', 'Today')}
-        {nav('/recipes', 'zap', 'Recipes')}
-        {nav('/schedules', 'clock', 'Schedules')}
-        {(user?.role === 'admin' || user?.can_run) && nav('/skills', 'sparkles', 'Skills')}
-        {(user?.role === 'admin' || user?.can_run) && nav('/history', 'history', 'On this server')}
-        {(user?.role === 'admin' || user?.can_run) && nav('/worktrees', 'fork', 'Worktrees', activeWt > 0 ? <span className="badge">{activeWt}</span> : undefined)}
-        {(user?.role === 'admin' || user?.can_run) && nav('/term', 'terminal', 'Terminal', terms.open > 0 ? (
-          <span className="sb-term" title={terms.busy ? `${terms.open} open · ${terms.busy} running a command` : `${terms.open} open`}>
-            {terms.busy > 0 && <RunDots size={11} />}
-            <span className={`badge ${terms.busy ? 'accent-soft' : ''}`}>{terms.open}</span>
-          </span>) : undefined)}
-        {(user?.role === 'admin' || user?.can_run) && termTabs.length > 0 && (
-          <div className="sb-terms">
-            {termTabs.map(g => {
-              const ts = idsOf(g.root).map(id => term.byId.get(id)).filter(t => !!t)
-              const lead = term.byId.get(g.focus) || ts[0]
-              if (!lead) return null
-              const busy = ts.some(t => !t.ended && terms.busy_ids.includes(t.id))
-              return (
-                <button key={g.id} type="button" className={`sb-term-row ${loc.pathname === `/term/${g.id}` ? 'active' : ''} ${ts.every(t => t.ended) ? 'ended' : ''}`}
-                  onClick={() => go(`/term/${g.id}`)} title={`${lead.title} · ${lead.host_name}${lead.cwd ? ` · ${lead.cwd}` : ''}${ts.length > 1 ? ` · ${ts.length} panes` : ''}`}>
-                  <span className="sb-term-ico">{busy ? <RunDots size={10} /> : <span className="term-dot" />}</span>
-                  <span className="grow ellipsis">{lead.title}</span>
-                  {ts.length > 1 && <span className="sb-term-n">{ts.length}</span>}
-                </button>
-              )
-            })}
-          </div>
-        )}
-        {(user?.role === 'admin' || user?.can_run) && nav('/files', 'folder', 'Files')}
-        {nav('/shared', 'users', 'Shared', sharedN > 0 ? <span className="badge">{sharedN}</span> : undefined)}
-        {nav('/usage', 'chart', 'Usage')}
-        {nav('/snippets', 'bookmark', 'Snippets')}
-        <button type="button" className={`sb-item ${showArchive ? 'active' : ''}`} onClick={() => { setShowArchive(a => !a); setHits(null) }}><Icon name="archive" size={16} /><span className="grow">Archive</span></button>
+        {menu.map(({ item }) => {
+          const extra = item.id === 'worktrees' ? (activeWt > 0 ? <span className="badge">{activeWt}</span> : undefined)
+            : item.id === 'shared' ? (sharedN > 0 ? <span className="badge">{sharedN}</span> : undefined)
+            : item.id === 'terminal' && terms.open > 0 ? (
+              <span className="sb-term" title={terms.busy ? `${terms.open} open · ${terms.busy} running a command` : `${terms.open} open`}>
+                {terms.busy > 0 && <RunDots size={11} />}
+                <span className={`badge ${terms.busy ? 'accent-soft' : ''}`}>{terms.open}</span>
+              </span>) : undefined
+          const onMenu = (e: React.MouseEvent) => ctx.open(e, () => [
+            { label: 'Remove from sidebar', icon: 'eye-off', onSelect: () => removeItem(item.id) },
+            { label: 'Customize sidebar…', icon: 'settings', onSelect: () => go('/settings/general#sidebar') },
+          ])
+          if (item.id === 'archive') return <button key={item.id} type="button" className={`sb-item ${showArchive ? 'active' : ''}`} onClick={() => { setShowArchive(a => !a); setHits(null) }} onContextMenu={onMenu}><Icon name="archive" size={16} /><span className="grow">Archive</span></button>
+          return (
+            <Fragment key={item.id}>
+              {nav(item.path!, item.icon, item.label, extra, onMenu)}
+              {item.id === 'terminal' && termTabs.length > 0 && (
+                <div className="sb-terms">
+                  {termTabs.map(g => {
+                    const ts = idsOf(g.root).map(id => term.byId.get(id)).filter(t => !!t)
+                    const lead = term.byId.get(g.focus) || ts[0]
+                    if (!lead) return null
+                    const busy = ts.some(t => !t.ended && terms.busy_ids.includes(t.id))
+                    return (
+                      <button key={g.id} type="button" className={`sb-term-row ${loc.pathname === `/term/${g.id}` ? 'active' : ''} ${ts.every(t => t.ended) ? 'ended' : ''}`}
+                        onClick={() => go(`/term/${g.id}`)} title={`${lead.title} · ${lead.host_name}${lead.cwd ? ` · ${lead.cwd}` : ''}${ts.length > 1 ? ` · ${ts.length} panes` : ''}`}>
+                        <span className="sb-term-ico">{busy ? <RunDots size={10} /> : <span className="term-dot" />}</span>
+                        <span className="grow ellipsis">{lead.title}</span>
+                        {ts.length > 1 && <span className="sb-term-n">{ts.length}</span>}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </Fragment>
+          )
+        })}
       </nav>
 
       <div className="sb-sec">
