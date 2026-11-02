@@ -101,3 +101,48 @@ func TestLostLink(t *testing.T) {
 		}
 	}
 }
+
+// A dropped connection's sshd keeps the agent's forward; lsof cannot see
+// sshd's sockets on Linux, so freePorts finds it through the slot's
+// pocket-hold attach under it, ends it, and leaves other slots alone.
+func TestFreePortsEndsTheSlotsOldConnection(t *testing.T) {
+	if _, err := exec.LookPath("ps"); err != nil {
+		t.Skip("no ps")
+	}
+	dir := t.TempDir()
+	hold := filepath.Join(dir, "pocket-hold-test")
+	sshd := filepath.Join(dir, "sshd-session")
+	if err := os.WriteFile(hold, []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// "sshd" stays the parent (no exec), as sshd-session does
+	if err := os.WriteFile(sshd, []byte("#!/bin/sh\n'"+hold+"' attach -from 1 -only \"$1\" -- claude\necho done\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	start := func(slot string) *exec.Cmd {
+		c := exec.Command(sshd, slot)
+		c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := c.Start(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = syscall.Kill(-c.Process.Pid, syscall.SIGKILL); _ = c.Wait() })
+		return c
+	}
+	slot, other := "8561216b-3c99-48cc-86be-09f05aad1428", "9c4b59a4-523b-4d12-bfd0-5b9dd8591f52"
+	stale, keep := start(slot), start(other)
+	time.Sleep(300 * time.Millisecond)
+	out, err := exec.Command("sh", "-c", freePorts, "sh", slot).CombinedOutput()
+	if err != nil {
+		t.Fatalf("freePorts: %v: %s", err, out)
+	}
+	ended := make(chan error, 1)
+	go func() { ended <- stale.Wait() }()
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the slot's old connection was not ended")
+	}
+	if err := syscall.Kill(keep.Process.Pid, 0); err != nil {
+		t.Fatalf("another slot's connection was ended: %v", err)
+	}
+}
