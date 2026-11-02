@@ -271,12 +271,23 @@ func lostLink(r *Remote, err error, stderr string) string {
 // muxArgs share one connection per machine between short commands. The
 // shared link notices a dead network within ~15 s (agents: 2 min), and closes
 // 5 minutes after its last use. They come first: ssh keeps the first value.
-// freePorts ends this account's sshd processes listening on the ports given
-// ($@): connections that dropped without the machine noticing, still holding
-// a forward. Then it waits a few seconds for the ports to come free.
-const freePorts = `for port; do for p in $(lsof -t -nP -iTCP@127.0.0.1:"$port" -sTCP:LISTEN 2>/dev/null); do ` +
-	`case "$(ps -o comm= -p "$p" 2>/dev/null)" in *sshd*) kill "$p" 2>/dev/null;; esac; done; done; ` +
-	`i=0; while [ $i -lt 10 ]; do busy=; for port; do lsof -t -nP -iTCP@127.0.0.1:"$port" -sTCP:LISTEN >/dev/null 2>&1 && busy=1; done; ` +
+// freePorts ends this account's sshd processes still holding the forwards of
+// slot $1 on the ports given (the rest): connections that dropped without the
+// machine noticing. They are found by the slot's pocket-hold attach (its sshd
+// is the one up the tree) and, where the system shows it, by the port: sshd
+// makes itself non-dumpable, so lsof sees no sockets of it on Linux (OpenSSH
+// 10 on athena-box), and that alone left the port held for good. Then it
+// waits a few seconds for the ports to come free (ss sees every socket).
+const freePorts = `slot=$1; shift; ` +
+	`up() { c=$1; n=0; while [ -n "$c" ] && [ "$c" -gt 1 ] && [ $n -lt 4 ]; do ` +
+	`case "$(ps -o comm= -p "$c" 2>/dev/null)" in *sshd*) kill "$c" 2>/dev/null; return;; esac; ` +
+	`c=$(ps -o ppid= -p "$c" 2>/dev/null | tr -d ' '); n=$((n+1)); done; }; ` +
+	`if [ -n "$slot" ]; then for p in $(ps -eo pid=,args= 2>/dev/null | awk -v s=" $slot -- " 'index($0, s) && / attach / {print $1}'); do ` +
+	`case "$(ps -o comm= -p "$p" 2>/dev/null)" in *pocket-hold*) up "$p";; esac; done; fi; ` +
+	`for port; do for p in $(lsof -t -nP -iTCP@127.0.0.1:"$port" -sTCP:LISTEN 2>/dev/null); do up "$p"; done; done; ` +
+	`held() { if command -v ss >/dev/null 2>&1; then ss -Hltn "sport = :$1" 2>/dev/null | grep -q .; ` +
+	`else lsof -nP -iTCP@127.0.0.1:"$1" -sTCP:LISTEN >/dev/null 2>&1; fi; }; ` +
+	`i=0; while [ $i -lt 10 ]; do busy=; for port; do held "$port" && busy=1; done; ` +
 	`[ -z "$busy" ] && exit 0; sleep 0.5; i=$((i+1)); done; exit 1`
 
 // FreeForwards ends the old connections on the remote machine that still
@@ -291,7 +302,7 @@ func (r *Remote) FreeForwards(ctx context.Context) error {
 	if len(ports) == 0 {
 		return nil
 	}
-	_, stderr, err := r.Run(ctx, 20*time.Second, freePorts, ports...)
+	_, stderr, err := r.Run(ctx, 20*time.Second, freePorts, append([]string{r.Slot}, ports...)...)
 	if err != nil && stderr != "" {
 		return errors.New(stderr)
 	}
