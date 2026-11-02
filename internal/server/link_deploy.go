@@ -29,7 +29,8 @@ import (
 //     replaced since (a nightly reset, someone by hand) isn't shown as live.
 // The commands get POCKET_BRANCH, POCKET_SHA, POCKET_REF, POCKET_SOURCE,
 // POCKET_PROJECT, POCKET_DEPLOY_ID, POCKET_DEPLOYED_BY, POCKET_REF_URL and
-// POCKET_REF_TITLE (the item's address and title, when the app sent them).
+// POCKET_REF_TITLE (the item's address and title, when the app sent them),
+// and POCKET_QUICK=1 for a quick redeploy (the project's "quick" commands).
 //
 // A person may also set up a deploy of their own for a project (their own
 // staging box): it wins over the shared one for them and is a slot of its
@@ -47,6 +48,12 @@ type deployConfig struct {
 	// Check: what a deploy of $POCKET_BRANCH would do, shown before the click
 	// (one line each; a line starting with "!" is a warning: "! resets the database")
 	Check string `json:"check,omitempty"`
+	// Quick: commands for redeploying the branch that runs there now after a
+	// fix (no fresh start: e.g. keep the database, rebuild only what changed)
+	Quick []string `json:"quick,omitempty"`
+	// QuickCheck: whether a quick redeploy of $POCKET_BRANCH fits (exit 0) or
+	// not (exit non-zero, its last line says why); none = always offered
+	QuickCheck string `json:"quick_check,omitempty"`
 }
 
 func deployKey(project string) string { return "deploy:" + project }
@@ -375,6 +382,34 @@ type deployCheckResult struct {
 	Lines  []deployCheckLine `json:"lines"`
 	Error  string            `json:"error,omitempty"`
 	Behind *deployBehind     `json:"behind,omitempty"`
+	Quick  *deployQuick      `json:"quick,omitempty"` // only when the project has a quick redeploy
+}
+
+// deployQuick: whether the quick redeploy fits the branch (no = why not)
+type deployQuick struct {
+	OK     bool   `json:"ok"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// quickCheck asks the deploy machine whether a quick redeploy of the branch fits.
+func (s *Server) quickCheck(ctx context.Context, th *store.Host, cfg deployConfig, branch string) *deployQuick {
+	if len(cfg.Quick) == 0 {
+		return nil
+	}
+	if cfg.QuickCheck == "" {
+		return &deployQuick{OK: true}
+	}
+	script := "export POCKET_BRANCH=" + deployQuote(branch) + "\n" + deployCdScript(cfg.Dir) + cfg.QuickCheck + "\n"
+	out, errOut, err := shOn(ctx, th, 90*time.Second, script)
+	if err == nil {
+		return &deployQuick{OK: true}
+	}
+	lines := splitLines(strings.TrimSpace(cleanLog(out)))
+	reason := ""
+	if len(lines) > 0 {
+		reason = strings.TrimSpace(lines[len(lines)-1])
+	}
+	return &deployQuick{Reason: oneLine(firstNonEmpty(reason, strings.TrimSpace(errOut), err.Error()), 300)}
 }
 
 // deployBehind: the branch lacks commits of the repository's default branch
@@ -478,7 +513,7 @@ type deployCheckCached struct {
 // machine (?check=<branch> on GET /link/deploy). Kept a minute, and until the
 // next deploy changes what is on the machine.
 func (s *Server) deployCheck(ctx context.Context, project string, cfg deployConfig, branch string) deployCheckResult {
-	if cfg.Check == "" {
+	if cfg.Check == "" && len(cfg.Quick) == 0 {
 		return deployCheckResult{Lines: []deployCheckLine{}}
 	}
 	latest := int64(0)
@@ -496,9 +531,14 @@ func (s *Server) deployCheck(ctx context.Context, project string, cfg deployConf
 	if err != nil {
 		return deployCheckResult{Lines: []deployCheckLine{}, Error: err.Error()}
 	}
-	script := "export POCKET_BRANCH=" + deployQuote(branch) + "\n" + deployCdScript(cfg.Dir) + cfg.Check + "\n"
-	out, errOut, err := shOn(ctx, th, 90*time.Second, script)
-	v := deployCheckResult{Lines: []deployCheckLine{}}
+	quick := make(chan *deployQuick, 1)
+	go func() { quick <- s.quickCheck(ctx, th, cfg, branch) }()
+	var out, errOut string
+	if cfg.Check != "" {
+		script := "export POCKET_BRANCH=" + deployQuote(branch) + "\n" + deployCdScript(cfg.Dir) + cfg.Check + "\n"
+		out, errOut, err = shOn(ctx, th, 90*time.Second, script)
+	}
+	v := deployCheckResult{Lines: []deployCheckLine{}, Quick: <-quick}
 	for _, l := range splitLines(cleanLog(out)) {
 		if l = strings.TrimSpace(l); l == "" || len(v.Lines) >= 12 {
 			continue
@@ -625,6 +665,7 @@ func (s *Server) handleLinkDeployConfig(w http.ResponseWriter, r *http.Request) 
 	if in.Config != nil {
 		c := in.Config
 		c.Run, c.Dir, c.URL, c.Current, c.Check = nonEmpty(c.Run), strings.TrimSpace(c.Dir), strings.TrimSpace(c.URL), strings.TrimSpace(c.Current), strings.TrimSpace(c.Check)
+		c.Quick, c.QuickCheck = nonEmpty(c.Quick), strings.TrimSpace(c.QuickCheck)
 		if len(c.Run) > 0 {
 			if _, err := s.mayDeployOn(ctx, u, c.HostID); err != nil {
 				s.fail(w, err, "deploy")
@@ -669,6 +710,8 @@ func (s *Server) handleLinkStartDeploy(w http.ResponseWriter, r *http.Request) {
 		// MergeBase: merge the repository's default branch into the branch and
 		// push it first (the person said yes to "N commits behind development")
 		MergeBase bool `json:"merge_base"`
+		// Quick: run the project's quick redeploy commands instead of the deploy
+		Quick bool `json:"quick"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
@@ -690,6 +733,14 @@ func (s *Server) handleLinkStartDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg := ds.cfg
+	commands := cfg.Run
+	if in.Quick {
+		if len(cfg.Quick) == 0 {
+			writeErr(w, http.StatusBadRequest, "this project has no quick redeploy set up")
+			return
+		}
+		commands = cfg.Quick
+	}
 	th, err := s.deployTarget(ctx, u, ds)
 	if err != nil {
 		s.fail(w, err, "deploy")
@@ -739,6 +790,13 @@ func (s *Server) handleLinkStartDeploy(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, m["err"])
 		return
 	}
+	// asked after the push: the machine sees the fix only once origin has it
+	if in.Quick {
+		if q := s.quickCheck(ctx, th, cfg, in.Branch); q != nil && !q.OK {
+			writeErr(w, http.StatusConflict, "quick redeploy doesn't fit: "+q.Reason+"; deploy it instead")
+			return
+		}
+	}
 	d := &store.Deploy{UserID: u.ID, Project: ds.slot, HostID: cfg.HostID, Branch: in.Branch, SHA: m["sha"],
 		Source: firstNonEmpty(strings.ToLower(in.Source), app), Ref: strings.TrimSpace(in.Ref), Status: "running", URL: cfg.URL}
 	switch {
@@ -752,6 +810,9 @@ func (s *Server) handleLinkStartDeploy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	d.Note = merged + d.Note
+	if in.Quick {
+		d.Note = "Quick redeploy.\n" + d.Note
+	}
 	if err := s.store.CreateDeploy(ctx, d); err != nil {
 		s.fail(w, err, "deploy")
 		return
@@ -760,11 +821,14 @@ func (s *Server) handleLinkStartDeploy(w http.ResponseWriter, r *http.Request) {
 	env := [][2]string{{"POCKET_DEPLOY", "1"}, {"POCKET_DEPLOY_ID", strconv.FormatInt(d.ID, 10)}, {"POCKET_BRANCH", d.Branch}, {"POCKET_SHA", d.SHA},
 		{"POCKET_REF", d.Ref}, {"POCKET_SOURCE", d.Source}, {"POCKET_PROJECT", info.ProjectID}, {"POCKET_DEPLOYED_BY", who},
 		{"POCKET_REF_URL", oneLine(strings.TrimSpace(in.RefURL), 500)}, {"POCKET_REF_TITLE", oneLine(strings.TrimSpace(in.RefLabel), 200)}}
+	if in.Quick {
+		env = append(env, [2]string{"POCKET_QUICK", "1"})
+	}
 	var run strings.Builder
 	for _, e := range env {
 		run.WriteString("export " + e[0] + "=" + deployQuote(e[1]) + "\n")
 	}
-	run.WriteString(deployCdScript(cfg.Dir) + "set -e\n" + strings.Join(cfg.Run, "\n") + "\n")
+	run.WriteString(deployCdScript(cfg.Dir) + "set -e\n" + strings.Join(commands, "\n") + "\n")
 	sout, serr, err := shOn(ctx, th, 45*time.Second, wtDeployStart, deployDir(d.Project), strconv.FormatInt(d.ID, 10), run.String())
 	sm := kv(sout)
 	if err != nil || sm["started"] == "" {
