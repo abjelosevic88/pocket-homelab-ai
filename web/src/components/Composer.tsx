@@ -58,6 +58,25 @@ async function shrink(file: File): Promise<File> {
 
 let lidSeq = 0
 
+// Text pasted while nothing editable has the focus (a click in the conversation, a tab,
+// dictation apps that paste with ⌘V) goes to a composer instead of nowhere: the one used
+// last if it is on screen, else the first one that is.
+type PasteTarget = { el: () => HTMLTextAreaElement | null; insert: (s: string, atEnd: boolean) => void }
+const pasteTargets: PasteTarget[] = []
+let lastPasteTarget: PasteTarget | null = null
+const editable = (el: Element | null) => !!el && (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement || (el as HTMLElement).isContentEditable || !!el.closest('.xterm, [contenteditable]'))
+const onScreen = (t: PasteTarget) => { const el = t.el(); return !!el && !el.disabled && el.offsetParent !== null }
+function strayPaste(e: ClipboardEvent) {
+  if (e.defaultPrevented || editable(e.target as Element) || editable(document.activeElement)) return
+  if (document.querySelector('.modal-backdrop')) return
+  const text = e.clipboardData?.getData('text/plain')
+  if (!text) return
+  const t = lastPasteTarget && onScreen(lastPasteTarget) ? lastPasteTarget : pasteTargets.find(onScreen)
+  if (!t) return
+  e.preventDefault()
+  t.insert(text, true)
+}
+
 /** Where a message would run: decides which skills the CLI offers. */
 export interface SkillScope { provider: ProviderId; cwd?: string; account_id?: number; host_id?: number }
 
@@ -233,9 +252,42 @@ export const Composer = React.forwardRef<ComposerHandle, {
     return () => { window.removeEventListener('dragenter', enter); window.removeEventListener('dragleave', leave); window.removeEventListener('dragover', over); window.removeEventListener('drop', drop) }
   }, [addFiles, disabled])
 
-  const onPaste = (e: React.ClipboardEvent) => {
+  /** Text in at the caret (or at the end), put into the state directly: the browser's own
+   *  paste sometimes never reached it, and the text was lost until pasted a second time. */
+  const insert = useCallback((s: string, atEnd: boolean) => {
+    const el = ta.current
+    if (!el) return
+    const focused = document.activeElement === el
+    const a = focused && !atEnd ? el.selectionStart : el.value.length
+    const b = focused && !atEnd ? el.selectionEnd : el.value.length
+    const v = el.value
+    const lead = atEnd && v && !/\s$/.test(v) ? ' ' : ''
+    const next = v.slice(0, a) + lead + s + v.slice(b)
+    const pos = a + lead.length + s.length
+    setText(next)
+    setCaret(pos)
+    requestAnimationFrame(() => { const t = ta.current; if (!t) return; t.focus(); t.setSelectionRange(pos, pos) })
+  }, [])
+
+  useEffect(() => {
+    const me: PasteTarget = { el: () => ta.current, insert }
+    pasteTargets.push(me)
+    if (pasteTargets.length === 1) window.addEventListener('paste', strayPaste)
+    return () => {
+      pasteTargets.splice(pasteTargets.indexOf(me), 1)
+      if (lastPasteTarget === me) lastPasteTarget = null
+      if (!pasteTargets.length) window.removeEventListener('paste', strayPaste)
+    }
+  }, [insert])
+  const markUsed = () => { lastPasteTarget = pasteTargets.find(p => p.el() === ta.current) || null }
+
+  const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const files = Array.from(e.clipboardData.items).filter(i => i.kind === 'file').map(i => i.getAsFile()).filter((f): f is File => !!f)
-    if (files.length) { e.preventDefault(); addFiles(files.map((f, i) => f.name && f.name !== 'image.png' ? f : new File([f], `pasted-${Date.now()}-${i}.${(f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: f.type }))) }
+    if (files.length) { e.preventDefault(); addFiles(files.map((f, i) => f.name && f.name !== 'image.png' ? f : new File([f], `pasted-${Date.now()}-${i}.${(f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: f.type }))); return }
+    const s = e.clipboardData.getData('text/plain')
+    if (!s) return
+    e.preventDefault()
+    insert(s, false)
   }
 
   const uploading = atts.some(a => !a.upload && !a.error)
@@ -404,7 +456,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
         </div>
       )}
       <textarea {...noGrammarly} ref={ta} rows={big ? 3 : 1} value={text} disabled={disabled} placeholder={placeholder} aria-label="Message"
-        onSelect={e => setCaret(e.currentTarget.selectionStart)}
+        onSelect={e => setCaret(e.currentTarget.selectionStart)} onFocus={markUsed}
         onChange={e => { setText(e.target.value); setCaret(e.target.selectionStart) }} onKeyDown={onKey} onPaste={onPaste} enterKeyHint={isTouch() ? 'enter' : 'send'} />
       <div className="composer-bar">
         {/* Phones get Camera / Photos / Files like the Codex app: one input each, so iOS opens
