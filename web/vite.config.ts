@@ -12,6 +12,10 @@ const keep: Plugin = { name: 'keep-gitkeep', closeBundle() { writeFileSync(fileU
 export default defineConfig({
   plugins: [react(), keep],
   build: { chunkSizeWarningLimit: 1500 },
+  // xterm's ES build, minified again here, comes out broken: its answer to a
+  // mode query (DECRQM, which vim sends) throws, and the terminal stops
+  // drawing for good. Its own ready-made bundle is used instead.
+  resolve: { alias: [{ find: /^@xterm\/xterm$/, replacement: '@xterm/xterm/lib/xterm.js' }] },
   server: {
     proxy: { '/api': api },
   },
