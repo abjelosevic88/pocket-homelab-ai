@@ -36,6 +36,8 @@ func (s *Server) linkRoutes(r chi.Router) {
 	r.Post("/drafts/{id}/start", s.handleStartDraft)
 	r.Get("/threads/{id}/context", s.handleThreadContext)
 	r.Post("/threads/{id}/pin", s.handleThreadPin)
+	r.Post("/threads/{id}/attach", s.handleAttachThread)
+	r.Delete("/threads/{id}/attach", s.handleDetachThread)
 }
 
 // linkUser authenticates an app acting for a person with threads:write.

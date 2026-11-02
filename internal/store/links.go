@@ -243,3 +243,24 @@ func (s *Store) DeleteLinkDraft(ctx context.Context, userID int64, id string) er
 	_, err := s.DB.ExecContext(ctx, `DELETE FROM link_drafts WHERE id = ? AND user_id = ?`, id, userID)
 	return err
 }
+
+// DetachThread forgets that a thread belongs to an item of another app: its
+// drafts from that app, its context, and (for one the app started) the item
+// in its source, so nothing groups it under the item any more.
+func (s *Store) DetachThread(ctx context.Context, userID int64, threadID, source string) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+	if _, err := tx.ExecContext(ctx, `DELETE FROM link_drafts WHERE user_id = ? AND thread_id = ? AND source = ?`, userID, threadID, source); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM thread_context WHERE thread_id = ? AND source = ?`, threadID, source); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE threads SET source_ref = '' WHERE id = ? AND user_id = ? AND source = ?`, threadID, userID, "link:"+source); err != nil {
+		return err
+	}
+	return tx.Commit()
+}

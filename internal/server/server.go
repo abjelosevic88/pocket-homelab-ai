@@ -294,6 +294,7 @@ func (s *Server) Router() http.Handler {
 			r.Delete("/remembered-folders", s.handleRememberedFolders)
 			r.Get("/settings/app-models", s.handleAppModels)
 			r.Get("/projects-link", s.handleProjectsLink)
+			r.Get("/projects-issues", s.handleProjectsIssues)
 			r.Get("/pocket-tools/auto-approve", s.handleGetAppAuto)
 			r.Put("/pocket-tools/auto-approve", s.handlePutAppAuto)
 			r.Post("/pocket-tools/auto-approve", s.handleAddAppAuto)
