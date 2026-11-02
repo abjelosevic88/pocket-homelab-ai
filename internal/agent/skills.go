@@ -21,10 +21,19 @@ type Skill struct {
 	Invoke      string `json:"invoke"`          // "/name" (Claude) or "$name" (Codex)
 }
 
+// claudeHidden are built-in commands left out of the slash menu: Pocket AI
+// has its own control for them (model, effort, title, a new conversation),
+// they only make sense in the terminal, or they are internal.
+var claudeHidden = map[string]bool{
+	"clear": true, "model": true, "effort": true, "fast": true, "rename": true, "color": true,
+	"focus": true, "heapdump": true, "extra-usage": true, "agents": true, "workflow-launch-exec": true,
+}
+
 // ListClaudeSkills asks Claude Code which skills and custom commands it loads
-// in cwd (user, project and plugin ones; built-in commands are left out). The
+// in cwd (user, project and plugin ones) and which built-in commands it runs
+// without a terminal (/compact, /context, /mcp, /code-review …). The
 // initialize handshake only: no prompt, no session file.
-func ListClaudeSkills(ctx context.Context, bin, cwd string, env []string) ([]Skill, error) {
+func ListClaudeSkills(ctx context.Context, bin, cwd string, env []string) (skills, commands []Skill, err error) {
 	if bin == "" {
 		bin = "claude"
 	}
@@ -33,13 +42,13 @@ func ListClaudeSkills(ctx context.Context, bin, cwd string, env []string) ([]Ski
 	cmd, err := LocalCmd(ctx, cwd, env, bin, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
 		"--no-session-persistence", "--permission-prompt-tool", "stdio", "--settings", `{"disableAllHooks":true}`)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, _ := cmd.StdinPipe()
 	stdout, _ := cmd.StdoutPipe()
 	if err := cmd.Start(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer func() {
 		_ = stdin.Close()
@@ -67,20 +76,30 @@ func ListClaudeSkills(ctx context.Context, bin, cwd string, env []string) ([]Ski
 		if json.Unmarshal(sc.Bytes(), &m) != nil || m.Type != "control_response" || m.Response.RequestID != "skills" {
 			continue
 		}
-		out := []Skill{}
+		skills, commands = []Skill{}, []Skill{}
 		for _, c := range m.Response.Response.Commands {
-			if c.Builtin || c.Name == "" || strings.HasPrefix(c.Name, "_") {
+			if c.Name == "" || strings.HasPrefix(c.Name, "_") {
 				continue
 			}
-			out = append(out, Skill{Name: c.Name, Description: c.Description, ArgHint: c.ArgumentHint, Invoke: "/" + c.Name})
+			k := Skill{Name: c.Name, Description: c.Description, ArgHint: c.ArgumentHint, Invoke: "/" + c.Name}
+			switch {
+			case !c.Builtin:
+				skills = append(skills, k)
+			case !claudeHidden[c.Name] && !strings.HasPrefix(c.Description, "(removed)"):
+				if c.Name == "mcp" {
+					k.ArgHint = "" // Pocket AI's MCP panel does reconnect / enable / disable / sign in
+				}
+				commands = append(commands, k)
+			}
 		}
-		sortSkills(out)
-		return out, nil
+		sortSkills(skills)
+		sortSkills(commands)
+		return skills, commands, nil
 	}
 	if ctx.Err() != nil {
-		return nil, errors.New("Claude Code did not answer in time")
+		return nil, nil, errors.New("Claude Code did not answer in time")
 	}
-	return nil, errors.New("Claude Code did not list its skills")
+	return nil, nil, errors.New("Claude Code did not list its skills")
 }
 
 // ListCodexSkills asks the Codex app-server for the enabled skills in cwd.

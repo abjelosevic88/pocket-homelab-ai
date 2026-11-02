@@ -250,6 +250,12 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
   const [rcNext, setRcNext] = useState(() => localStorage.getItem('pai-rc-next') === '1')
   const remoteSwitch = { on: rcNext, onToggle: () => setRcNext(v => { localStorage.setItem('pai-rc-next', v ? '0' : '1'); return !v }) }
 
+  // /mcp needs a running conversation: there is no agent yet here
+  const startFirst = (name: string) => {
+    if (name !== 'mcp') return false
+    toast('Send a first message — then /mcp shows that conversation’s MCP servers')
+    return true
+  }
   const send = async (text: string, uploadIds: string[]) => {
     if (!choice) return false
     if (wtSpec && repo === null && wtSpec.mode !== 'existing' && !(embedded && draft)) { toast('Still checking the folder for the worktree — try again in a second', 'err'); return false }
@@ -301,7 +307,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
           if (from && text.includes(from)) serverComposer.current?.setText(text.split(from).join(to))
         }} />}
         <DraftFiles files={draftFiles} source={draft.ref} onRemove={id => setDraftFiles(f => f.filter(x => x.id !== id))} />
-        <Composer ref={serverComposer} big autoFocus draftKey={`link-${draft.id}`} onSend={send} skills={choice?.provider ? { provider: choice.provider, cwd: choice.cwd, account_id: choice.account_id, host_id: hostId } : undefined}
+        <Composer ref={serverComposer} big autoFocus draftKey={`link-${draft.id}`} onSend={send} onCommand={startFirst} skills={choice?.provider ? { provider: choice.provider, cwd: choice.cwd, account_id: choice.account_id, host_id: hostId } : undefined}
           placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} about ${draft.ref || 'this'}${hostId ? ` on ${hosts.find(h => h.id === hostId)?.name}` : ''}…`}
           footer={<AgentPicker compact showProvider={false} host={hostId} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} remote={remoteSwitch} />} />
         </>
@@ -383,7 +389,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
                 </div>
               )}
               {draft && <DraftFiles files={draftFiles} source={draft.ref} onRemove={id => setDraftFiles(f => f.filter(x => x.id !== id))} />}
-              <Composer ref={serverComposer} big autoFocus draftKey={draft ? `link-${draft.id}` : 'new'} onSend={send} skills={choice?.provider ? { provider: choice.provider, cwd: choice.cwd, account_id: choice.account_id, host_id: hostId } : undefined}
+              <Composer ref={serverComposer} big autoFocus draftKey={draft ? `link-${draft.id}` : 'new'} onSend={send} onCommand={startFirst} skills={choice?.provider ? { provider: choice.provider, cwd: choice.cwd, account_id: choice.account_id, host_id: hostId } : undefined}
                 placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} anything${hostId ? ` on ${hosts.find(h => h.id === hostId)?.name}` : ''}${choice.cwd && !wtSpec ? ` in ${shortPath(choice.cwd)}` : ''}${wtWhere}… paste a screenshot, type / for recipes`}
                 footer={<AgentPicker compact showProvider={false} host={hostId} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} remote={remoteSwitch} />} />
               {providers.length > 0 && !providers.some(p => p.available) && (

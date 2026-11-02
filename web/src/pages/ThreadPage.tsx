@@ -30,6 +30,7 @@ import { accessOf } from '../lib/share'
 import { actionFor, useShortcuts } from '../lib/shortcuts'
 import { type PageActions, usePageActions } from '../lib/palette'
 import { FolderPicker } from '../components/FolderPicker'
+import { McpDialog } from '../components/McpDialog'
 import { retitleThread } from '../components/ThreadMenu'
 import { Confirm, download, Empty, errMsg, Loading, type MenuItem, MenuButton, useContextMenu, useToast } from '../components/ui'
 
@@ -80,6 +81,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const [attaching, setAttaching] = useState(false)
   const [refRev, setRefRev] = useState(0) // the header's issue chip loads again after an attach or detach
   const [moving, setMoving] = useState(false)
+  const [mcpOpen, setMcpOpen] = useState(false)
   const [atBottom, setAtBottom] = useState(true)
   const [newBelow, setNewBelow] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
@@ -275,6 +277,14 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
       if (parentTabs) { openInParent(th.id, th.title); toast('Forked — the copy opened in a new tab') } else { navigate(`/t/${th.id}`); toast('Forked — this is the copy') }
     } catch (e) { toast(errMsg(e), 'err') }
   }
+  // slash commands Pocket AI answers itself instead of the agent
+  const localCommand = (name: string) => {
+    if (name !== 'mcp') return false
+    if (t?.source === 'ask') { toast('Pocket Ask chats keep the connectors they were set up with', 'err'); return true }
+    if (t?.external) { toast('This conversation runs somewhere else — manage its MCP servers there', 'err'); return true }
+    setMcpOpen(true)
+    return true
+  }
   // a new CLI process on the same session: MCP servers and connectors connect again (another account)
   const restartSession = async () => {
     try {
@@ -363,6 +373,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
       { label: 'Attach to issue…', icon: 'link' as const, disabled: !projectsLink.on, hint: projectsLink.on ? undefined : 'Turn on Pocket AI → Pocket Projects in Pocket Core', onSelect: () => setAttaching(true) },
     ] : []),
     ...(t.provider === 'claude' && t.source !== 'ask' && canRun ? [{ label: t.remote_control ? 'Turn off Remote Control' : 'Turn on Remote Control', icon: 'smartphone' as const, onSelect: () => remoteControl(!t.remote_control) }] : []),
+    { label: 'MCP servers…', icon: 'server', disabled: t.source === 'ask' || !canRun || !!t.external, hint: '/mcp', onSelect: () => setMcpOpen(true) },
     { label: 'Restart session', icon: 'repeat', disabled: t.source === 'ask' || !canRun || !!t.external, hint: 'Reconnects MCP & connectors', onSelect: restartSession },
     { label: 'Fork into a new thread', icon: 'fork', disabled: t.source === 'ask' || !t.provider_session_id || !canRun, onSelect: fork },
     { label: 'Export as Markdown', icon: 'download', onSelect: () => download(`${V1}/threads/${id}/export.md`) },
@@ -456,7 +467,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
           {access === 'view' ? (
             <div className="callout info"><Icon name="eye" size={15} /><span>{t.owner_name || 'Someone'} shared this chat with you to read. They can let you chat in it too.</span></div>
           ) : canRun ? (
-            <Composer key={id} ref={composer} draftKey={id} autoFocus onSend={send} skills={t.source === 'ask' ? undefined : { provider: t.provider, cwd: t.cwd, account_id: t.account_id, host_id: t.host_id }} running={running} onStop={t.external && !t.live && !t.reattached ? undefined : interrupt} disabled={!!t.external && !t.live && !t.reattached}
+            <Composer key={id} ref={composer} draftKey={id} autoFocus onSend={send} onCommand={localCommand} skills={t.source === 'ask' ? undefined : { provider: t.provider, cwd: t.cwd, account_id: t.account_id, host_id: t.host_id }} running={running} onStop={t.external && !t.live && !t.reattached ? undefined : interrupt} disabled={!!t.external && !t.live && !t.reattached}
               placeholder={t.external && !t.live && !t.reattached ? 'It is running in another app right now — you can reply here once it has finished' : running ? 'Add a message — it is sent when the agent is done…' : pending.length ? 'Or type an answer…' : `Reply to ${providerName(t.provider)}…`}
               footer={<>
                 {t.source === 'ask' && owner && <span className="thread-pickers"><AgentPicker compact ask showProvider={false} value={{ provider: 'claude', model: t.model, effort: t.effort, mode: t.mode, account_id: t.account_id || 0 }}
@@ -472,6 +483,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
         </div>
       </div>
 
+      {mcpOpen && <McpDialog threadId={id} onClose={() => setMcpOpen(false)} onRestart={restartSession} />}
       {moving && <FolderPicker value={t.cwd} host={t.host_id || 0} onClose={() => setMoving(false)} onPick={async cwd => {
         try { const th = await api.post<Thread>(`${V1}/threads/${id}/folder`, { cwd }); setThread(th); upsertThread(th); toast(`Moved to ${shortPath(th.cwd)}`) } catch (e) { toast(errMsg(e), 'err') }
       }} />}

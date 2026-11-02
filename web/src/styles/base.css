@@ -405,3 +405,18 @@ input.bare, textarea.bare { border-color: transparent; background: transparent; 
 .toast-timer { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: color-mix(in srgb, #a78bfa 85%, transparent); transform-origin: left; animation: toast-run linear forwards; }
 @keyframes toast-run { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 .toast-left { opacity: .7; font-weight: 500; }
+
+/* MCP panel (/mcp) */
+.mcp-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.mcp-row { display: flex; gap: 12px; align-items: center; padding: 10px 2px; border-top: 1px solid var(--border); }
+.mcp-row:first-child { border-top: 0; }
+.mcp-main { flex: 1; min-width: 0; }
+.mcp-name { display: flex; align-items: center; gap: 8px; font-weight: 600; min-width: 0; }
+.mcp-name .badge { gap: 4px; flex-shrink: 0; }
+.mcp-sub { font-size: 12px; margin-top: 2px; }
+.mcp-err { font-size: 12px; color: var(--danger); margin-top: 3px; overflow-wrap: anywhere; }
+.mcp-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.mcp-login { margin-bottom: 10px; }
+.mcp-callback { display: flex; gap: 6px; margin-top: 8px; }
+.mcp-callback input { flex: 1; min-width: 0; }
+@media (max-width: 560px) { .mcp-row { flex-direction: column; align-items: stretch; gap: 8px; } .mcp-actions { justify-content: flex-start; } }

@@ -86,12 +86,17 @@ Personal app assistance: [Briefing, workflows, memory, sources and document uplo
 - **Images in the prompt**: paste a screenshot, drag one in, or use the camera/photo library on an iPhone. Claude
   gets image blocks, Codex local image inputs. Large photos are shrunk in the browser first.
 - Type while it works: messages queue and go out when the turn ends. Stop any time.
+- `/` in the message box lists the agent's commands and skills, as in the terminal: Claude Code's own
+  (`/compact`, `/context`, `/code-review`, `/usage`, …) and for Codex `/compact`, `/review`, `/init`. `#` lists recipes.
+- `/mcp` (or thread menu → MCP servers) shows the conversation's MCP servers and claude.ai connectors: reconnect,
+  turn off/on, sign in or out — e.g. after switching an account. Thread menu → Restart session starts the agent
+  again on the same conversation, with every connection fresh.
 - A push through Apprise / ntfy / a webhook when a turn finishes, fails or waits for you — only when you are not
   already looking at that thread. Browser notifications and an app badge when installed as a PWA.
 
 **Checks that run themselves**
 - **Recipes** are saved prompts with their agent settings and `{{placeholders}}` ("Check an app: {{app}}"); one
-  tap to run. Starter recipes for server health, a misbehaving app, disk space, container updates, recent errors.
+  tap to run, or `#` in the message box. Starter recipes for server health, a misbehaving app, disk space, container updates, recent errors.
 - **Schedules** run a prompt every N minutes/hours, daily, on weekdays, weekly or on a cron line. The agent ends
   with `OK: …` or `ATTENTION: …`; you are notified always, only on attention, or never.
 
