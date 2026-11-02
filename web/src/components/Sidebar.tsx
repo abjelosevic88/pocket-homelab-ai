@@ -17,7 +17,7 @@ import { type Option, Select } from './Select'
 import { Avatar, Kbd, Spinner, useContextMenu } from './ui'
 import { useThreadMenu } from './ThreadMenu'
 import { PrivacyChip } from './ShareDialog'
-import { projectsPaused, projectsRef, useProjectsLink } from '../lib/projects'
+import { projectsPaused, projectsRef, refHost, refKey, useProjectsLink } from '../lib/projects'
 
 function groupOf(t: Thread): string {
   if (t.pinned) return 'Pinned'
@@ -261,16 +261,16 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
                 const issueUrl = is?.url || (proj?.projects_url ? `${proj.projects_url}/issue/${g.ref}` : '')
                 return (
                   <div key={g.ref} className="sb-issue-wrap">
-                    <div className="sb-issue-row" onContextMenu={e => { if (issueUrl) ctx.open(e, () => [{ label: `Open ${g.ref} in Pocket Projects`, icon: 'external', onSelect: () => window.open(issueUrl, '_blank', 'noopener') }]) }}>
+                    <div className="sb-issue-row" onContextMenu={e => { if (issueUrl) ctx.open(e, () => [{ label: `Open ${refKey(g.ref)} in Pocket Projects`, icon: 'external', onSelect: () => window.open(issueUrl, '_blank', 'noopener') }]) }}>
                       <button type="button" className={`sb-issue grow ${open ? 'open' : ''} ${is?.state_type === 'completed' || is?.state_type === 'canceled' ? 'closed' : ''}`} aria-expanded={open}
-                        title={is ? `${g.ref} · ${is.title}` : g.ref}
+                        title={[refKey(g.ref), refHost(g.ref), is?.title].filter(Boolean).join(' · ')}
                         onClick={() => setProjOpen(o => o.includes(g.ref) ? o.filter(x => x !== g.ref) : [...o, g.ref])}>
                         <Icon name="chevron-right" size={12} className="sb-issue-caret" />
-                        <span className="sb-issue-ref tnum">{g.ref}</span>
+                        <span className="sb-issue-ref tnum">{refKey(g.ref)}</span>
                         <span className="sb-issue-title ellipsis">{is?.title || ''}</span>
                         <span className="sb-issue-n tnum">{g.items.length}</span>
                       </button>
-                      {issueUrl && <a className="sb-issue-open" href={issueUrl} target="_blank" rel="noreferrer" title={`Open ${g.ref} in Pocket Projects`} aria-label={`Open ${g.ref} in Pocket Projects`}><Icon name="external" size={13} /></a>}
+                      {issueUrl && <a className="sb-issue-open" href={issueUrl} target="_blank" rel="noreferrer" title={`Open ${refKey(g.ref)} in Pocket Projects`} aria-label={`Open ${refKey(g.ref)} in Pocket Projects`}><Icon name="external" size={13} /></a>}
                     </div>
                     {open && g.items.map(t => <ThreadRow key={t.id} t={t} active={t.id === activeId} onOpen={() => go(`/t/${t.id}`)} onContextMenu={e => ctx.open(e, () => tm.items(t))} />)}
                   </div>

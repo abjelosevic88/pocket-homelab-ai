@@ -11,7 +11,7 @@ import { BgMark, backgroundTitle, hasBackground } from './Background'
 import { type MenuItem, MenuButton, useContextMenu } from './ui'
 import { useThreadMenu } from './ThreadMenu'
 import { keyCaps, useShortcuts } from '../lib/shortcuts'
-import { projectsRef, useProjectsLink } from '../lib/projects'
+import { projectsRef, refHost, refKey, useProjectsLink } from '../lib/projects'
 import { idsOf, isTermTab, TERM_TAB, tabPath, useMachineItems, useTerminals } from '../lib/terminals'
 import { baseOf, fileIcon, fileTab, isFileTab, parseFileTab } from '../lib/files'
 import { RunDots } from './RunningList'
@@ -29,7 +29,13 @@ const GROUPS = 'pai-tab-groups'
 const AUTO = 'pai-tab-auto2' // 2: forks of Projects conversations count too
 export const GROUP_COLORS = ['blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange', 'grey']
 const loadGroups = (): TabGroup[] => {
-  try { const v = JSON.parse(localStorage.getItem(GROUPS) || '[]'); return Array.isArray(v) ? v.filter(g => g && typeof g.id === 'string' && Array.isArray(g.tabs)) : [] } catch { return [] }
+  try {
+    const v = JSON.parse(localStorage.getItem(GROUPS) || '[]')
+    if (!Array.isArray(v)) return []
+    return v.filter(g => g && typeof g.id === 'string' && Array.isArray(g.tabs))
+      // groups made before names were shortened: host/ATH-12 → ATH-12 (renamed ones stay)
+      .map(g => g.auto?.startsWith('projects:') && g.name === g.auto.slice(9) ? { ...g, name: refKey(g.name) } : g)
+  } catch { return [] }
 }
 
 /** The open tabs; opening a thread adds its tab. */
@@ -151,7 +157,7 @@ export function useTabs(enabled: boolean) {
     const ref = projectsRef(threads.find(t => t.id === id))
     if (!ref || groupOf(id)) return
     const g = groups.find(x => x.auto === 'projects:' + ref)
-    if (g) joinGroup(id, g.id); else newGroup([id], ref, 'projects:' + ref)
+    if (g) joinGroup(id, g.id); else newGroup([id], refKey(ref), 'projects:' + ref)
   }, [enabled, threads, proj?.on, proj?.threads, tabs, autoDone, groups, groupOf, joinGroup, newGroup])
   return { tabs, active, close, move, moveGroup, closed: reopenable, reopen, step, groups, issues: proj?.on ? proj.issues : {}, groupOf, joinGroup, newGroup, leaveGroup, editGroup, ungroup }
 }
@@ -230,7 +236,7 @@ export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, i
               : <button key={'g-' + g.id} type="button" draggable className={`tg-label tg-${g.color} ${g.collapsed ? 'collapsed' : ''} ${g.name ? '' : 'empty'} ${dragGroup === g.id ? 'dragging' : ''}`}
                   onDragStart={e => { setDragGroup(g.id); e.dataTransfer.effectAllowed = 'move' }}
                   onDragEnd={() => setDragGroup('')}
-                  title={`${g.name || 'Unnamed group'}${g.auto?.startsWith('projects:') && issues[g.auto.slice(9)] ? ` · ${issues[g.auto.slice(9)].title}` : ''} · ${n} ${n === 1 ? 'tab' : 'tabs'} — click to ${g.collapsed ? 'expand' : 'collapse'}, double-click to rename`}
+                  title={`${g.name || 'Unnamed group'}${(r => r && refHost(r) ? ` · ${refHost(r)}` : '')(g.auto?.startsWith('projects:') ? g.auto.slice(9) : '')}${g.auto?.startsWith('projects:') && issues[g.auto.slice(9)] ? ` · ${issues[g.auto.slice(9)].title}` : ''} · ${n} ${n === 1 ? 'tab' : 'tabs'} — click to ${g.collapsed ? 'expand' : 'collapse'}, double-click to rename`}
                   aria-expanded={!g.collapsed}
                   onClick={() => editGroup(g.id, { collapsed: !g.collapsed })}
                   onDoubleClick={() => setNaming(g.id)}
@@ -239,7 +245,7 @@ export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, i
                     if (drag) { e.preventDefault(); joinGroup(drag, g.id) }
                     else if (dragGroup && dragGroup !== g.id) { e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); moveGroup(dragGroup, shown.find(x => g.tabs.includes(x)) || '', e.clientX > r.left + r.width / 2) }
                   }}>
-                  {g.name || <span className="tg-dot" />}{g.collapsed && <span className="tg-count tnum">{n}</span>}
+                  {g.name ? <span className="tg-name">{g.name}</span> : <span className="tg-dot" />}{g.collapsed && <span className="tg-count tnum">{n}</span>}
                 </button>
           }
           const id = r.id
