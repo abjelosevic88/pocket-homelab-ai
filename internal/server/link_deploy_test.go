@@ -112,6 +112,31 @@ func TestDeployHelpers(t *testing.T) {
 	}
 }
 
+func TestFailureReason(t *testing.T) {
+	migrator := `error [2026-11-02 09:37:09.877] [DbMigratorJob] Database migration job failed
+{
+  "data": {
+    "errorMessage": "Error: Refusing to migrate: 13 applied migration created_at values do not exist in the current journal: 1793349881772. Restore the matching journal history before migrating.",
+    "stack": "Error: Error: Refusing to migrate: 13 applied\n    at handleSafeCallError (index.ts:138:42)"
+  }
+}
+/work/athena-instance/apps/db-migrator-job:
+[ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL] db-migrator-job@0.0.0 start: ` + "`tsx src/main.ts migrate`" + `
+Exit status 1
+[ELIFECYCLE] Command failed with exit code 1.
+`
+	for log, want := range map[string]string{
+		migrator: "Refusing to migrate: 13 applied migration created_at values do not exist in the current journal: 1793349881772. Restore the matching journal history before migrating.",
+		"building\n! 2 migration(s) of x were not applied: regenerate them\n": "2 migration(s) of x were not applied: regenerate them",
+		"fatal: couldn't find remote ref feat/x\n":                            "fatal: couldn't find remote ref feat/x",
+		"all good\n": "",
+	} {
+		if got := failureReason(log); got != want {
+			t.Errorf("failureReason:\n got %q\nwant %q", got, want)
+		}
+	}
+}
+
 func TestDeployCheck(t *testing.T) {
 	s, _, _ := testServer(t)
 	cfg := deployConfig{Run: []string{"true"}, Check: `echo "! Resets the database: $POCKET_BRANCH"; echo; echo "Adds 1 migration(s): 0042_x"`}
