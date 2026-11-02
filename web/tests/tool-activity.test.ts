@@ -17,10 +17,11 @@ test('repeated calls collapse without losing order or touching source items', ()
   if (result[1].type === 'tools') assert.deepEqual(result[1].items.map(i => i.key), items.slice(1, -1).map(i => i.key))
   assert.equal(JSON.stringify(items), before)
 })
-test('denied calls, approvals, replies and image previews remain outside groups', () => {
+test('denied calls, approvals, replies, image previews and sent files remain outside groups', () => {
   const image = call('picture'); image.tool!.images = 1
   const legacyImage = call('legacy-picture'); legacyImage.tool!.output = '[image]'
-  const separate = [call('denied', 'denied'), message('approval', 'request'), message('reply', 'assistant'), image, legacyImage]
+  const sent = call('sent'); sent.tool!.kind = 'file'; sent.tool!.name = 'SendUserFile'
+  const separate = [call('denied', 'denied'), message('approval', 'request'), message('reply', 'assistant'), image, legacyImage, sent]
   for (const boundary of separate) {
     const groups = groupToolActivity([call('first'), boundary, call('last')])
     assert.deepEqual(groups.map(x => x.type), ['tools', 'item', 'tools'])

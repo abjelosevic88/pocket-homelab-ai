@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -43,6 +44,7 @@ func (s *Server) threadRoutes(r chi.Router) {
 	r.Post("/threads/{id}/rewind", s.handleRewind)
 	r.Get("/threads/{id}/export.md", s.handleExport)
 	r.Get("/threads/{id}/log-image", s.handleLogImage)
+	r.Get("/threads/{id}/sent-file", s.handleSentFile) // sentfiles.go
 	r.Get("/threads/{id}/subagents", s.handleSubagents)
 	r.Get("/threads/{id}/subagents/{sid}", s.handleSubagent)
 	s.shareRoutes(r)
@@ -709,6 +711,7 @@ func (s *Server) deleteThread(ctx context.Context, t *store.Thread) error {
 		s.removeUploadFile(u.Path)
 		_ = s.store.DeleteUpload(ctx, u.UserID, u.ID)
 	}
+	_ = os.RemoveAll(s.sentDir(t.ID))
 	gone := sseEvent{Name: "thread_removed", Data: map[string]string{"id": t.ID}}
 	s.rt.toUser(t.UserID, gone)
 	s.notifyMobileBadge(t.UserID)

@@ -222,6 +222,7 @@ type ToolResult struct {
 	IsError   bool
 	Diff      string
 	Images    int
+	Files     []SentFile // SendUserFile: the files as the CLI resolved them
 }
 
 // Feed parses one line.
@@ -270,7 +271,7 @@ func (l *ClaudeLog) Feed(line []byte) []LogOp {
 				}
 				results = true
 				ops = append(ops, LogOp{Result: &ToolResult{ToolUseID: b.ToolUseID, Output: clip(toolResultText(b.Content), 20000),
-					IsError: b.IsError, Diff: structuredDiff(m.ToolUseResult), Images: countImages(b.Content)}})
+					IsError: b.IsError, Diff: structuredDiff(m.ToolUseResult), Images: countImages(b.Content), Files: sentFilesResult(m.ToolUseResult)}})
 			}
 			if results {
 				return ops
@@ -339,6 +340,9 @@ func (r *ToolResult) Apply(t *Tool) {
 	}
 	if r.Diff != "" && (t.Kind == "edit" || t.Kind == "write") {
 		t.Diff = r.Diff
+	}
+	if len(r.Files) > 0 && t.Kind == "file" {
+		t.Files = r.Files
 	}
 }
 

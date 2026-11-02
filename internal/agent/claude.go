@@ -104,6 +104,13 @@ func StartClaude(ctx context.Context, o Options, sink Sink) (Session, error) {
 	if mode == "" {
 		mode = "default"
 	}
+	if !o.Restricted {
+		// SendUserFile: the CLI offers it only with Remote Control (or in
+		// Anthropic's own apps); by path it hands Pocket AI the file's path,
+		// and Pocket AI shows it as a card.
+		o.Env = append(o.Env, "CLAUDE_CODE_ATTACHMENTS_BY_PATH=1")
+		o.SystemPrompt = strings.TrimSpace(o.SystemPrompt + "\n\nA file the person should see (a report, an HTML page, a chart, a screenshot, a build) goes to them with the SendUserFile tool: Pocket AI shows it as a card they can open on their phone.")
+	}
 	if o.Restricted {
 		args = append(args, "--restricted", "--permission-mode", "manual", "--tools", "")
 		if len(o.Connectors) == 0 {
@@ -873,6 +880,11 @@ func claudeTool(name string, input json.RawMessage) *Tool {
 	case "Skill":
 		t.Kind = "skill"
 		t.Title = "Skill: " + sv("skill")
+	case "SendUserFile":
+		t.Kind = "file"
+		t.Display = sv("display")
+		t.Files = sentFilesInput(in["files"])
+		t.Title = sentTitle(sv("caption"), t.Files)
 	case "Task", "Agent":
 		t.Kind = "task"
 		t.Title = "Agent: " + oneLine(firstNonEmpty(sv("description"), sv("prompt")), 120)
@@ -941,6 +953,11 @@ func (s *claudeSession) handleUser(raw, result json.RawMessage) {
 		if t.Kind == "edit" || t.Kind == "write" {
 			if d := structuredDiff(result); d != "" {
 				t.Diff = d
+			}
+		}
+		if t.Kind == "file" {
+			if f := sentFilesResult(result); f != nil {
+				t.Files = f
 			}
 		}
 		s.sink.Item(Item{Key: b.ToolUseID, Kind: "tool", Tool: t})
@@ -1335,4 +1352,69 @@ func (s *claudeSession) handleBackground(m map[string]json.RawMessage) {
 	if !same {
 		s.sink.Tasks(append([]Task(nil), next...))
 	}
+}
+
+// sentFilesInput: the files a SendUserFile call names ("a.html" or
+// ["a.html", …]), before the CLI resolved them.
+func sentFilesInput(v any) []SentFile {
+	var paths []string
+	switch x := v.(type) {
+	case string:
+		paths = []string{x}
+	case []any:
+		for _, p := range x {
+			if s, ok := p.(string); ok {
+				paths = append(paths, s)
+			}
+		}
+	}
+	out := []SentFile{}
+	for _, p := range paths {
+		if strings.TrimSpace(p) != "" {
+			out = append(out, SentFile{Name: filepath.Base(p), Path: p})
+		}
+	}
+	return out
+}
+
+// sentFilesResult: the files as the CLI resolved them (absolute path, size,
+// type); nil when the result has none.
+func sentFilesResult(raw json.RawMessage) []SentFile {
+	var r struct {
+		Attachments []struct {
+			Path      string `json:"path"`
+			Size      int64  `json:"size"`
+			IsImage   bool   `json:"isImage"`
+			MediaType string `json:"media_type"`
+		} `json:"attachments"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &r) != nil || len(r.Attachments) == 0 {
+		return nil
+	}
+	out := []SentFile{}
+	for _, a := range r.Attachments {
+		if a.Path == "" {
+			continue
+		}
+		out = append(out, SentFile{Name: filepath.Base(a.Path), Path: a.Path, Size: a.Size, Mime: a.MediaType, Image: a.IsImage})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// sentTitle: the caption, else what was sent.
+func sentTitle(caption string, files []SentFile) string {
+	if c := oneLine(caption, 160); c != "" {
+		return c
+	}
+	names := make([]string, 0, len(files))
+	for _, f := range files {
+		names = append(names, f.Name)
+	}
+	if len(names) == 0 {
+		return "Send a file"
+	}
+	return "Sent " + oneLine(strings.Join(names, ", "), 140)
 }

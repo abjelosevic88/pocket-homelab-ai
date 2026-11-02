@@ -576,3 +576,19 @@
 .away-banner-saved { flex: none; font-weight: 650; color: var(--accent-ink); }
 .away-banner .btn { flex: none; }
 @media (max-width: 640px) { .away-banner-long { display: none; } }
+
+/* Files the agent sent (SendUserFile): cards like the Claude apps' */
+.sent-files { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin: 4px 0; }
+.sent-files .msg-imgs { justify-content: flex-start; }
+.sent-caption { font-size: 13px; color: var(--muted); }
+.sent-card { display: inline-flex; align-items: center; gap: 10px; max-width: min(420px, 100%); padding: 9px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: inherit; text-decoration: none; font: inherit; cursor: pointer; text-align: left; box-shadow: 0 1px 2px rgba(0, 0, 0, .05); }
+.sent-card:hover { border-color: var(--accent); }
+.sent-card.busy { cursor: default; opacity: .75; }
+.sent-ext { flex: none; font-size: 10.5px; font-weight: 600; letter-spacing: .04em; padding: 2px 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); }
+.sent-name { min-width: 0; font-size: 14px; }
+.sent-size { flex: none; font-size: 12px; color: var(--muted); }
+.sent-act { flex: none; color: var(--muted); }
+.sent-view .modal-body { padding: 0 12px 12px; }
+.sent-view-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sent-frame { display: block; width: 100%; height: min(78vh, 900px); border: 0; border-radius: 8px; background: #fff; }
+.sent-media { display: block; width: 100%; max-height: 78vh; }
