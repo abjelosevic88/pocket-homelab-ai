@@ -372,8 +372,99 @@ type deployCheckLine struct {
 }
 
 type deployCheckResult struct {
-	Lines []deployCheckLine `json:"lines"`
-	Error string            `json:"error,omitempty"`
+	Lines  []deployCheckLine `json:"lines"`
+	Error  string            `json:"error,omitempty"`
+	Behind *deployBehind     `json:"behind,omitempty"`
+}
+
+// deployBehind: the branch lacks commits of the repository's default branch
+// (origin/HEAD, e.g. development). Clean: merging it in has no conflicts, so
+// the app can offer to merge, push and deploy in one click.
+type deployBehind struct {
+	Base      string   `json:"base"`
+	Commits   int      `json:"commits"`
+	Clean     bool     `json:"clean"`
+	Conflicts []string `json:"conflicts"`
+}
+
+// wtDeployTip, shared by the scripts below: $b's commit as it would be
+// deployed (the local branch when it has commits origin lacks, else origin's)
+// in $t, the default branch in $base; exits quietly when there is nothing to
+// compare. Needs b set.
+const wtDeployTip = `base=$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null); base=${base#origin/}
+[ -n "$base" ] && [ "$base" != "$b" ] || exit 0
+timeout 30 git fetch -q origin "+refs/heads/$base:refs/remotes/origin/$base" "+refs/heads/$b:refs/remotes/origin/$b" 2>/dev/null
+l=$(git rev-parse -q --verify "refs/heads/$b^{commit}" 2>/dev/null)
+o=$(git rev-parse -q --verify "refs/remotes/origin/$b^{commit}" 2>/dev/null)
+t=$o
+if [ -n "$l" ] && { [ -z "$o" ] || git merge-base --is-ancestor "$o" "$l"; }; then t=$l; fi
+[ -n "$t" ] || exit 0
+`
+
+// wtDeployBehind: $1 repo, $2 branch. Prints base=, behind= and, when behind,
+// clean=1 or clean=0 with a conflict=<file> line each (merged without
+// touching any checkout).
+const wtDeployBehind = gitEnv + `cd -- "$1" || exit 3
+b=$2
+` + wtDeployTip + `n=$(git rev-list --count "$t..origin/$base")
+echo "base=$base"; echo "behind=$n"
+[ "$n" -gt 0 ] || exit 0
+if out=$(git merge-tree --write-tree --name-only --no-messages "$t" "origin/$base" 2>/dev/null); then echo "clean=1"
+else echo "clean=0"; printf '%s\n' "$out" | tail -n +2 | grep -v '^$' | head -n 20 | sed 's/^/conflict=/'; fi
+`
+
+// wtDeployMergeBase: $1 repo, $2 branch. Merges the default branch into the
+// branch in a throwaway worktree (no one's checkout changes) and pushes it.
+// Prints merged=<sha> <base>, conflict=<files>, err= or nothing (not behind).
+const wtDeployMergeBase = gitEnv + `cd -- "$1" || exit 3
+b=$2
+` + wtDeployTip + `if [ -n "$l" ] && [ -n "$o" ] && [ "$t" = "$o" ] && ! git merge-base --is-ancestor "$l" "$o"; then
+  echo "err=$b here and on origin have gone apart; pull or push it yourself first"; exit 0
+fi
+[ "$(git rev-list --count "$t..origin/$base")" -gt 0 ] || exit 0
+w=$(mktemp -d "${TMPDIR:-/tmp}/pocket-merge-XXXXXX")
+done_() { git worktree remove --force "$w" >/dev/null 2>&1; rm -rf "$w"; git worktree prune >/dev/null 2>&1; }
+git worktree add -q --detach "$w" "$t" 2>/dev/null || { done_; echo "err=could not check $b out to merge"; exit 0; }
+if ! out=$(git -C "$w" merge -q --no-verify --no-edit -m "Merge $base into $b" "origin/$base" 2>&1); then
+  f=$(git -C "$w" diff --name-only --diff-filter=U | head -n 20 | tr '\n' ' ')
+  git -C "$w" merge --abort >/dev/null 2>&1
+  done_
+  if [ -n "$f" ]; then echo "conflict=$f"; else echo "err=merging $base failed: $(printf '%s' "$out" | tail -n 3 | tr '\n' ' ')"; fi
+  exit 0
+fi
+sha=$(git -C "$w" rev-parse HEAD)
+if out=$(git -C "$w" push -q origin "HEAD:refs/heads/$b" 2>&1); then echo "merged=$sha $base"
+else echo "err=git push failed: $(printf '%s' "$out" | tail -n 3 | tr '\n' ' ')"; fi
+done_
+`
+
+// branchBehind asks the caller's repository how far the branch is behind the
+// default branch; nil when it is not (or that can't be told).
+func (s *Server) branchBehind(ctx context.Context, h *store.Host, repo, branch string) *deployBehind {
+	out, _, err := shOn(ctx, h, 60*time.Second, wtDeployBehind, repo, branch)
+	if err != nil {
+		return nil
+	}
+	v := &deployBehind{Conflicts: []string{}}
+	for _, l := range splitLines(out) {
+		k, val, _ := strings.Cut(strings.TrimSpace(l), "=")
+		switch k {
+		case "base":
+			v.Base = val
+		case "behind":
+			v.Commits, _ = strconv.Atoi(val)
+		case "clean":
+			v.Clean = val == "1"
+		case "conflict":
+			if val != "" {
+				v.Conflicts = append(v.Conflicts, val)
+			}
+		}
+	}
+	if v.Base == "" || v.Commits <= 0 {
+		return nil
+	}
+	return v
 }
 
 var deployCheckCache sync.Map // project|branch|latest deploy → deployCheckCached
@@ -452,7 +543,11 @@ func (s *Server) handleLinkDeploy(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "bad branch")
 			return
 		}
-		writeJSON(w, http.StatusOK, s.deployCheck(ctx, ds.slot, cfg, b))
+		behind := make(chan *deployBehind, 1)
+		go func() { behind <- s.branchBehind(ctx, h, info.Main, b) }()
+		v := s.deployCheck(ctx, ds.slot, cfg, b)
+		v.Behind = <-behind
+		writeJSON(w, http.StatusOK, v)
 		return
 	}
 	source, ref := strings.ToLower(q.Get("source")), strings.TrimSpace(q.Get("ref"))
@@ -571,6 +666,9 @@ func (s *Server) handleLinkStartDeploy(w http.ResponseWriter, r *http.Request) {
 		// (POCKET_REF_URL, POCKET_REF_TITLE: a "what's deployed" badge can link back)
 		RefURL   string `json:"ref_url"`
 		RefLabel string `json:"ref_label"`
+		// MergeBase: merge the repository's default branch into the branch and
+		// push it first (the person said yes to "N commits behind development")
+		MergeBase bool `json:"merge_base"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
@@ -608,6 +706,28 @@ func (s *Server) handleLinkStartDeploy(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, what+" is being deployed right now; try again when it is done")
 		return
 	}
+	merged := ""
+	if in.MergeBase {
+		out, errOut, err := shOn(ctx, h, 3*time.Minute, wtDeployMergeBase, info.Main, in.Branch)
+		if err != nil {
+			s.fail(w, scriptErr(errOut, err), "deploy")
+			return
+		}
+		m := kv(out)
+		switch {
+		case m["err"] != "":
+			writeErr(w, http.StatusBadRequest, m["err"])
+			return
+		case strings.Contains(out, "conflict="):
+			files := strings.Fields(m["conflict"])
+			writeErr(w, http.StatusConflict, "merging it brings conflicts in "+strconv.Itoa(len(files))+" file(s): "+strings.Join(files, ", ")+
+				". Resolve them in the branch (ask Claude in the issue's chat to merge it), then deploy")
+			return
+		case m["merged"] != "":
+			sha, base, _ := strings.Cut(m["merged"], " ")
+			merged = "Merged " + base + " into " + in.Branch + " and pushed it (" + sha[:min(8, len(sha))] + "); pull it where you work on it.\n"
+		}
+	}
 	// origin must have the branch as it is here, or the target deploys an older one
 	out, errOut, err := shOn(ctx, h, 2*time.Minute, wtDeployPush, info.Main, in.Branch)
 	if err != nil {
@@ -627,8 +747,11 @@ func (s *Server) handleLinkStartDeploy(w http.ResponseWriter, r *http.Request) {
 	case m["pushed"] != "":
 		d.Note = "Pushed " + m["pushed"] + " commit(s) of " + in.Branch + " to origin.\n"
 	case m["behind"] != "":
-		d.Note = "Deploying origin/" + in.Branch + ": it has " + m["behind"] + " commit(s) the local branch lacks.\n"
+		if merged == "" {
+			d.Note = "Deploying origin/" + in.Branch + ": it has " + m["behind"] + " commit(s) the local branch lacks.\n"
+		}
 	}
+	d.Note = merged + d.Note
 	if err := s.store.CreateDeploy(ctx, d); err != nil {
 		s.fail(w, err, "deploy")
 		return

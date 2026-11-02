@@ -112,6 +112,85 @@ func TestDeployHelpers(t *testing.T) {
 	}
 }
 
+func TestDeployMergeBase(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for k, v := range map[string]string{"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"} {
+		t.Setenv(k, v)
+	}
+	origin, repo := filepath.Join(home, "origin.git"), filepath.Join(home, "repo")
+	gitT(t, home, "init", "-q", "--bare", "-b", "development", origin)
+	gitT(t, home, "clone", "-q", origin, repo)
+	write := func(name, body string) { _ = os.WriteFile(filepath.Join(repo, name), []byte(body), 0o644) }
+	write("a.txt", "a\n")
+	gitT(t, repo, "add", ".")
+	gitT(t, repo, "commit", "-q", "-m", "first")
+	gitT(t, repo, "push", "-q", "origin", "development")
+	gitT(t, repo, "remote", "set-head", "origin", "development")
+	gitT(t, repo, "checkout", "-q", "-b", "feat/x")
+	write("b.txt", "b\n")
+	gitT(t, repo, "add", ".")
+	gitT(t, repo, "commit", "-q", "-m", "feature")
+	gitT(t, repo, "push", "-q", "origin", "feat/x")
+	// development moves on without touching the feature's file
+	gitT(t, repo, "checkout", "-q", "development")
+	write("c.txt", "c\n")
+	gitT(t, repo, "add", ".")
+	gitT(t, repo, "commit", "-q", "-m", "dev work")
+	gitT(t, repo, "push", "-q", "origin", "development")
+	gitT(t, repo, "checkout", "-q", "feat/x") // someone's checkout: the merge must not touch it
+	ctx := context.Background()
+
+	out, _, err := shOn(ctx, nil, 30*time.Second, wtDeployBehind, repo, "feat/x")
+	if err != nil || !strings.Contains(out, "base=development") || !strings.Contains(out, "behind=1") || !strings.Contains(out, "clean=1") {
+		t.Fatalf("behind: %q %v", out, err)
+	}
+	if out, _, _ = shOn(ctx, nil, 30*time.Second, wtDeployBehind, repo, "development"); strings.TrimSpace(out) != "" {
+		t.Fatalf("the base itself is never behind: %q", out)
+	}
+
+	out, _, err = shOn(ctx, nil, time.Minute, wtDeployMergeBase, repo, "feat/x")
+	m := kv(out)
+	if err != nil || !strings.HasSuffix(m["merged"], " development") {
+		t.Fatalf("merge: %q %v", out, err)
+	}
+	if sha, _, _ := strings.Cut(m["merged"], " "); gitT(t, origin, "rev-parse", "refs/heads/feat/x") != sha {
+		t.Fatal("the merge was not pushed")
+	}
+	if gitT(t, repo, "status", "--porcelain") != "" || gitT(t, repo, "log", "-1", "--format=%s") != "feature" {
+		t.Fatal("the checkout changed")
+	}
+	if out, _, _ = shOn(ctx, nil, 30*time.Second, wtDeployBehind, repo, "feat/x"); !strings.Contains(out, "behind=0") {
+		t.Fatalf("still behind after the merge: %q", out)
+	}
+	if out, _, _ = shOn(ctx, nil, time.Minute, wtDeployMergeBase, repo, "feat/x"); strings.TrimSpace(out) != "" {
+		t.Fatalf("nothing to merge: %q", out)
+	}
+
+	// both change the same file: conflicts named, nothing pushed
+	gitT(t, repo, "pull", "-q", "--ff-only", "origin", "feat/x")
+	write("a.txt", "feature\n")
+	gitT(t, repo, "commit", "-q", "-am", "feature edits a")
+	gitT(t, repo, "push", "-q", "origin", "feat/x")
+	before := gitT(t, origin, "rev-parse", "refs/heads/feat/x")
+	gitT(t, repo, "checkout", "-q", "development")
+	write("a.txt", "development\n")
+	gitT(t, repo, "commit", "-q", "-am", "dev edits a")
+	gitT(t, repo, "push", "-q", "origin", "development")
+	gitT(t, repo, "checkout", "-q", "feat/x")
+	out, _, _ = shOn(ctx, nil, 30*time.Second, wtDeployBehind, repo, "feat/x")
+	if !strings.Contains(out, "clean=0") || !strings.Contains(out, "conflict=a.txt") {
+		t.Fatalf("conflict check: %q", out)
+	}
+	out, _, _ = shOn(ctx, nil, time.Minute, wtDeployMergeBase, repo, "feat/x")
+	if strings.TrimSpace(kv(out)["conflict"]) != "a.txt" || gitT(t, origin, "rev-parse", "refs/heads/feat/x") != before {
+		t.Fatalf("conflict merge: %q", out)
+	}
+	if strings.Count(gitT(t, repo, "worktree", "list"), "\n") != 0 {
+		t.Fatal("a merge worktree was left behind")
+	}
+}
+
 func TestFailureReason(t *testing.T) {
 	migrator := `error [2026-11-02 09:37:09.877] [DbMigratorJob] Database migration job failed
 {
