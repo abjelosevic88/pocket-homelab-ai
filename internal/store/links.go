@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"time"
 )
 
 // ---------- conversations other Pocket apps prepare ----------
@@ -88,7 +90,45 @@ func (s *Store) CreateLinkDraft(ctx context.Context, d *LinkDraft) error {
 
 // GetLinkDraft loads one of a person's drafts (ErrNotFound for anyone else's).
 func (s *Store) GetLinkDraft(ctx context.Context, userID int64, id string) (*LinkDraft, error) {
-	return scanDraft(s.DB.QueryRowContext(ctx, `SELECT `+draftCols+` FROM link_drafts WHERE id = ? AND user_id = ?`, id, userID))
+	d, err := scanDraft(s.DB.QueryRowContext(ctx, `SELECT `+draftCols+` FROM link_drafts WHERE id = ? AND user_id = ?`, id, userID))
+	if err == nil {
+		s.healLinkDraft(ctx, d)
+	}
+	return d, err
+}
+
+// staleDraftClaim: a start that has not recorded its thread by then never will.
+const staleDraftClaim = 5 * time.Minute
+
+// healLinkDraft repairs a draft claimed without its thread (a start that
+// stopped between creating the thread and recording it): it finds the thread
+// the start made, or releases a stale claim so the draft can be sent again.
+// Left alone, the app shows it as not sent and every resend is refused.
+func (s *Store) healLinkDraft(ctx context.Context, d *LinkDraft) {
+	if d.UsedAt == nil || d.ThreadID != nil {
+		return
+	}
+	ctx = context.WithoutCancel(ctx)
+	used, err := time.Parse(time.RFC3339Nano, *d.UsedAt)
+	if err != nil {
+		return
+	}
+	var tid string
+	err = s.DB.QueryRowContext(ctx, `SELECT t.id FROM threads t
+		WHERE t.user_id = ? AND t.source = ? AND t.source_ref = ? AND t.created_at >= ?
+		  AND NOT EXISTS (SELECT 1 FROM link_drafts o WHERE o.thread_id = t.id)
+		ORDER BY t.created_at LIMIT 1`,
+		d.UserID, "link:"+d.Source, d.Ref, used.Add(-time.Second).UTC().Format(time.RFC3339)).Scan(&tid)
+	switch {
+	case err == nil:
+		if _, err := s.DB.ExecContext(ctx, `UPDATE link_drafts SET thread_id = ? WHERE id = ? AND thread_id IS NULL`, tid, d.ID); err == nil {
+			d.ThreadID = &tid
+		}
+	case errors.Is(err, sql.ErrNoRows) && time.Since(used) > staleDraftClaim:
+		if _, err := s.DB.ExecContext(ctx, `UPDATE link_drafts SET used_at = NULL WHERE id = ? AND thread_id IS NULL`, d.ID); err == nil {
+			d.UsedAt = nil
+		}
+	}
 }
 
 // LinkDrafts lists a person's drafts for one item of another app, newest first.
@@ -106,7 +146,14 @@ func (s *Store) LinkDrafts(ctx context.Context, userID int64, source, ref string
 		}
 		out = append(out, d)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	for _, d := range out {
+		s.healLinkDraft(ctx, d)
+	}
+	return out, nil
 }
 
 // StartedLinkDrafts are the person's latest sent drafts from one app (any ref).
