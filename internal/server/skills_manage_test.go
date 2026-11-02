@@ -72,3 +72,40 @@ func TestOwnSkillsAddEditRemove(t *testing.T) {
 	other, _ := person(t, s, h, "other@example.com", "user", true)
 	other.want("POST", "/api/v1/skills/own"+q, map[string]string{"name": "x", "description": "d", "body": "b"}, 400, nil)
 }
+
+func TestOwnSkillsCopyBetweenAgents(t *testing.T) {
+	s, h, _ := testServer(t)
+	owner, _ := person(t, s, h, "owner@example.com", "admin", true)
+	owner.want("POST", "/api/v1/skills/own?provider=claude", map[string]string{"name": "review", "description": "Review code", "body": "Look closely."}, 201, nil)
+	src := filepath.Join(s.cfg.ClaudeHome, "skills", "review")
+	_ = os.MkdirAll(filepath.Join(src, "refs"), 0o755)
+	_ = os.WriteFile(filepath.Join(src, "refs", "style.md"), []byte("style"), 0o644)
+	_ = os.Symlink("/etc/passwd", filepath.Join(src, "leak"))
+
+	copyTo := func(from, name string, body map[string]any, code int) {
+		owner.want("POST", "/api/v1/skills/own/"+name+"/copy?provider="+from, body, code, nil)
+	}
+	copyTo("claude", "review", map[string]any{"to": "claude"}, 400) // same folder
+	copyTo("claude", "missing", map[string]any{"to": "codex"}, 404)
+	copyTo("claude", "review", map[string]any{"to": "codex"}, 200)
+	dst := filepath.Join(s.cfg.CodexHome, "skills", "review")
+	if b, err := os.ReadFile(filepath.Join(dst, "refs", "style.md")); err != nil || string(b) != "style" {
+		t.Fatalf("other files not copied: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(dst, "leak")); err == nil {
+		t.Fatal("a link was copied")
+	}
+	if _, err := os.Stat(filepath.Join(src, "SKILL.md")); err != nil {
+		t.Fatal("copy removed the original")
+	}
+	copyTo("claude", "review", map[string]any{"to": "codex"}, 409)
+
+	owner.want("PUT", "/api/v1/skills/own/review?provider=claude", map[string]string{"description": "Newer", "body": "b"}, 200, nil)
+	copyTo("claude", "review", map[string]any{"to": "codex", "replace": true, "move": true}, 200)
+	var sk ownSkill
+	owner.want("GET", "/api/v1/skills/own/review?provider=codex", nil, 200, &sk)
+	if sk.Description != "Newer" {
+		t.Fatalf("not replaced: %#v", sk)
+	}
+	owner.want("GET", "/api/v1/skills/own/review?provider=claude", nil, 404, nil)
+}
