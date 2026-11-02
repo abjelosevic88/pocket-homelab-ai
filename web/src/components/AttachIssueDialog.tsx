@@ -44,7 +44,7 @@ export function AttachIssueDialog({ threadId, current, onClose, onAttached }: { 
   const listed = !!list?.issues.some(i => i.ref.toUpperCase() === typedRef.toUpperCase())
 
   return (
-    <Modal title={current ? 'Move to another issue' : 'Attach to an issue'} onClose={onClose} size="sm">
+    <Modal title={current ? 'Move to another issue' : 'Attach to an issue'} onClose={onClose} size="xl">
       <div className="stack attach-issue">
         <p className="muted small">The issue’s Code panel in Pocket Projects lists this conversation, and pull requests opened here are attached to it.{list?.workspace ? <> Searching <strong>{list.workspace}</strong>, the workspace open in Projects.</> : null}</p>
         <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search issues, or type a key like AS-7" aria-label="Search issues" spellCheck={false} />
@@ -55,10 +55,10 @@ export function AttachIssueDialog({ threadId, current, onClose, onAttached }: { 
               <Icon name="link" size={15} /><span className="grow ellipsis">Attach to <strong>{typedKey}</strong></span>
             </button>}
             {list.issues.map(i => (
-              <button key={i.ref} type="button" role="listitem" className={`dir-row ${closed(i.state_type) ? 'faint' : ''}`} disabled={!!busy || i.ref === current} onClick={() => void attach(i.ref)} title={i.ref}>
+              <button key={i.ref} type="button" role="listitem" className={`dir-row ${closed(i.state_type) ? 'faint' : ''}`} disabled={!!busy || i.ref === current} onClick={() => void attach(i.ref)} title={`${i.ref} · ${i.title}`}>
                 <span className={`attach-state st-${i.state_type || 'unstarted'}`} aria-hidden />
                 <span className="mono small attach-key">{i.identifier}</span>
-                <span className="grow ellipsis">{i.title}</span>
+                <span className="grow attach-title">{i.title}</span>
                 {i.ref === current && <Icon name="check" size={15} />}
                 {busy === i.ref && <span className="spinner" />}
               </button>
