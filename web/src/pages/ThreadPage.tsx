@@ -275,6 +275,13 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
       if (parentTabs) { openInParent(th.id, th.title); toast('Forked — the copy opened in a new tab') } else { navigate(`/t/${th.id}`); toast('Forked — this is the copy') }
     } catch (e) { toast(errMsg(e), 'err') }
   }
+  // a new CLI process on the same session: MCP servers and connectors connect again (another account)
+  const restartSession = async () => {
+    try {
+      const { when } = await api.post<{ when: string }>(`${V1}/threads/${id}/restart`)
+      toast(when === 'after-turn' ? 'Restarts after this turn — connections refresh with your next message' : 'Session restarted — your next message reconnects MCP servers and connectors', 'ok')
+    } catch (e) { toast(errMsg(e), 'err') }
+  }
   // keepText: the message rewound to comes back to edit; false (rewind to a reply): an empty box
   const rewind = async (item: Item, keepText = true) => {
     if (rewinding) return
@@ -356,6 +363,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
       { label: 'Attach to issue…', icon: 'link' as const, disabled: !projectsLink.on, hint: projectsLink.on ? undefined : 'Turn on Pocket AI → Pocket Projects in Pocket Core', onSelect: () => setAttaching(true) },
     ] : []),
     ...(t.provider === 'claude' && t.source !== 'ask' && canRun ? [{ label: t.remote_control ? 'Turn off Remote Control' : 'Turn on Remote Control', icon: 'smartphone' as const, onSelect: () => remoteControl(!t.remote_control) }] : []),
+    { label: 'Restart session', icon: 'repeat', disabled: t.source === 'ask' || !canRun || !!t.external, hint: 'Reconnects MCP & connectors', onSelect: restartSession },
     { label: 'Fork into a new thread', icon: 'fork', disabled: t.source === 'ask' || !t.provider_session_id || !canRun, onSelect: fork },
     { label: 'Export as Markdown', icon: 'download', onSelect: () => download(`${V1}/threads/${id}/export.md`) },
     'sep',

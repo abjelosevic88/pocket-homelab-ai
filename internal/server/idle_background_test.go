@@ -41,3 +41,19 @@ func TestEnforceMaxKeepsTheAgentJustStarted(t *testing.T) {
 		t.Fatal("the agent just started was stopped")
 	}
 }
+
+// Restart session: a busy agent is not cut off mid-turn; it is marked to
+// restart (and so reconnect its MCP servers) once the turn is over.
+func TestRestartWaitsForTheTurn(t *testing.T) {
+	rt := &engine{runs: map[string]*run{}}
+	rt.runs["busy"] = &run{threadID: "busy", running: true, pending: map[string]bool{}}
+	if got := rt.restart("busy"); got != "after-turn" {
+		t.Fatalf("busy: %q", got)
+	}
+	if !rt.runs["busy"].stale || rt.runs["busy"] == nil {
+		t.Fatal("the busy agent was not marked to restart after its turn")
+	}
+	if got := rt.restart("none"); got != "" {
+		t.Fatalf("no process: %q", got)
+	}
+}

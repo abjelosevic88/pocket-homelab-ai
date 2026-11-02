@@ -35,6 +35,7 @@ func (s *Server) threadRoutes(r chi.Router) {
 	r.Post("/threads/{id}/queue/{key}/now", s.handleSendNow)
 	r.Post("/threads/{id}/queue/{key}/edit", s.handleEditQueued)
 	r.Post("/threads/{id}/interrupt", s.handleInterrupt)
+	r.Post("/threads/{id}/restart", s.handleRestartSession)
 	r.Post("/threads/{id}/remote-control", s.handleRemoteControl)
 	r.Post("/threads/{id}/requests/{rid}", s.handleRespond)
 	r.Post("/threads/{id}/read", s.handleMarkRead)
@@ -841,6 +842,17 @@ func (s *Server) handleInterrupt(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// POST /threads/{id}/restart: a new process on the same session, so MCP
+// servers and connectors reconnect (e.g. after signing one in to another
+// account). {"when": "now" | "after-turn" | ""}.
+func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request) {
+	if t := s.threadAs(w, r, accessChat); t != nil {
+		when := s.rt.restart(t.ID)
+		s.log.Info("session restart requested", "thread", t.ID, "when", firstNonEmpty(when, "idle"))
+		writeJSON(w, http.StatusOK, map[string]string{"when": when})
 	}
 }
 

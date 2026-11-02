@@ -1440,6 +1440,27 @@ func (rt *engine) stopAccount(id int64) {
 	}
 }
 
+// restart ends a thread's process so the next message resumes the same
+// session in a new one: MCP servers and connectors connect again, signed in
+// to whatever account they use now (the CLI reads them only at start). A busy
+// process restarts once its turn is over. Returns "now", "after-turn", or ""
+// when no process runs (the next message starts a fresh one anyway).
+func (rt *engine) restart(threadID string) string {
+	r := rt.get(threadID)
+	if r == nil {
+		return ""
+	}
+	r.mu.Lock()
+	busy := r.running || len(r.pending) > 0 || len(r.queue) > 0
+	r.stale = r.stale || busy
+	r.mu.Unlock()
+	if busy {
+		return "after-turn"
+	}
+	rt.stop(threadID)
+	return "now"
+}
+
 // refreshLimits reads the full plan limits from both CLIs (at most every
 // minute); wait=false runs it in the background.
 func (rt *engine) refreshLimits(wait bool) {
