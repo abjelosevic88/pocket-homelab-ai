@@ -23,6 +23,7 @@ import SharedPage from './SharedPage'
 import TodayPage from './TodayPage'
 import UsagePage from './UsagePage'
 import SnippetsPage from './SnippetsPage'
+import SkillsPage from './SkillsPage'
 import AwayPage, { AwayBanner } from './AwayPage'
 import WorktreesPage from './WorktreesPage'
 import FilesPage from './FilesPage'
@@ -134,6 +135,7 @@ function ShellInner() {
     { id: 'recipes', label: 'Recipes', icon: 'zap', keywords: 'prompts saved', run: () => navigate('/recipes') },
     { id: 'schedules', label: 'Schedules', icon: 'clock', keywords: 'cron timer automatic', run: () => navigate('/schedules') },
     { id: 'history', label: 'On this server — CLI sessions', icon: 'history', keywords: 'import resume history claude codex', run: () => navigate('/history') },
+    { id: 'skills', label: 'Skills', icon: 'sparkles', keywords: 'skill slash commands plugins add edit', run: () => navigate('/skills') },
     { id: 'snippets', label: 'Snippets', icon: 'bookmark', keywords: 'saved text prompts', run: () => navigate('/snippets') },
     { id: 'files', label: 'Files', icon: 'folder', keywords: 'upload download browse open file folder server machine', run: () => navigate('/files') },
     { id: 'terminal', label: 'Terminal', icon: 'terminal', keywords: 'shell ssh console bash zsh server machine', run: () => navigate('/term') },
@@ -172,6 +174,7 @@ function ShellInner() {
             <Route path="/actions" element={<ActionsPage onMenu={onMenu} />} />
             <Route path="/workflows" element={<WorkflowsPage onMenu={onMenu} />} />
             <Route path="/usage" element={<UsagePage onMenu={onMenu} />} />
+            <Route path="/skills" element={<SkillsPage onMenu={onMenu} />} />
             <Route path="/snippets" element={<SnippetsPage onMenu={onMenu} />} />
             <Route path="/away" element={<AwayPage onMenu={onMenu} />} />
             <Route path="/worktrees" element={<WorktreesPage onMenu={onMenu} />} />

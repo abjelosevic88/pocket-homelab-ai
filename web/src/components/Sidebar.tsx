@@ -178,6 +178,7 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
         {(user?.role === 'admin' || user?.can_run) && nav('/today', 'today', 'Today')}
         {nav('/recipes', 'zap', 'Recipes')}
         {nav('/schedules', 'clock', 'Schedules')}
+        {(user?.role === 'admin' || user?.can_run) && nav('/skills', 'sparkles', 'Skills')}
         {(user?.role === 'admin' || user?.can_run) && nav('/history', 'history', 'On this server')}
         {(user?.role === 'admin' || user?.can_run) && nav('/worktrees', 'fork', 'Worktrees', activeWt > 0 ? <span className="badge">{activeWt}</span> : undefined)}
         {(user?.role === 'admin' || user?.can_run) && nav('/term', 'terminal', 'Terminal', terms.open > 0 ? (
