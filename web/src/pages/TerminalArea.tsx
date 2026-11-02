@@ -269,6 +269,20 @@ function TermView({ term, shade, visible, focused, onEnded, onAgain, onClose }: 
     // (cursor position, colours, device attributes) would reach whatever runs
     // now as typing, e.g. vim or zsh's line editor
     let replaying = false
+    // OSC 52: a program copying to the clipboard (vim/nvim yank, tmux) — this
+    // computer's clipboard, as in a desktop terminal. Reading it is not offered.
+    let copiedAt = 0 // nvim sends a yank twice (+ and *): one toast
+    t.parser.registerOscHandler(52, data => {
+      const b64 = data.slice(data.indexOf(';') + 1)
+      if (replaying || !b64 || b64 === '?') return true
+      let text: string
+      try { text = new TextDecoder().decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0))) } catch { return true }
+      const was = document.activeElement as HTMLElement | null // copyText's fallback takes the focus
+      const quiet = Date.now() - copiedAt < 1000
+      copiedAt = Date.now()
+      copyText(text).then(ok => { was?.focus?.(); if (!quiet || !ok) toast(ok ? 'Copied to clipboard' : 'The browser did not allow copying', ok ? 'ok' : 'err') })
+      return true
+    })
     t.onData(d => {
       if (replaying) return
       if (ctrl.current && d.length === 1) {
