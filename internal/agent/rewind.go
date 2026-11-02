@@ -38,10 +38,46 @@ func checkpointIndex(native, visible []Item) (int, error) {
 			return i, nil
 		}
 		if !checkpointPromptMatches(native[i], it) {
-			return -1, errors.New("the conversation and agent history do not match; reopen the thread before rewinding")
+			return -1, errHistoryMismatch
 		}
 	}
 	return len(visible) - 1, nil
+}
+
+// errHistoryMismatch: the prompts here and in the provider's history differ.
+var errHistoryMismatch = errors.New("the conversation and agent history do not match; fork from the latest reply instead")
+
+// promptCheckpoint is checkpointIndex (codexCheckpointIndex with unconfirmed
+// sends) that, on a mismatch, tries once more allowing the same prompt shown
+// twice in a row to be one provider message: a send racing a Pocket AI
+// restart was read back from the log as a second copy. Only tried after the
+// exact match failed, so prompts really sent twice still map one to one.
+func promptCheckpoint(native, visible []Item, unconfirmed map[string]bool) (int, error) {
+	index, err := codexCheckpointIndex(native, visible, unconfirmed)
+	if !errors.Is(err, errHistoryMismatch) {
+		return index, err
+	}
+	optional := map[string]bool{}
+	for k, v := range unconfirmed {
+		optional[k] = v
+	}
+	doubled := false
+	for i := 0; i+1 < len(visible); i++ {
+		a, b := visible[i], visible[i+1]
+		if a.Key != "" && strings.TrimSpace(a.Text) != "" && strings.TrimSpace(a.Text) == strings.TrimSpace(b.Text) {
+			optional[a.Key], doubled = true, true
+		}
+	}
+	if !doubled {
+		return index, err
+	}
+	return codexCheckpointIndex(native, visible, optional)
+}
+
+// SamePrompt reports whether a provider log's prompt is the message Pocket AI
+// sent (the log carries what was appended at dispatch, too).
+func SamePrompt(native, sent Item) bool {
+	return checkpointPromptMatches(native, sent)
 }
 
 func checkpointPromptMatches(native, visible Item) bool {
@@ -101,7 +137,7 @@ func codexCheckpointIndex(native, visible []Item, unconfirmed map[string]bool) (
 		index = pos
 	}
 	if index < 0 {
-		return -1, errors.New("the conversation and agent history do not match; reopen the thread before rewinding")
+		return -1, errHistoryMismatch
 	}
 	return index, nil
 }
@@ -137,7 +173,7 @@ func RewindClaude(home, sessionID string, visible []Item) (id, path string, err 
 	if err := sc.Err(); err != nil {
 		return "", "", err
 	}
-	index, err := checkpointIndex(native, visible)
+	index, err := promptCheckpoint(native, visible, nil)
 	if err != nil {
 		return "", "", err
 	}
@@ -313,7 +349,7 @@ func RewindCodex(ctx context.Context, o Options, visible []Item, checkpoints ...
 				}
 			}
 		}
-		index, err := codexCheckpointIndex(native, visible, checkpoint.UnconfirmedPrompts)
+		index, err := promptCheckpoint(native, visible, checkpoint.UnconfirmedPrompts)
 		if err != nil {
 			return "", err
 		}

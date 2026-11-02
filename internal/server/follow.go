@@ -206,6 +206,8 @@ func (rt *engine) claudeTick(ctx context.Context, t *store.Thread, path string, 
 	for _, line := range lines {
 		for _, op := range log.Feed(line) {
 			switch {
+			case op.Item != nil && op.Item.Kind == "user" && rt.alreadyShown(ctx, t.ID, *op.Item):
+				// sent from here just as Pocket AI restarted: same message
 			case op.Item != nil:
 				rt.saveItem(t.ID, *op.Item)
 				if op.Item.Kind == "assistant" {
@@ -239,6 +241,18 @@ func (rt *engine) claudeTick(ctx context.Context, t *store.Thread, path string, 
 	} else if len(lines) > 0 && !rt.isExternal(t.ID) {
 		rt.setExternal(t.ID, true) // tool calls and replies of a turn started before we looked
 	}
+}
+
+// alreadyShown: the log's prompt is the unanswered last message here — Pocket
+// AI sent it, then restarted before its own process saw the log line (the
+// log has another key for it). A prompt repeated after a reply is new.
+func (rt *engine) alreadyShown(ctx context.Context, threadID string, prompt agent.Item) bool {
+	last, err := rt.s.store.LastMessage(ctx, threadID)
+	if err != nil || last.Kind != "user" || last.Key == prompt.Key {
+		return false
+	}
+	var sent agent.Item
+	return json.Unmarshal(last.Data, &sent) == nil && agent.SamePrompt(prompt, sent)
 }
 
 func (rt *engine) followCodex(ctx context.Context, threadID string) {
