@@ -26,6 +26,11 @@ let state: ProjectsLink | null = null
 /** A conversation a Projects issue started: its issue key (AS-7), else ''. */
 export const projectsRef = (t?: Thread) => !t ? '' : state?.threads?.[t.id] || ((t.source as string) === 'link:projects' ? (t.source_ref || '').toUpperCase() : '')
 
+/** An issue ref as it reads on screen: AS-7, and ATH-12 for a connected
+ * instance's host/ATH-12 (the host goes in tooltips). */
+export const refKey = (ref: string) => ref.slice(ref.lastIndexOf('/') + 1)
+export const refHost = (ref: string) => ref.includes('/') ? ref.slice(0, ref.lastIndexOf('/')).toLowerCase() : ''
+
 /** Why a conversation is paused (its Projects workspace isn't the one open), else ''. */
 export const projectsPaused = (t?: Thread) => (t && state?.paused?.[t.id]) || ''
 
