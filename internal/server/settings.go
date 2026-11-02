@@ -72,6 +72,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		UsageWidget     *bool                `json:"usage_widget"`
 		ThreadTabs      *bool                `json:"thread_tabs"`
 		UsagePinned     *[]string            `json:"usage_pinned"`
+		Sidebar         *[]string            `json:"sidebar"`
 		Shortcuts       *map[string]string   `json:"shortcuts"`
 	}
 	if err := decode(r, &in); err != nil {
@@ -189,6 +190,14 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		for _, k := range *in.UsagePinned {
 			if k = strings.TrimSpace(k); k != "" && !strings.Contains(k, ",") && len(k) < 100 && len(st.UsagePinned) < 30 {
 				st.UsagePinned = append(st.UsagePinned, k)
+			}
+		}
+	}
+	if in.Sidebar != nil {
+		st.Sidebar = []string{}
+		for _, id := range *in.Sidebar {
+			if sidebarID.MatchString(id) && len(st.Sidebar) < 60 {
+				st.Sidebar = append(st.Sidebar, id)
 			}
 		}
 	}
@@ -322,3 +331,6 @@ func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
 
 // shortcutID is a keyboard shortcut action id ("reopen_tab").
 var shortcutID = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+
+// a sidebar menu item ("files"), or "-files" when the person removed it
+var sidebarID = regexp.MustCompile(`^-?[a-z][a-z0-9_]{0,31}$`)

@@ -1,4 +1,5 @@
 // The app shell: thread sidebar (a drawer on phones) + the page; palette and shortcuts.
+import { SHOW_ARCHIVE } from '../lib/sidebar'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { useApp } from '../lib/app-context'
@@ -136,6 +137,11 @@ function ShellInner() {
     { id: 'schedules', label: 'Schedules', icon: 'clock', keywords: 'cron timer automatic', run: () => navigate('/schedules') },
     { id: 'history', label: 'On this server — CLI sessions', icon: 'history', keywords: 'import resume history claude codex', run: () => navigate('/history') },
     { id: 'skills', label: 'Skills', icon: 'sparkles', keywords: 'skill slash commands plugins add edit', run: () => navigate('/skills') },
+    { id: 'today', label: 'Today', icon: 'today', keywords: 'runs account day', run: () => navigate('/today') },
+    { id: 'worktrees', label: 'Worktrees', icon: 'fork', keywords: 'git branches', run: () => navigate('/worktrees') },
+    { id: 'shared', label: 'Shared', icon: 'users', keywords: 'shared with me people', run: () => navigate('/shared') },
+    { id: 'archive', label: 'Archive', icon: 'archive', keywords: 'archived threads', run: () => { window.dispatchEvent(new Event(SHOW_ARCHIVE)); if (drawer) setDrawerOpen(true) } },
+    { id: 'sidebar', label: 'Customize sidebar', icon: 'sidebar', keywords: 'menu reorder hide remove items', run: () => navigate('/settings/general#sidebar') },
     { id: 'snippets', label: 'Snippets', icon: 'bookmark', keywords: 'saved text prompts', run: () => navigate('/snippets') },
     { id: 'files', label: 'Files', icon: 'folder', keywords: 'upload download browse open file folder server machine', run: () => navigate('/files') },
     { id: 'terminal', label: 'Terminal', icon: 'terminal', keywords: 'shell ssh console bash zsh server machine', run: () => navigate('/term') },
@@ -146,7 +152,7 @@ function ShellInner() {
     { id: 'recent', label: 'Recent conversations', icon: 'history', hint: keyCaps(keys.recent).join(''), keywords: 'switch threads chats', run: () => setPalette('recent') },
     { id: 'keys', label: 'Keyboard shortcuts', icon: 'keyboard', hint: '?', run: () => setShortcuts(true) },
     { id: 'keys-edit', label: 'Change keyboard shortcuts', icon: 'keyboard', keywords: 'keys hotkeys bindings', run: () => navigate('/settings/general#shortcuts') },
-  ], [navigate, theme, setThemeMode, keys.recent])
+  ], [navigate, theme, setThemeMode, keys.recent, drawer])
 
   const openMenu = useCallback(() => setDrawerOpen(true), [])
   const onMenu = drawer ? openMenu : undefined

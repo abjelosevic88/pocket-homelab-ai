@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useApp } from '../../lib/app-context'
 import { Icon } from '../../components/icons'
@@ -7,6 +7,7 @@ import { Select } from '../../components/Select'
 import { Section, useSaveSettings } from './common'
 import { useDisplay } from '../../lib/display'
 import { useIsMobile } from '../../components/ui'
+import { type SidebarEntry, sidebarLayout, sidebarSetting } from '../../lib/sidebar'
 import { comboOf, isMac, keyCaps, SHORTCUTS, type ShortcutId, useShortcuts } from '../../lib/shortcuts'
 
 export function GeneralTab() {
@@ -39,6 +40,8 @@ export function GeneralTab() {
           <Switch label="Plan limits always in view" checked={s.usage_widget !== false} onChange={v => save({ usage_widget: v })} />
         </SettingRow>
       </Section>
+
+      <SidebarSection />
 
       <Section title="On this device" sub="How conversations look in this browser. Your phone and your computer each keep their own.">
         <SettingRow title="Text size" help="Messages, code, and the tool and thinking rows.">
@@ -144,6 +147,105 @@ function ShortcutsSection() {
             </SettingRow>
           )
         })}
+      </Section>
+    </div>
+  )
+}
+
+/** Which pages the sidebar lists and in what order: drag the grips, ✕ removes, + adds back. */
+function SidebarSection() {
+  const { settings, user } = useApp()
+  const save = useSaveSettings()
+  const ref = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const loc = useLocation()
+  useEffect(() => { if (loc.hash === '#sidebar') ref.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }) }, [loc.hash])
+  const saved = useMemo(() => sidebarLayout(settings?.sidebar, user), [settings?.sidebar, user])
+  // the order while a row is being dragged (saved when it is let go)
+  const [draft, setDraft] = useState<SidebarEntry[] | null>(null)
+  const [dragId, setDragId] = useState('')
+  const layout = draft || saved
+  const shown = layout.filter(e => e.on)
+  const removed = layout.filter(e => !e.on)
+
+  const store = (next: SidebarEntry[]) => { void save({ sidebar: sidebarSetting(next) }) }
+  const toggle = (id: string, on: boolean) => {
+    // added back items go to the end of the menu
+    const rest = layout.filter(e => e.item.id !== id)
+    const e = layout.find(x => x.item.id === id)!
+    store(on ? [...rest.filter(x => x.on), { ...e, on }, ...rest.filter(x => !x.on)] : layout.map(x => x.item.id === id ? { ...x, on } : x))
+  }
+  // put the shown item `id` at position `to` among the shown ones
+  const moved = (list: SidebarEntry[], id: string, to: number) => {
+    const on = list.filter(e => e.on && e.item.id !== id)
+    on.splice(Math.max(0, Math.min(to, on.length)), 0, list.find(e => e.item.id === id)!)
+    return [...on, ...list.filter(e => !e.on)]
+  }
+
+  const down = (e: React.PointerEvent, id: string) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    const el = e.currentTarget as HTMLElement
+    el.setPointerCapture(e.pointerId)
+    setDragId(id)
+    let cur = saved
+    setDraft(cur)
+    const move = (ev: PointerEvent) => {
+      const rows = [...(listRef.current?.querySelectorAll<HTMLElement>('[data-sb-id]') || [])].filter(r => r.dataset.sbId !== id)
+      const to = rows.filter(r => { const b = r.getBoundingClientRect(); return b.top + b.height / 2 < ev.clientY }).length
+      const next = moved(cur, id, to)
+      if (next.map(x => x.item.id).join() !== cur.map(x => x.item.id).join()) { cur = next; setDraft(next) }
+    }
+    const up = () => {
+      el.removeEventListener('pointermove', move)
+      el.removeEventListener('pointerup', up)
+      el.removeEventListener('pointercancel', up)
+      setDragId('')
+      if (cur !== saved) store(cur)
+      setDraft(null)
+    }
+    el.addEventListener('pointermove', move)
+    el.addEventListener('pointerup', up)
+    el.addEventListener('pointercancel', up)
+  }
+  const key = (e: React.KeyboardEvent, id: string, i: number) => {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+    e.preventDefault()
+    const to = i + (e.key === 'ArrowUp' ? -1 : 1)
+    if (to < 0 || to >= shown.length) return
+    store(moved(layout, id, to))
+    requestAnimationFrame(() => listRef.current?.querySelector<HTMLElement>(`[data-sb-id="${id}"] .sbset-grip`)?.focus())
+  }
+
+  return (
+    <div ref={ref} id="sidebar" className="scroll-anchor">
+      <Section title="Sidebar" sub="What the sidebar lists and in what order. Drag the handles to reorder, ✕ removes. Everything stays in ⌘K. Right-click a sidebar item to remove it from there."
+        actions={(settings?.sidebar?.length || 0) > 0 && <button type="button" className="btn sm" onClick={() => void save({ sidebar: [] }, 'Sidebar reset')}>Reset</button>}>
+        <div className="sbset-list" ref={listRef} role="list" aria-label="In the sidebar">
+          {shown.map(({ item }, i) => (
+            <div key={item.id} data-sb-id={item.id} role="listitem" className={`sbset-row ${dragId === item.id ? 'dragging' : ''}`}>
+              <button type="button" className="sbset-grip" aria-label={`Move ${item.label} (arrow keys)`} title="Drag to reorder"
+                onPointerDown={e => down(e, item.id)} onKeyDown={e => key(e, item.id, i)}><Icon name="grip" size={14} strokeWidth={3} /></button>
+              <Icon name={item.icon} size={16} />
+              <span className="grow">{item.label}</span>
+              <button type="button" className="btn ghost icon-only sm" aria-label={`Remove ${item.label} from the sidebar`} title="Remove from the sidebar"
+                disabled={shown.length <= 1} onClick={() => toggle(item.id, false)}><Icon name="x" size={14} /></button>
+            </div>
+          ))}
+        </div>
+        {removed.length > 0 && <>
+          <div className="sbset-h">Not in the sidebar</div>
+          <div className="sbset-list" role="list" aria-label="Not in the sidebar">
+            {removed.map(({ item }) => (
+              <div key={item.id} role="listitem" className="sbset-row off">
+                <span className="sbset-grip" aria-hidden />
+                <Icon name={item.icon} size={16} />
+                <span className="grow">{item.label}</span>
+                <button type="button" className="btn ghost sm" aria-label={`Add ${item.label} to the sidebar`} onClick={() => toggle(item.id, true)}><Icon name="plus" size={14} />Add</button>
+              </div>
+            ))}
+          </div>
+        </>}
       </Section>
     </div>
   )
