@@ -41,21 +41,24 @@ func (s *Server) skillsManageRoutes(r chi.Router) {
 	r.Get("/skills/own/{name}", s.handleGetOwnSkill)
 	r.Put("/skills/own/{name}", s.handleSaveOwnSkill)
 	r.Delete("/skills/own/{name}", s.handleDeleteOwnSkill)
+	r.Post("/skills/own/{name}/copy", s.handleCopyOwnSkill)
 }
 
 // ownSkillsDir is the skills folder of the login the request names
 // (provider + account), if the person may change it.
 func (s *Server) ownSkillsDir(r *http.Request) (string, error) {
+	return s.skillsDirFor(r, r.URL.Query().Get("provider"), queryInt64(r, "account"))
+}
+
+func (s *Server) skillsDirFor(r *http.Request, provider string, acct int64) (string, error) {
 	ctx := r.Context()
 	u := userFrom(ctx)
 	if !u.MayRun() {
 		return "", errForbidden("an admin has not allowed you to run agents on this server")
 	}
-	provider := r.URL.Query().Get("provider")
 	if provider != "claude" && provider != "codex" {
 		return "", badRequest("provider must be claude or codex")
 	}
-	acct := queryInt64(r, "account")
 	if err := s.checkAccount(ctx, u, provider, acct); err != nil {
 		return "", err
 	}
@@ -212,18 +215,133 @@ func (s *Server) handleDeleteOwnSkill(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
-	trash := filepath.Join(filepath.Dir(dir), ".pocket-ai-trash", "skills")
-	if err := os.MkdirAll(trash, 0o755); err != nil {
-		s.fail(w, err, "delete skill")
-		return
-	}
-	dst := filepath.Join(trash, fmt.Sprintf("%s-%s", name, time.Now().Format("20060102-150405")))
-	if err := os.Rename(src, dst); err != nil {
+	dst, err := trashSkill(dir, name)
+	if err != nil {
 		s.fail(w, err, "delete skill")
 		return
 	}
 	forgetSkills()
 	writeJSON(w, http.StatusOK, map[string]string{"trash": dst})
+}
+
+// trashSkill moves a skill folder to <home>/.pocket-ai-trash/skills.
+func trashSkill(dir, name string) (string, error) {
+	trash := filepath.Join(filepath.Dir(dir), ".pocket-ai-trash", "skills")
+	if err := os.MkdirAll(trash, 0o755); err != nil {
+		return "", err
+	}
+	dst := filepath.Join(trash, fmt.Sprintf("%s-%s", name, time.Now().Format("20060102-150405.000")))
+	return dst, os.Rename(filepath.Join(dir, name), dst)
+}
+
+// handleCopyOwnSkill copies a skill folder (SKILL.md and its other files) to
+// another login, e.g. from Claude Code to Codex. Move removes the original
+// afterwards; replace puts a skill already there in the trash first.
+func (s *Server) handleCopyOwnSkill(w http.ResponseWriter, r *http.Request) {
+	from, err := s.ownSkillsDir(r)
+	if err != nil {
+		s.fail(w, err, "copy skill")
+		return
+	}
+	var in struct {
+		To        string `json:"to"`
+		ToAccount int64  `json:"to_account"`
+		Move      bool   `json:"move"`
+		Replace   bool   `json:"replace"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	to, err := s.skillsDirFor(r, in.To, in.ToAccount)
+	if err != nil {
+		s.fail(w, err, "copy skill")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	if !skillName.MatchString(name) || skillsReserved[name] {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	if fi, err := os.Lstat(filepath.Join(from, name, "SKILL.md")); err != nil || !fi.Mode().IsRegular() {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	same := func(a, b string) bool {
+		ra, err1 := filepath.EvalSymlinks(a)
+		rb, err2 := filepath.EvalSymlinks(b)
+		return err1 == nil && err2 == nil && ra == rb
+	}
+	if same(from, to) {
+		writeErr(w, http.StatusBadRequest, "that is the same skills folder")
+		return
+	}
+	if _, err := os.Lstat(filepath.Join(to, name)); err == nil {
+		if !in.Replace {
+			writeErr(w, http.StatusConflict, "there is already a skill called "+name+" there")
+			return
+		}
+		if _, err := trashSkill(to, name); err != nil {
+			s.fail(w, err, "copy skill")
+			return
+		}
+	}
+	if err := os.MkdirAll(to, 0o755); err != nil {
+		s.fail(w, err, "copy skill")
+		return
+	}
+	tmp := filepath.Join(to, "."+name+".copying")
+	_ = os.RemoveAll(tmp)
+	if err := copySkillTree(filepath.Join(from, name), tmp); err != nil {
+		_ = os.RemoveAll(tmp)
+		s.fail(w, err, "copy skill")
+		return
+	}
+	if err := os.Rename(tmp, filepath.Join(to, name)); err != nil {
+		_ = os.RemoveAll(tmp)
+		s.fail(w, err, "copy skill")
+		return
+	}
+	if in.Move {
+		if _, err := trashSkill(from, name); err != nil {
+			s.fail(w, err, "move skill")
+			return
+		}
+	}
+	forgetSkills()
+	sk, err := readOwnSkill(to, name, false)
+	if err != nil {
+		s.fail(w, err, "copy skill")
+		return
+	}
+	writeJSON(w, http.StatusOK, sk)
+}
+
+// copySkillTree copies folders and regular files; links are left out, so a
+// copy never reaches outside the skill.
+func copySkillTree(src, dst string) error {
+	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, p)
+		out := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(out, 0o755)
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(out, data, info.Mode().Perm())
+	})
 }
 
 // forgetSkills drops the cached CLI lists so the composer sees changes now.

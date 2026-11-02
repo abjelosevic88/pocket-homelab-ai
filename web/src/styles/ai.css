@@ -689,3 +689,6 @@ button.privacy-badge:disabled { cursor: default; }
 .th-row.is-paused { opacity: .55; }
 .th-row.is-paused:hover, .th-row.is-paused.active { opacity: .8; }
 .privacy-badge.muted { opacity: .6; }
+.skill-where { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 500; padding: 2px 8px; border-radius: 999px; border: 1px dashed var(--border); background: transparent; color: var(--muted); cursor: pointer; }
+.skill-where:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.skill-where.on { border-style: solid; border-color: transparent; background: var(--accent-soft); color: var(--accent); cursor: default; }
