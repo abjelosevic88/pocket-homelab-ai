@@ -510,13 +510,18 @@ func (s *Server) handleStartDraft(w http.ResponseWriter, r *http.Request) {
 	linkStarts.Delete(key)
 	linkStartMu.Unlock()
 
+	// Record the outcome even if the person left meanwhile (a closed panel
+	// cancels the request): a claim without its thread blocks the draft for good.
+	bg := context.WithoutCancel(ctx)
 	if t == nil {
-		_ = s.store.FinishLinkDraft(ctx, d.ID, "")
+		_ = s.store.FinishLinkDraft(bg, d.ID, "")
 		s.fail(w, err, "start conversation")
 		return
 	}
-	_ = s.store.SaveThreadContext(ctx, draftContext(t.ID, d))
-	_ = s.store.FinishLinkDraft(ctx, d.ID, t.ID)
+	_ = s.store.SaveThreadContext(bg, draftContext(t.ID, d))
+	if err := s.store.FinishLinkDraft(bg, d.ID, t.ID); err != nil {
+		s.log.Warn("draft not linked to its thread", "draft", d.ID, "thread", t.ID, "err", err)
+	}
 	if err != nil {
 		// The thread exists; the agent did not start. Show it with the error.
 		s.rt.saveItem(t.ID, agent.Item{Key: "err-" + uuid.NewString()[:8], Kind: "notice", Level: "error", Text: err.Error()})
