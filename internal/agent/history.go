@@ -239,7 +239,9 @@ func (l *ClaudeLog) Feed(line []byte) []LogOp {
 		} `json:"attachment"`
 		IsMeta      bool `json:"isMeta"`
 		IsSidechain bool `json:"isSidechain"`
-		Message     struct {
+		// Compaction writes its summary as a user row; nobody sent it.
+		IsCompactSummary bool `json:"isCompactSummary"`
+		Message          struct {
 			Content    json.RawMessage `json:"content"`
 			StopReason string          `json:"stop_reason"`
 		} `json:"message"`
@@ -254,7 +256,7 @@ func (l *ClaudeLog) Feed(line []byte) []LogOp {
 	var ops []LogOp
 	switch m.Type {
 	case "user":
-		if m.IsMeta {
+		if m.IsMeta || m.IsCompactSummary {
 			return nil
 		}
 		var blocks []struct {
