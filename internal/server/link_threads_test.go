@@ -543,6 +543,12 @@ func TestLinkDraftWorktree(t *testing.T) {
 	if old := start("as-3-old"); old.WorktreeID == 0 || old.WorktreeID == first.WorktreeID || branchOf(old.Cwd) != "as-3-old" {
 		t.Fatalf("existing branch: %+v", old)
 	}
+	// an earlier start made the checkout and then failed: the next one takes it
+	// over instead of "already checked out in …"
+	half := runSh(t, wtAdd, repo, s.worktreesDir(nil, repo), "you/as-5-half", "main", "new", "")
+	if got := start("you/as-5-half"); got.WorktreeID == 0 || got.Cwd != half["path"] {
+		t.Fatalf("half-made worktree not taken over: %+v vs %v", got, half)
+	}
 
 	// the item's worktrees: the conversations' own, plus branches named after it
 	var wts []linkWorktree

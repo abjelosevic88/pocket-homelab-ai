@@ -240,6 +240,18 @@ func (e errInUse) Error() string {
 	return "that branch is already checked out in " + e.Path + " — work there instead (start the thread in that folder)"
 }
 
+// unclaimedWorktree: the branch is checked out in a folder Pocket AI made for
+// this repo but no worktree of anyone's is there — a start that made the
+// checkout and then failed. Taking it over beats sending the person off to a
+// folder nothing in Pocket AI shows.
+func (s *Server) unclaimedWorktree(ctx context.Context, hostID int64, m map[string]string) bool {
+	if m["ours"] != "1" || m["path"] == "" {
+		return false
+	}
+	_, err := s.store.WorktreeAtPath(ctx, hostID, m["path"])
+	return errors.Is(err, store.ErrNotFound)
+}
+
 // createWorktree makes a worktree for a new thread started in cwd. It
 // returns the worktree and the folder inside it matching cwd.
 func (s *Server) createWorktree(ctx context.Context, u *store.User, h *store.Host, cwd string, spec newWorktree, text string) (*store.Worktree, string, error) {
@@ -287,7 +299,7 @@ func (s *Server) createWorktree(ctx context.Context, u *store.User, h *store.Hos
 		return nil, "", scriptErr(errOut, err)
 	}
 	m := kv(out)
-	if m["inuse"] != "" {
+	if m["inuse"] != "" && !s.unclaimedWorktree(ctx, hostID, m) {
 		return nil, "", errInUse{m["inuse"]}
 	}
 	if m["path"] == "" {

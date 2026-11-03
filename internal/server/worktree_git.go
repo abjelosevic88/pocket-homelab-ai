@@ -149,10 +149,21 @@ func gitProjectID(remote string) string {
 // start with ~/), $3 name (folder and, for a new branch, branch), $4 base,
 // $5 new|branch|pr, $6 the existing branch (branch) or PR number (pr). A
 // taken name gets -2, -3…; a branch already checked out somewhere is not
-// forked silently: "inuse=<folder>" says where it is.
+// forked silently: "inuse=<folder>" says where it is. When that folder is in
+// $2 (Pocket AI made it) "ours=1" follows with its branch, sha and path, so a
+// worktree whose start failed half-way can be picked up instead.
 const wtAdd = gitEnv + `cd -- "$1" || exit 3
 dir=$2
 case "$dir" in "~/"*) dir="$HOME/${dir#\~/}";; esac
+held() {
+  echo "inuse=$1"
+  d=$(cd -- "$dir" 2>/dev/null && pwd -P) && q=$(cd -- "$1" 2>/dev/null && pwd -P) || exit 0
+  case "$q" in "$d"/*)
+    echo "ours=1"; echo "branch=$2"; echo "path=$q"
+    echo "sha=$(git -C "$q" merge-base HEAD "$3" 2>/dev/null || git -C "$q" rev-parse HEAD)";;
+  esac
+  exit 0
+}
 mode=$5
 if [ "$mode" = pr ]; then
   remote=origin
@@ -161,7 +172,7 @@ if [ "$mode" = pr ]; then
     pb=$(gh pr view "$6" --json baseRefName -q .baseRefName 2>/dev/null) && [ -n "$pb" ] && echo "base=$pb"
   fi
   inuse=$(git worktree list --porcelain | awk -v b="branch refs/heads/pr-$6" '/^worktree /{p=substr($0,10)} $0==b{print p; exit}')
-  [ -n "$inuse" ] && { echo "inuse=$inuse"; exit 0; }
+  [ -n "$inuse" ] && held "$inuse" "pr-$6" "${pb:-$4}"
   git fetch -q "$remote" "+pull/$6/head:refs/heads/pr-$6" >&2 || { echo "could not fetch pull request #$6" >&2; exit 5; }
   set -- "$1" "$dir" "$3" "${pb:-$4}" branch "pr-$6"
   mode=branch
@@ -173,7 +184,7 @@ p="$dir/$slug"
 if [ "$mode" = branch ]; then
   b=$6
   inuse=$(git worktree list --porcelain | awk -v b="branch refs/heads/$b" '/^worktree /{p=substr($0,10)} $0==b{print p; exit}')
-  [ -n "$inuse" ] && { echo "inuse=$inuse"; exit 0; }
+  [ -n "$inuse" ] && held "$inuse" "$b" "$4"
   mkdir -p -- "$dir" || exit 7
   if git show-ref --verify -q "refs/heads/$b"; then git worktree add -q "$p" "$b" >&2 || exit 8
   elif git show-ref --verify -q "refs/remotes/origin/$b"; then git worktree add -q --track -b "$b" "$p" "origin/$b" >&2 || exit 8

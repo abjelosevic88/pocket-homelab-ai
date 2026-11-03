@@ -67,6 +67,12 @@ func (s *Store) GetWorktreeAny(ctx context.Context, id int64) (*Worktree, error)
 	return scanWorktree(s.DB.QueryRowContext(ctx, `SELECT `+worktreeCols+` FROM worktrees WHERE id = ?`, id))
 }
 
+// WorktreeAtPath finds the worktree at a folder on a machine, whoever owns it
+// and whatever its status (ErrNotFound when Pocket AI knows none there).
+func (s *Store) WorktreeAtPath(ctx context.Context, hostID int64, path string) (*Worktree, error) {
+	return scanWorktree(s.DB.QueryRowContext(ctx, `SELECT `+worktreeCols+` FROM worktrees WHERE host_id = ? AND path = ? ORDER BY id DESC LIMIT 1`, hostID, path))
+}
+
 // ListWorktrees lists a person's worktrees, newest first; status "" = all.
 func (s *Store) ListWorktrees(ctx context.Context, userID int64, status string) ([]*Worktree, error) {
 	q := `SELECT ` + worktreeCols + ` FROM worktrees WHERE user_id = ?`
