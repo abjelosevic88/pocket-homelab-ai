@@ -76,8 +76,14 @@ func TestWorktreeLifecycle(t *testing.T) {
 		runSh(t, wtArchive, m2["path"], repo, "refs/pocket-ai/archive/x", "fix-a-2", "1")
 		runSh(t, wtForget, repo, "refs/pocket-ai/archive/x", "fix-a-2", "1")
 	}
-	if m2 := runSh(t, wtAdd, repo, filepath.Join(root, "wts", "repo"), "other", "main", "branch", "fix-a"); m2["inuse"] != wt {
+	// in use in a folder of ours: say so, with what's needed to take it over
+	if m2 := runSh(t, wtAdd, repo, filepath.Join(root, "wts", "repo"), "other", "main", "branch", "fix-a"); m2["inuse"] != wt ||
+		m2["ours"] != "1" || m2["path"] != wt || m2["branch"] != "fix-a" || m2["sha"] == "" {
 		t.Fatalf("branch in use: %v", m2)
+	}
+	// in use somewhere else (the main checkout): never ours
+	if m2 := runSh(t, wtAdd, repo, filepath.Join(root, "wts", "repo"), "main", "main", "branch", "main"); m2["inuse"] == "" || m2["ours"] != "" || m2["path"] != "" {
+		t.Fatalf("main in use: %v", m2)
 	}
 	m = runSh(t, wtCopy, append([]string{repo, wt}, defaultCopy...)...)
 	if m["copied"] != ".env\nweb/.env.local" {
