@@ -47,7 +47,8 @@ export function AccountsSection() {
   const signOutRemote = async (h: HostLogin) => {
     try { await api.post(`${V1}/hosts/${h.host_id}/logout/${h.provider}${dirQuery(h)}`); toast(`Signed out on ${machineLabel(h)}`); done() } catch (e) { toast(errMsg(e), 'err') }
   }
-  const accountSignIn = (a: Account): SignInTarget => ({ label: a.label, provider: a.provider, base: `${V1}/accounts/${a.id}/login` })
+  // the server login has no account row: its own sign-in, for an admin
+  const accountSignIn = (a: Account): SignInTarget => ({ label: a.label, provider: a.provider, base: a.default ? `${V1}/accounts/server/${a.provider}/login` : `${V1}/accounts/${a.id}/login` })
   const remoteSignIn = (h: HostLogin): SignInTarget => ({ label: machineLabel(h), provider: h.provider, base: `${V1}/hosts/${h.host_id}/login/${h.provider}`, query: h.dir ? { dir: h.dir } : undefined, where: machineLabel(h) })
 
   return (
@@ -78,7 +79,9 @@ export function AccountsSection() {
                   {mayAdd && <button type="button" className="btn sm ghost acct-group-add" onClick={() => setAdding(pid)}><Icon name="plus" size={13} />Add</button>}
                 </div>
                 {rows.map(a => {
-                  const more: MenuItem[] = [
+                  const more: MenuItem[] = a.default ? [
+                    { label: a.signed_in ? 'Sign in again…' : 'Sign in…', icon: 'key', onSelect: () => setSignIn(accountSignIn(a)) },
+                  ] : [
                     { label: a.signed_in ? 'Sign in again…' : 'Sign in…', icon: 'key', onSelect: () => setSignIn(accountSignIn(a)) },
                     { label: 'Edit…', icon: 'edit', onSelect: () => setEdit(a) },
                     ...(a.signed_in ? [{ label: 'Sign out', icon: 'log-out', onSelect: () => signOut(a) }] : []),
@@ -86,7 +89,7 @@ export function AccountsSection() {
                     { label: 'Remove…', icon: 'trash', danger: true, onSelect: () => setDel(a) },
                   ]
                   return (
-                  <div key={a.id} className="acct-row" onContextMenu={canManage(a) ? e => ctx.open(e, more) : undefined}>
+                  <div key={a.default ? `server-${a.provider}` : a.id} className="acct-row" onContextMenu={canManage(a) || (a.default && isAdmin) ? e => ctx.open(e, more) : undefined}>
                     <StatusDot status={a.signed_in ? 'ok' : a.error ? 'error' : 'off'}
                       title={(a.signed_in ? 'Signed in' : a.error ? 'Error' : 'Not signed in') + (a.checked_at ? ` · checked ${ago(a.checked_at)}` : '')} />
                     <div className="acct-main">
@@ -101,7 +104,8 @@ export function AccountsSection() {
                       {a.error && <div className="danger-text xsmall" title={a.error}>{a.error}</div>}
                     </div>
                     <div className="acct-actions">
-                      {canManage(a) && (
+                      {a.default && isAdmin && !a.signed_in && <button type="button" className="btn sm" onClick={() => setSignIn(accountSignIn(a))}><Icon name="key" size={13} />Sign in</button>}
+                      {(canManage(a) || (a.default && isAdmin)) && (
                         <MenuButton label={`More for ${a.label}`} align="right" items={more}><Icon name="more" size={16} /></MenuButton>
                       )}
                     </div>

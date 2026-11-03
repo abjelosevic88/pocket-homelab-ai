@@ -39,6 +39,11 @@ func (s *Server) accountRoutes(r chi.Router) {
 	r.Post("/accounts/{id}/login/code", s.handleLoginCode)
 	r.Delete("/accounts/{id}/login", s.handleCancelLogin)
 	r.Post("/accounts/{id}/logout", s.handleAccountLogout)
+	// the server's own login (account 0), signed in again by an admin
+	r.Post("/accounts/server/{provider}/login", s.handleStartServerLogin)
+	r.Get("/accounts/server/{provider}/login", s.handleServerLoginState)
+	r.Post("/accounts/server/{provider}/login/code", s.handleServerLoginCode)
+	r.Delete("/accounts/server/{provider}/login", s.handleCancelServerLogin)
 }
 
 // accountView is an account as the web app sees it.
@@ -86,6 +91,9 @@ func acctKey(provider string, id int64) string { return provider + "/" + strconv
 
 // loginKey names the sign-in of an account.
 func loginKey(id int64) string { return "a" + strconv.FormatInt(id, 10) }
+
+// serverLoginKey names the sign-in of the server's own login of a CLI.
+func serverLoginKey(provider string) string { return "server-" + provider }
 
 // defaultHome is the folder of the server's own login.
 func (s *Server) defaultHome(provider string) string {
@@ -630,19 +638,78 @@ func (s *Server) handleStartLogin(w http.ResponseWriter, r *http.Request) {
 	if a == nil {
 		return
 	}
-	key := loginKey(a.ID)
+	s.startLogin(w, a.Provider, loginKey(a.ID), a.Home, agent.AccountEnv(a.Provider, a.Home), func(ok bool) {
+		s.accountStatus(s.rt.ctx, a.Provider, a.ID, a.Home, true)
+		if ok {
+			s.rt.stopAccount(a.ID) // idle threads start again on the new sign-in
+		}
+	})
+}
+
+// serverLogin checks that the person may sign the server's own login in
+// (an admin who runs on it) and returns its CLI.
+func (s *Server) serverLogin(w http.ResponseWriter, r *http.Request) string {
+	u := userFrom(r.Context())
+	if u == nil || u.Role != "admin" || !s.mayUseServerLogin(r.Context(), u) {
+		writeErr(w, http.StatusForbidden, "forbidden")
+		return ""
+	}
+	p := chi.URLParam(r, "provider")
+	if p != "claude" && p != "codex" {
+		writeErr(w, http.StatusNotFound, "no such login")
+		return ""
+	}
+	return p
+}
+
+// handleStartServerLogin signs the server's own login in again, e.g. after
+// the CLI dropped it because a token refresh failed.
+func (s *Server) handleStartServerLogin(w http.ResponseWriter, r *http.Request) {
+	p := s.serverLogin(w, r)
+	if p == "" {
+		return
+	}
+	s.startLogin(w, p, serverLoginKey(p), s.cfg.Home, nil, func(ok bool) {
+		s.accountStatus(s.rt.ctx, p, 0, s.defaultHome(p), true)
+		if ok {
+			s.rt.stopServerLogin(p)
+		}
+	})
+}
+
+func (s *Server) handleServerLoginState(w http.ResponseWriter, r *http.Request) {
+	if p := s.serverLogin(w, r); p != "" {
+		writeLoginState(w, r, s.login(serverLoginKey(p)))
+	}
+}
+
+func (s *Server) handleServerLoginCode(w http.ResponseWriter, r *http.Request) {
+	if p := s.serverLogin(w, r); p != "" {
+		sendLoginCode(w, r, s.login(serverLoginKey(p)))
+	}
+}
+
+func (s *Server) handleCancelServerLogin(w http.ResponseWriter, r *http.Request) {
+	if p := s.serverLogin(w, r); p != "" {
+		s.cancelLogin(serverLoginKey(p))
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// startLogin runs a CLI's sign-in in dir with env; after runs once it ends.
+func (s *Server) startLogin(w http.ResponseWriter, provider, key, dir string, env []string, after func(ok bool)) {
 	s.cancelLogin(key)
 	ctx, cancel := context.WithTimeout(s.rt.ctx, loginExpiry)
-	bin, args := loginArgs(a.Provider, s.cfg.ClaudeBin, s.cfg.CodexBin)
+	bin, args := loginArgs(provider, s.cfg.ClaudeBin, s.cfg.CodexBin)
 	// nothing to open on a server
-	cmd, err := agent.LocalCmd(ctx, a.Home, append(agent.AccountEnv(a.Provider, a.Home), loginEnv...), bin, args...)
+	cmd, err := agent.LocalCmd(ctx, dir, append(env, loginEnv...), bin, args...)
 	if err != nil {
 		cancel()
 		s.fail(w, err, "login")
 		return
 	}
-	l, err := s.beginLogin(ctx, cancel, key, a.Provider, cmd, func(ok bool) {
-		s.accountStatus(s.rt.ctx, a.Provider, a.ID, a.Home, true)
+	l, err := s.beginLogin(ctx, cancel, key, provider, cmd, func(ok bool) {
+		after(ok)
 		s.rt.publishAccounts()
 		if ok {
 			s.rt.refreshLimitsNow()
