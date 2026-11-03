@@ -1,12 +1,12 @@
 import { Modal } from './ui'
 import { Snippets } from './Snippets'
-// The prompt box: text, images (paste / drop / camera / photo library), dictation, slash menu (recipes + the CLI's skills).
+// The prompt box: text, images (paste / drop / camera / photo library), dictation, slash menu (the CLI's commands and skills; recipes run from ⌘J, never in here).
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api, uploadWithProgress, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { isTouch } from '../lib/format'
 import { parentContext, parentContextItem, parentTabs, type ParentContextItem } from '../lib/embed'
-import type { ProviderId, Recipe, Skill, Upload } from '../lib/types'
+import type { ProviderId, Skill, Upload } from '../lib/types'
 import { Icon } from './icons'
 import { errMsg, Spinner, useDismiss, useToast, noGrammarly } from './ui'
 
@@ -187,7 +187,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
   /** A slash command Pocket AI runs itself (/mcp): true when handled, so it is not sent. */
   onCommand?: (name: string, args: string) => boolean
 }>(function Composer({ onSend, placeholder = 'Ask anything…', autoFocus, running, onStop, disabled, footer, draftKey, big, skills: skillScope, onCommand }, ref) {
-  const { settings, recipes } = useApp()
+  const { settings } = useApp()
   const { toast } = useToast()
   const [text, setText] = useState(() => (draftKey && sessionStorage.getItem('pai-draft-' + draftKey)) || '')
   const [atts, setAtts] = useState<Attachment[]>(() => draftAttachments(draftKey))
@@ -379,25 +379,24 @@ export const Composer = React.forwardRef<ComposerHandle, {
     } finally { setSending(false) }
   }
 
-  // At the start: "/" the agent's commands and skills, then recipes; "#" recipes only; "$" Codex skills (its own syntax)
+  // At the start: "/" the agent's commands and skills; "$" Codex skills (its own syntax)
   const lead = text[0]
-  const trigger = lead === '/' || lead === '#' || (lead === '$' && skillScope?.provider === 'codex')
+  const trigger = lead === '/' || (lead === '$' && skillScope?.provider === 'codex')
   const slash = trigger && !/\s/.test(text) && text !== slashShut ? text.slice(1).toLowerCase() : null
-  const { skills: allSkills, commands: allCommands } = useSkills(skillScope, slash !== null && lead !== '#')
+  const { skills: allSkills, commands: allCommands } = useSkills(skillScope, slash !== null)
   const byName = (list: Skill[], max: number) => slash === null ? [] : list
     .filter(k => k.name.toLowerCase().includes(slash) || (slash.length > 2 && k.description.toLowerCase().includes(slash)))
     .sort((a, b) => Number(!a.name.toLowerCase().startsWith(slash)) - Number(!b.name.toLowerCase().startsWith(slash)))
     .slice(0, max)
   const commandList: Skill[] = lead === '/' ? byName(allCommands, 8) : []
   const skillList: Skill[] = lead === '/' || lead === '$' ? byName(allSkills, 8) : []
-  const recipeList: Recipe[] = slash === null || lead === '$' ? [] : recipes.filter(r => r.name.toLowerCase().includes(slash)).slice(0, lead === '#' ? 12 : 6)
-  type SlashPick = { recipe: Recipe } | { skill: Skill; command?: boolean }
-  const slashList: SlashPick[] = [...commandList.map(skill => ({ skill, command: true })), ...skillList.map(skill => ({ skill })), ...recipeList.map(recipe => ({ recipe }))]
-  const group = (p: SlashPick) => 'recipe' in p ? 'Recipes' : p.command ? 'Commands' : 'Skills'
+  type SlashPick = { skill: Skill; command?: boolean }
+  const slashList: SlashPick[] = [...commandList.map(skill => ({ skill, command: true })), ...skillList.map(skill => ({ skill }))]
+  const group = (p: SlashPick) => p.command ? 'Commands' : 'Skills'
   useEffect(() => setSlashHi(0), [slash, lead])
   const pick = (p: SlashPick) => {
-    if ('skill' in p && p.command && !p.skill.argument_hint && onCommand?.(p.skill.name, '')) { setText(''); return }
-    setText('recipe' in p ? p.recipe.prompt : p.skill.invoke + ' ')
+    if (p.command && !p.skill.argument_hint && onCommand?.(p.skill.name, '')) { setText(''); return }
+    setText(p.skill.invoke + ' ')
     setTimeout(() => ta.current?.focus(), 0)
   }
 
@@ -541,20 +540,15 @@ export const Composer = React.forwardRef<ComposerHandle, {
   return (
     <div ref={box} className={`composer ${big ? 'big' : ''} ${disabled ? 'disabled' : ''}`}>
       {slashList.length > 0 && (
-        <div className={`slash-menu ${menuInside ? 'inside' : ''}`} role="listbox" aria-label="Commands, skills and recipes">
+        <div className={`slash-menu ${menuInside ? 'inside' : ''}`} role="listbox" aria-label="Commands and skills">
           {slashList.map((p, i) => {
             const first = i === 0 || group(p) !== group(slashList[i - 1])
             return (
-              <React.Fragment key={'recipe' in p ? 'r' + p.recipe.id : (p.command ? 'c' : 's') + p.skill.name}>
-                {first && <div className="slash-h">{group(p)}{group(p) === 'Recipes' && lead === '/' ? <span className="slash-hint"> · or type #</span> : null}</div>}
+              <React.Fragment key={(p.command ? 'c' : 's') + p.skill.name}>
+                {first && <div className="slash-h">{group(p)}</div>}
                 <button type="button" role="option" aria-selected={i === slashHi} className={`slash-row ${i === slashHi ? 'hi' : ''}`} onMouseMove={() => { if (i !== slashHi) setSlashHi(i) }} onMouseDown={e => e.preventDefault()} onClick={() => pick(p)}>
-                  {'recipe' in p ? <>
-                    <span className="slash-ico">{p.recipe.icon || '✦'}</span>
-                    <span className="grow"><span className="slash-name">{p.recipe.name}</span><span className="slash-sub">{p.recipe.prompt.slice(0, 90)}</span></span>
-                  </> : <>
-                    <span className="slash-ico"><Icon name={p.command ? 'terminal' : 'sparkles'} size={14} /></span>
-                    <span className="grow"><span className="slash-name">{p.skill.invoke}{p.skill.argument_hint ? <span className="slash-hint"> {p.skill.argument_hint}</span> : null}</span><span className="slash-sub">{p.skill.description.slice(0, 110)}</span></span>
-                  </>}
+                  <span className="slash-ico"><Icon name={p.command ? 'terminal' : 'sparkles'} size={14} /></span>
+                  <span className="grow"><span className="slash-name">{p.skill.invoke}{p.skill.argument_hint ? <span className="slash-hint"> {p.skill.argument_hint}</span> : null}</span><span className="slash-sub">{p.skill.description.slice(0, 110)}</span></span>
                 </button>
               </React.Fragment>
             )

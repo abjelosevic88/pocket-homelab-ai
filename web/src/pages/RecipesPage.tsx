@@ -42,7 +42,7 @@ export default function RecipesPage({ onMenu }: { onMenu?: () => void }) {
 
   return (
     <div className="page">
-      <PageHead title="Recipes" icon="zap" onMenu={onMenu} sub={<>Prompts you run again and again — pinned ones show on the start page and after / in the composer{keys.recipes && <>; <kbd>{keyCaps(keys.recipes).join('')}</kbd> runs one as a new thread from anywhere</>}.</>}
+      <PageHead title="Recipes" icon="zap" onMenu={onMenu} sub={<>Prompts you run again and again — pinned ones show on the start page{keys.recipes && <>; <kbd>{keyCaps(keys.recipes).join('')}</kbd> runs one as a new thread from anywhere</>}.</>}
         actions={<>
           <button type="button" className="btn" onClick={() => setStarters(true)}><Icon name="sparkles" size={14} /><span className="hide-sm">Starter recipes</span></button>
           <button type="button" className="btn primary" onClick={() => setEdit({ ...blank })}><Icon name="plus" size={14} />New</button>

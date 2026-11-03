@@ -6,7 +6,7 @@ const M = isMac ? '⌘' : 'Ctrl'
 /** Fixed keys; the ones you can change come from lib/shortcuts.ts. */
 const FIXED: Record<string, [string[], string][]> = {
   Anywhere: [[['c'], 'New thread'], [['?'], 'This sheet']],
-  'In a thread': [[['↵'], 'Send (desktop; set in Settings)'], [['⇧', '↵'], 'New line'], [[M, '↵'], 'Always sends'], [['/'], 'Recipes and skills at the start of a message']],
+  'In a thread': [[['↵'], 'Send (desktop; set in Settings)'], [['⇧', '↵'], 'New line'], [[M, '↵'], 'Always sends'], [['/'], 'Commands and skills at the start of a message']],
   Images: [[[M, 'V'], 'Paste a screenshot'], [['drop'], 'Drag images onto the page']],
   Dialogs: [[['esc'], 'Close']],
 }
