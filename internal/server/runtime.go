@@ -1464,10 +1464,20 @@ func (rt *engine) stopHost(id int64) {
 // stopAccount stops the idle processes of an account (signed out, removed);
 // busy ones restart on their next turn.
 func (rt *engine) stopAccount(id int64) {
+	rt.stopWhere(func(r *run) bool { return r.account == id })
+}
+
+// stopServerLogin is stopAccount for the server's own login of one CLI
+// (account 0 also stands for the other CLI and the other machines' logins).
+func (rt *engine) stopServerLogin(provider string) {
+	rt.stopWhere(func(r *run) bool { return r.account == 0 && r.host == 0 && r.provider == provider })
+}
+
+func (rt *engine) stopWhere(match func(*run) bool) {
 	rt.mu.Lock()
 	var ids []string
 	for tid, r := range rt.runs {
-		if r.account == id {
+		if match(r) {
 			r.mu.Lock()
 			busy := r.running || len(r.pending) > 0 || len(r.queue) > 0
 			r.stale = r.stale || busy
