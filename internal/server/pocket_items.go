@@ -27,6 +27,9 @@ var mentionApps = []string{"notes", "tasks", "projects", "documents", "files", "
 
 const pocketItemsPerApp = 8
 
+// pocketItemsOneApp: results when only one app is searched.
+const pocketItemsOneApp = 15
+
 // pocketTextMax keeps an attached item within what an agent can read in one go.
 const pocketTextMax = 512 << 10
 
@@ -36,9 +39,17 @@ var textFileExt = map[string]bool{
 	".go": true, ".py": true, ".swift": true, ".ts": true, ".tsx": true, ".js": true, ".rs": true, ".java": true, ".kt": true,
 }
 
+// GET /pocket/items?q=: one search across mentionApps. With app= ("@documents
+// #tax" in the composer) only that app is searched, and an empty q lists what
+// its search returns without one.
 func (s *Server) handlePocketItems(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	if q == "" || len(q) > 200 {
+	app := r.URL.Query().Get("app")
+	if app != "" && !appSlugRe.MatchString(app) {
+		writeErr(w, 400, "Unknown app")
+		return
+	}
+	if (q == "" && app == "") || len(q) > 200 {
 		writeErr(w, 400, "Write a search query up to 200 characters")
 		return
 	}
@@ -47,12 +58,16 @@ func (s *Server) handlePocketItems(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 409, err.Error())
 		return
 	}
-	res, _ := s.appSearch(r.Context(), me(r), "", cat, searchInput{Query: q, Apps: mentionApps}).(map[string]any)
+	apps, per := mentionApps, pocketItemsPerApp
+	if app != "" {
+		apps, per = []string{app}, pocketItemsOneApp
+	}
+	res, _ := s.appSearch(r.Context(), me(r), "", cat, searchInput{Query: q, Apps: apps}).(map[string]any)
 	sections, _ := res["sections"].([]appSection)
-	writeJSON(w, 200, map[string]any{"items": pocketItems(sections)})
+	writeJSON(w, 200, map[string]any{"items": pocketItems(sections, apps, per)})
 }
 
-func pocketItems(sections []appSection) []pocketItem {
+func pocketItems(sections []appSection, order []string, per int) []pocketItem {
 	byApp := map[string][]pocketItem{}
 	for _, sec := range sections {
 		parts := strings.SplitN(sec.Tool, "_", 3)
@@ -61,16 +76,26 @@ func pocketItems(sections []appSection) []pocketItem {
 		}
 		app := parts[1]
 		for _, row := range resultRows(sec.Data) {
-			if item, ok := toPocketItem(app, row); ok && len(byApp[app]) < pocketItemsPerApp {
+			if item, ok := toPocketItem(app, row); ok && len(byApp[app]) < per && !hasItem(byApp[app], item.ID) {
 				byApp[app] = append(byApp[app], item)
 			}
 		}
 	}
 	out := []pocketItem{}
-	for _, app := range mentionApps {
+	for _, app := range order {
 		out = append(out, byApp[app]...)
 	}
 	return out
+}
+
+// hasItem: an app with two search operations can find the same item twice.
+func hasItem(items []pocketItem, id string) bool {
+	for _, it := range items {
+		if it.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // resultRows finds the list in a tool result: a bare array, or one under a

@@ -138,6 +138,6 @@ func (s *Server) appMentionNote(ctx context.Context, uid int64, text string) str
 	if len(lines) == 0 {
 		return ""
 	}
-	return "\n\n[Pocket AI: with @ the person picked these Pocket apps for this message. Work in them through your pocket tools; an operation that is not loaded yet: get its schema with pocket_find_tools, then run it with pocket_call_tool.\n" +
+	return "\n\n[Pocket AI: with @ the person picked these Pocket apps for this message. Work in them through your pocket tools; an operation that is not loaded yet: get its schema with pocket_find_tools, then run it with pocket_call_tool. A link right after an @app is an item the person picked in that app (its id is in the link).\n" +
 		strings.Join(lines, "\n") + "]\n"
 }

@@ -18,7 +18,7 @@ func TestPocketItemsFlattenEachAppsResultShape(t *testing.T) {
 		}}}},
 		{Tool: "pocket_contacts_list", Error: "This source could not be read."},
 	}
-	got := pocketItems(sections)
+	got := pocketItems(sections, mentionApps, pocketItemsPerApp)
 	if len(got) != 4 {
 		t.Fatalf("want 4 items, got %d: %+v", len(got), got)
 	}

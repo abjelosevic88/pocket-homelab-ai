@@ -126,6 +126,35 @@ function useMentionApps(wanted: boolean): MentionApp[] | null {
   return apps
 }
 
+/** One item found in a Pocket app ("@documents #tax"); see server pocket_items.go. */
+interface PocketItem { app: string; id: string; title: string; subtitle?: string; url?: string; attachable: boolean }
+const itemCache = new Map<string, { at: number; items: PocketItem[] }>()
+
+/** Searches one app as the person types after "#" (debounced, cached a minute); null while looking. */
+function usePocketItems(app: string | null, q: string): PocketItem[] | null {
+  const key = app === null ? '' : app + '\n' + q.trim().toLowerCase()
+  const cached = () => { const c = itemCache.get(key); return c && Date.now() - c.at < 60_000 ? c.items : null }
+  const [got, setGot] = useState<{ key: string; items: PocketItem[] } | null>(null)
+  useEffect(() => {
+    if (!app || cached()) return
+    let live = true
+    const timer = setTimeout(() => {
+      api.get<{ items: PocketItem[] }>(`${V1}/pocket/items?app=${encodeURIComponent(app)}&q=${encodeURIComponent(q.trim())}`)
+        .then(r => r.items || []).catch(() => [] as PocketItem[])
+        .then(items => { itemCache.set(key, { at: Date.now(), items }); if (live) setGot({ key, items }) })
+    }, 250)
+    return () => { live = false; clearTimeout(timer) }
+  }, [key]) // eslint-disable-line react-hooks/exhaustive-deps
+  if (!app) return null
+  return cached() ?? (got?.key === key ? got.items : null)
+}
+
+/** What a picked item becomes in the message: a link the agent can follow (ids are in it), else title + id. */
+function itemRef(it: PocketItem): string {
+  const title = it.title.replace(/[[\]]/g, m => m === '[' ? '(' : ')')
+  return it.url ? `[${title}](${it.url})` : `"${title}" (${it.app} ${it.id})`
+}
+
 /** The app's own icon (web/public/app-icons, from the Pocket icon set); a plain grid for an app without one. */
 function AppIcon({ slug }: { slug: string }) {
   const [missing, setMissing] = useState(false)
@@ -373,9 +402,13 @@ export const Composer = React.forwardRef<ComposerHandle, {
   }
 
   const before = text.slice(0, caret)
-  const atMatch = slash === null ? /(^|\s)@([^\s@]*)$/.exec(before) : null
+  // "@documents #tax" (or "@documents#tax"): search inside that app, up to three words
+  const hashMatch = slash === null && before !== atShut ? /(^|\s)@([a-z][a-z0-9-]*) ?#((?:[^\s#]+ ?){0,3})$/i.exec(before) : null
+  const atMatch = slash === null && !hashMatch ? /(^|\s)@([^\s@]*)$/.exec(before) : null
   const atQ = atMatch && before !== atShut ? atMatch[2].toLowerCase() : null
-  const apps = useMentionApps(atQ !== null)
+  const apps = useMentionApps(atQ !== null || hashMatch !== null)
+  const hashApp = hashMatch && apps ? apps.find(a => a.slug === hashMatch[2].toLowerCase()) ?? null : null
+  const found = usePocketItems(hashApp?.slug ?? null, hashMatch?.[3] ?? '')
   useEffect(() => {
     if (atQ === null || !parentTabs) { setCtx(null); return } // asked again next time: the page's items change
     let live = true
@@ -387,11 +420,21 @@ export const Composer = React.forwardRef<ComposerHandle, {
     .filter(a => a.slug.includes(atQ) || a.name.toLowerCase().includes(atQ))
     .sort((a, b) => Number(!a.slug.startsWith(atQ)) - Number(!b.slug.startsWith(atQ)))
     .slice(0, parentTabs ? 6 : 10)
-  type AtPick = { item: ParentContextItem } | { app: MentionApp }
-  const atList: AtPick[] = [...itemList.map(item => ({ item })), ...appList.map(app => ({ app }))]
-  // still looking: the page's items (in a panel), or the apps the first time
-  const atLoading = atQ !== null && ((parentTabs && !ctx) || apps === null || ctxBusy)
-  useEffect(() => setAtHi(0), [atQ])
+  type AtPick = { item: ParentContextItem } | { app: MentionApp } | { found: PocketItem }
+  const atList: AtPick[] = hashMatch ? (found || []).map(f => ({ found: f })) : [...itemList.map(item => ({ item })), ...appList.map(app => ({ app }))]
+  // still looking: the page's items (in a panel), the apps the first time, or the app's search
+  const atLoading = hashMatch ? apps === null || (!!hashApp && found === null) : atQ !== null && ((parentTabs && !ctx) || apps === null || ctxBusy)
+  useEffect(() => setAtHi(0), [atQ, hashMatch?.[3]])
+  const pickFound = (it: PocketItem) => {
+    if (!hashMatch) return
+    const hash = caret - hashMatch[3].length - 1 // the "#"
+    const rest = text.slice(caret)
+    const ins = (text[hash - 1] === ' ' ? '' : ' ') + itemRef(it) + (rest.startsWith(' ') ? '' : ' ')
+    const pos = hash + ins.length + (rest.startsWith(' ') ? 1 : 0)
+    setText(text.slice(0, hash) + ins + rest)
+    setCaret(pos)
+    setTimeout(() => { ta.current?.focus(); ta.current?.setSelectionRange(pos, pos) }, 0)
+  }
   const pickApp = (app: MentionApp) => {
     if (!atMatch) return
     const start = caret - atMatch[2].length - 1
@@ -403,6 +446,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
     setTimeout(() => { ta.current?.focus(); ta.current?.setSelectionRange(pos, pos) }, 0)
   }
   const pickAt = async (p: AtPick) => {
+    if ('found' in p) { pickFound(p.found); return }
     if (!atMatch) return
     if ('app' in p) { pickApp(p.app); return }
     const item = p.item
@@ -419,7 +463,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
     } catch (err) { toast(errMsg(err), 'err') } finally { setCtxBusy(false) }
   }
 
-  const atOpen = atQ !== null && (atList.length > 0 || atLoading)
+  const atOpen = hashMatch ? !!hashApp || atLoading : atQ !== null && (atList.length > 0 || atLoading)
   const menuOpen = slashList.length > 0 || atOpen
   useLayoutEffect(() => {
     if (!menuOpen || !box.current) return
@@ -530,11 +574,16 @@ export const Composer = React.forwardRef<ComposerHandle, {
         </div>
       )}
       {atOpen && (
-        <div className={`slash-menu at-menu ${menuInside ? 'inside' : ''}`} role="listbox" aria-label="Mention an app or add from the page">
+        <div className={`slash-menu at-menu ${menuInside ? 'inside' : ''}`} role="listbox" aria-label={hashApp ? `Search ${hashApp.name}` : 'Mention an app or add from the page'}>
           {atList.map((p, i) => {
             const first = i === 0 || ('app' in p) !== ('app' in atList[i - 1])
-            const head = 'app' in p ? 'Apps' : ctx?.label ? `From ${ctx.label}` : 'Add as context'
-            const row = 'app' in p
+            const head = 'found' in p ? hashApp?.name : 'app' in p ? 'Apps' : ctx?.label ? `From ${ctx.label}` : 'Add as context'
+            const row = 'found' in p
+              ? <>
+                <AppIcon slug={p.found.app} />
+                <span className="grow"><span className="slash-name">{p.found.title}</span>{p.found.subtitle && <span className="slash-sub">{p.found.subtitle}</span>}</span>
+              </>
+              : 'app' in p
               ? <>
                 <AppIcon slug={p.app.slug} />
                 <span className="grow"><span className="slash-name">{p.app.name}</span><span className="slash-sub">@{p.app.slug} · {p.app.tools.length} {p.app.tools.length === 1 ? 'operation' : 'operations'}</span></span>
@@ -544,13 +593,14 @@ export const Composer = React.forwardRef<ComposerHandle, {
                 <span className="grow"><span className="slash-name">{p.item.title}</span><span className="slash-sub">{[p.item.kind === 'note' ? 'Note' : p.item.kind === 'file' ? 'File' : 'Link', p.item.sub].filter(Boolean).join(' · ')}</span></span>
               </>
             return (
-              <React.Fragment key={'app' in p ? 'a' + p.app.slug : 'i' + p.item.id}>
+              <React.Fragment key={'found' in p ? 'f' + p.found.app + p.found.id : 'app' in p ? 'a' + p.app.slug : 'i' + p.item.id}>
                 {first && <div className="slash-h">{head}</div>}
                 <button type="button" role="option" aria-selected={i === atHi} className={`slash-row ${i === atHi ? 'hi' : ''}`} onMouseMove={() => { if (i !== atHi) setAtHi(i) }} onMouseDown={e => e.preventDefault()} onClick={() => { void pickAt(p) }}>{row}</button>
               </React.Fragment>
             )
           })}
           {atLoading && <div className="slash-row muted"><Spinner size={14} /> Looking…</div>}
+          {hashApp && found?.length === 0 && <div className="slash-row muted">{hashMatch?.[3].trim() ? `Nothing in ${hashApp.name} matches “${hashMatch[3].trim()}”` : `Type to search ${hashApp.name}`}</div>}
         </div>
       )}
       <textarea {...noGrammarly} ref={ta} rows={big ? 3 : 1} value={text} disabled={disabled} placeholder={placeholder} aria-label="Message"
