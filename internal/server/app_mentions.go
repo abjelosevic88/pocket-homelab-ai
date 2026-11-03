@@ -57,7 +57,7 @@ func (s *Server) mentionApps(ctx context.Context, uid int64) ([]mentionApp, erro
 		}
 		a := bySlug[slug]
 		if a == nil {
-			a = &mentionApp{Slug: slug, Name: "Pocket " + appTitle(slug)}
+			a = &mentionApp{Slug: slug, Name: mentionName(slug)}
 			bySlug[slug] = a
 		}
 		a.Tools = append(a.Tools, t.Name)
@@ -75,6 +75,16 @@ func (s *Server) mentionApps(ctx context.Context, uid int64) ([]mentionApp, erro
 	mentionCache.m[k] = mentionEntry{time.Now(), apps}
 	mentionCache.Unlock()
 	return apps, nil
+}
+
+// Apps whose name is not just their slug capitalised.
+var mentionNames = map[string]string{"pr-review": "PR Review", "ai": "AI"}
+
+func mentionName(slug string) string {
+	if n, ok := mentionNames[slug]; ok {
+		return "Pocket " + n
+	}
+	return "Pocket " + appTitle(slug)
 }
 
 // GET /pocket-tools/apps: the apps you can @-mention in a message.
