@@ -2180,6 +2180,7 @@ func (rt *engine) takeTurnNote(threadID string) string {
 // chatting in a shared thread doesn't get theirs pulled into it unasked.
 func (rt *engine) withMemory(r *run, in agent.Input, sender int64) agent.Input {
 	in.Text += rt.takeTurnNote(r.threadID)
+	in.Text += rt.s.appMentionNote(rt.ctxOrBackground(), sender, in.Text)
 	if rt.s.isAway(rt.ctxOrBackground(), sender) {
 		in.Text += awayNote
 	}
