@@ -170,6 +170,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
   const [caret, setCaret] = useState(0)
   const [atHi, setAtHi] = useState(0)
   const [atShut, setAtShut] = useState('')
+  const [slashShut, setSlashShut] = useState('')
   const [ctx, setCtx] = useState<{ label: string; items: ParentContextItem[] } | null>(null)
   const [ctxBusy, setCtxBusy] = useState(false)
   // the menus open above the box; with no room there (a draft filling the panel) they open inside it
@@ -352,7 +353,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
   // At the start: "/" the agent's commands and skills, then recipes; "#" recipes only; "$" Codex skills (its own syntax)
   const lead = text[0]
   const trigger = lead === '/' || lead === '#' || (lead === '$' && skillScope?.provider === 'codex')
-  const slash = trigger && !/\s/.test(text) ? text.slice(1).toLowerCase() : null
+  const slash = trigger && !/\s/.test(text) && text !== slashShut ? text.slice(1).toLowerCase() : null
   const { skills: allSkills, commands: allCommands } = useSkills(skillScope, slash !== null && lead !== '#')
   const byName = (list: Skill[], max: number) => slash === null ? [] : list
     .filter(k => k.name.toLowerCase().includes(slash) || (slash.length > 2 && k.description.toLowerCase().includes(slash)))
@@ -430,6 +431,20 @@ export const Composer = React.forwardRef<ComposerHandle, {
     }
     setMenuInside(box.current.getBoundingClientRect().top - Math.max(top, 0) < 220)
   }, [menuOpen])
+
+  // a click outside the menu and the text box closes it; clicking back into the text reopens it
+  useEffect(() => {
+    if (!menuOpen) return
+    const down = (e: PointerEvent) => {
+      const t = e.target as Node
+      if (t === ta.current || box.current?.querySelector('.slash-menu')?.contains(t)) return
+      setAtShut(before)
+      setSlashShut(text)
+    }
+    document.addEventListener('pointerdown', down, true)
+    return () => document.removeEventListener('pointerdown', down, true)
+  }, [menuOpen, before, text])
+  const reopen = (e: React.MouseEvent<HTMLTextAreaElement>) => { setAtShut(''); setSlashShut(''); setCaret(e.currentTarget.selectionStart) }
 
   // arrow keys move the highlight: keep it in view (the first row also shows its section heading)
   useEffect(() => {
@@ -539,7 +554,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
         </div>
       )}
       <textarea {...noGrammarly} ref={ta} rows={big ? 3 : 1} value={text} disabled={disabled} placeholder={placeholder} aria-label="Message"
-        onSelect={e => setCaret(e.currentTarget.selectionStart)} onFocus={markUsed}
+        onSelect={e => setCaret(e.currentTarget.selectionStart)} onClick={reopen} onFocus={markUsed}
         onChange={e => { setText(e.target.value); setCaret(e.target.selectionStart) }} onKeyDown={onKey} onPaste={onPaste} enterKeyHint={isTouch() ? 'enter' : 'send'} />
       <div className="composer-bar">
         {/* Phones get Camera / Photos / Files like the Codex app: one input each, so iOS opens
