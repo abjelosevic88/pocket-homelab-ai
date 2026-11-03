@@ -105,6 +105,27 @@ function useSkills(scope: SkillScope | undefined, wanted: boolean): SkillList {
   return scope ? skills : noSkills
 }
 
+/** A Pocket app the person can @-mention: the agent is pointed at its tools for that message. */
+interface MentionApp { slug: string; name: string; tools: string[]; reads: number }
+let mentionApps: { at: number; apps: MentionApp[] } | null = null
+
+/** The person's Pocket apps, fetched when the @ menu first opens (cached 2 minutes). */
+function useMentionApps(wanted: boolean): MentionApp[] | null {
+  const [apps, setApps] = useState<MentionApp[] | null>(() => mentionApps?.apps ?? null)
+  useEffect(() => {
+    if (!wanted) return
+    if (mentionApps) setApps(mentionApps.apps)
+    if (mentionApps && Date.now() - mentionApps.at < 120_000) return
+    let live = true
+    api.get<{ apps: MentionApp[] }>(`${V1}/pocket-tools/apps`).then(r => {
+      mentionApps = { at: Date.now(), apps: r.apps || [] }
+      if (live) setApps(mentionApps.apps)
+    }).catch(() => { if (live) setApps(a => a ?? []) })
+    return () => { live = false }
+  }, [wanted])
+  return apps
+}
+
 function draftAttachments(key?: string): Attachment[] {
   if (!key) return []
   try {
@@ -138,7 +159,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
   const [dragging, setDragging] = useState(false)
   const [listening, setListening] = useState(false)
   const [slashHi, setSlashHi] = useState(0)
-  // "@": the framing page's items (Pocket Projects: the issue's notes, files, links)
+  // "@": the person's Pocket apps, and the framing page's items (Pocket Projects: the issue's notes, files, links)
   const [caret, setCaret] = useState(0)
   const [atHi, setAtHi] = useState(0)
   const [atShut, setAtShut] = useState('')
@@ -344,18 +365,39 @@ export const Composer = React.forwardRef<ComposerHandle, {
   }
 
   const before = text.slice(0, caret)
-  const atMatch = parentTabs && slash === null ? /(^|\s)@([^\s@]*)$/.exec(before) : null
+  const atMatch = slash === null ? /(^|\s)@([^\s@]*)$/.exec(before) : null
   const atQ = atMatch && before !== atShut ? atMatch[2].toLowerCase() : null
+  const apps = useMentionApps(atQ !== null)
   useEffect(() => {
-    if (atQ === null) { setCtx(null); return } // asked again next time: the page's items change
+    if (atQ === null || !parentTabs) { setCtx(null); return } // asked again next time: the page's items change
     let live = true
     parentContext().then(c => { if (live) setCtx(c) }).catch(() => { if (live) setCtx({ label: '', items: [] }) })
     return () => { live = false }
   }, [atQ !== null]) // eslint-disable-line react-hooks/exhaustive-deps
-  const atList: ParentContextItem[] = atQ === null || !ctx ? [] : ctx.items.filter(i => i.title.toLowerCase().includes(atQ) || (i.sub || '').toLowerCase().includes(atQ)).slice(0, 10)
+  const itemList: ParentContextItem[] = atQ === null || !ctx ? [] : ctx.items.filter(i => i.title.toLowerCase().includes(atQ) || (i.sub || '').toLowerCase().includes(atQ)).slice(0, 10)
+  const appList: MentionApp[] = atQ === null || !apps ? [] : apps
+    .filter(a => a.slug.includes(atQ) || a.name.toLowerCase().includes(atQ))
+    .sort((a, b) => Number(!a.slug.startsWith(atQ)) - Number(!b.slug.startsWith(atQ)))
+    .slice(0, parentTabs ? 6 : 10)
+  type AtPick = { item: ParentContextItem } | { app: MentionApp }
+  const atList: AtPick[] = [...itemList.map(item => ({ item })), ...appList.map(app => ({ app }))]
+  // still looking: the page's items (in a panel), or the apps the first time
+  const atLoading = atQ !== null && ((parentTabs && !ctx) || apps === null || ctxBusy)
   useEffect(() => setAtHi(0), [atQ])
-  const pickAt = async (item: ParentContextItem) => {
+  const pickApp = (app: MentionApp) => {
     if (!atMatch) return
+    const start = caret - atMatch[2].length - 1
+    const rest = text.slice(caret)
+    const ins = '@' + app.slug + (rest.startsWith(' ') ? '' : ' ')
+    const pos = start + ins.length + (rest.startsWith(' ') ? 1 : 0)
+    setText(text.slice(0, start) + ins + rest)
+    setCaret(pos)
+    setTimeout(() => { ta.current?.focus(); ta.current?.setSelectionRange(pos, pos) }, 0)
+  }
+  const pickAt = async (p: AtPick) => {
+    if (!atMatch) return
+    if ('app' in p) { pickApp(p.app); return }
+    const item = p.item
     const start = caret - atMatch[2].length - 1
     const rest = text.slice(caret)
     setText(text.slice(0, start) + rest)
@@ -369,7 +411,8 @@ export const Composer = React.forwardRef<ComposerHandle, {
     } catch (err) { toast(errMsg(err), 'err') } finally { setCtxBusy(false) }
   }
 
-  const menuOpen = slashList.length > 0 || (atQ !== null && (atList.length > 0 || !ctx || ctxBusy))
+  const atOpen = atQ !== null && (atList.length > 0 || atLoading)
+  const menuOpen = slashList.length > 0 || atOpen
   useLayoutEffect(() => {
     if (!menuOpen || !box.current) return
     // room above the box, inside the nearest scrolling area (or the window)
@@ -455,16 +498,28 @@ export const Composer = React.forwardRef<ComposerHandle, {
           ))}
         </div>
       )}
-      {atQ !== null && (atList.length > 0 || !ctx || ctxBusy) && (
-        <div className={`slash-menu at-menu ${menuInside ? 'inside' : ''}`} role="listbox" aria-label="Add from the page">
-          <div className="slash-h">{ctx?.label ? `From ${ctx.label}` : 'Add as context'}</div>
-          {!ctx ? <div className="slash-row muted"><Spinner size={14} /> Looking…</div>
-            : atList.map((item, i) => (
-              <button key={item.id} type="button" role="option" aria-selected={i === atHi} className={`slash-row ${i === atHi ? 'hi' : ''}`} onMouseEnter={() => setAtHi(i)} onMouseDown={e => e.preventDefault()} onClick={() => { void pickAt(item) }}>
-                <span className={`slash-ico at-ico ${item.kind}`}><Icon name={item.kind === 'note' ? 'note' : item.kind === 'file' ? 'paperclip' : 'link'} size={14} /></span>
-                <span className="grow"><span className="slash-name">{item.title}</span><span className="slash-sub">{[item.kind === 'note' ? 'Note' : item.kind === 'file' ? 'File' : 'Link', item.sub].filter(Boolean).join(' · ')}</span></span>
-              </button>
-            ))}
+      {atOpen && (
+        <div className={`slash-menu at-menu ${menuInside ? 'inside' : ''}`} role="listbox" aria-label="Mention an app or add from the page">
+          {atList.map((p, i) => {
+            const first = i === 0 || ('app' in p) !== ('app' in atList[i - 1])
+            const head = 'app' in p ? 'Apps' : ctx?.label ? `From ${ctx.label}` : 'Add as context'
+            const row = 'app' in p
+              ? <>
+                <span className="slash-ico at-ico app"><Icon name="grid" size={14} /></span>
+                <span className="grow"><span className="slash-name">{p.app.name}</span><span className="slash-sub">@{p.app.slug} · {p.app.tools.length} {p.app.tools.length === 1 ? 'operation' : 'operations'}</span></span>
+              </>
+              : <>
+                <span className={`slash-ico at-ico ${p.item.kind}`}><Icon name={p.item.kind === 'note' ? 'note' : p.item.kind === 'file' ? 'paperclip' : 'link'} size={14} /></span>
+                <span className="grow"><span className="slash-name">{p.item.title}</span><span className="slash-sub">{[p.item.kind === 'note' ? 'Note' : p.item.kind === 'file' ? 'File' : 'Link', p.item.sub].filter(Boolean).join(' · ')}</span></span>
+              </>
+            return (
+              <React.Fragment key={'app' in p ? 'a' + p.app.slug : 'i' + p.item.id}>
+                {first && <div className="slash-h">{head}</div>}
+                <button type="button" role="option" aria-selected={i === atHi} className={`slash-row ${i === atHi ? 'hi' : ''}`} onMouseEnter={() => setAtHi(i)} onMouseDown={e => e.preventDefault()} onClick={() => { void pickAt(p) }}>{row}</button>
+              </React.Fragment>
+            )
+          })}
+          {atLoading && <div className="slash-row muted"><Spinner size={14} /> Looking…</div>}
         </div>
       )}
       <textarea {...noGrammarly} ref={ta} rows={big ? 3 : 1} value={text} disabled={disabled} placeholder={placeholder} aria-label="Message"
