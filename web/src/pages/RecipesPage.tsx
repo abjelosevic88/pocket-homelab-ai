@@ -3,9 +3,11 @@ import { useState } from 'react'
 import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { promptVars, providerName, shortPath } from '../lib/format'
+import { keyCaps, useShortcuts } from '../lib/shortcuts'
 import type { AgentChoice, Recipe } from '../lib/types'
 import { AgentPicker } from '../components/AgentPicker'
 import { FolderButton } from '../components/FolderPicker'
+import { HostPicker, HostTag } from '../components/HostPicker'
 import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
 import { useRunRecipe } from '../components/RecipeRunner'
@@ -13,7 +15,7 @@ import { Confirm, Empty, errMsg, Field, Loading, MenuButton, Modal, Spinner, Swi
 
 type Draft = Omit<Recipe, 'id' | 'runs' | 'created_at' | 'updated_at' | 'sort_order'> & { id?: number; sort_order?: number }
 
-const blank: Draft = { name: '', prompt: '', icon: '', provider: '', model: '', effort: '', mode: '', speed: '', cwd: '', pinned: true }
+const blank: Draft = { name: '', prompt: '', icon: '', provider: '', model: '', effort: '', mode: '', speed: '', host_id: 0, cwd: '', pinned: true }
 
 export function AgentSummary({ c }: { c: AgentChoice }) {
   const bits = [c.provider ? providerName(c.provider) : 'Default agent']
@@ -32,6 +34,7 @@ export default function RecipesPage({ onMenu }: { onMenu?: () => void }) {
   const ctx = useContextMenu()
   const [starters, setStarters] = useState(false)
   const canRun = !!user && (user.role === 'admin' || user.can_run)
+  const keys = useShortcuts()
 
   const togglePin = async (r: Recipe) => {
     try { await api.put(`${V1}/recipes/${r.id}`, { ...r, pinned: !r.pinned }); reloadRecipes() } catch (e) { toast(errMsg(e), 'err') }
@@ -39,7 +42,7 @@ export default function RecipesPage({ onMenu }: { onMenu?: () => void }) {
 
   return (
     <div className="page">
-      <PageHead title="Recipes" icon="zap" onMenu={onMenu} sub="Prompts you run again and again — pinned ones show on the start page and after / in the composer."
+      <PageHead title="Recipes" icon="zap" onMenu={onMenu} sub={<>Prompts you run again and again — pinned ones show on the start page and after / in the composer{keys.recipes && <>; <kbd>{keyCaps(keys.recipes).join('')}</kbd> runs one as a new thread from anywhere</>}.</>}
         actions={<>
           <button type="button" className="btn" onClick={() => setStarters(true)}><Icon name="sparkles" size={14} /><span className="hide-sm">Starter recipes</span></button>
           <button type="button" className="btn primary" onClick={() => setEdit({ ...blank })}><Icon name="plus" size={14} />New</button>
@@ -70,7 +73,7 @@ export default function RecipesPage({ onMenu }: { onMenu?: () => void }) {
                   <div className="grow" style={{ minWidth: 0 }}>
                     <div className="list-card-title">{r.name}{r.pinned && <Icon name="bookmark" size={12} className="faint" />}{promptVars(r.prompt).length > 0 && <span className="badge">asks {promptVars(r.prompt).length}</span>}</div>
                     <div className="list-card-sub">{r.prompt}</div>
-                    <AgentSummary c={r} />
+                    <span className="row recipe-meta"><HostTag id={r.host_id} /><AgentSummary c={r} /></span>
                   </div>
                   <div className="list-card-actions">
                     <button type="button" className="btn sm" disabled={!canRun} onClick={() => run(r)}><Icon name="play" size={11} />Run</button>
@@ -94,6 +97,7 @@ function RecipeDialog({ draft, onClose, onSaved }: { draft: Draft; onClose: () =
   const { toast } = useToast()
   const [f, setF] = useState<Draft>(draft)
   const [busy, setBusy] = useState(false)
+  const { hosts } = useApp()
   const vars = promptVars(f.prompt)
   const save = async () => {
     setBusy(true)
@@ -116,11 +120,14 @@ function RecipeDialog({ draft, onClose, onSaved }: { draft: Draft; onClose: () =
         <Field label="Prompt" help={<>Use <code>{'{{name}}'}</code> for something you fill in each time, e.g. “Why is <code>{'{{app}}'}</code> down?”.{vars.length > 0 && <> Asks for: <b>{vars.join(', ')}</b>.</>}</>}>
           <textarea {...noGrammarly} value={f.prompt} onChange={e => setF({ ...f, prompt: e.target.value })} rows={6} placeholder="Check disk space, memory, failed systemd units and unhealthy Docker containers. Summarise what needs attention." />
         </Field>
+        {hosts.length > 0 && <Field label="Runs on" group help="This server, or a machine from Settings → Servers (it uses that machine’s own login). Every run starts a new thread there.">
+          <HostPicker value={f.host_id} onChange={host_id => setF({ ...f, host_id, cwd: '' })} className="btn" />
+        </Field>}
         <Field label="Agent" group help="“My default” uses whatever is set in Settings → Agents when the recipe runs.">
-          <AgentPicker allowDefault value={f} onChange={p => setF(x => ({ ...x, ...p }))} />
+          <AgentPicker allowDefault noAccount={!!f.host_id} value={f} onChange={p => setF(x => ({ ...x, ...p }))} />
         </Field>
         <Field label="Folder" group help="Where the agent starts. Empty = your default folder.">
-          <div className="row"><FolderButton value={f.cwd} onChange={cwd => setF({ ...f, cwd })} className="btn" />{f.cwd && <button type="button" className="btn ghost sm" onClick={() => setF({ ...f, cwd: '' })}>Use default</button>}</div>
+          <div className="row"><FolderButton value={f.cwd} host={f.host_id} onChange={cwd => setF({ ...f, cwd })} className="btn" />{f.cwd && <button type="button" className="btn ghost sm" onClick={() => setF({ ...f, cwd: '' })}>Use default</button>}</div>
         </Field>
         <label className="inline-switch"><Switch checked={f.pinned} onChange={v => setF({ ...f, pinned: v })} label="Pinned" />Show on the start page</label>
       </div>

@@ -366,6 +366,8 @@ export interface Recipe extends AgentChoice {
   name: string
   prompt: string
   icon: string
+  /** 0 = this server, else the machine it runs on (Settings → Servers) */
+  host_id: number
   pinned: boolean
   sort_order: number
   runs: number

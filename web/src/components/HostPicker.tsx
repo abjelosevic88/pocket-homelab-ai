@@ -18,6 +18,12 @@ export function HostPicker({ value, onChange, className = 'btn sm' }: { value: n
     renderValue={o => <span className="ellipsis"><Icon name="server" size={13} className="inline-ico" />{o?.label ?? 'This server'}</span>} />
 }
 
+/** "🖥 name" for a machine, nothing for this server. */
+export function HostTag({ id }: { id: number | undefined }) {
+  const name = useHostName(id)
+  return name ? <span className="faint"><Icon name="server" size={11} />{name}</span> : null
+}
+
 /** The name of a thread's machine, '' for this server. */
 export function useHostName(id: number | undefined): string {
   const { hosts } = useApp()

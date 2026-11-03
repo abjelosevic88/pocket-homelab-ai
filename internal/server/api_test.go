@@ -534,6 +534,37 @@ func TestScheduleHost(t *testing.T) {
 	}
 }
 
+// A recipe can be bound to another machine the same way; its runs start there.
+func TestRecipeHost(t *testing.T) {
+	s, h, _ := testServer(t)
+	c, _ := person(t, s, h, "recipe@example.test", "admin", false)
+	box := &store.Host{Name: "athena-box", Target: "ubuntu@example.invalid"}
+	if err := s.store.CreateHost(t.Context(), box); err != nil {
+		t.Fatal(err)
+	}
+	for name, in := range map[string]map[string]any{
+		"unknown host":  {"name": "n", "prompt": "p", "host_id": box.ID + 100},
+		"relative path": {"name": "n", "prompt": "p", "host_id": box.ID, "cwd": "athena/instance"},
+		"missing here":  {"name": "n", "prompt": "p", "cwd": "/home/ubuntu/athena/instance"},
+	} {
+		if code, b := c.call("POST", "/api/v1/recipes", in); code < 400 {
+			t.Fatalf("%s accepted: %d %s", name, code, b)
+		}
+	}
+	var rc store.Recipe
+	c.want("POST", "/api/v1/recipes", map[string]any{"name": "Box health", "prompt": "check", "host_id": box.ID, "cwd": "~/athena", "provider": "claude"}, 201, &rc)
+	var list []store.Recipe
+	c.want("GET", "/api/v1/recipes", nil, 200, &list)
+	if len(list) != 1 || list[0].HostID != box.ID || list[0].Cwd != "~/athena" {
+		t.Fatalf("recipe: %+v", list)
+	}
+	rc.HostID, rc.Cwd = 0, ""
+	c.want("PUT", "/api/v1/recipes/"+itoa(rc.ID), rc, 200, &rc)
+	if rc.HostID != 0 {
+		t.Fatalf("moved back to this server: %+v", rc)
+	}
+}
+
 func TestClientSourceOnlyAllowsQuickChat(t *testing.T) {
 	for claimed, want := range map[string]string{"quick-chat": "quick-chat", "": "web", "ask": "web", "schedule": "web", "link:projects": "web", "Quick-Chat": "web"} {
 		if got := clientSource(claimed); got != want {

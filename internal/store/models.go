@@ -172,6 +172,7 @@ type Recipe struct {
 	Effort    string  `json:"effort"`
 	Mode      string  `json:"mode"`
 	Speed     string  `json:"speed"`
+	HostID    int64   `json:"host_id"` // 0 = this server, else the machine it runs on over ssh
 	Cwd       string  `json:"cwd"`
 	Pinned    bool    `json:"pinned"`
 	SortOrder float64 `json:"sort_order"`

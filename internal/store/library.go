@@ -75,11 +75,11 @@ func (s *Store) WorkspaceForPath(ctx context.Context, userID int64, path string)
 
 // ---------- recipes ----------
 
-const recipeCols = `id, user_id, name, prompt, icon, provider, model, effort, mode, speed, cwd, pinned, sort_order, runs, created_at, updated_at`
+const recipeCols = `id, user_id, name, prompt, icon, provider, model, effort, mode, speed, host_id, cwd, pinned, sort_order, runs, created_at, updated_at`
 
 func scanRecipe(row interface{ Scan(...any) error }) (*Recipe, error) {
 	var r Recipe
-	if err := row.Scan(&r.ID, &r.UserID, &r.Name, &r.Prompt, &r.Icon, &r.Provider, &r.Model, &r.Effort, &r.Mode, &r.Speed, &r.Cwd,
+	if err := row.Scan(&r.ID, &r.UserID, &r.Name, &r.Prompt, &r.Icon, &r.Provider, &r.Model, &r.Effort, &r.Mode, &r.Speed, &r.HostID, &r.Cwd,
 		&r.Pinned, &r.SortOrder, &r.Runs, &r.CreatedAt, &r.UpdatedAt); err != nil {
 		return nil, notFound(err)
 	}
@@ -115,8 +115,8 @@ func (s *Store) SaveRecipe(ctx context.Context, r *Recipe) error {
 	r.UpdatedAt = now
 	if r.ID == 0 {
 		r.CreatedAt = now
-		res, err := s.DB.ExecContext(ctx, `INSERT INTO recipes (user_id, name, prompt, icon, provider, model, effort, mode, speed, cwd, pinned, sort_order, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, r.UserID, r.Name, r.Prompt, r.Icon, r.Provider, r.Model, r.Effort, r.Mode, r.Speed, r.Cwd,
+		res, err := s.DB.ExecContext(ctx, `INSERT INTO recipes (user_id, name, prompt, icon, provider, model, effort, mode, speed, host_id, cwd, pinned, sort_order, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, r.UserID, r.Name, r.Prompt, r.Icon, r.Provider, r.Model, r.Effort, r.Mode, r.Speed, r.HostID, r.Cwd,
 			boolInt(r.Pinned), r.SortOrder, now, now)
 		if err != nil {
 			return err
@@ -124,8 +124,8 @@ func (s *Store) SaveRecipe(ctx context.Context, r *Recipe) error {
 		r.ID, _ = res.LastInsertId()
 		return nil
 	}
-	_, err := s.DB.ExecContext(ctx, `UPDATE recipes SET name = ?, prompt = ?, icon = ?, provider = ?, model = ?, effort = ?, mode = ?, speed = ?, cwd = ?,
-		pinned = ?, sort_order = ?, updated_at = ? WHERE id = ? AND user_id = ?`, r.Name, r.Prompt, r.Icon, r.Provider, r.Model, r.Effort, r.Mode, r.Speed, r.Cwd,
+	_, err := s.DB.ExecContext(ctx, `UPDATE recipes SET name = ?, prompt = ?, icon = ?, provider = ?, model = ?, effort = ?, mode = ?, speed = ?, host_id = ?, cwd = ?,
+		pinned = ?, sort_order = ?, updated_at = ? WHERE id = ? AND user_id = ?`, r.Name, r.Prompt, r.Icon, r.Provider, r.Model, r.Effort, r.Mode, r.Speed, r.HostID, r.Cwd,
 		boolInt(r.Pinned), r.SortOrder, now, r.ID, r.UserID)
 	return err
 }
