@@ -406,3 +406,12 @@ func TestPromptCheckpointToleratesARestartDuplicate(t *testing.T) {
 		t.Fatal("unrelated history accepted", err)
 	}
 }
+
+// Compaction writes its summary into the log as a user row Pocket AI never
+// shows: rewinding a message after a compaction must not count it.
+func TestRewindClaudeSkipsCompactionSummary(t *testing.T) {
+	native := (&ClaudeLog{}).Feed([]byte(`{"type":"user","uuid":"c1","isVisibleInTranscriptOnly":true,"isCompactSummary":true,"message":{"content":"This session is being continued from a previous conversation that ran out of context."}}`))
+	if len(native) != 0 {
+		t.Fatalf("compaction summary read as a prompt: %+v", native)
+	}
+}
