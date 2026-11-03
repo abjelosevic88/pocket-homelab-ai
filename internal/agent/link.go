@@ -182,6 +182,17 @@ func (l *link) connect(from int64, only bool) (*exec.Cmd, io.WriteCloser, *bufio
 		}
 		cmd, stdin, r, hd, _, err = l.connectOnce(from, only)
 	}
+	// ssh could not reach the machine at all (nothing started there): a
+	// network blip, usually gone in a few seconds — try again, 1 s then 3 s
+	for try := 0; err != nil && try < 2 && l.o.Remote != nil && notConnected(err, stderr); try++ {
+		l.log.Info("machine not reachable; trying again", "machine", l.o.Remote.Target, "err", strings.TrimSpace(stderr))
+		select {
+		case <-l.ctx.Done():
+			return cmd, stdin, r, hd, err
+		case <-time.After(time.Duration(1+2*try) * time.Second):
+		}
+		cmd, stdin, r, hd, stderr, err = l.connectOnce(from, only)
+	}
 	return cmd, stdin, r, hd, err
 }
 
