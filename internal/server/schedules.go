@@ -406,7 +406,7 @@ func (s *Server) handleSaveSchedule(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := s.checkScheduleAgent(ctx, userFrom(ctx), &in); err != nil {
+	if err := s.checkAgentOn(ctx, userFrom(ctx), in.HostID, &in.Provider, &in.Mode, &in.Cwd); err != nil {
 		s.fail(w, err, "schedule")
 		return
 	}
@@ -428,25 +428,25 @@ func (s *Server) handleSaveSchedule(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, in)
 }
 
-// checkScheduleAgent validates the agent fields. On another machine the
-// folder is that machine's (checked when a run starts, like a thread's), so
-// here it only has to be absolute; the machine's own login is used.
-func (s *Server) checkScheduleAgent(ctx context.Context, u *store.User, sc *store.Schedule) error {
-	if sc.HostID == 0 {
-		return s.checkAgentFields(ctx, &sc.Provider, &sc.Mode, &sc.Cwd)
+// checkAgentOn validates the agent fields of a schedule or recipe. On another
+// machine the folder is that machine's (checked when a run starts, like a
+// thread's), so here it only has to be absolute; the machine's own login is used.
+func (s *Server) checkAgentOn(ctx context.Context, u *store.User, hostID int64, provider, mode, cwd *string) error {
+	if hostID == 0 {
+		return s.checkAgentFields(ctx, provider, mode, cwd)
 	}
-	if _, err := s.checkHostUse(ctx, u, sc.HostID); err != nil {
+	if _, err := s.checkHostUse(ctx, u, hostID); err != nil {
 		return err
 	}
-	cwd := strings.TrimSpace(sc.Cwd)
-	if cwd != "" && !strings.HasPrefix(cwd, "/") && cwd != "~" && !strings.HasPrefix(cwd, "~/") {
+	dir := strings.TrimSpace(*cwd)
+	if dir != "" && !strings.HasPrefix(dir, "/") && dir != "~" && !strings.HasPrefix(dir, "~/") {
 		return badRequest("the folder on another machine must be absolute (or ~/…)")
 	}
 	none := ""
-	if err := s.checkAgentFields(ctx, &sc.Provider, &sc.Mode, &none); err != nil {
+	if err := s.checkAgentFields(ctx, provider, mode, &none); err != nil {
 		return err
 	}
-	sc.Cwd = cwd
+	*cwd = dir
 	return nil
 }
 

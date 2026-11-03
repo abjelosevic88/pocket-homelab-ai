@@ -61,7 +61,7 @@ function ShellInner() {
   const narrow = useMediaQuery('(max-width: 980px)')
   const drawer = !embedded && (mobile || narrow)
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const [palette, setPalette] = useState<'' | 'all' | 'recent'>('')
+  const [palette, setPalette] = useState<'' | 'all' | 'recent' | 'recipes'>('')
   const [shortcuts, setShortcuts] = useState(false)
   const runRecipe = useRunRecipe()
   const tabsOn = settings?.thread_tabs !== false && !mobile && !embedded
@@ -111,11 +111,14 @@ function ShellInner() {
         if (tabsOn && tabs.active) tabs.close([tabs.active])
         return
       }
+      // Ctrl+J is the shell's newline inside a terminal off a Mac: left to it
+      if (action === 'recipes' && !isMac && (e.target as Element | null)?.closest?.('.xterm')) return
       const tabAction = action === 'new_tab' || action === 'reopen_tab' || action === 'prev_tab' || action === 'next_tab'
       if (action && action !== 'stop' && !(tabAction && !tabsOn)) {
         e.preventDefault()
         if (action === 'palette') setPalette(p => p === 'all' ? '' : 'all')
         else if (action === 'recent') setPalette(p => p === 'recent' ? '' : 'recent') // while open, the palette moves down instead
+        else if (action === 'recipes') setPalette(p => p === 'recipes' ? '' : 'recipes')
         else if (action === 'new_thread' || action === 'new_tab') navigate('/')
         else if (action === 'reopen_tab') tabs.reopen()
         else if (action === 'prev_tab') tabs.step(-1)
@@ -133,6 +136,7 @@ function ShellInner() {
   const commands = useMemo<PaletteCommand[]>(() => [
     { id: 'new', label: 'New thread', icon: 'plus', hint: 'C', run: () => navigate('/') },
     ...['briefing', 'memory', 'actions', 'workflows'].map(path => ({ id: path, label: path[0].toUpperCase() + path.slice(1), icon: 'sparkles', run: () => navigate('/' + path) })),
+    { id: 'run-recipe', label: 'Run a recipe…', icon: 'play', hint: keyCaps(keys.recipes).join(''), keywords: 'recipes prompts saved start', run: () => setPalette('recipes') },
     { id: 'recipes', label: 'Recipes', icon: 'zap', keywords: 'prompts saved', run: () => navigate('/recipes') },
     { id: 'schedules', label: 'Schedules', icon: 'clock', keywords: 'cron timer automatic', run: () => navigate('/schedules') },
     { id: 'history', label: 'On this server — CLI sessions', icon: 'history', keywords: 'import resume history claude codex', run: () => navigate('/history') },
@@ -152,7 +156,7 @@ function ShellInner() {
     { id: 'recent', label: 'Recent conversations', icon: 'history', hint: keyCaps(keys.recent).join(''), keywords: 'switch threads chats', run: () => setPalette('recent') },
     { id: 'keys', label: 'Keyboard shortcuts', icon: 'keyboard', hint: '?', run: () => setShortcuts(true) },
     { id: 'keys-edit', label: 'Change keyboard shortcuts', icon: 'keyboard', keywords: 'keys hotkeys bindings', run: () => navigate('/settings/general#shortcuts') },
-  ], [navigate, theme, setThemeMode, keys.recent, drawer])
+  ], [navigate, theme, setThemeMode, keys.recent, keys.recipes, drawer])
 
   const openMenu = useCallback(() => setDrawerOpen(true), [])
   const onMenu = drawer ? openMenu : undefined

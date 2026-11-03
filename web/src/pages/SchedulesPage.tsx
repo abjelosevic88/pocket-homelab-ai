@@ -7,7 +7,7 @@ import { ago, when } from '../lib/format'
 import type { Schedule, SchedulePreview, Thread } from '../lib/types'
 import { AgentPicker } from '../components/AgentPicker'
 import { FolderButton } from '../components/FolderPicker'
-import { HostPicker, useHostName } from '../components/HostPicker'
+import { HostPicker, HostTag } from '../components/HostPicker'
 import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
 import { Confirm, Empty, errMsg, Field, Loading, MenuButton, Modal, Segmented, Spinner, Switch, useAsync, useDebounce, useToast, type MenuItem, useContextMenu, noGrammarly } from '../components/ui'
@@ -82,7 +82,7 @@ export default function SchedulesPage({ onMenu }: { onMenu?: () => void }) {
                         {st && <span className={`badge ${st.cls}`}><Icon name={st.icon} size={10} />{st.label}</span>}
                         {s.last_thread_id && <button type="button" className="link-btn xsmall" onClick={() => navigate(`/t/${s.last_thread_id}`)}>Open last run</button>}
                         <span className="faint">notify: {s.notify}</span>
-                        <HostName id={s.host_id} />
+                        <HostTag id={s.host_id} />
                       </div>
                       {s.last_summary && <div className={`sched-summary ${s.last_status}`}>{s.last_summary}</div>}
                       <AgentSummary c={s} />
@@ -103,11 +103,6 @@ export default function SchedulesPage({ onMenu }: { onMenu?: () => void }) {
         onConfirm={async () => { const d = del; setDel(null); try { await api.del(`${V1}/schedules/${d.id}`); list.reload(); toast('Schedule deleted') } catch (e) { toast(errMsg(e), 'err') } }} />}
     </div>
   )
-}
-
-function HostName({ id }: { id: number }) {
-  const name = useHostName(id)
-  return name ? <span className="faint"><Icon name="server" size={11} />{name}</span> : null
 }
 
 function ScheduleDialog({ draft, onClose, onSaved }: { draft: Draft; onClose: () => void; onSaved: () => void }) {

@@ -296,7 +296,7 @@ func (s *Server) handleSaveRecipe(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "a recipe needs a name and a prompt")
 		return
 	}
-	if err := s.checkAgentFields(ctx, &in.Provider, &in.Mode, &in.Cwd); err != nil {
+	if err := s.checkAgentOn(ctx, userFrom(ctx), in.HostID, &in.Provider, &in.Mode, &in.Cwd); err != nil {
 		s.fail(w, err, "recipe")
 		return
 	}
@@ -378,7 +378,7 @@ func (s *Server) handleRunRecipe(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "run recipe")
 		return
 	}
-	t, err := s.createThread(ctx, userFrom(ctx), newThread{Provider: rc.Provider, Model: rc.Model, Effort: rc.Effort, Mode: rc.Mode,
+	t, err := s.createThread(ctx, userFrom(ctx), newThread{Provider: rc.Provider, HostID: rc.HostID, Model: rc.Model, Effort: rc.Effort, Mode: rc.Mode,
 		Speed: optSpeed(rc.Speed), Cwd: rc.Cwd, Text: prompt, Title: rc.Name}, "recipe", strconv.FormatInt(rc.ID, 10))
 	if err != nil && t == nil {
 		s.fail(w, err, "run recipe")

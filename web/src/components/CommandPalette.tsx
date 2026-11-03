@@ -1,5 +1,6 @@
 // ⌘K — act on the open thread, jump to a thread, run a recipe, or go anywhere.
 // ⌘E (mode recent) — only your conversations, latest first, to switch between them.
+// ⌘J (mode recipes) — only your recipes, by the server they run on; each starts a new thread.
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -15,15 +16,16 @@ import { Icon } from './icons'
 
 export interface PaletteCommand { id: string; label: string; icon: string; hint?: string; keywords?: string; run: () => void }
 
-export function CommandPalette({ mode = 'all', onClose, commands, openThread, runRecipe }: { mode?: 'all' | 'recent'; onClose: () => void; commands: PaletteCommand[]; openThread: (id: string) => void; runRecipe: (r: Recipe) => void }) {
-  const { threads, recipes } = useApp()
+export function CommandPalette({ mode = 'all', onClose, commands, openThread, runRecipe }: { mode?: 'all' | 'recent' | 'recipes'; onClose: () => void; commands: PaletteCommand[]; openThread: (id: string) => void; runRecipe: (r: Recipe) => void }) {
+  const { threads, recipes, hosts } = useApp()
   const [q, setQ] = useState('')
   const [hi, setHi] = useState(0)
   const [hits, setHits] = useState<SearchHit[]>([])
   const list = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
   const recent = mode === 'recent'
-  const [here] = useState(() => recent ? null : pageActions())
+  const onlyRecipes = mode === 'recipes'
+  const [here] = useState(() => recent || onlyRecipes ? null : pageActions())
   const openId = useLocation().pathname.match(/^\/t\/([^/]+)/)?.[1]
   const keys = useShortcuts()
   // the pointer where it last moved: rows scrolled under a still mouse must not take the selection
@@ -52,6 +54,21 @@ export function CommandPalette({ mode = 'all', onClose, commands, openThread, ru
         out.push({ key: 'h' + h.thread_id, group: 'In conversations', icon: <Icon name="search" size={16} />, label: h.title || 'Untitled', sub: <span dangerouslySetInnerHTML={{ __html: safeSnippet(h.snippet) }} />, hint: <span className="muted" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{stamp(h.activity_at)}</span>, run: () => navigate(`/t/${h.thread_id}${h.item_key ? `#item-${h.item_key}` : ''}`) })
       }
     }
+    const hostName = (id: number) => !id ? '' : hosts.find(h => h.id === id)?.name || 'Removed server'
+    const recipeRow = (r: Recipe, group: string): Row => ({
+      key: 'r' + r.id, group, icon: <span className="pal-emoji">{r.icon || '✦'}</span>, label: r.name,
+      sub: [group === 'Run a recipe' ? hostName(r.host_id) : '', r.prompt.slice(0, 100)].filter(Boolean).join(' · '), run: () => runRecipe(r),
+    })
+    if (onlyRecipes) {
+      // this server first, then each machine, in the recipes' own order
+      const order = [0, ...hosts.map(h => h.id)]
+      const rank = (id: number) => { const i = order.indexOf(id); return i < 0 ? order.length : i }
+      const list = recipes.filter(r => match(`${r.name} ${r.prompt} ${hostName(r.host_id) || 'this server'}`)).sort((a, b) => rank(a.host_id) - rank(b.host_id))
+      const grouped = list.some(r => r.host_id)
+      for (const r of list) out.push(recipeRow(r, grouped ? hostName(r.host_id) || 'This server' : 'Run a recipe'))
+      if (match('manage recipes new edit')) out.push({ key: 'manage', group: 'Recipes', icon: <Icon name="zap" size={16} />, label: recipes.length ? 'Manage recipes' : 'Add a recipe', run: () => navigate('/recipes') })
+      return out
+    }
     const hereGroup = here ? `This thread · ${here.title}` : ''
     if (here) {
       const group = hereGroup
@@ -74,7 +91,7 @@ export function CommandPalette({ mode = 'all', onClose, commands, openThread, ru
       return out
     }
     for (const c of commands) if (match(`${c.label} ${c.keywords || ''}`)) out.push({ key: c.id, group: 'Go to', icon: <Icon name={c.icon} size={16} />, label: c.label, hint: c.hint ? <kbd>{c.hint}</kbd> : undefined, run: c.run })
-    for (const r of recipes) if (match(r.name)) out.push({ key: 'r' + r.id, group: 'Run a recipe', icon: <span className="pal-emoji">{r.icon || '✦'}</span>, label: r.name, sub: r.prompt.slice(0, 100), run: () => runRecipe(r) })
+    for (const r of recipes) if (match(r.name)) out.push(recipeRow(r, 'Run a recipe'))
     let nThreads = 0
     const shown = new Set<string>()
     for (const t of threads || []) {
@@ -89,7 +106,7 @@ export function CommandPalette({ mode = 'all', onClose, commands, openThread, ru
     const rank = (r: Row) => r.group === hereGroup ? 0 : !n && r.group === 'Recent threads' ? 1 : 2
     out.sort((a, b) => rank(a) - rank(b))
     return out
-  }, [q, hits, here, recent, openId, commands, recipes, threads, openThread, runRecipe, navigate])
+  }, [q, hits, here, recent, onlyRecipes, openId, commands, recipes, hosts, threads, openThread, runRecipe, navigate])
   useEffect(() => setHi(0), [q])
   useEffect(() => { list.current?.querySelector(`[data-i="${hi}"]`)?.scrollIntoView({ block: 'nearest' }) }, [hi])
 
@@ -100,7 +117,7 @@ export function CommandPalette({ mode = 'all', onClose, commands, openThread, ru
       <div className="palette-box" role="dialog" aria-label="Search and commands">
         <div className="pal-input">
           <Icon name="search" size={18} />
-          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={recent ? 'Switch to a recent conversation, or search what was said…' : here ? 'Rename, archive, find a thread, go somewhere…' : 'Find a thread, run a recipe, go somewhere…'} aria-label="Search"
+          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={recent ? 'Switch to a recent conversation, or search what was said…' : onlyRecipes ? 'Run a recipe — it starts a new thread…' : here ? 'Rename, archive, find a thread, go somewhere…' : 'Find a thread, run a recipe, go somewhere…'} aria-label="Search"
             onKeyDown={e => {
               // ⌘E again while switching: the next one down, as in editors
               const again = recent && actionFor(e.nativeEvent, keys) === 'recent'
