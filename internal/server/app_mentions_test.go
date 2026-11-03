@@ -31,3 +31,11 @@ func TestAppMentionNote(t *testing.T) {
 		t.Fatalf("plain text gave a note: %q", got)
 	}
 }
+
+func TestMentionName(t *testing.T) {
+	for slug, want := range map[string]string{"pr-review": "Pocket PR Review", "money": "Pocket Money", "ai": "Pocket AI"} {
+		if got := mentionName(slug); got != want {
+			t.Errorf("%s: got %q, want %q", slug, got, want)
+		}
+	}
+}
