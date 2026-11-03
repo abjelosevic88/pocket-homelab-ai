@@ -431,6 +431,15 @@ export const Composer = React.forwardRef<ComposerHandle, {
     setMenuInside(box.current.getBoundingClientRect().top - Math.max(top, 0) < 220)
   }, [menuOpen])
 
+  // arrow keys move the highlight: keep it in view (the first row also shows its section heading)
+  useEffect(() => {
+    const menu = box.current?.querySelector<HTMLElement>('.slash-menu')
+    const row = menu?.querySelector<HTMLElement>('.slash-row.hi')
+    if (!menu || !row) return
+    if ((atOpen ? atHi : slashHi) === 0) menu.scrollTop = 0
+    else row.scrollIntoView({ block: 'nearest' })
+  }, [atHi, slashHi, atOpen])
+
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return
     if (atList.length) {
@@ -479,7 +488,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
             return (
               <React.Fragment key={'recipe' in p ? 'r' + p.recipe.id : (p.command ? 'c' : 's') + p.skill.name}>
                 {first && <div className="slash-h">{group(p)}{group(p) === 'Recipes' && lead === '/' ? <span className="slash-hint"> · or type #</span> : null}</div>}
-                <button type="button" role="option" aria-selected={i === slashHi} className={`slash-row ${i === slashHi ? 'hi' : ''}`} onMouseEnter={() => setSlashHi(i)} onMouseDown={e => e.preventDefault()} onClick={() => pick(p)}>
+                <button type="button" role="option" aria-selected={i === slashHi} className={`slash-row ${i === slashHi ? 'hi' : ''}`} onMouseMove={() => { if (i !== slashHi) setSlashHi(i) }} onMouseDown={e => e.preventDefault()} onClick={() => pick(p)}>
                   {'recipe' in p ? <>
                     <span className="slash-ico">{p.recipe.icon || '✦'}</span>
                     <span className="grow"><span className="slash-name">{p.recipe.name}</span><span className="slash-sub">{p.recipe.prompt.slice(0, 90)}</span></span>
@@ -522,7 +531,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
             return (
               <React.Fragment key={'app' in p ? 'a' + p.app.slug : 'i' + p.item.id}>
                 {first && <div className="slash-h">{head}</div>}
-                <button type="button" role="option" aria-selected={i === atHi} className={`slash-row ${i === atHi ? 'hi' : ''}`} onMouseEnter={() => setAtHi(i)} onMouseDown={e => e.preventDefault()} onClick={() => { void pickAt(p) }}>{row}</button>
+                <button type="button" role="option" aria-selected={i === atHi} className={`slash-row ${i === atHi ? 'hi' : ''}`} onMouseMove={() => { if (i !== atHi) setAtHi(i) }} onMouseDown={e => e.preventDefault()} onClick={() => { void pickAt(p) }}>{row}</button>
               </React.Fragment>
             )
           })}
