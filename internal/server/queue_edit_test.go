@@ -17,9 +17,18 @@ type queueSession struct {
 	sent        []agent.Input
 	interrupted int
 	onInterrupt func() error
+	onSend      func() error
 }
 
-func (s *queueSession) Send(in agent.Input) error { s.sent = append(s.sent, in); return nil }
+func (s *queueSession) Send(in agent.Input) error {
+	if s.onSend != nil {
+		if err := s.onSend(); err != nil {
+			return err
+		}
+	}
+	s.sent = append(s.sent, in)
+	return nil
+}
 func (s *queueSession) Interrupt() error {
 	s.interrupted++
 	if s.onInterrupt != nil {
@@ -49,7 +58,9 @@ func queuedTexts(r *run) []string {
 	}
 	return out
 }
-func TestSendNowPrioritizesWithoutDroppingQueue(t *testing.T) {
+// Send now steers the running turn, as typing in the terminal does: the
+// turn is never interrupted (the agent would read that as "stop").
+func TestSendNowSteersWithoutInterrupting(t *testing.T) {
 	s, c, th, r, sess := queueFixture(t)
 	endpoint := "/api/v1/threads/" + th.ID + "/messages"
 	for _, text := range []string{"first", "second"} {
@@ -58,32 +69,47 @@ func TestSendNowPrioritizesWithoutDroppingQueue(t *testing.T) {
 	if sess.interrupted != 0 || len(sess.sent) != 0 {
 		t.Fatal("ordinary sends must wait")
 	}
-	sess.onInterrupt = func() error { r.mu.Lock(); r.running = false; r.mu.Unlock(); s.rt.next(r); return nil }
-	c.want("POST", endpoint, map[string]any{"text": "urgent", "send_now": true}, 200, nil)
-	if sess.interrupted != 1 || len(sess.sent) != 1 || !strings.HasPrefix(sess.sent[0].Text, "urgent\n") {
-		t.Fatalf("wrong immediate dispatch: %+v", sess)
+	var out struct {
+		Queued bool `json:"queued"`
+	}
+	c.want("POST", endpoint, map[string]any{"text": "urgent", "send_now": true}, 200, &out)
+	if sess.interrupted != 0 || len(sess.sent) != 1 || !strings.HasPrefix(sess.sent[0].Text, "urgent\n") || out.Queued {
+		t.Fatalf("wrong steer: %+v queued=%v", sess, out.Queued)
 	}
 	if strings.Join(queuedTexts(r), ",") != "first,second" {
 		t.Fatal("older queue was changed")
 	}
-	rows, _ := s.store.ListItems(context.Background(), th.ID)
-	found := false
-	for _, row := range rows {
-		var it agent.Item
-		_ = json.Unmarshal(row.Data, &it)
-		if it.Text == "urgent" {
-			found = true
-			if it.Queued {
-				t.Fatal("sent item was incorrectly marked queued again")
+	itemQueued := func(text string) (found, queued bool) {
+		rows, _ := s.store.ListItems(context.Background(), th.ID)
+		for _, row := range rows {
+			var it agent.Item
+			_ = json.Unmarshal(row.Data, &it)
+			if it.Text == text {
+				return true, it.Queued
 			}
 		}
+		return false, false
 	}
-	if !found {
-		t.Fatal("missing sent item")
+	if found, queued := itemQueued("urgent"); !found || queued {
+		t.Fatal("steered item missing or still marked queued")
+	}
+	// the queue's own Send now button steers too
+	r.mu.Lock()
+	key := r.queue[1].key
+	r.mu.Unlock()
+	c.want("POST", "/api/v1/threads/"+th.ID+"/queue/"+key+"/now", nil, 204, nil)
+	if sess.interrupted != 0 || len(sess.sent) != 2 || !strings.HasPrefix(sess.sent[1].Text, "second\n") {
+		t.Fatalf("queued Send now did not steer: %+v", sess)
+	}
+	if strings.Join(queuedTexts(r), ",") != "first" {
+		t.Fatal("steered message left in the queue")
+	}
+	if found, queued := itemQueued("second"); !found || queued {
+		t.Fatal("steered queued item still marked queued")
 	}
 }
-func TestSendNowIdleAndInterruptFailure(t *testing.T) {
-	s, c, th, r, sess := queueFixture(t)
+func TestSendNowIdleAndSteerFailure(t *testing.T) {
+	_, c, th, r, sess := queueFixture(t)
 	endpoint := "/api/v1/threads/" + th.ID + "/messages"
 	r.mu.Lock()
 	r.running = false
@@ -92,22 +118,13 @@ func TestSendNowIdleAndInterruptFailure(t *testing.T) {
 	if len(sess.sent) != 1 || sess.interrupted != 0 {
 		t.Fatal("idle send must start normally")
 	}
-	sess.onInterrupt = func() error { return errors.New("provider rejected interrupt") }
+	r.mu.Lock()
+	r.running = true
+	r.mu.Unlock()
+	sess.onSend = func() error { return errors.New("no turn to steer") }
 	c.want("POST", endpoint, map[string]any{"text": "kept", "send_now": true}, 200, nil)
-	if strings.Join(queuedTexts(r), ",") != "kept" {
-		t.Fatal("failed interrupt lost the message")
-	}
-	rows, _ := s.store.ListItems(context.Background(), th.ID)
-	found := false
-	for _, row := range rows {
-		var it agent.Item
-		_ = json.Unmarshal(row.Data, &it)
-		if it.Kind == "notice" && strings.Contains(it.Text, "your message is queued") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("failed interruption was not surfaced")
+	if strings.Join(queuedTexts(r), ",") != "kept" || sess.interrupted != 0 {
+		t.Fatal("a failed steer must keep the message queued for after the turn")
 	}
 }
 func TestEditQueuedRestoresAttachmentsAndRejectsSentMessage(t *testing.T) {

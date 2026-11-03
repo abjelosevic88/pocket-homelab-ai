@@ -793,10 +793,8 @@ func (rt *engine) send(t *store.Thread, key string, in agent.Input, sendNow ...b
 		if now {
 			if !running {
 				rt.next(r)
-			} else if err := r.sess.Interrupt(); err != nil {
-				// The message has been accepted. Keep it queued and surface the
-				// interruption failure instead of inviting a duplicate retry.
-				rt.saveItem(t.ID, agent.Item{Key: "interrupt-" + key, Kind: "notice", Level: "warn", Text: "Could not interrupt the current turn; your message is queued to go next. " + err.Error()})
+			} else if rt.steer(r, key) {
+				return false, nil
 			}
 		}
 		return true, nil
@@ -872,8 +870,8 @@ func (rt *engine) busy(held bool) int {
 	return n
 }
 
-// sendNow puts a queued message first and stops the current turn, so it goes
-// out right away (next() sends it when the interrupted turn ends).
+// sendNow hands a queued message to the running turn (steer), or sends it
+// at once when nothing runs.
 func (rt *engine) sendNow(threadID, key string) error {
 	r := rt.get(threadID)
 	if r == nil {
@@ -898,7 +896,52 @@ func (rt *engine) sendNow(threadID, key string) error {
 		rt.next(r)
 		return nil
 	}
-	return r.sess.Interrupt()
+	rt.steer(r, key)
+	return nil
+}
+
+// steer hands a queued message to the turn that is running, the way typing
+// into the terminal does: Claude Code takes it in at the next step (after the
+// tool call in progress), Codex through turn/steer. The turn is never
+// interrupted, so the agent reads it as more instructions, not as a stop.
+// False (the message stays queued for after the turn) if it cannot go in.
+func (rt *engine) steer(r *run, key string) bool {
+	r.mu.Lock()
+	i := -1
+	for j, q := range r.queue {
+		if q.key == key {
+			i = j
+		}
+	}
+	if i < 0 || !r.running || r.linkDown {
+		r.mu.Unlock()
+		return false
+	}
+	q := r.queue[i]
+	r.queue = append(r.queue[:i:i], r.queue[i+1:]...)
+	r.lastUsed = time.Now()
+	r.mu.Unlock()
+	in := rt.withMemory(r, q.in, rt.setTurnSender(r.threadID, q.key, r.userID))
+	if err := r.sess.Send(in); err != nil {
+		// e.g. Codex's turn ended just now: it goes first after this turn
+		r.mu.Lock()
+		r.queue = append([]queued{q}, r.queue...)
+		r.mu.Unlock()
+		rt.s.log.Warn("steer message", "thread", r.threadID, "err", err)
+		rt.next(r)
+		return false
+	}
+	if st, err := rt.s.store.GetItem(rt.ctx, r.threadID, q.key); err == nil {
+		var it agent.Item
+		if json.Unmarshal(st.Data, &it) == nil && it.Queued {
+			it.Queued = false
+			rt.saveItem(r.threadID, it)
+		}
+	}
+	if t, err := rt.s.store.GetThread(rt.ctx, r.userID, r.threadID); err == nil {
+		rt.publishThread(t)
+	}
+	return true
 }
 
 // dropQueued removes one queued (or unsent) message.
