@@ -126,6 +126,13 @@ function useMentionApps(wanted: boolean): MentionApp[] | null {
   return apps
 }
 
+/** The app's own icon (web/public/app-icons, from the Pocket icon set); a plain grid for an app without one. */
+function AppIcon({ slug }: { slug: string }) {
+  const [missing, setMissing] = useState(false)
+  if (missing) return <span className="slash-ico at-ico app-mention"><Icon name="grid" size={14} /></span>
+  return <span className="slash-ico app-icon"><img src={`/app-icons/${slug}.svg`} alt="" width={22} height={22} loading="lazy" onError={() => setMissing(true)} /></span>
+}
+
 function draftAttachments(key?: string): Attachment[] {
   if (!key) return []
   try {
@@ -505,7 +512,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
             const head = 'app' in p ? 'Apps' : ctx?.label ? `From ${ctx.label}` : 'Add as context'
             const row = 'app' in p
               ? <>
-                <span className="slash-ico at-ico app-mention"><Icon name="grid" size={14} /></span>
+                <AppIcon slug={p.app.slug} />
                 <span className="grow"><span className="slash-name">{p.app.name}</span><span className="slash-sub">@{p.app.slug} · {p.app.tools.length} {p.app.tools.length === 1 ? 'operation' : 'operations'}</span></span>
               </>
               : <>
