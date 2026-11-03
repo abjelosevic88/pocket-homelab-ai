@@ -571,7 +571,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
         {running && onStop && !text.trim() && atts.length === 0 ? (
           <button type="button" className="stop-round" aria-label="Stop" title="Stop (⌘.)" onClick={onStop}><span /></button>
         ) : (
-          <button type="button" className="btn primary icon-only send-btn" aria-label={running ? defaultNow ? 'Send now' : 'Queue message' : 'Send'} title={running ? defaultNow ? 'Send now — interrupts the current turn' : 'Queue — sent when the agent is done' : 'Send'} disabled={!canSend} onClick={() => { void send() }}>
+          <button type="button" className="btn primary icon-only send-btn" aria-label={running ? defaultNow ? 'Send now' : 'Queue message' : 'Send'} title={running ? defaultNow ? 'Send now — the agent reads it after its current step' : 'Queue — sent when the agent is done' : 'Send'} disabled={!canSend} onClick={() => { void send() }}>
             {sending ? <Spinner size={14} /> : <Icon name="arrow-up" size={17} strokeWidth={2.2} />}
           </button>
         )}

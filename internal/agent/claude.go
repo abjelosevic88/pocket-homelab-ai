@@ -606,8 +606,9 @@ func (s *claudeSession) handleRemoteUser(m map[string]json.RawMessage) {
 		text = strings.Join(parts, "\n")
 	}
 	text = strings.TrimSpace(text)
-	// tags are the CLI talking to the model (reminders, task notifications)
-	if text == "" || strings.HasPrefix(text, "<") {
+	// tags are the CLI talking to the model (reminders, task notifications);
+	// "[Request interrupted by user…]" is its note that a turn was stopped
+	if text == "" || strings.HasPrefix(text, "<") || strings.HasPrefix(text, "[Request interrupted by user") {
 		return
 	}
 	s.mu.Lock()

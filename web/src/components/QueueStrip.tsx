@@ -1,5 +1,5 @@
 // Messages waiting for the agent to finish, above the reply box: what will go
-// out next, with "Send now" (stop the current turn and send this one) and ✕.
+// out next, with "Send now" (hand it to the running turn, like typing in the terminal) and ✕.
 import { useState } from 'react'
 import { api, V1 } from '../lib/api'
 import type { Item } from '../lib/types'
@@ -30,7 +30,7 @@ export function QueueStrip({ threadId, queued, agent, onClearAll, onEdit, curren
           <span className="queue-n tnum">{i + 1}</span>
           <span className="queue-text">{it.images?.length ? `🖼 ${it.images.length} · ` : ''}{it.text || '(image)'}</span>
           {onEdit && (it.by_id || ownerId) === currentUserId && <button type="button" className="btn ghost icon-only xs" disabled={!!busy} onClick={() => { void edit(it) }} aria-label="Edit queued message" title="Edit in composer"><Icon name="edit" size={13} /></button>}
-          <button type="button" className="btn sm" disabled={!!busy} onClick={() => act(it, true)} title="Stop what the agent is doing and send this now">Send now</button>
+          <button type="button" className="btn sm" disabled={!!busy} onClick={() => act(it, true)} title="Give this to the agent now; it reads it after the current step, without stopping">Send now</button>
           <button type="button" className="btn ghost icon-only xs" disabled={!!busy} onClick={() => act(it, false)} aria-label="Remove from the queue" title="Remove from the queue"><Icon name="x" size={13} /></button>
         </div>
       ))}

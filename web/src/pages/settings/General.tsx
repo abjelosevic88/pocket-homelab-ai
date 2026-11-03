@@ -72,7 +72,7 @@ export function GeneralTab() {
         <SettingRow title="Enter sends" help="On a computer: Enter sends, Shift+Enter makes a new line. Off: Enter makes a new line; ⌘/Ctrl+Enter uses the alternate send action. Phones always use the send button.">
           <Switch label="Enter sends" checked={s.enter_sends !== false} onChange={v => save({ enter_sends: v })} />
         </SettingRow>
-        <SettingRow title="Send behavior" help={`While working, ${s.enter_sends === false ? 'the send button' : 'Enter and the send button'} ${s.enter_send_now ? 'send immediately; ⌘/Ctrl+Enter queues' : 'queue; ⌘/Ctrl+Enter sends immediately'}. Sending immediately interrupts the current turn.`}>
+        <SettingRow title="Send behavior" help={`While working, ${s.enter_sends === false ? 'the send button' : 'Enter and the send button'} ${s.enter_send_now ? 'send immediately; ⌘/Ctrl+Enter queues' : 'queue; ⌘/Ctrl+Enter sends immediately'}. Sending immediately hands the message to the running turn after its current step, like typing in the terminal; Stop interrupts.`}>
           <Select label="Send behavior" value={s.enter_send_now ? 'now' : 'queue'} onChange={v => save({ enter_send_now: v === 'now' })} options={[
             { value: 'queue', label: 'Queue message', description: '⌘/Ctrl+Enter sends immediately'  },
             { value: 'now', label: 'Send immediately', description: '⌘/Ctrl+Enter queues'  },

@@ -815,7 +815,7 @@ func (s *Server) handleDropQueued(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleSendNow stops the current turn and sends this queued message next.
+// handleSendNow steers the running turn with this queued message.
 func (s *Server) handleSendNow(w http.ResponseWriter, r *http.Request) {
 	if !s.requireRun(w, r) {
 		return
