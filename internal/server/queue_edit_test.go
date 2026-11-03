@@ -58,6 +58,7 @@ func queuedTexts(r *run) []string {
 	}
 	return out
 }
+
 // Send now steers the running turn, as typing in the terminal does: the
 // turn is never interrupted (the agent would read that as "stop").
 func TestSendNowSteersWithoutInterrupting(t *testing.T) {
