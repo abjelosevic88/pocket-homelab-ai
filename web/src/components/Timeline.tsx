@@ -179,6 +179,15 @@ export function foldedMessage(text: string): Folded | null {
   }
 }
 
+/** What the person wrote, as written; only "[title](https://…)" (an item picked with "@app #…") becomes a link. */
+function UserText({ text }: { text: string }) {
+  const parts = text.split(/(\[[^\]\n]+\]\(https?:\/\/[^\s)]+\))/)
+  return <div className="user-text">{parts.map((p, i) => {
+    const m = i % 2 ? /^\[(.+)\]\((.+)\)$/.exec(p) : null
+    return m ? <a key={i} href={m[2]} target="_blank" rel="noreferrer">{m[1]}</a> : p
+  })}</div>
+}
+
 function FoldedNote({ f }: { f: Folded }) {
   const [open, setOpen] = useState(false)
   const preview = f.body.split('\n').map(l => l.trim()).find(l => l && !l.startsWith('<')) || ''
@@ -208,7 +217,7 @@ export const ItemView = memo(function ItemView({ item, showThinking, threadId, o
           <div className="bubble">
             {pics.length > 0 && <Images images={pics} />}
             {item.files?.map(f => <a className="file-chip" key={f.id} href={f.url} download={f.name}>📄 {f.name}</a>)}
-            {f ? <><FoldedNote f={f} />{f.rest && <div className="user-text">{f.rest}</div>}</> : item.text && <div className="user-text">{item.text}</div>}
+            {f ? <><FoldedNote f={f} />{f.rest && <UserText text={f.rest} />}</> : item.text && <UserText text={item.text} />}
           </div>
           {item.queued && <div className="queued-tag"><Icon name="clock" size={11} />queued — sent when the agent is done</div>}
         </div>
