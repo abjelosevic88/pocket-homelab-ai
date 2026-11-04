@@ -172,6 +172,12 @@ export function foldedMessage(text: string): Folded | null {
     case 'agent-message':
       body = body.replace(/^\[Subagent hand-back\][^\n]*\n+/, '').trim()
       return { icon: 'bot', label: 'Subagent report', body, rest }
+    case 'pocket-agent-report': {
+      // an agent this conversation started answered (pocket_agent_start)
+      const name = attr(attrs, 'from-name') || 'an agent'
+      const state = attr(attrs, 'state')
+      return { icon: 'bot', label: state === 'failed' ? `${name} stopped with an error` : state === 'stopped' ? `${name} was stopped` : `Answer from ${name}`, body, rest }
+    }
     default: {
       const name = tag.replace(/-/g, ' ')
       return { icon: 'info', label: name[0].toUpperCase() + name.slice(1), body, rest }

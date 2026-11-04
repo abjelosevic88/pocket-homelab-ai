@@ -40,7 +40,7 @@ function RowTimer({ since }: { since?: string }) {
   return <span className="th-time run-time tnum">{elapsed(since, now)}</span>
 }
 
-export function ThreadRow({ t, active, onOpen, onContextMenu }: { t: Thread; active: boolean; onOpen: () => void; onContextMenu?: (e: React.MouseEvent) => void }) {
+export function ThreadRow({ t, active, onOpen, onContextMenu, child }: { t: Thread; active: boolean; onOpen: () => void; onContextMenu?: (e: React.MouseEvent) => void; child?: boolean }) {
   const { running, user, hosts } = useApp()
   const host = t.host_id ? hosts.find(h => h.id === t.host_id)?.name || 'Removed server' : ''
   // working in Pocket AI, or in Paseo / a terminal on the same session
@@ -51,13 +51,14 @@ export function ThreadRow({ t, active, onOpen, onContextMenu }: { t: Thread; act
   const bg = !working && hasBackground(t)
   const paused = projectsPaused(t)
   return (
-    <button type="button" className={`th-row ${active ? 'active' : ''} ${t.unread ? 'unread' : ''} ${working ? 'is-working' : ''} ${bg ? 'is-background' : ''} ${paused ? 'is-paused' : ''}`} onClick={onOpen} onContextMenu={onContextMenu} title={paused || (host ? `${host}: ${t.cwd}` : t.cwd)}>
+    <button type="button" className={`th-row ${child ? 'th-child' : ''} ${active ? 'active' : ''} ${t.unread ? 'unread' : ''} ${working ? 'is-working' : ''} ${bg ? 'is-background' : ''} ${paused ? 'is-paused' : ''}`} onClick={onOpen} onContextMenu={onContextMenu} title={paused || (host ? `${host}: ${t.cwd}` : t.cwd)}>
       <span className="th-main">
         <span className="th-title ellipsis">{t.pinned && <Icon name="star" size={10} fill className="fav-star" />}{threadTitle(t)}</span>
         <span className="th-meta">
           <ProviderBadge provider={t.provider} size="xs" />
           {t.archived && <Icon name="archive" size={11} />}
           {t.source === 'schedule' && <Icon name="clock" size={11} />}
+          {t.source === 'agent' && <span className="th-agent" title="Started by another agent"><Icon name="bot" size={11} /></span>}
           {t.source === 'quick-chat' && <span className="quick-chat-chip xs" title="Started from Quick Chat in Pocket Launcher"><Icon name="sparkles" size={10} />Quick Chat</span>}
           <PrivacyChip sharedWith={t.shares?.map(s => s.name)} iconOnly />
           <span className="ellipsis">{t.owner_name && user && t.owner_id !== user.id ? `${t.owner_name} · ` : ''}{host ? `${host}: ` : ''}{baseName(t.cwd)}</span>
@@ -155,20 +156,37 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
       </button>
     </div>
   )
+  // agents an agent started sit under the conversation that started them
+  const shownIds = useMemo(() => new Set(shown.map(t => t.id)), [shown])
+  const nested = (t: Thread) => t.source === 'agent' && !!t.source_ref && shownIds.has(t.source_ref)
+  const kids = useMemo(() => {
+    const m = new Map<string, Thread[]>()
+    for (const t of shown) if (t.source === 'agent' && t.source_ref && shownIds.has(t.source_ref)) m.set(t.source_ref, [...(m.get(t.source_ref) || []), t])
+    for (const l of m.values()) l.sort((a, b) => a.created_at.localeCompare(b.created_at))
+    return m
+  }, [shown, shownIds])
+  const hasActive = (t: Thread, depth = 0): boolean => t.id === activeId || (depth < 4 && (kids.get(t.id) || []).some(k => hasActive(k, depth + 1)))
+  const rowsOf = (t: Thread, depth = 0): React.ReactNode => (
+    <Fragment key={t.id}>
+      <ThreadRow t={t} child={depth > 0} active={t.id === activeId} onOpen={() => go(`/t/${t.id}`)} onContextMenu={e => ctx.open(e, () => tm.items(t))} />
+      {depth < 4 && (kids.get(t.id) || []).map(k => rowsOf(k, depth + 1))}
+    </Fragment>
+  )
   // a folded group still shows the open thread
-  const foldRows = (name: string, items: Thread[]) => !view && folded.includes(name) ? items.filter(t => t.id === activeId) : items
+  const foldRows = (name: string, items: Thread[]) => !view && folded.includes(name) ? items.filter(t => hasActive(t)) : items
   const [projFolded, setProjFolded] = useState(() => localStorage.getItem('pai-sb-projects-folded') === '1')
   useEffect(() => { localStorage.setItem('pai-sb-projects-folded', projFolded ? '1' : '0') }, [projFolded])
   const groups = useMemo(() => {
     const out: { name: string; items: Thread[] }[] = []
     for (const t of shown) {
       if (projIssues.length && projectsRef(t)) continue // listed under Projects
+      if (nested(t)) continue // under the conversation that started it
       const g = showArchive ? 'Archived' : showFav ? 'Favorites' : groupOf(t)
       const last = out[out.length - 1]
       if (last && last.name === g) last.items.push(t); else out.push({ name: g, items: [t] })
     }
     return out
-  }, [shown, showArchive, showFav, projIssues])
+  }, [shown, showArchive, showFav, projIssues, shownIds])
   const sharedN = (threads || []).filter(t => !mine(t) || !!t.shares?.length).length
   const activeWt = worktrees.filter(w => w.status === 'active').length
   const needYou = (base || []).filter(t => t.status === 'waiting' || t.pending > 0).length
@@ -318,7 +336,7 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
           {groups.map(g => (
             <div key={g.name} className="sb-group">
               {view ? <div className="sb-h"><span>{g.name}</span></div> : foldHead(g.name, g.items.length, folded.includes(g.name))}
-              {foldRows(g.name, g.items).map(t => <ThreadRow key={t.id} t={t} active={t.id === activeId} onOpen={() => go(`/t/${t.id}`)} onContextMenu={e => ctx.open(e, () => tm.items(t))} />)}
+              {foldRows(g.name, g.items).map(t => rowsOf(t))}
             </div>
           ))}
           {shared.length > 0 && !q && !ws && (

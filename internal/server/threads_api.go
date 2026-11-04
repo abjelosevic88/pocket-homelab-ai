@@ -406,6 +406,9 @@ func (s *Server) postMessage(ctx context.Context, u *store.User, t *store.Thread
 		}
 	}
 	in := agent.Input{Text: text}
+	if agentToolsOn(t) {
+		in.Text = expandAgentCommand(t.Provider, text) // /handoff, /advisor, /committee
+	}
 	it := agent.Item{Key: "u-" + uuid.NewString(), Kind: "user", Text: text}
 	if _, shared := s.rt.sharesOf(t.ID); shared || u.ID != t.UserID {
 		it.ByID, it.By = u.ID, displayName(u)

@@ -392,7 +392,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
   const skillList: Skill[] = lead === '/' || lead === '$' ? byName(allSkills, 8) : []
   type SlashPick = { skill: Skill; command?: boolean }
   const slashList: SlashPick[] = [...commandList.map(skill => ({ skill, command: true })), ...skillList.map(skill => ({ skill }))]
-  const group = (p: SlashPick) => p.command ? 'Commands' : 'Skills'
+  const group = (p: SlashPick) => p.command ? 'Commands' : p.skill.scope === 'pocket-ai' ? 'Other agents' : 'Skills'
   useEffect(() => setSlashHi(0), [slash, lead])
   const pick = (p: SlashPick) => {
     if (p.command && !p.skill.argument_hint && onCommand?.(p.skill.name, '')) { setText(''); return }

@@ -137,6 +137,37 @@ ssh on hosts — the same code both ways, covered by `TestWorktreeLifecycle` aga
 - **Other worktrees** (`git worktree list` of the person's repos that Pocket AI did not make, e.g. Paseo's):
   adopt (row with base from settings) or remove with the same backup under `refs/pocket-ai/removed/…`.
 
+## Agents that start agents (`internal/server/agent_tools.go`)
+
+Every coding conversation's Pocket tool endpoint (the loopback MCP server of
+`preparePocketTools`, forwarded over ssh on other machines) also serves the
+`pocket_agent_*` tools — even when the person has no app connection; Ask chats
+don't get them.
+
+- `pocket_agent_start` makes a new thread with `source = "agent"`,
+  `source_ref = <parent id>`: Claude Code or Codex, any machine the owner may
+  use, a folder or a new worktree. Defaults follow the parent (agent, model,
+  login, machine, folder). The permission mode is never freer than the
+  parent's (`modeLevel` ranks both CLIs' modes); `read_only` = Claude `plan` /
+  Codex `read-only`. The start is a Pocket approval card (`approveChange`,
+  shared with app changes): auto-approve rules (`ai` adds), away-mode deferral
+  and "Always allow…" all apply. Limits: depth 2 (an agent's agent can't start
+  more), 12 per conversation, 4 working at once.
+- Report back: `agent_reports` (migration 0031) holds "this child owes its
+  parent an answer". When the child's turn ends (TurnDone → `agentTurnDone`)
+  and nobody is in `pocket_agent_wait` for it, its reply since its last
+  message is posted to the parent as `<pocket-agent-report …>` (the timeline
+  folds it), which wakes or queues behind the parent's turn. Its own
+  "finished" push is skipped; the parent tells the person.
+- `pocket_agent_wait` (≤600 s, under Codex's 660 s tool timeout) polls the
+  children's state (`agentState`: starting / working / waiting_for_person /
+  done / failed / stopped) and takes the report it hands over.
+- `/handoff`, `/advisor`, `/committee` (`agent_commands.go`) are listed in the
+  composer's "/" menu (group "Other agents") and expanded server-side in
+  `postMessage`: the timeline keeps what was typed, the agent gets the brief.
+- UI: the parent shows an "N agents" chip above the composer / in the run bar;
+  a child shows "Started by …"; the sidebar nests children under their parent.
+
 ## Schedules
 
 A schedule creates a thread with the prompt plus an instruction to begin the final answer with `OK: …` or

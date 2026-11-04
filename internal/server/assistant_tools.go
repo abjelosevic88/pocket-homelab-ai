@@ -217,6 +217,9 @@ func (s *Server) callPocketTool(ctx, session context.Context, t *store.Thread, s
 		}
 		call.Name, call.Arguments = nested.Name, nested.Arguments
 	}
+	if strings.HasPrefix(call.Name, "pocket_agent_") {
+		return s.callAgentTool(ctx, session, t, sink, call.Name, call.Arguments)
+	}
 	undoID := ""
 	if call.Name == "pocket_undo_action" {
 		var in struct {
@@ -277,50 +280,16 @@ func (s *Server) callPocketTool(ctx, session context.Context, t *store.Thread, s
 		}
 	}
 	_, _ = s.store.DB.ExecContext(ctx, `UPDATE app_calls SET status='pending' WHERE id=?`, callID)
-	id := "ask-" + uuid.NewString()
-	answer := make(chan string, 1)
-	key := struct {
-		S          *Server
-		Thread, ID string
-	}{s, t.ID, id}
-	req := agent.Request{ID: id, Type: "permission", ToolName: call.Name, Title: askActionTitle(call.Name), Input: preview, Status: "pending", ForID: uid, For: byName, App: tool.Meta.App, Kind: tool.Meta.Kind}
-	approved := false
+	req := agent.Request{ID: "ask-" + uuid.NewString(), Type: "permission", ToolName: call.Name, Title: askActionTitle(call.Name), Input: preview, Status: "pending", ForID: uid, For: byName, App: tool.Meta.App, Kind: tool.Meta.Kind}
 	match := awayMatch(call.Name, call.Arguments)
-	deferred := func() json.RawMessage {
+	switch s.approveChange(ctx, session, t, sink, uid, tool, req, match) {
+	case "allow":
+	case "defer":
 		s.saveDeferred(t.ID, req, uid, match)
 		status = "deferred"
 		result = toolFailure(awayDeferText)
 		return result
-	}
-	if why := s.appAutoRules(ctx, uid).allows(tool); why != "" {
-		// the person's own rule: shown in the timeline as allowed, nobody waits
-		req.Status, req.Auto = "allowed", why
-		sink.rt.saveItem(sink.r.threadID, agent.Item{Key: "req-" + id, Kind: "request", Request: &req})
-		approved = true
-	} else if s.takeAwayApproval(ctx, t.ID, match) {
-		// approved after being away; the agent repeats the call (away.go)
-		req.Status, req.Auto = "allowed", "away"
-		sink.rt.saveItem(sink.r.threadID, agent.Item{Key: "req-" + id, Kind: "request", Request: &req})
-		approved = true
-	} else if s.isAway(ctx, uid) {
-		return deferred()
-	} else {
-		askApprovals.Store(key, askApproval{Thread: t.ID, Answer: answer, UserID: uid})
-		defer askApprovals.Delete(key)
-		sink.Request(req)
-		select {
-		case d := <-answer:
-			if d == "defer" {
-				return deferred()
-			}
-			approved = d == "allow"
-		case <-ctx.Done():
-		case <-session.Done():
-		case <-time.After(10 * time.Minute):
-		}
-	}
-	if !approved {
-		_ = s.rt.respond(t, id, agent.Response{Decision: "deny"})
+	default:
 		return result
 	}
 	_, err := s.store.DB.ExecContext(ctx, `UPDATE app_calls SET status='running' WHERE id=?`, callID)
@@ -386,4 +355,46 @@ func (s *Server) undoNoteArgs(ctx context.Context, uid int64, id string) (json.R
 		}
 	}
 	return json.Marshal(map[string]any{"id": original["id"], "request_id": uuid.NewString(), "data": data})
+}
+
+// approveChange decides on a change an agent asked for through the Pocket
+// tools: the person's own auto-approve rule, an approval they gave while away,
+// "defer" while they are away (the caller saves it), else the card in the
+// thread, which waits up to 10 minutes. "allow", "deny" or "defer".
+func (s *Server) approveChange(ctx, session context.Context, t *store.Thread, sink *runSink, uid int64, tool askTool, req agent.Request, match string) string {
+	if why := s.appAutoRules(ctx, uid).allows(tool); why != "" {
+		// the person's own rule: shown in the timeline as allowed, nobody waits
+		req.Status, req.Auto = "allowed", why
+		sink.rt.saveItem(sink.r.threadID, agent.Item{Key: "req-" + req.ID, Kind: "request", Request: &req})
+		return "allow"
+	}
+	if s.takeAwayApproval(ctx, t.ID, match) {
+		// approved after being away; the agent repeats the call (away.go)
+		req.Status, req.Auto = "allowed", "away"
+		sink.rt.saveItem(sink.r.threadID, agent.Item{Key: "req-" + req.ID, Kind: "request", Request: &req})
+		return "allow"
+	}
+	if s.isAway(ctx, uid) {
+		return "defer"
+	}
+	answer := make(chan string, 1)
+	key := struct {
+		S          *Server
+		Thread, ID string
+	}{s, t.ID, req.ID}
+	askApprovals.Store(key, askApproval{Thread: t.ID, Answer: answer, UserID: uid})
+	defer askApprovals.Delete(key)
+	sink.Request(req)
+	d := "deny"
+	select {
+	case d = <-answer:
+	case <-ctx.Done():
+	case <-session.Done():
+	case <-time.After(10 * time.Minute):
+	}
+	if d == "allow" || d == "defer" {
+		return d
+	}
+	_ = s.rt.respond(t, req.ID, agent.Response{Decision: "deny"})
+	return "deny"
 }
