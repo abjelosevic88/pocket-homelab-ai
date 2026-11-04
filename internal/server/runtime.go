@@ -491,15 +491,11 @@ func (rt *engine) startRun(t *store.Thread) (*run, error) {
 			cancel()
 			return nil, err
 		}
-	} else if _, err := rt.s.askToken(ctx, t.UserID); err == nil {
-		// An existing per-person connection is shared with ordinary coding
-		// threads. Core still checks access and the proxy still gates writes.
-		if err := rt.s.preparePocketTools(ctx, t, sink, &o, pin); err != nil {
-			rt.s.log.Warn("Pocket app tools unavailable", "thread", t.ID, "err", err)
-			o.SystemPrompt += "\nPocket app tools are currently unavailable. For app-data questions, explain that the user should reconnect Pocket Ask; do not search credentials or databases as a workaround."
-		}
-	} else {
-		o.SystemPrompt += "\nFor questions about Pocket app data, the user can enable the Ask connection in an application. Do not search credentials or databases to substitute for that connection."
+	} else if err := rt.s.preparePocketTools(ctx, t, sink, &o, pin); err != nil {
+		// The person's app connection is shared with ordinary coding threads
+		// (Core still checks access and the proxy still gates writes), next to
+		// the agent tools. preparePocketTools notes what is missing.
+		rt.s.log.Warn("Pocket tools unavailable", "thread", t.ID, "err", err)
 	}
 	switch t.Provider {
 	case "claude":
@@ -636,15 +632,14 @@ func (rt *engine) startRemote(t *store.Thread, h *store.Host) (*run, error) {
 	// ssh connection carries it to the remote machine's loopback.
 	tools := false
 	if t.Source != "ask" {
-		if _, err := rt.s.askToken(ctx, t.UserID); err == nil {
-			if err := rt.s.preparePocketTools(ctx, t, sink, &o, pin); err != nil {
-				rt.s.log.Warn("Pocket app tools unavailable", "thread", t.ID, "host", h.Name, "err", err)
-			} else if err := remotePocketTools(&o, pin); err != nil {
-				rt.s.log.Warn("Pocket app tools not forwarded", "thread", t.ID, "host", h.Name, "err", err)
-				o.MCPConfig = ""
-			} else {
-				tools = true
-			}
+		prompt := o.SystemPrompt
+		if err := rt.s.preparePocketTools(ctx, t, sink, &o, pin); err != nil {
+			rt.s.log.Warn("Pocket tools unavailable", "thread", t.ID, "host", h.Name, "err", err)
+		} else if err := remotePocketTools(&o, pin); err != nil {
+			rt.s.log.Warn("Pocket tools not forwarded", "thread", t.ID, "host", h.Name, "err", err)
+			o.MCPConfig, o.SystemPrompt = "", prompt
+		} else {
+			tools = true
 		}
 	}
 	if !tools {
@@ -2029,8 +2024,15 @@ func (k *runSink) TurnDone(ti agent.TurnInfo) {
 	rt.publishThread(t)
 
 	scheduled := !dup && ((t.Source == "schedule" && rt.s.scheduleFinished(t, ti, lastText)) || rt.s.workflowFinished(t, ti, lastText))
+	// an agent another agent started: its answer goes back to that one
+	// (agent_tools.go), which tells the person, not this one
+	reports := !dup && queuedN == 0 && t.Source == "agent" && rt.s.store.OwesReport(rt.ctx, t.ID)
+	if reports {
+		go rt.s.agentTurnDone(t.ID)
+	}
 	if !dup && !scheduled && queuedN == 0 {
 		switch {
+		case reports && ti.OK:
 		case !ti.OK && !ti.Interrupted:
 			rt.notify(t, "failed", providerName(t.Provider)+" stopped with an error", oneLine(t.Title+"\n"+ti.Error, 200))
 		case ti.OK && rt.s.isAway(rt.ctx, t.UserID):

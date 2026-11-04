@@ -270,20 +270,29 @@ func (s *Server) preparePocketTools(ctx context.Context, t *store.Thread, sink *
 	if len(pin) > 0 && pin[0] != nil && pin[0].Cap != "" {
 		keep = pin[0]
 	}
-	token, err := s.askToken(ctx, t.UserID)
-	if err != nil {
-		return err
-	}
-	catalog, err := s.askReadRPC(ctx, token, "tools/list", map[string]any{})
-	if err != nil {
-		return err
-	}
+	// Coding conversations get the agent tools (agent_tools.go) even without
+	// the person's app connection; Ask chats need it.
 	var list struct {
 		Tools []askTool `json:"tools"`
 	}
-	if json.Unmarshal(catalog, &list) != nil || len(list.Tools) == 0 {
-		return errors.New("No Pocket tools are available")
+	appsNote := ""
+	token, err := s.askToken(ctx, t.UserID)
+	if err == nil {
+		var catalog json.RawMessage
+		if catalog, err = s.askReadRPC(ctx, token, "tools/list", map[string]any{}); err == nil && (json.Unmarshal(catalog, &list) != nil || len(list.Tools) == 0) {
+			err = errors.New("No Pocket tools are available")
+		}
+		if err != nil {
+			list.Tools = nil
+			appsNote = "\nPocket app tools are currently unavailable. For app-data questions, explain that the user should reconnect Pocket Ask; do not search credentials or databases as a workaround."
+		}
+	} else {
+		appsNote = "\nFor questions about Pocket app data, the user can enable the Ask connection in an application. Do not search credentials or databases to substitute for that connection."
 	}
+	if err != nil && !agentToolsOn(t) {
+		return err
+	}
+	apps := len(list.Tools) > 0
 	tools := map[string]askTool{}
 	for _, tool := range list.Tools {
 		tools[tool.Name] = tool
@@ -337,7 +346,11 @@ func (s *Server) preparePocketTools(ctx context.Context, t *store.Thread, sink *
 					scope += " " + source.App + " " + source.Title
 				}
 			}
-			result = withLinkedAppTools(scopedCatalog(list.Tools, scope), list.Tools, t)
+			if apps {
+				result = withAgentTools(withLinkedAppTools(scopedCatalog(list.Tools, scope), list.Tools, t), t)
+			} else {
+				result = withAgentTools(nil, t)
+			}
 		case "tools/call":
 			result = s.callPocketTool(r.Context(), ctx, t, sink, tools, rpc.Params)
 
@@ -366,7 +379,10 @@ func (s *Server) preparePocketTools(ctx context.Context, t *store.Thread, sink *
 	o.MCPConfig, _ = filepath.Abs(f.Name())
 	guidance := pocketToolsInstructions + "\nCurrent server date/time: " + time.Now().Format(time.RFC3339)
 	if t.Source != "ask" {
-		o.SystemPrompt += "\n\n" + guidance
+		if apps {
+			o.SystemPrompt += "\n\n" + guidance
+		}
+		o.SystemPrompt += appsNote + "\n\n" + agentToolsInstructions
 		return nil
 	}
 	var source string

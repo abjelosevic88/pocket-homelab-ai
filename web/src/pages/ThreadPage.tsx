@@ -8,6 +8,7 @@ import { openInParent, parentTabs } from '../lib/embed'
 import { openSSE } from '../lib/sse'
 import type { Item, Thread, ThreadDetail, Upload } from '../lib/types'
 import { SubagentsChip } from '../components/Subagents'
+import { AgentsChip, ParentChip } from '../components/AgentChildren'
 import { RunBar, useForkNewTab } from '../components/RunBar'
 import { QueueStrip } from '../components/QueueStrip'
 import { AgentPicker } from '../components/AgentPicker'
@@ -406,6 +407,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
             <PrivacyBadge thread={t} access={access} onShare={owner ? () => setSharing(true) : undefined} />
             <ProviderBadge provider={t.provider} size="xs" />
             <ThreadRefChip threadId={t.id} source={t.source} owner={owner} attached={!!issueRef} rev={refRev} />
+            <ParentChip t={t} />
             {t.source === 'quick-chat' && <span className="quick-chat-chip" title="Started from Quick Chat in Pocket Launcher"><Icon name="sparkles" size={12} />Quick Chat</span>}
             {!!t.worktree_id && <WorktreeChip id={t.worktree_id} threadId={t.id} onAsk={owner && canRun ? text => { void send(text, []) } : undefined} />}
             {t.remote_control && <RemoteChip rc={t.remote_control} />}
@@ -450,7 +452,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
         {newBelow && !atBottom && <button type="button" className="new-below" onClick={() => { toBottom(true); setNewBelow(false) }}><Icon name="arrow-down" size={13} />New messages</button>}
         <div className="thread-bottom-inner">
           {(running || t.status === 'waiting' || !!t.subagents?.length || !!t.background?.length) && items ? <RunBar t={t} items={items} reconnecting={streamDown} />
-            : t.provider === 'claude' && t.provider_session_id && <div className="sub-dock"><SubagentsChip t={t} /></div>}
+            : <div className="sub-dock">{t.provider === 'claude' && t.provider_session_id && <SubagentsChip t={t} />}<AgentsChip t={t} /></div>}
           <QueueStrip threadId={id} queued={queuedItems} agent={t.provider === 'codex' ? 'Codex' : 'Claude'} onClearAll={canSend ? clearQueue : undefined} onEdit={canSend ? async it => {
             const draft = await api.post<{ text: string; uploads: Upload[] }>(`${V1}/threads/${id}/queue/${encodeURIComponent(it.key)}/edit`)
             composer.current?.restoreDraft(draft.text, draft.uploads)

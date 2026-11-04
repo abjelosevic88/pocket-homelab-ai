@@ -38,7 +38,7 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if queryInt64(r, "host") != 0 {
-		writeJSON(w, http.StatusOK, map[string]any{"skills": []agent.Skill{}, "commands": remoteCommands(provider), "remote": true})
+		writeJSON(w, http.StatusOK, map[string]any{"skills": agentCommandSkills(), "commands": remoteCommands(provider), "remote": true})
 		return
 	}
 	cwd := s.cfg.Home
@@ -97,7 +97,7 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 	if e.commands == nil {
 		e.commands = []agent.Skill{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"skills": e.skills, "commands": e.commands, "error": e.err})
+	writeJSON(w, http.StatusOK, map[string]any{"skills": append(agentCommandSkills(e.skills, e.commands), e.skills...), "commands": e.commands, "error": e.err})
 }
 
 // claudeBasicCommands stand in for Claude Code's built-in commands until it
