@@ -13,6 +13,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -23,8 +24,9 @@ import (
 )
 
 type folderGoneError struct {
-	dir  string
-	host string // "" = this server
+	dir       string
+	host      string // "" = this server
+	unmounted string // the mount point (from fstab) the folder sits under that is not mounted now
 }
 
 func (e *folderGoneError) Error() string {
@@ -32,8 +34,64 @@ func (e *folderGoneError) Error() string {
 	if e.host != "" {
 		where = " on " + e.host
 	}
+	if e.unmounted != "" {
+		return "The folder " + e.dir + " is not there" + where + ": " + e.unmounted + " is not mounted (its disk did not come back after a restart?). Mount it there (sudo mount " + e.unmounted + "), then send again."
+	}
 	return "The folder " + e.dir + " no longer exists" + where + ". Move this conversation to another folder to carry on — its history comes along."
 }
+
+// unsentWhy is the reason on the message that could not go out.
+func (e *folderGoneError) unsentWhy() string {
+	if e.unmounted != "" {
+		return "Not sent — its disk is not mounted."
+	}
+	return "Not sent — its folder is gone."
+}
+
+// unmountedFor is the mount point fstab lists for dir (or a folder above it)
+// while nothing is mounted there now: a disk that did not come back after a
+// restart, so moving the conversation is the wrong advice. "" when fstab has
+// no such line or the mount table is unknown (no /proc/mounts, e.g. macOS).
+func unmountedFor(dir, fstab, mounts string) string {
+	if strings.TrimSpace(mounts) == "" || !path.IsAbs(dir) {
+		return ""
+	}
+	points := func(text string) map[string]bool {
+		m := map[string]bool{}
+		for _, line := range strings.Split(text, "\n") {
+			f := strings.Fields(line)
+			if len(f) < 2 || strings.HasPrefix(f[0], "#") {
+				continue
+			}
+			m[path.Clean(strings.ReplaceAll(f[1], `\040`, " "))] = true
+		}
+		return m
+	}
+	want, have := points(fstab), points(mounts)
+	for p := path.Clean(dir); p != "/"; p = path.Dir(p) {
+		if want[p] {
+			if have[p] {
+				return ""
+			}
+			return p
+		}
+	}
+	return ""
+}
+
+// localUnmounted is unmountedFor on this server.
+func localUnmounted(dir string) string {
+	fstab, _ := os.ReadFile("/etc/fstab")
+	mounts, _ := os.ReadFile("/proc/self/mounts")
+	return unmountedFor(dir, string(fstab), string(mounts))
+}
+
+// remoteFolderCheck: $1 the folder. "there", or the tables unmountedFor
+// reads. Always exits 0: a missing folder is an answer, not an ssh failure.
+const remoteFolderCheck = `[ -d "$1" ] && { echo there; exit 0; }
+echo "@@fstab"; cat /etc/fstab 2>/dev/null
+echo "@@mounts"; cat /proc/mounts 2>/dev/null
+exit 0`
 
 const folderGoneKey = "folder-gone"
 
@@ -41,7 +99,11 @@ const folderGoneKey = "folder-gone"
 // that just failed and never piles up.
 func (rt *engine) folderGoneNotice(threadID string, e *folderGoneError) {
 	rt.dropFolderGone(threadID)
-	rt.saveItem(threadID, agent.Item{Key: folderGoneKey, Kind: "notice", Level: "error", Fix: "folder", Text: e.Error()})
+	fix := "folder"
+	if e.unmounted != "" {
+		fix = "" // mounting it fixes this, not a move
+	}
+	rt.saveItem(threadID, agent.Item{Key: folderGoneKey, Kind: "notice", Level: "error", Fix: fix, Text: e.Error()})
 }
 
 // holdUnsent marks the latest message as not sent, with the reason.
