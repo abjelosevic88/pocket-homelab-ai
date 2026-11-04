@@ -114,6 +114,11 @@
 .app-chat-earlier button { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 7px 8px; border: 0; border-radius: 8px; background: none; color: var(--text); font-size: 13px; text-align: left; cursor: pointer; }
 .app-chat-earlier button:hover { background: var(--hover, var(--accent-soft)); }
 .app-chat-earlier button .icon { flex-shrink: 0; color: var(--muted); }
+.app-chat-earlier button .muted { flex-shrink: 0; }
+.app-chat-earlier.all .app-chat-earlier-list { max-height: 46vh; overflow-y: auto; }
+.app-chat-earlier-q { margin: 0 4px 6px; }
+.app-chat-earlier-none { padding: 7px 8px; }
+.app-chat-earlier .app-chat-earlier-more { color: var(--muted); font-size: 12px; }
 html.pai-embedded pocket-ask-launcher { display: none !important; }
 /* Embedded: thin scrollbars that show only while the panel is hovered */
 .app.embedded { scrollbar-width: thin; scrollbar-color: transparent transparent; }

@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, V1 } from '../lib/api'
+import { ago } from '../lib/format'
 import { useApp } from '../lib/app-context'
 import type { Thread } from '../lib/types'
 import { Composer, type ComposerHandle } from './Composer'
@@ -13,7 +14,7 @@ import { errMsg, useToast } from './ui'
 
 const MODEL = 'pai-app-chat-model'
 
-export function AppChatStart({ app, appURL, appName }: { app: string; appURL: string; appName: string }) {
+export function AppChatStart({ app, appURL, appName, history = false }: { app: string; appURL: string; appName: string; history?: boolean }) {
   const { threads, upsertThread } = useApp()
   const navigate = useNavigate()
   const { toast } = useToast()
@@ -22,7 +23,12 @@ export function AppChatStart({ app, appURL, appName }: { app: string; appURL: st
   const [noMemory, setNoMemory] = useState(false)
   const [connected, setConnected] = useState<boolean | null>(null)
   useEffect(() => { api.get<{ connected: boolean }>(`${V1}/assistant/status`).then(v => setConnected(v.connected)).catch(() => setConnected(false)) }, [])
-  const earlier = (threads || []).filter(t => t.source === 'ask' && t.source_ref === appURL).slice(0, 5)
+  // every earlier chat about this app (the app's history button opens them all)
+  const [all, setAll] = useState(history)
+  const [q, setQ] = useState('')
+  const mine = (threads || []).filter(t => t.source === 'ask' && t.source_ref === appURL)
+  const words = q.trim().toLowerCase()
+  const earlier = all ? mine.filter(t => !words || (t.title || '').toLowerCase().includes(words)) : mine.slice(0, 5)
 
   const send = async (text: string, uploadIds: string[]) => {
     try {
@@ -44,14 +50,19 @@ export function AppChatStart({ app, appURL, appName }: { app: string; appURL: st
       {connected === false && <div className="callout info ask-connect"><Icon name="sparkles" size={15} />
         <span className="grow">Ask reads your Pocket apps as you, so connect it once in Pocket AI.</span>
         <a className="btn primary sm" href={`${location.origin}/`} target="_blank" rel="noreferrer">Open Pocket AI</a></div>}
-      {earlier.length > 0 && (
-        <div className="app-chat-earlier">
-          <div className="app-chat-earlier-head">Earlier chats</div>
-          {earlier.map(t => (
-            <button key={t.id} type="button" onClick={() => navigate(`/t/${t.id}`)}>
-              <Icon name="message" size={14} /><span className="ellipsis">{t.title || 'Chat'}</span>
-            </button>
-          ))}
+      {(mine.length > 0 || all) && (
+        <div className={`app-chat-earlier ${all ? 'all' : ''}`}>
+          <div className="app-chat-earlier-head">{all ? `All chats about ${appName} (${mine.length})` : 'Earlier chats'}</div>
+          {all && mine.length > 5 && <input className="app-chat-earlier-q" type="search" placeholder="Find a chat…" value={q} onChange={e => setQ(e.target.value)} autoFocus />}
+          <div className="app-chat-earlier-list">
+            {earlier.map(t => (
+              <button key={t.id} type="button" onClick={() => navigate(`/t/${t.id}`)}>
+                <Icon name="message" size={14} /><span className="ellipsis grow">{t.title || 'Chat'}</span><span className="muted small">{ago(t.updated_at)}</span>
+              </button>
+            ))}
+            {all && earlier.length === 0 && <div className="muted small app-chat-earlier-none">{mine.length ? 'No chat matches.' : `No chats about ${appName} yet.`}</div>}
+          </div>
+          {!all && mine.length > 5 && <button type="button" className="app-chat-earlier-more" onClick={() => setAll(true)}><Icon name="chevron-down" size={14} /><span>All {mine.length} chats</span></button>}
         </div>
       )}
       <Composer ref={composer} big autoFocus draftKey={`app-chat-${app}`} onSend={send}
@@ -65,10 +76,10 @@ export function AppChatStart({ app, appURL, appName }: { app: string; appURL: st
 }
 
 /** The app chat's parameters, when this frame is one (only inside another app's page). */
-export function appChatParams(params: URLSearchParams): { app: string; appURL: string; appName: string } | null {
+export function appChatParams(params: URLSearchParams): { app: string; appURL: string; appName: string; history: boolean } | null {
   const app = (params.get('ask') || '').toLowerCase()
   const appURL = params.get('app_url') || ''
   if (!/^[a-z][a-z0-9-]{0,30}$/.test(app)) return null
   try { const u = new URL(appURL); if (u.protocol !== 'https:' && u.protocol !== 'http:') return null } catch { return null }
-  return { app, appURL, appName: (params.get('app_name') || '').slice(0, 80) || `Pocket ${app[0].toUpperCase()}${app.slice(1)}` }
+  return { app, appURL, appName: (params.get('app_name') || '').slice(0, 80) || `Pocket ${app[0].toUpperCase()}${app.slice(1)}`, history: params.get('history') === '1' }
 }
