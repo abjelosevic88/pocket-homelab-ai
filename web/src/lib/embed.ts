@@ -4,11 +4,19 @@
 
 import { comboOf } from './shortcuts'
 
-const KEY = 'pai-embed'
+// Same-origin frames of one tab share sessionStorage (an app's chat and an
+// issue's panel side by side): each frame keeps its own flags, by a name
+// it gives itself (window.name stays while the frame navigates).
+if (window.parent !== window && !window.name.startsWith('pai-frame-')) window.name = 'pai-frame-' + Math.random().toString(36).slice(2, 10)
+/** A sessionStorage key of this frame only. */
+export const frameKey = (k: string) => window.parent === window ? k : `${k}:${window.name}`
 
-const TABS = 'pai-embed-tabs'
-const LINKS = 'pai-embed-links'
-const CHAT_KEY = 'pai-embed-chat-key'
+const KEY = frameKey('pai-embed')
+
+const TABS = frameKey('pai-embed-tabs')
+const LINKS = frameKey('pai-embed-links')
+const CHAT_KEY = frameKey('pai-embed-chat-key')
+const APP_CHAT = frameKey('pai-app-chat')
 
 function detect(): boolean {
   if (window.parent === window) return false
@@ -17,10 +25,14 @@ function detect(): boolean {
   if (q.get('tabs') === '1') sessionStorage.setItem(TABS, '1')
   if (q.get('links') === '1') sessionStorage.setItem(LINKS, '1')
   if (q.get('chat_key')) sessionStorage.setItem(CHAT_KEY, q.get('chat_key')!.toLowerCase())
+  // an app's own chat (?ask=<app>&app_url=…&app_name=…): a new chat in this frame starts there again
+  if (q.get('ask')) sessionStorage.setItem(APP_CHAT, new URLSearchParams([['ask', q.get('ask')!], ['app_url', q.get('app_url') || ''], ['app_name', q.get('app_name') || '']]).toString())
   return sessionStorage.getItem(KEY) === '1'
 }
 
 export const embedded = detect()
+/** The app chat this frame is (ask, app_url, app_name), however it got here. */
+export const appChatQuery = () => new URLSearchParams(embedded ? sessionStorage.getItem(APP_CHAT) || '' : '')
 /** The framing page shows conversations in tabs of its own (?tabs=1, Pocket Projects' panel):
  *  a new conversation (a fork) opens there instead of in a new browser tab. */
 export const parentTabs = embedded && sessionStorage.getItem(TABS) === '1'
