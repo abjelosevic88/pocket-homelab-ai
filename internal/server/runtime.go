@@ -467,7 +467,7 @@ func (rt *engine) startRun(t *store.Thread) (*run, error) {
 		return rt.startRemote(t, h)
 	}
 	if fi, err := os.Stat(t.Cwd); err != nil || !fi.IsDir() {
-		return nil, &folderGoneError{dir: t.Cwd}
+		return nil, &folderGoneError{dir: t.Cwd, unmounted: localUnmounted(t.Cwd)}
 	}
 	if err := rt.s.checkRunFor(rt.ctx, t); err != nil {
 		return nil, err
@@ -595,12 +595,14 @@ func (rt *engine) startRemote(t *store.Thread, h *store.Host) (*run, error) {
 	// The folder may be gone there (moved, cleaned up): say so plainly
 	// instead of letting the CLI fail on "cd" every time.
 	if t.Cwd != "" {
-		out, errOut, err := remoteOf(h).Run(rt.ctx, 20*time.Second, `[ -d "$1" ] && echo there`, t.Cwd)
+		out, errOut, err := remoteOf(h).Run(rt.ctx, 20*time.Second, remoteFolderCheck, t.Cwd)
 		if err != nil {
 			return nil, badRequest(h.Name + ": " + sshError(errOut, err))
 		}
 		if strings.TrimSpace(out) != "there" {
-			return nil, &folderGoneError{dir: t.Cwd, host: h.Name}
+			fstab, mounts, _ := strings.Cut(out, "@@mounts\n")
+			fstab = strings.TrimPrefix(fstab, "@@fstab\n")
+			return nil, &folderGoneError{dir: t.Cwd, host: h.Name, unmounted: unmountedFor(t.Cwd, fstab, mounts)}
 		}
 	}
 	ctx, cancel := context.WithCancel(rt.ctx)

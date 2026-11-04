@@ -499,7 +499,7 @@ func (s *Server) sendStarting(threadID, key string, in agent.Input) {
 	switch {
 	case errors.As(err, &gone):
 		s.rt.setStatus(t.ID, "idle", "")
-		s.rt.holdUnsent(t.ID, "Not sent — its folder is gone.")
+		s.rt.holdUnsent(t.ID, gone.unsentWhy())
 		s.rt.folderGoneNotice(t.ID, gone)
 	case err != nil:
 		s.rt.saveItem(t.ID, agent.Item{Key: "err-" + uuid.NewString()[:8], Kind: "notice", Level: "error", Text: err.Error()})
@@ -784,7 +784,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	if errors.As(err, &gone) {
 		// The message stays, marked not sent (Send again once moved), with one
 		// notice under it that offers the move. Nothing for the composer to keep.
-		s.rt.holdUnsent(t.ID, "Not sent — its folder is gone.")
+		s.rt.holdUnsent(t.ID, gone.unsentWhy())
 		s.rt.folderGoneNotice(t.ID, gone)
 		t, _ = s.store.GetThreadAny(r.Context(), t.ID)
 		writeJSON(w, http.StatusOK, map[string]any{"queued": false, "thread": s.rt.decorate(t)})

@@ -101,3 +101,28 @@ func TestClaudeProjectName(t *testing.T) {
 		}
 	}
 }
+
+// A folder under an fstab mount point that is not mounted now (a disk that
+// did not come back after a restart) says so instead of offering a move.
+func TestUnmountedFor(t *testing.T) {
+	fstab := "# /etc/fstab\nUUID=abc / ext4 defaults 0 1\n/dev/vg_work/work\t/work\txfs\tdefaults,nofail 0 0\n/dev/sdb1 /mnt/my\\040disk ext4 defaults 0 0\n"
+	mounts := "/dev/md3 / ext4 rw 0 0\nproc /proc proc rw 0 0\n"
+	for _, c := range []struct{ dir, fstab, mounts, want string }{
+		{"/work/Projects/athena", fstab, mounts, "/work"},
+		{"/work", fstab, mounts, "/work"},
+		{"/mnt/my disk/x", fstab, mounts, "/mnt/my disk"},
+		{"/work/Projects/athena", fstab, mounts + "/dev/mapper/vg_work-work /work xfs rw 0 0\n", ""}, // mounted: the folder itself is gone
+		{"/home/ubuntu/gone", fstab, mounts, ""},                                                     // only / above it
+		{"/workshop/x", fstab, mounts, ""},                                                           // not a path prefix match
+		{"/work/Projects/athena", fstab, "", ""},                                                     // no mount table (macOS)
+		{"/work/Projects/athena", "", mounts, ""},                                                    // no fstab
+	} {
+		if got := unmountedFor(c.dir, c.fstab, c.mounts); got != c.want {
+			t.Errorf("unmountedFor(%q) = %q, want %q", c.dir, got, c.want)
+		}
+	}
+	e := &folderGoneError{dir: "/work/Projects/athena", host: "athena-box", unmounted: "/work"}
+	if !strings.Contains(e.Error(), "/work is not mounted") || e.unsentWhy() != "Not sent — its disk is not mounted." {
+		t.Fatalf("message: %q / %q", e.Error(), e.unsentWhy())
+	}
+}
