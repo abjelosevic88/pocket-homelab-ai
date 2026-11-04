@@ -362,7 +362,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
     { label: 'Save as workflow', icon: 'zap', onSelect: () => navigate('/workflows', { state: { name: t.title, prompt: t.last_prompt || '' } }) },
     { label: t.no_memory ? 'Enable saved memory' : 'Don’t use memory in this conversation', icon: 'bookmark', onSelect: () => patch({ no_memory: !t.no_memory }) },
     ...(document.querySelector('pocket-ask-launcher') ? [{ label: 'Ask about an item…', icon: 'sparkles' as const, onSelect: () => window.dispatchEvent(new Event('pocket-ask-pick')) }] : []),
-    { label: t.pinned ? 'Unpin' : 'Pin to top', icon: 'bookmark', onSelect: () => patch({ pinned: !t.pinned }) },
+    { label: t.pinned ? 'Remove from favorites' : 'Add to favorites', icon: 'star', onSelect: async () => { const th = await patch({ pinned: !t.pinned }); if (th) toast(th.pinned ? 'Added to favorites' : 'Removed from favorites') } },
     { label: 'Rename', icon: 'edit', onSelect: () => { setTitleDraft(t.title || threadTitle(t)); setEditingTitle(true) } },
     { label: 'Regenerate title', icon: 'sparkles', onSelect: async () => { const th = await retitleThread(id, toast); if (th) { setThread(th); upsertThread(th) } } },
     { label: 'Move to another folder…', icon: 'folder', disabled: t.source === 'ask' || !canRun || running, onSelect: () => setMoving(true) },
@@ -395,7 +395,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
             </form>
           ) : (
             <h1 className="thread-title ellipsis" onClick={() => { if (!owner) return; setTitleDraft(t.title || threadTitle(t)); setEditingTitle(true) }} title={owner ? 'Click to rename' : undefined}>
-              {t.pinned && <Icon name="bookmark" size={13} className="pin-ico" />}{threadTitle(t)}
+              {t.pinned && <Icon name="star" size={13} className="pin-ico" />}{threadTitle(t)}
             </h1>
           )}
           <div className="thread-sub">
