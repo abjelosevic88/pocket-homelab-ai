@@ -47,6 +47,13 @@ if (parentLinks) {
     e.preventDefault()
     window.parent.postMessage({ type: 'pocket-ai', link: u.href }, '*')
   }, true)
+  // ⌘J / Ctrl+J opens and closes the app's chat: typed in here, the framing page does it
+  document.addEventListener('keydown', e => {
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'j') {
+      e.preventDefault()
+      window.parent.postMessage({ type: 'pocket-ai', key: 'toggle-chat' }, '*')
+    }
+  }, true)
 }
 
 /** Tells the framing page where the frame is (thread id once one is open) and
