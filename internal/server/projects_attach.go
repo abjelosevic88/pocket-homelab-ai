@@ -69,15 +69,19 @@ func (s *Server) projectsCall(ctx context.Context, email, path, workspace string
 	return res.StatusCode, json.NewDecoder(http.MaxBytesReader(nil, res.Body, 4<<20)).Decode(out)
 }
 
-// projectsAgentWorkspace: the connected workspace open to Pocket AI, "" when
-// that is Projects' own (or there is only one).
+// projectsAgentWorkspace: the workspace open to Pocket AI that the person
+// looked at last, "" when that is Projects' own (or there is only one).
 func (s *Server) projectsAgentWorkspace(ctx context.Context, email string) string {
+	pick, picked := "", false
 	for _, w := range s.projectsWorkspaces(ctx, email) {
-		if w.Active && !w.Own {
-			return strings.ToLower(w.Address)
+		if w.Active && (w.Open || !picked) {
+			pick, picked = "", true
+			if !w.Own {
+				pick = strings.ToLower(w.Address)
+			}
 		}
 	}
-	return ""
+	return pick
 }
 
 // projectsLinkReady answers for the person when the Core link to Projects is off.
