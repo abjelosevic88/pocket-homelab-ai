@@ -259,7 +259,7 @@ export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, i
           const file = isFileTab(id) ? parseFileTab(id) : null
           return (
             <div key={id} role="tab" aria-selected={on} tabIndex={0} draggable
-              className={`tab ${on ? 'on' : ''} ${drag === id ? 'dragging' : ''} ${t?.unread && !on ? 'unread' : ''} ${r.group ? `grouped tg-${r.group.color}` : ''}`}
+              className={`tab ${on ? 'on' : ''} ${drag === id ? 'dragging' : ''} ${t?.unread && !on ? 'unread' : ''} ${r.group ? `grouped tg-${r.group.color}` : ''} ${t?.pinned ? 'fav' : ''}`}
               title={file ? `${file.path} · ${file.host ? hosts.find(h => h.id === file.host)?.name || 'Server' : 'This server'}` : t ? threadTitle(t) : tLead ? `${tLead.title} · ${tLead.host_name}${tts.length > 1 ? ` · ${tts.length} panes` : ''}` : ''}
               onClick={() => navigate(tabPath(id))}
               onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(tabPath(id)) } }}
@@ -285,6 +285,7 @@ export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, i
                   : t?.unread && !on ? <span className="tab-done" role="img" aria-label="Done, new reply" title="Done — new reply" />
                   : <Icon name={t?.provider === 'codex' ? 'codex' : 'claude'} size={13} />}
               </span>}
+              {t?.pinned && <Icon name="star" size={11} fill className="fav-star" title="Favorite" />}
               <span className="tab-title">{file ? baseOf(file.path) : t ? threadTitle(t) : tLead ? tLead.title : '…'}</span>
               {tts.length > 1 && <span className="tab-panes" title={`${tts.length} panes`}><Icon name="split-right" size={10} />{tts.length}</span>}
               {t && <span className={`tab-privacy ${t.shares?.length ? 'shared' : ''}`} title={t.shares?.length ? (t.owner_name && t.owner_id !== user?.id ? `Shared by ${t.owner_name}` : 'Shared') : 'Private'}>

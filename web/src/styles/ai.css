@@ -313,6 +313,17 @@
 .thread-head-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .thread-title { font-size: 15.5px; font-weight: 650; cursor: text; display: flex; align-items: center; gap: 6px; }
 .pin-ico { color: var(--accent); }
+/* favorites: a gold star in the title (click toggles), on tabs and sidebar rows */
+.fav-star { color: var(--fav); flex-shrink: 0; }
+.th-title .fav-star { display: inline-block; margin-right: 4px; vertical-align: -1px; }
+.fav-toggle { display: grid; place-items: center; width: 24px; height: 24px; margin-left: -4px; flex-shrink: 0; border: 0; border-radius: 6px; background: none; color: var(--faint); cursor: pointer; transition: color .15s, background .15s, transform .15s; }
+.fav-toggle:hover { color: var(--fav); background: var(--fav-soft); }
+.fav-toggle:active { transform: scale(.85); }
+.fav-toggle.on { color: var(--fav); }
+.tab.fav:not(.on) { background: var(--fav-soft); }
+.tab.fav:not(.on):hover { background: color-mix(in srgb, var(--fav) 16%, transparent); }
+.tab.fav .fav-star { margin-right: -3px; }
+.sb-h-fold .fav-star { margin-right: -1px; }
 .title-input { height: 30px; font-size: 15px; font-weight: 600; }
 .thread-sub .host-chip { display: inline-flex; align-items: center; gap: 4px; flex: none; height: 20px; padding: 0 7px; border-radius: 6px; background: var(--surface-3); color: var(--text-2); font-weight: 600; }
 .thread-sub .rc-chip { text-decoration: none; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
