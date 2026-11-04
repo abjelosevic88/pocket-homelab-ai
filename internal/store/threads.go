@@ -62,6 +62,7 @@ func (s *Store) GetThreadAny(ctx context.Context, id string) (*Thread, error) {
 // ThreadFilter narrows ListThreads.
 type ThreadFilter struct {
 	Archived    bool
+	Favorites   bool // the person's favorites (pinned), archived or not
 	WorkspaceID int64
 	Q           string
 	Limit       int
@@ -71,6 +72,10 @@ type ThreadFilter struct {
 func (s *Store) ListThreads(ctx context.Context, userID int64, f ThreadFilter) ([]*Thread, error) {
 	q := `SELECT ` + threadCols + ` FROM threads WHERE user_id = ? AND archived = ?`
 	args := []any{userID, boolInt(f.Archived)}
+	if f.Favorites {
+		q = `SELECT ` + threadCols + ` FROM threads WHERE user_id = ? AND pinned = 1`
+		args = []any{userID}
+	}
 	if f.WorkspaceID > 0 {
 		q += ` AND workspace_id = ?`
 		args = append(args, f.WorkspaceID)

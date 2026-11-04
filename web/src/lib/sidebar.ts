@@ -6,7 +6,7 @@ export interface SidebarItem {
   id: string
   label: string
   icon: string
-  /** the page it opens; Archive has none (it switches the thread list) */
+  /** the page it opens; Favorites and Archive have none (they switch the thread list) */
   path?: string
   /** only for people who may run agents */
   runner?: boolean
@@ -14,6 +14,7 @@ export interface SidebarItem {
 
 /** Every menu item, in the default order. */
 export const SIDEBAR_ITEMS: SidebarItem[] = [
+  { id: 'favorites', label: 'Favorites', icon: 'star' },
   { id: 'briefing', label: 'Briefing', icon: 'sun', path: '/briefing' },
   { id: 'workflows', label: 'Workflows', icon: 'zap', path: '/workflows' },
   { id: 'memory', label: 'Memory', icon: 'bookmark', path: '/memory' },
@@ -67,3 +68,5 @@ export function sidebarSetting(layout: SidebarEntry[]): string[] {
 
 /** The palette's Archive command asks the sidebar to show the archive. */
 export const SHOW_ARCHIVE = 'pai:show-archive'
+/** …and Favorites the favorite threads. */
+export const SHOW_FAVORITES = 'pai:show-favorites'

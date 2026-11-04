@@ -57,7 +57,7 @@ export function useThreadMenu() {
     return [
       { label: 'Rename…', icon: 'edit', onSelect: () => setRenaming(t) },
       { label: 'Regenerate title', icon: 'sparkles', onSelect: async () => { const th = await retitleThread(t.id, toast); if (th) upsertThread(th) } },
-      { label: t.pinned ? 'Unpin' : 'Pin to top', icon: 'bookmark', onSelect: () => patch(t, { pinned: !t.pinned }) },
+      { label: t.pinned ? 'Remove from favorites' : 'Add to favorites', icon: 'star', onSelect: async () => { const th = await patch(t, { pinned: !t.pinned }); if (th) toast(th.pinned ? 'Added to favorites' : 'Removed from favorites') } },
       { label: t.shares?.length ? 'Sharing…' : 'Share…', icon: 'users', onSelect: () => setSharing(t) },
       'sep',
       { label: 'Copy link', icon: 'link', onSelect: link },

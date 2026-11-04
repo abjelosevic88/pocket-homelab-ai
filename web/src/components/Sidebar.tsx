@@ -1,4 +1,4 @@
-// Threads, grouped by time, with search (titles here, all messages on Enter), folder filter and archive.
+// Threads, grouped by time, with search (titles here, all messages on Enter), folder filter, favorites and archive.
 import type React from 'react'
 import { RunDots, RunningList, elapsed, useNow } from './RunningList'
 import { idsOf, useTerminals } from '../lib/terminals'
@@ -17,11 +17,11 @@ import { type Option, Select } from './Select'
 import { Avatar, Kbd, Spinner, useContextMenu } from './ui'
 import { useThreadMenu } from './ThreadMenu'
 import { PrivacyChip } from './ShareDialog'
-import { SHOW_ARCHIVE, sidebarLayout, sidebarSetting } from '../lib/sidebar'
+import { SHOW_ARCHIVE, SHOW_FAVORITES, sidebarLayout, sidebarSetting } from '../lib/sidebar'
 import { projectsPaused, projectsRef, refHost, refKey, useProjectsLink } from '../lib/projects'
 
 function groupOf(t: Thread): string {
-  if (t.pinned) return 'Pinned'
+  if (t.pinned) return 'Favorites'
   const d = new Date(t.activity_at)
   const now = new Date()
   const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
@@ -56,6 +56,7 @@ export function ThreadRow({ t, active, onOpen, onContextMenu }: { t: Thread; act
         <span className="th-title ellipsis">{threadTitle(t)}</span>
         <span className="th-meta">
           <ProviderBadge provider={t.provider} size="xs" />
+          {t.archived && <Icon name="archive" size={11} />}
           {t.source === 'schedule' && <Icon name="clock" size={11} />}
           {t.source === 'quick-chat' && <span className="quick-chat-chip xs" title="Started from Quick Chat in Pocket Launcher"><Icon name="sparkles" size={10} />Quick Chat</span>}
           <PrivacyChip sharedWith={t.shares?.map(s => s.name)} iconOnly />
@@ -81,21 +82,28 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
   const [hits, setHits] = useState<SearchHit[] | null>(null)
   const [searching, setSearching] = useState(false)
   const [ws, setWs] = useState<number>(() => Number(localStorage.getItem('pai-ws') || 0))
-  const [archived, setArchived] = useState<Thread[] | null>(null)
-  const [showArchive, setShowArchive] = useState(false)
+  // Archive / Favorites switch the thread list ('' = the usual list)
+  const [view, setView] = useState<'' | 'archive' | 'favorites'>('')
+  const [special, setSpecial] = useState<Thread[] | null>(null)
+  const showArchive = view === 'archive'
+  const showFav = view === 'favorites'
+  const toggleView = (v: 'archive' | 'favorites') => { setView(x => x === v ? '' : v); setSpecial(null); setHits(null) }
   const ctx = useContextMenu()
   const tm = useThreadMenu()
   useEffect(() => { localStorage.setItem('pai-ws', String(ws)) }, [ws])
   useEffect(() => { if (!q.trim()) setHits(null) }, [q])
   useEffect(() => {
-    const show = () => { setShowArchive(true); setHits(null) }
-    window.addEventListener(SHOW_ARCHIVE, show)
-    return () => window.removeEventListener(SHOW_ARCHIVE, show)
+    const arch = () => { setView('archive'); setSpecial(null); setHits(null) }
+    const fav = () => { setView('favorites'); setSpecial(null); setHits(null) }
+    window.addEventListener(SHOW_ARCHIVE, arch)
+    window.addEventListener(SHOW_FAVORITES, fav)
+    return () => { window.removeEventListener(SHOW_ARCHIVE, arch); window.removeEventListener(SHOW_FAVORITES, fav) }
   }, [])
   useEffect(() => {
-    if (!showArchive) return
-    api.get<Thread[]>(`${V1}/threads${qs({ archived: 1 })}`).then(l => setArchived(sortThreads((l || []).filter(t => t.archived)))).catch(() => setArchived([]))
-  }, [showArchive, threads])
+    if (!view) return
+    const keep = (t: Thread) => view === 'archive' ? t.archived : t.pinned
+    api.get<Thread[]>(`${V1}/threads${qs(view === 'archive' ? { archived: 1 } : { favorites: 1 })}`).then(l => setSpecial(sortThreads((l || []).filter(keep)))).catch(() => setSpecial([]))
+  }, [view, threads])
 
   const go = (path: string) => { navigate(path); onNavigate() }
   // Away from keyboard: agents carry on without you; back = decide what they saved
@@ -111,8 +119,8 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
   const termTabs = term.groups
   const activeId = loc.pathname.startsWith('/t/') ? loc.pathname.split('/')[2] : ''
   const mine = (t: Thread) => !user || !t.owner_id || t.owner_id === user.id
-  const base = showArchive ? archived : threads && threads.filter(mine)
-  const shared = showArchive || !threads ? [] : threads.filter(t => !mine(t))
+  const base = view ? special : threads && threads.filter(mine)
+  const shared = view || !threads ? [] : threads.filter(t => !mine(t))
   const shown = useMemo(() => {
     let list = base || []
     if (ws) list = list.filter(t => t.workspace_id === ws)
@@ -124,7 +132,7 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
   const projRefs = useMemo(() => (base || []).map(projectsRef).filter(Boolean), [base])
   const proj = useProjectsLink(projRefs)
   const projIssues = useMemo(() => {
-    if (!proj?.on || showArchive) return []
+    if (!proj?.on || view) return []
     const out: { ref: string; items: Thread[] }[] = []
     for (const t of shown) {
       const ref = projectsRef(t)
@@ -133,7 +141,7 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
       if (g) g.items.push(t); else out.push({ ref, items: [t] })
     }
     return out
-  }, [proj?.on, proj?.threads, showArchive, shown])
+  }, [proj?.on, proj?.threads, view, shown])
   const [projOpen, setProjOpen] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('pai-sb-projects') || '[]') } catch { return [] } })
   useEffect(() => { localStorage.setItem('pai-sb-projects', JSON.stringify(projOpen)) }, [projOpen])
   const [projFolded, setProjFolded] = useState(() => localStorage.getItem('pai-sb-projects-folded') === '1')
@@ -142,12 +150,12 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
     const out: { name: string; items: Thread[] }[] = []
     for (const t of shown) {
       if (projIssues.length && projectsRef(t)) continue // listed under Projects
-      const g = showArchive ? 'Archived' : groupOf(t)
+      const g = showArchive ? 'Archived' : showFav ? 'Favorites' : groupOf(t)
       const last = out[out.length - 1]
       if (last && last.name === g) last.items.push(t); else out.push({ name: g, items: [t] })
     }
     return out
-  }, [shown, showArchive, projIssues])
+  }, [shown, showArchive, showFav, projIssues])
   const sharedN = (threads || []).filter(t => !mine(t) || !!t.shares?.length).length
   const activeWt = worktrees.filter(w => w.status === 'active').length
   const needYou = (base || []).filter(t => t.status === 'waiting' || t.pending > 0).length
@@ -195,7 +203,7 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
             { label: 'Remove from sidebar', icon: 'eye-off', onSelect: () => removeItem(item.id) },
             { label: 'Customize sidebar…', icon: 'settings', onSelect: () => go('/settings/general#sidebar') },
           ])
-          if (item.id === 'archive') return <button key={item.id} type="button" className={`sb-item ${showArchive ? 'active' : ''}`} onClick={() => { setShowArchive(a => !a); setHits(null) }} onContextMenu={onMenu}><Icon name="archive" size={16} /><span className="grow">Archive</span></button>
+          if (item.id === 'archive' || item.id === 'favorites') return <button key={item.id} type="button" className={`sb-item ${view === item.id ? 'active' : ''}`} onClick={() => toggleView(item.id as 'archive' | 'favorites')} onContextMenu={onMenu}><Icon name={item.icon} size={16} /><span className="grow">{item.label}</span></button>
           return (
             <Fragment key={item.id}>
               {nav(item.path!, item.icon, item.label, extra, onMenu)}
@@ -237,7 +245,7 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
         )}
       </div>
 
-      {!hits && !showArchive && <RunningList compact onOpened={onNavigate} />}
+      {!hits && !view && <RunningList compact onOpened={onNavigate} />}
       {hits ? (
         <div className="sb-threads">
           <div className="sb-h"><span>Messages matching “{q.trim()}”</span><button type="button" className="btn ghost xs" aria-label="Close search" onClick={() => setHits(null)}><Icon name="x" size={12} /></button></div>
@@ -254,16 +262,16 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
         </div>
       ) : (
         <div className="sb-threads">
-          {showArchive && <button type="button" className="sb-away" onClick={() => setShowArchive(false)}><Icon name="arrow-left" size={13} /><span className="grow">Back to threads</span></button>}
-          {(away?.on || saved > 0) && !showArchive && (
+          {view && <button type="button" className="sb-away" onClick={() => setView('')}><Icon name="arrow-left" size={13} /><span className="grow">Back to threads</span></button>}
+          {(away?.on || saved > 0) && !view && (
             <button type="button" className={`sb-away ${away?.on ? 'on' : ''}`} onClick={() => go('/away')}>
               <Icon name="moon" size={13} /><span className="grow ellipsis">{away?.on ? 'Away — agents carry on without you' : 'Saved while you were away'}</span>
               {saved > 0 && <span className="badge">{saved}</span>}
             </button>
           )}
-          {needYou > 0 && !showArchive && !away?.on && <div className="sb-needyou"><Icon name="help-circle" size={13} />{needYou === 1 ? '1 thread needs you' : `${needYou} threads need you`}</div>}
+          {needYou > 0 && !view && !away?.on && <div className="sb-needyou"><Icon name="help-circle" size={13} />{needYou === 1 ? '1 thread needs you' : `${needYou} threads need you`}</div>}
           {base === null && <div className="sb-empty"><Spinner /></div>}
-          {base && shown.length === 0 && !(shared.length && !q && !ws) && <div className="sb-empty">{q || ws ? 'No threads match.' : showArchive ? 'Nothing archived.' : 'No threads yet — start one above.'}</div>}
+          {base && shown.length === 0 && !(shared.length && !q && !ws) && <div className="sb-empty">{q || ws ? 'No threads match.' : showArchive ? 'Nothing archived.' : showFav ? 'No favorites yet — right-click a thread → Add to favorites.' : 'No threads yet — start one above.'}</div>}
           {projIssues.length > 0 && (
             <div className="sb-group">
               <div className="sb-h">
@@ -310,7 +318,7 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
       )}
 
       <div className="sb-bottom">
-      {!showArchive && <UsageWidget onNavigate={onNavigate} />}
+      {!view && <UsageWidget onNavigate={onNavigate} />}
       <div className="sb-foot">
         <button type="button" className={`sb-foot-link away-toggle ${away?.on ? 'on' : ''}`} aria-pressed={!!away?.on} onClick={toggleAway}
           title={away?.on ? "I'm back: show what the agents saved for me" : 'Away from keyboard: agents keep working on what they can and save approvals and questions for when you are back'}>

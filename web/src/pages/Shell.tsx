@@ -1,5 +1,5 @@
 // The app shell: thread sidebar (a drawer on phones) + the page; palette and shortcuts.
-import { SHOW_ARCHIVE } from '../lib/sidebar'
+import { SHOW_ARCHIVE, SHOW_FAVORITES } from '../lib/sidebar'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { useApp } from '../lib/app-context'
@@ -144,6 +144,7 @@ function ShellInner() {
     { id: 'today', label: 'Today', icon: 'today', keywords: 'runs account day', run: () => navigate('/today') },
     { id: 'worktrees', label: 'Worktrees', icon: 'fork', keywords: 'git branches', run: () => navigate('/worktrees') },
     { id: 'shared', label: 'Shared', icon: 'users', keywords: 'shared with me people', run: () => navigate('/shared') },
+    { id: 'favorites', label: 'Favorites', icon: 'star', keywords: 'favorite starred pinned saved threads', run: () => { window.dispatchEvent(new Event(SHOW_FAVORITES)); if (drawer) setDrawerOpen(true) } },
     { id: 'archive', label: 'Archive', icon: 'archive', keywords: 'archived threads', run: () => { window.dispatchEvent(new Event(SHOW_ARCHIVE)); if (drawer) setDrawerOpen(true) } },
     { id: 'sidebar', label: 'Customize sidebar', icon: 'sidebar', keywords: 'menu reorder hide remove items', run: () => navigate('/settings/general#sidebar') },
     { id: 'snippets', label: 'Snippets', icon: 'bookmark', keywords: 'saved text prompts', run: () => navigate('/snippets') },

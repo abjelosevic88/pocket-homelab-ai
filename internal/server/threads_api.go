@@ -125,7 +125,7 @@ func (s *Server) agentProvider(ctx context.Context, id string) (agent.Provider, 
 }
 
 func (s *Server) handleListThreads(w http.ResponseWriter, r *http.Request) {
-	list, err := s.store.ListThreads(r.Context(), me(r), store.ThreadFilter{Archived: queryBool(r, "archived"),
+	list, err := s.store.ListThreads(r.Context(), me(r), store.ThreadFilter{Archived: queryBool(r, "archived"), Favorites: queryBool(r, "favorites"),
 		WorkspaceID: queryInt64(r, "workspace"), Q: r.URL.Query().Get("q"), Limit: queryInt(r, "limit")})
 	if err != nil {
 		s.fail(w, err, "list threads")
@@ -134,7 +134,7 @@ func (s *Server) handleListThreads(w http.ResponseWriter, r *http.Request) {
 	for _, t := range list {
 		s.rt.decorate(t)
 	}
-	if !queryBool(r, "archived") && queryInt64(r, "workspace") == 0 && r.URL.Query().Get("q") == "" {
+	if !queryBool(r, "archived") && !queryBool(r, "favorites") && queryInt64(r, "workspace") == 0 && r.URL.Query().Get("q") == "" {
 		list = append(list, s.sharedThreads(r.Context(), me(r))...) // under "Shared with me"
 	}
 	writeJSON(w, http.StatusOK, list)

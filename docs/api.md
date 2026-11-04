@@ -119,7 +119,7 @@ only their own calls.
 
 | Method | Path | Body / query | Returns |
 |---|---|---|---|
-| GET | `/threads` | `?archived=1`, `?workspace=ID`, `?q=` (title filter) | `Thread[]` newest activity first, pinned first |
+| GET | `/threads` | `?archived=1`, `?favorites=1` (pinned = favorites, archived or not), `?workspace=ID`, `?q=` (title filter) | `Thread[]` newest activity first, pinned first |
 | POST | `/threads` | `{provider, model?, effort?, mode?, cwd?, workspace_id?, title?, text, upload_ids?: string[]}` | `Thread` (201); the first turn starts right away |
 | GET | `/threads/{id}` | | `{thread: Thread, items: Item[]}` |
 | PATCH | `/threads/{id}` | any of `{title, pinned, archived, model, effort, mode}` | `Thread` |
