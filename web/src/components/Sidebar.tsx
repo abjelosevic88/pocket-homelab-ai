@@ -53,7 +53,7 @@ export function ThreadRow({ t, active, onOpen, onContextMenu }: { t: Thread; act
   return (
     <button type="button" className={`th-row ${active ? 'active' : ''} ${t.unread ? 'unread' : ''} ${working ? 'is-working' : ''} ${bg ? 'is-background' : ''} ${paused ? 'is-paused' : ''}`} onClick={onOpen} onContextMenu={onContextMenu} title={paused || (host ? `${host}: ${t.cwd}` : t.cwd)}>
       <span className="th-main">
-        <span className="th-title ellipsis">{threadTitle(t)}</span>
+        <span className="th-title ellipsis">{t.pinned && <Icon name="star" size={10} fill className="fav-star" />}{threadTitle(t)}</span>
         <span className="th-meta">
           <ProviderBadge provider={t.provider} size="xs" />
           {t.archived && <Icon name="archive" size={11} />}
@@ -144,6 +144,19 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
   }, [proj?.on, proj?.threads, view, shown])
   const [projOpen, setProjOpen] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('pai-sb-projects') || '[]') } catch { return [] } })
   useEffect(() => { localStorage.setItem('pai-sb-projects', JSON.stringify(projOpen)) }, [projOpen])
+  // Favorites / Today / … / Shared with me fold (header toggle, remembered); older ones start folded
+  const [folded, setFolded] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('pai-sb-folded') || 'null') || ['This week', 'This month', 'Older'] } catch { return [] } })
+  useEffect(() => { localStorage.setItem('pai-sb-folded', JSON.stringify(folded)) }, [folded])
+  const fold = (name: string) => setFolded(f => f.includes(name) ? f.filter(x => x !== name) : [...f, name])
+  const foldHead = (name: string, n: number, isFolded: boolean) => (
+    <div className="sb-h">
+      <button type="button" className={`sb-h-fold ${isFolded ? '' : 'open'}`} aria-expanded={!isFolded} onClick={() => fold(name)} title={isFolded ? `Show ${name}` : `Fold ${name}`}>
+        <Icon name="chevron-right" size={11} className="sb-h-caret" />{name === 'Favorites' && <Icon name="star" size={11} fill className="fav-star" />}<span>{name}</span>{isFolded && <span className="sb-issue-n tnum">{n}</span>}
+      </button>
+    </div>
+  )
+  // a folded group still shows the open thread
+  const foldRows = (name: string, items: Thread[]) => !view && folded.includes(name) ? items.filter(t => t.id === activeId) : items
   const [projFolded, setProjFolded] = useState(() => localStorage.getItem('pai-sb-projects-folded') === '1')
   useEffect(() => { localStorage.setItem('pai-sb-projects-folded', projFolded ? '1' : '0') }, [projFolded])
   const groups = useMemo(() => {
@@ -304,14 +317,14 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
           )}
           {groups.map(g => (
             <div key={g.name} className="sb-group">
-              <div className="sb-h"><span>{g.name}</span></div>
-              {g.items.map(t => <ThreadRow key={t.id} t={t} active={t.id === activeId} onOpen={() => go(`/t/${t.id}`)} onContextMenu={e => ctx.open(e, () => tm.items(t))} />)}
+              {view ? <div className="sb-h"><span>{g.name}</span></div> : foldHead(g.name, g.items.length, folded.includes(g.name))}
+              {foldRows(g.name, g.items).map(t => <ThreadRow key={t.id} t={t} active={t.id === activeId} onOpen={() => go(`/t/${t.id}`)} onContextMenu={e => ctx.open(e, () => tm.items(t))} />)}
             </div>
           ))}
           {shared.length > 0 && !q && !ws && (
             <div className="sb-group">
-              <div className="sb-h"><span>Shared with me</span></div>
-              {shared.map(t => <ThreadRow key={t.id} t={t} active={t.id === activeId} onOpen={() => go(`/t/${t.id}`)} onContextMenu={e => ctx.open(e, () => tm.items(t))} />)}
+              {foldHead('Shared with me', shared.length, folded.includes('Shared with me'))}
+              {foldRows('Shared with me', shared).map(t => <ThreadRow key={t.id} t={t} active={t.id === activeId} onOpen={() => go(`/t/${t.id}`)} onContextMenu={e => ctx.open(e, () => tm.items(t))} />)}
             </div>
           )}
         </div>

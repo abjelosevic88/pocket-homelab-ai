@@ -395,7 +395,11 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
             </form>
           ) : (
             <h1 className="thread-title ellipsis" onClick={() => { if (!owner) return; setTitleDraft(t.title || threadTitle(t)); setEditingTitle(true) }} title={owner ? 'Click to rename' : undefined}>
-              {t.pinned && <Icon name="star" size={13} className="pin-ico" />}{threadTitle(t)}
+              {owner ? <button type="button" className={`fav-toggle ${t.pinned ? 'on' : ''}`} aria-pressed={!!t.pinned}
+                aria-label={t.pinned ? 'Remove from favorites' : 'Add to favorites'} title={t.pinned ? 'Favorite — click to remove' : 'Add to favorites'}
+                onClick={async e => { e.stopPropagation(); const th = await patch({ pinned: !t.pinned }); if (th) toast(th.pinned ? 'Added to favorites' : 'Removed from favorites') }}>
+                <Icon name="star" size={15} fill={!!t.pinned} /></button>
+              : t.pinned && <Icon name="star" size={13} fill className="fav-star" />}{threadTitle(t)}
             </h1>
           )}
           <div className="thread-sub">
