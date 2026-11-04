@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, V1 } from '../lib/api'
+import { appChatQuery } from '../lib/embed'
 import { ago } from '../lib/format'
 import { useApp } from '../lib/app-context'
 import type { Thread } from '../lib/types'
@@ -75,11 +76,14 @@ export function AppChatStart({ app, appURL, appName, history = false }: { app: s
   )
 }
 
-/** The app chat's parameters, when this frame is one (only inside another app's page). */
+/** The app chat's parameters, when this frame is one (only inside another app's page).
+ *  The frame remembers them (lib/embed.ts), so a new chat from anywhere in it
+ *  (⌘N, C, the palette, a deleted thread) opens this start again, not the server one. */
 export function appChatParams(params: URLSearchParams): { app: string; appURL: string; appName: string; history: boolean } | null {
-  const app = (params.get('ask') || '').toLowerCase()
-  const appURL = params.get('app_url') || ''
+  const q = params.get('ask') ? params : appChatQuery()
+  const app = (q.get('ask') || '').toLowerCase()
+  const appURL = q.get('app_url') || ''
   if (!/^[a-z][a-z0-9-]{0,30}$/.test(app)) return null
   try { const u = new URL(appURL); if (u.protocol !== 'https:' && u.protocol !== 'http:') return null } catch { return null }
-  return { app, appURL, appName: (params.get('app_name') || '').slice(0, 80) || `Pocket ${app[0].toUpperCase()}${app.slice(1)}`, history: params.get('history') === '1' }
+  return { app, appURL, appName: (q.get('app_name') || '').slice(0, 80) || `Pocket ${app[0].toUpperCase()}${app.slice(1)}`, history: params.get('history') === '1' }
 }
