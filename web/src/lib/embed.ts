@@ -5,12 +5,14 @@
 const KEY = 'pai-embed'
 
 const TABS = 'pai-embed-tabs'
+const LINKS = 'pai-embed-links'
 
 function detect(): boolean {
   if (window.parent === window) return false
   const q = new URLSearchParams(location.search)
   if (q.get('embed') === '1') sessionStorage.setItem(KEY, '1')
   if (q.get('tabs') === '1') sessionStorage.setItem(TABS, '1')
+  if (q.get('links') === '1') sessionStorage.setItem(LINKS, '1')
   return sessionStorage.getItem(KEY) === '1'
 }
 
@@ -31,6 +33,21 @@ export function openInParent(threadId: string, title: string) {
 }
 // the framing app has its own Ask: hide Core's floating launcher in here
 if (embedded) document.documentElement.classList.add('pai-embedded')
+
+/** The framing page opens links itself (?links=1, an app's own chat): one into
+ *  that app opens in its window, where the person already is, not a new one. */
+export const parentLinks = embedded && sessionStorage.getItem(LINKS) === '1'
+if (parentLinks) {
+  document.addEventListener('click', e => {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+    const a = (e.target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null
+    if (!a || a.hasAttribute('download')) return
+    const u = new URL(a.href, location.href)
+    if ((u.protocol !== 'https:' && u.protocol !== 'http:') || u.origin === location.origin) return
+    e.preventDefault()
+    window.parent.postMessage({ type: 'pocket-ai', link: u.href }, '*')
+  }, true)
+}
 
 /** Tells the framing page where the frame is (thread id once one is open) and
  *  how that thread is doing (running / waiting / idle / error), on every change. */
