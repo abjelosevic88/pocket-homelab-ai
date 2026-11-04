@@ -104,6 +104,16 @@
 .home.embed-draft .composer { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .home.embed-draft .composer textarea { flex: 1; max-height: none; }
 .embed-starting { display: grid; place-items: center; height: 100%; }
+.home.app-chat-start { display: flex; flex-direction: column; justify-content: flex-end; gap: 12px; height: 100%; padding: 14px; overflow-y: auto; }
+.app-chat-intro { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; margin: auto 8px 4px; color: var(--accent); }
+.app-chat-intro h1 { font-size: 19px; letter-spacing: -.3px; margin: 2px 0 0; color: var(--text); }
+.app-chat-intro p { margin: 0; font-size: 13px; line-height: 1.5; max-width: 340px; }
+.app-chat-intro kbd { font: 12px ui-monospace, monospace; padding: 1px 5px; border: 1px solid var(--border); border-radius: 5px; }
+.app-chat-earlier { display: flex; flex-direction: column; gap: 2px; }
+.app-chat-earlier-head { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; padding: 0 8px 4px; }
+.app-chat-earlier button { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 7px 8px; border: 0; border-radius: 8px; background: none; color: var(--text); font-size: 13px; text-align: left; cursor: pointer; }
+.app-chat-earlier button:hover { background: var(--hover, var(--accent-soft)); }
+.app-chat-earlier button .icon { flex-shrink: 0; color: var(--muted); }
 html.pai-embedded pocket-ask-launcher { display: none !important; }
 /* Embedded: thin scrollbars that show only while the panel is hovered */
 .app.embedded { scrollbar-width: thin; scrollbar-color: transparent transparent; }

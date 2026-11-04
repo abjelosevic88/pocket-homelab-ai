@@ -583,8 +583,8 @@ export const Composer = React.forwardRef<ComposerHandle, {
                 <span className="grow"><span className="slash-name">{p.app.name}</span><span className="slash-sub">@{p.app.slug} · {p.app.tools.length} {p.app.tools.length === 1 ? 'operation' : 'operations'}</span></span>
               </>
               : <>
-                <span className={`slash-ico at-ico ${p.item.kind}`}><Icon name={p.item.kind === 'note' ? 'note' : p.item.kind === 'file' ? 'paperclip' : 'link'} size={14} /></span>
-                <span className="grow"><span className="slash-name">{p.item.title}</span><span className="slash-sub">{[p.item.kind === 'note' ? 'Note' : p.item.kind === 'file' ? 'File' : 'Link', p.item.sub].filter(Boolean).join(' · ')}</span></span>
+                <span className={`slash-ico at-ico ${p.item.kind}`}><Icon name={p.item.kind === 'note' ? 'note' : p.item.kind === 'file' ? 'paperclip' : p.item.kind === 'page' ? 'file' : 'link'} size={14} /></span>
+                <span className="grow"><span className="slash-name">{p.item.title}</span><span className="slash-sub">{[p.item.kind === 'note' ? 'Note' : p.item.kind === 'file' ? 'File' : p.item.kind === 'page' ? 'Page' : 'Link', p.item.sub].filter(Boolean).join(' · ')}</span></span>
               </>
             return (
               <React.Fragment key={'found' in p ? 'f' + p.found.app + p.found.id : 'app' in p ? 'a' + p.app.slug : 'i' + p.item.id}>

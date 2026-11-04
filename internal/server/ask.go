@@ -138,6 +138,10 @@ type askCreate struct {
 	UploadIDs []string  `json:"upload_ids"`
 	NoMemory  bool      `json:"no_memory"`
 	AccountID *int64    `json:"account_id"` // Claude login; nil = the person's default
+	// AppChat: a general chat opened from an app's own chat button (Source = the
+	// app: its slug, address and name), not a question about one item. The page
+	// the person looks at comes with "@" as an attached file, when they add it.
+	AppChat bool `json:"app_chat"`
 }
 
 func (s *Server) createAsk(ctx context.Context, u *store.User, in askCreate) (*store.Thread, error) {
@@ -146,6 +150,14 @@ func (s *Server) createAsk(ctx context.Context, u *store.User, in askCreate) (*s
 	}
 	if in.Source.URL == "" {
 		in.Source = askSource{App: "ai", URL: s.cfg.BaseURL, Title: oneLine(in.Text, 160)}
+	}
+	title := firstNonEmpty(in.Source.Title, in.Text)
+	if in.AppChat {
+		// written here, not by the page: the app's name is all the browser supplies
+		name := oneLine(firstNonEmpty(in.Source.Title, in.Source.App), 80)
+		in.Source.Title = name
+		in.Source.Selection = "A general chat opened from " + name + "'s chat button, not about one item. The person may ask anything about " + name + " (its data, how to do something in it) or how it connects with their other Pocket apps. When they add the page they are looking at with @, it arrives as an attached file."
+		title = in.Text
 	}
 	sourceURL, err := url.Parse(in.Source.URL)
 	if err != nil || sourceURL.Host == "" || sourceURL.User != nil || (sourceURL.Scheme != "http" && sourceURL.Scheme != "https") {
@@ -165,7 +177,7 @@ func (s *Server) createAsk(ctx context.Context, u *store.User, in askCreate) (*s
 		return nil, err
 	}
 	cwd, _ = filepath.Abs(cwd)
-	t := &store.Thread{ID: uuid.NewString(), UserID: u.ID, Provider: "claude", Model: in.Model, Mode: "default", Effort: "medium", Cwd: cwd, Title: oneLine(firstNonEmpty(in.Source.Title, in.Text), 160), Source: "ask", SourceRef: in.Source.URL, NoMemory: in.NoMemory}
+	t := &store.Thread{ID: uuid.NewString(), UserID: u.ID, Provider: "claude", Model: in.Model, Mode: "default", Effort: "medium", Cwd: cwd, Title: oneLine(title, 160), Source: "ask", SourceRef: in.Source.URL, NoMemory: in.NoMemory}
 	if st, err := s.store.GetSettings(ctx, u.ID); err == nil {
 		t.AccountID = st.Claude.Account
 	}
