@@ -136,6 +136,8 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
   }, [proj?.on, proj?.threads, showArchive, shown])
   const [projOpen, setProjOpen] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('pai-sb-projects') || '[]') } catch { return [] } })
   useEffect(() => { localStorage.setItem('pai-sb-projects', JSON.stringify(projOpen)) }, [projOpen])
+  const [projFolded, setProjFolded] = useState(() => localStorage.getItem('pai-sb-projects-folded') === '1')
+  useEffect(() => { localStorage.setItem('pai-sb-projects-folded', projFolded ? '1' : '0') }, [projFolded])
   const groups = useMemo(() => {
     const out: { name: string; items: Thread[] }[] = []
     for (const t of shown) {
@@ -264,8 +266,12 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
           {base && shown.length === 0 && !(shared.length && !q && !ws) && <div className="sb-empty">{q || ws ? 'No threads match.' : showArchive ? 'Nothing archived.' : 'No threads yet — start one above.'}</div>}
           {projIssues.length > 0 && (
             <div className="sb-group">
-              <div className="sb-h"><span>Projects</span>{proj?.projects_url && <a className="btn ghost icon-only xs" href={proj.projects_url} target="_blank" rel="noreferrer" title="Open Pocket Projects" aria-label="Open Pocket Projects"><Icon name="external" size={12} /></a>}</div>
-              {projIssues.map(g => {
+              <div className="sb-h">
+                <button type="button" className={`sb-h-fold ${projFolded ? '' : 'open'}`} aria-expanded={!projFolded} onClick={() => setProjFolded(f => !f)} title={projFolded ? 'Show Projects' : 'Fold Projects'}>
+                  <Icon name="chevron-right" size={11} className="sb-h-caret" /><span>Projects</span>{projFolded && <span className="sb-issue-n tnum">{projIssues.length}</span>}
+                </button>
+                {proj?.projects_url && <a className="btn ghost icon-only xs" href={proj.projects_url} target="_blank" rel="noreferrer" title="Open Pocket Projects" aria-label="Open Pocket Projects"><Icon name="external" size={12} /></a>}</div>
+              {!projFolded && projIssues.map(g => {
                 const is = proj?.issues[g.ref]
                 const open = projOpen.includes(g.ref) || g.items.some(t => t.id === activeId)
                 const issueUrl = is?.url || (proj?.projects_url ? `${proj.projects_url}/issue/${g.ref}` : '')
