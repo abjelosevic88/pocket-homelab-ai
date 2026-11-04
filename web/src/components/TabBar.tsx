@@ -55,7 +55,11 @@ export function useTabs(enabled: boolean) {
     || (fileHost && filePathParam ? fileTab(Number(fileHost), filePathParam) : '')
   useEffect(() => { localStorage.setItem(KEY, JSON.stringify(tabs)) }, [tabs])
   useEffect(() => { localStorage.setItem(CLOSED, JSON.stringify(closed)) }, [closed])
-  useEffect(() => { if (enabled && active) { setTabs(t => t.includes(active) ? t : [...t, active]); setClosed(c => c.includes(active) ? c.filter(x => x !== active) : c) } }, [enabled, active])
+  // conversations another agent started (pocket_agent_start) never get a tab:
+  // they are reached from their parent's agents chip and the sidebar
+  const byAgent = useCallback((id: string) => !!threads?.some(t => t.id === id && t.source === 'agent'), [threads])
+  useEffect(() => { if (enabled && active && !byAgent(active)) { setTabs(t => t.includes(active) ? t : [...t, active]); setClosed(c => c.includes(active) ? c.filter(x => x !== active) : c) } }, [enabled, active, byAgent])
+  useEffect(() => { setTabs(t => { const next = t.filter(id => !byAgent(id)); return next.length === t.length ? t : next }) }, [byAgent])
 
   const close = useCallback((ids: string[], remember = true) => {
     const next = tabs.filter(x => !ids.includes(x))
