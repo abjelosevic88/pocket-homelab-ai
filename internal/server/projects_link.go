@@ -80,27 +80,31 @@ func (s *Server) handleProjectsLink(w http.ResponseWriter, r *http.Request) {
 		rows.Close()
 	}
 	out["threads"] = threads
-	// one Projects workspace at a time is open to Pocket AI: the conversations
-	// about the others are paused (Projects refuses their tool calls)
+	// only the Projects workspaces open in a Projects window are open to
+	// Pocket AI: the conversations about the others are paused (Projects
+	// refuses their tool calls)
 	if ws := s.projectsWorkspaces(r.Context(), u.Email); len(ws) > 1 {
-		active, own := "", ""
+		active, own, open := []string{}, "", ""
 		for _, w := range ws {
 			if w.Active {
-				active = w.Address
+				active = append(active, strings.ToLower(w.Address))
+				if w.Open || open == "" {
+					open = w.Address
+				}
 			}
 			if w.Own {
-				own = w.Address
+				own = strings.ToLower(w.Address)
 			}
 		}
-		out["agent_workspace"] = active
+		out["agent_workspace"] = open
 		paused := map[string]string{}
 		for id, ref := range threads {
 			addr := own
 			if i := strings.LastIndex(ref, "/"); i > 0 {
 				addr = strings.ToLower(ref[:i])
 			}
-			if active != "" && addr != active {
-				paused[id] = "Paused: " + addr + " isn't the workspace open in Pocket Projects (" + active + " is), so this conversation can't read or change its tickets. Open " + addr + " in Projects to continue with them."
+			if len(active) > 0 && !slices.Contains(active, addr) {
+				paused[id] = "Paused: " + addr + " isn't open in Pocket Projects (" + strings.Join(active, ", ") + " is), so this conversation can't read or change its tickets. Open " + addr + " in a Projects window to continue with them."
 			}
 		}
 		out["paused"] = paused
@@ -168,7 +172,8 @@ func (s *Server) projectsIssues(ctx context.Context, email string, refs []string
 type projectsWorkspace struct {
 	Address string `json:"address"`
 	Own     bool   `json:"own"`
-	Active  bool   `json:"active"`
+	Active  bool   `json:"active"` // open to Pocket AI: a Projects window shows it (several may)
+	Open    bool   `json:"open"`   // the one looked at last
 }
 
 var projectsWS sync.Map // email → projectsWSCached
