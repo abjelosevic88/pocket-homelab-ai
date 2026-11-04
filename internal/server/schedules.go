@@ -255,6 +255,7 @@ func (s *Server) scheduleLoop(ctx context.Context) {
 			return
 		case <-t.C:
 		}
+		s.runHeartbeats(ctx)
 		due, err := s.store.DueSchedules(ctx, store.FormatTime(time.Now()))
 		if err != nil {
 			continue

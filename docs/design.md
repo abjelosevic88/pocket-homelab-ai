@@ -167,6 +167,19 @@ don't get them.
   `postMessage`: the timeline keeps what was typed, the agent gets the brief.
 - UI: the parent shows an "N agents" chip above the composer / in the run bar;
   a child shows "Started by …"; the sidebar nests children under their parent.
+- Other conversations: send/read/wait/stop also take any of the same
+  person's coding conversations (`agentTarget`; `pocket_agent_list` scope
+  `all`). Reading and waiting are free; sending to or stopping one the agent
+  did not start is an approval card (app `ai`, kind `change`) showing that
+  conversation's permissions. Its answer comes back the same way
+  (`agent_reports` is keyed by the receiving conversation, whatever its
+  source; `TakeReportFrom` only takes a report owed to the caller).
+- Heartbeats (`heartbeats.go`, migration 0032): `pocket_agent_heartbeat_create`
+  (approval card) stores a prompt + schedule spec (`ParseSpec`, ≥5 min apart,
+  ≤5 per conversation, ends after a week by default). `scheduleLoop` →
+  `runHeartbeats` posts due ones as `<pocket-heartbeat id spec>` into the
+  conversation, skipping a beat while it is busy; archived/ended/used-up ones
+  are dropped. `GET/DELETE /threads/{id}/heartbeats[/{hid}]`, chip in the thread.
 
 ## Schedules
 

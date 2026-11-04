@@ -172,6 +172,8 @@ export function foldedMessage(text: string): Folded | null {
     case 'agent-message':
       body = body.replace(/^\[Subagent hand-back\][^\n]*\n+/, '').trim()
       return { icon: 'bot', label: 'Subagent report', body, rest }
+    case 'pocket-heartbeat':
+      return { icon: 'activity', label: `Heartbeat · ${attr(attrs, 'spec') || 'scheduled'}`, body, rest }
     case 'pocket-agent-report': {
       // an agent this conversation started answered (pocket_agent_start)
       const name = attr(attrs, 'from-name') || 'an agent'

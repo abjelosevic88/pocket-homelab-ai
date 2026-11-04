@@ -11,7 +11,7 @@ import type { Item, Thread } from '../lib/types'
 import { Icon } from './icons'
 import { RunDots, elapsed, useNow } from './RunningList'
 import { SubagentsChip } from './Subagents'
-import { AgentsChip } from './AgentChildren'
+import { AgentsChip, HeartbeatsChip } from './AgentChildren'
 import { errMsg, useToast } from './ui'
 
 // Fork the thread and open the copy in a new tab. window.open has to happen
@@ -66,6 +66,7 @@ export function RunBar({ t, items, reconnecting }: { t: Thread; items: Item[]; r
         </>}
         <SubagentsChip t={t} />
         <AgentsChip t={t} />
+        <HeartbeatsChip t={t} owner={false} />
         <span className="grow" />
         {t.provider_session_id && <button type="button" className="btn ghost icon-only xs" onClick={() => fork()} title="Fork into a new tab" aria-label="Fork into a new tab"><Icon name="fork" size={15} /></button>}
         <span className="run-time tnum" title={since ? `Since ${new Date(since).toLocaleTimeString()}` : ''}>{elapsed(since, now)}</span>

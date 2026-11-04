@@ -59,8 +59,10 @@ Personal app assistance: [Briefing, workflows, memory, sources and document uplo
 - **Agents that start agents**: an agent can start other agents (Claude Code or Codex, on any of your
   machines, in a folder or its own worktree), message them, wait for them and read what they wrote; each is a
   conversation of its own, nested under the one that started it, and its answer comes back by itself. Starting
-  one asks you first unless you always allow it. `/handoff`, `/advisor` (second opinion from the other agent)
-  and `/committee` (Claude Code and Codex in parallel, combined) are built in.
+  one asks you first unless you always allow it. Agents can also message your other conversations (with your
+  OK) and set heartbeats — a prompt that comes back to the conversation on a schedule. `/handoff`, `/advisor`
+  (second opinion from the other agent) and `/committee` (Claude Code and Codex in parallel, combined) are
+  built in.
 - **Other machines**, like Paseo's hosts: add a server in Settings → Agents → Servers (any machine this server
   can `ssh` into without a password, a tailnet name works) and pick it next to the folder when you start a
   thread. The CLI runs there with that machine's own login; folders and git branches are browsed over ssh, and

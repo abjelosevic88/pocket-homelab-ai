@@ -2024,9 +2024,9 @@ func (k *runSink) TurnDone(ti agent.TurnInfo) {
 	rt.publishThread(t)
 
 	scheduled := !dup && ((t.Source == "schedule" && rt.s.scheduleFinished(t, ti, lastText)) || rt.s.workflowFinished(t, ti, lastText))
-	// an agent another agent started: its answer goes back to that one
-	// (agent_tools.go), which tells the person, not this one
-	reports := !dup && queuedN == 0 && t.Source == "agent" && rt.s.store.OwesReport(rt.ctx, t.ID)
+	// a conversation another agent started or messaged: its answer goes back
+	// to that one (agent_tools.go), which tells the person, not this one
+	reports := !dup && queuedN == 0 && rt.s.store.OwesReport(rt.ctx, t.ID)
 	if reports {
 		go rt.s.agentTurnDone(t.ID)
 	}

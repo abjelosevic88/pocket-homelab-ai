@@ -34,7 +34,7 @@ const (
 	agentWaitMax     = 600 // seconds; Codex gives a tool call 660 s
 )
 
-const agentToolsInstructions = `Other agents: with pocket_agent_start you can hand work to another coding agent (Claude Code or Codex, on this or another of the person's machines, optionally in its own git worktree). It runs as its own Pocket AI conversation, which the person can open and join. Use it when the person asks (hand off, a second opinion, several agents at once) or when independent parallel work clearly pays off; do small things yourself. An agent does not see this conversation: give it a complete, self-contained task. Starting one asks the person first unless they always allow it. When it finishes, its answer comes back to you as a message (or directly, if you wait with pocket_agent_wait); continue it with pocket_agent_send. Agents that change code at the same time as you or each other need their own worktree (worktree: true).`
+const agentToolsInstructions = `Other agents: with pocket_agent_start you can hand work to another coding agent (Claude Code or Codex, on this or another of the person's machines, optionally in its own git worktree). It runs as its own Pocket AI conversation, which the person can open and join. Use it when the person asks (hand off, a second opinion, several agents at once) or when independent parallel work clearly pays off; do small things yourself. An agent does not see this conversation: give it a complete, self-contained task. Starting one asks the person first unless they always allow it. When it finishes, its answer comes back to you as a message (or directly, if you wait with pocket_agent_wait); continue it with pocket_agent_send. Agents that change code at the same time as you or each other need their own worktree (worktree: true). You can also message the person's other conversations (pocket_agent_list scope all; that asks the person first), and set a heartbeat (pocket_agent_heartbeat_create) to be reminded here on a schedule, e.g. to check on something long-running.`
 
 // agentTools are the pocket_agent_* tool definitions.
 func agentTools() []askTool {
@@ -58,23 +58,41 @@ func agentTools() []askTool {
 "mode":{"type":"string","description":"A permission mode id from pocket_agent_options; never more permissive than this conversation's. Default: like this conversation."},
 "report":{"type":"boolean","description":"Send its answer to this conversation as a message when it finishes (default true)."}
 },"required":["prompt"]}`, false},
-		{"pocket_agent_send", "Send another message to an agent this conversation started (a follow-up, an answer to its question, a correction). If it is working, the message waits for its turn to end, or goes into its current turn with now: true. Its answer comes back like the first one.", `{"type":"object","properties":{"agent_id":{"type":"string"},"message":{"type":"string","maxLength":100000},"now":{"type":"boolean","description":"Into its current turn instead of after it."},"report":{"type":"boolean","description":"Send its answer here when it finishes (default true)."}},"required":["agent_id","message"]}`, false},
-		{"pocket_agent_wait", "Wait until agents this conversation started have finished their turn (all of them, or the first one with until: any), up to timeout_seconds (default 300, at most 600). Returns each one's state and, when finished, its answer. An agent waiting for the person's approval keeps waiting; call again to wait longer.", `{"type":"object","properties":{"agent_ids":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":12},"until":{"type":"string","enum":["all","any"]},"timeout_seconds":{"type":"integer","minimum":1,"maximum":600}},"required":["agent_ids"]}`, true},
-		{"pocket_agent_read", "Read the latest messages of an agent this conversation started (what it was asked and what it answered; not its tool calls).", `{"type":"object","properties":{"agent_id":{"type":"string"},"messages":{"type":"integer","minimum":1,"maximum":30,"description":"How many of the latest messages (default 6)."}},"required":["agent_id"]}`, true},
-		{"pocket_agent_list", "List the agents this conversation started, with their state.", `{"type":"object","properties":{}}`, true},
-		{"pocket_agent_stop", "Stop an agent this conversation started (it ends its current turn; nothing is reported back).", `{"type":"object","properties":{"agent_id":{"type":"string"}},"required":["agent_id"]}`, false},
+		{"pocket_agent_send", "Send a message to an agent this conversation started (a follow-up, an answer to its question, a correction), or to another of the person's conversations (pocket_agent_list with scope all) — that one asks the person first. If it is working, the message waits for its turn to end, or goes into its current turn with now: true. Its answer comes back to you as a message.", `{"type":"object","properties":{"agent_id":{"type":"string"},"message":{"type":"string","maxLength":100000},"now":{"type":"boolean","description":"Into its current turn instead of after it."},"report":{"type":"boolean","description":"Send its answer here when it finishes (default true)."}},"required":["agent_id","message"]}`, false},
+		{"pocket_agent_wait", "Wait until agents (or other conversations of the person's) have finished their turn (all of them, or the first one with until: any), up to timeout_seconds (default 300, at most 600). Returns each one's state and, when finished, its answer. An agent waiting for the person's approval keeps waiting; call again to wait longer.", `{"type":"object","properties":{"agent_ids":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":12},"until":{"type":"string","enum":["all","any"]},"timeout_seconds":{"type":"integer","minimum":1,"maximum":600}},"required":["agent_ids"]}`, true},
+		{"pocket_agent_read", "Read the latest messages of an agent this conversation started or of another of the person's conversations (what it was asked and what it answered; not its tool calls).", `{"type":"object","properties":{"agent_id":{"type":"string"},"messages":{"type":"integer","minimum":1,"maximum":30,"description":"How many of the latest messages (default 6)."}},"required":["agent_id"]}`, true},
+		{"pocket_agent_list", "List the agents this conversation started, with their state; scope all lists the person's other recent conversations too (search them with query).", `{"type":"object","properties":{"scope":{"type":"string","enum":["started","all"]},"query":{"type":"string","maxLength":100}}}`, true},
+		{"pocket_agent_stop", "Stop an agent this conversation started (it ends its current turn; nothing is reported back). Stopping another conversation's agent asks the person first.", `{"type":"object","properties":{"agent_id":{"type":"string"}},"required":["agent_id"]}`, false},
+		{"pocket_agent_heartbeat_create", "Set a heartbeat: a prompt that comes back to THIS conversation on a schedule (e.g. check on a deploy every 30 minutes, a daily report), until removed, max_runs are used or it ends. The person approves it unless they always allow it. A beat is skipped while you are still working.", `{"type":"object","properties":{
+"prompt":{"type":"string","maxLength":20000,"description":"What you will be told each time (write it for your future self)."},
+"spec":{"type":"string","description":"When: \"every 30m\", \"every 2h\", \"hourly\", \"daily 08:00\", \"weekdays 09:00\", \"weekly mon,thu 08:00\" or a five-field cron line, in the person's time zone. At least 5 minutes apart."},
+"max_runs":{"type":"integer","minimum":1,"maximum":1000,"description":"Stop after this many beats (default: no limit)."},
+"ends_after_hours":{"type":"integer","minimum":0,"maximum":2160,"description":"Stop after this many hours (default 168 = a week; 0 = never)."}
+},"required":["prompt","spec"]}`, false},
+		{"pocket_agent_heartbeats", "List this conversation's heartbeats.", `{"type":"object","properties":{}}`, true},
+		{"pocket_agent_heartbeat_delete", "Remove one of this conversation's heartbeats.", `{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}`, false},
 	}
 	out := make([]askTool, 0, len(defs))
 	for _, d := range defs {
 		t := askTool{Name: d.name, Description: d.description, InputSchema: json.RawMessage(d.schema)}
 		t.Annotations.ReadOnly = d.read
-		if d.name == "pocket_agent_start" {
+		if d.name == "pocket_agent_start" || d.name == "pocket_agent_heartbeat_create" {
 			// "Always allow… everything new in AI" covers starting agents
 			t.Meta.App, t.Meta.Kind = "ai", "add"
 		}
 		out = append(out, t)
 	}
 	return out
+}
+
+// agentTool is one of the agent tool definitions.
+func agentTool(name string) askTool {
+	for _, t := range agentTools() {
+		if t.Name == name {
+			return t
+		}
+	}
+	return askTool{Name: name}
 }
 
 // agentToolsOn: coding conversations get the agent tools (Ask chats don't).
@@ -206,15 +224,6 @@ func (s *Server) agentDepth(ctx context.Context, t *store.Thread) int {
 	return d
 }
 
-// childOf loads an agent this conversation started.
-func (s *Server) childOf(ctx context.Context, t *store.Thread, id string) (*store.Thread, error) {
-	c, err := s.store.GetThreadAny(ctx, strings.TrimSpace(id))
-	if err != nil || c.Source != "agent" || c.SourceRef != t.ID || c.UserID != t.UserID {
-		return nil, errors.New("No agent with that id was started from this conversation (pocket_agent_list lists them)")
-	}
-	return c, nil
-}
-
 // ---------- permission modes ----------
 
 // modeLevel orders permission modes of both agents from read only (0) to
@@ -321,27 +330,34 @@ func (s *Server) callAgentTool(ctx, session context.Context, t *store.Thread, si
 		if json.Unmarshal(raw, &in) != nil || strings.TrimSpace(in.Message) == "" {
 			return toolFailure("Give agent_id and the message")
 		}
-		c, err := s.childOf(ctx, t, in.ID)
+		c, child, err := s.agentTarget(ctx, t, in.ID)
 		if err != nil {
 			return toolFailure(err.Error())
 		}
 		if c.Archived {
-			return toolFailure("That agent's conversation is archived")
+			return toolFailure("That conversation is archived")
 		}
 		if s.rt.isExternal(c.ID) {
-			return toolFailure("That agent's conversation is being driven elsewhere right now; try again when it is idle")
+			return toolFailure("That conversation is being driven elsewhere right now; try again when it is idle")
+		}
+		if !child {
+			// another of the person's conversations: its agent works on with its
+			// own permissions, so the person says yes first
+			if why := s.approveOther(ctx, session, owner, t, sink, "pocket_agent_send", "Message another conversation", c, raw, map[string]any{"message": tailHead(in.Message, 4000)}); why != "" {
+				return toolFailure(why)
+			}
 		}
 		if in.Report == nil || *in.Report {
 			_ = s.store.OweReport(ctx, c.ID, t.ID)
 		} else {
-			s.store.TakeReport(ctx, c.ID)
+			s.store.TakeReportFrom(ctx, c.ID, t.ID)
 		}
 		queued, err := s.postMessage(context.WithoutCancel(ctx), owner, c, in.Message, nil, in.Now)
 		if err != nil {
-			s.store.TakeReport(ctx, c.ID)
+			s.store.TakeReportFrom(ctx, c.ID, t.ID)
 			return toolFailure(err.Error())
 		}
-		s.log.Info("agent message", "thread", t.ID, "agent", c.ID, "now", in.Now)
+		s.log.Info("agent message", "thread", t.ID, "to", c.ID, "child", child, "now", in.Now)
 		return toolResult(map[string]any{"agent_id": c.ID, "sent": true, "waits_for_its_turn": queued}, false)
 	case "pocket_agent_wait":
 		var in struct {
@@ -368,19 +384,40 @@ func (s *Server) callAgentTool(ctx, session context.Context, t *store.Thread, si
 		if json.Unmarshal(raw, &in) != nil {
 			return toolFailure("Give agent_id")
 		}
-		c, err := s.childOf(ctx, t, in.ID)
+		c, _, err := s.agentTarget(ctx, t, in.ID)
 		if err != nil {
 			return toolFailure(err.Error())
 		}
 		return toolResult(s.agentRead(ctx, c, in.N), false)
 	case "pocket_agent_list":
-		list, err := s.store.ChildThreads(ctx, t.ID)
-		if err != nil {
+		var in struct {
+			Scope string `json:"scope"`
+			Query string `json:"query"`
+		}
+		_ = json.Unmarshal(raw, &in)
+		var list []*store.Thread
+		if in.Scope == "all" {
+			all, err := s.store.ListThreads(ctx, t.UserID, store.ThreadFilter{Q: in.Query, Limit: 40})
+			if err != nil {
+				return toolFailure(err.Error())
+			}
+			for _, c := range all {
+				if c.ID != t.ID && c.Source != "ask" {
+					list = append(list, c)
+				}
+			}
+		} else if list, err = s.store.ChildThreads(ctx, t.ID); err != nil {
 			return toolFailure(err.Error())
 		}
-		out := []agentInfo{}
+		out := []map[string]any{}
 		for _, c := range list {
-			out = append(out, s.agentState(ctx, c, false))
+			st := s.agentState(ctx, c, false)
+			row := map[string]any{"agent_id": st.ID, "title": st.Title, "provider": st.Provider, "machine": st.Machine, "folder": st.Folder, "state": st.State,
+				"started_by_you": c.Source == "agent" && c.SourceRef == t.ID, "last_activity": c.ActivityAt}
+			if in.Scope == "all" {
+				row["permissions"] = modeName(c.Provider, c.Mode)
+			}
+			out = append(out, row)
 		}
 		return toolResult(map[string]any{"agents": out}, false)
 	case "pocket_agent_stop":
@@ -390,20 +427,62 @@ func (s *Server) callAgentTool(ctx, session context.Context, t *store.Thread, si
 		if json.Unmarshal(raw, &in) != nil {
 			return toolFailure("Give agent_id")
 		}
-		c, err := s.childOf(ctx, t, in.ID)
+		c, child, err := s.agentTarget(ctx, t, in.ID)
 		if err != nil {
 			return toolFailure(err.Error())
 		}
-		s.store.TakeReport(ctx, c.ID)
+		if !child {
+			if why := s.approveOther(ctx, session, owner, t, sink, "pocket_agent_stop", "Stop another conversation's agent", c, raw, nil); why != "" {
+				return toolFailure(why)
+			}
+		}
+		s.store.TakeReportFrom(ctx, c.ID, t.ID)
 		if !s.stopReattached(c.ID) {
 			if err := s.rt.interrupt(c.ID); err != nil {
 				return toolFailure(err.Error())
 			}
 		}
-		s.log.Info("agent stopped by its parent", "thread", t.ID, "agent", c.ID)
+		s.log.Info("agent stopped by another", "thread", t.ID, "agent", c.ID, "child", child)
 		return toolResult(map[string]any{"agent_id": c.ID, "stopped": true}, false)
+	case "pocket_agent_heartbeat_create", "pocket_agent_heartbeats", "pocket_agent_heartbeat_delete":
+		return s.heartbeatTool(ctx, session, owner, t, sink, name, raw)
 	}
 	return toolFailure("Unknown agent tool")
+}
+
+// agentTarget loads a conversation an agent may talk to: one it started
+// (child = true), or another of the same person's coding conversations.
+func (s *Server) agentTarget(ctx context.Context, t *store.Thread, id string) (*store.Thread, bool, error) {
+	c, err := s.store.GetThreadAny(ctx, strings.TrimSpace(id))
+	if err != nil || c.UserID != t.UserID || c.Source == "ask" {
+		return nil, false, errors.New("No conversation with that id (pocket_agent_list lists them; scope all for every conversation of the person's)")
+	}
+	if c.ID == t.ID {
+		return nil, false, errors.New("That is this conversation")
+	}
+	return c, c.Source == "agent" && c.SourceRef == t.ID, nil
+}
+
+// approveOther asks the person before an agent acts on a conversation it did
+// not start. "" = approved, else why not.
+func (s *Server) approveOther(ctx, session context.Context, owner *store.User, t *store.Thread, sink *runSink, toolName, title string, c *store.Thread, raw json.RawMessage, extra map[string]any) string {
+	tool := askTool{Name: toolName}
+	tool.Meta.App, tool.Meta.Kind = "ai", "change"
+	preview := map[string]any{"conversation": firstNonEmpty(c.Title, c.ID), "agent": providerName(c.Provider), "where": s.machineName(ctx, c.HostID) + ": " + c.Cwd, "permissions": modeName(c.Provider, c.Mode)}
+	for k, v := range extra {
+		preview[k] = v
+	}
+	pv, _ := json.Marshal(preview)
+	req := agent.Request{ID: "ask-" + uuid.NewString(), Type: "permission", ToolName: tool.Name, Title: title, Input: pv, Status: "pending", ForID: owner.ID, App: "ai", Kind: "change"}
+	match := awayMatch(tool.Name, raw)
+	switch s.approveChange(ctx, session, t, sink, owner.ID, tool, req, match) {
+	case "allow":
+		return ""
+	case "defer":
+		s.saveDeferred(t.ID, req, owner.ID, match)
+		return awayDeferText
+	}
+	return "The person did not approve it. Nothing was sent."
 }
 
 func (s *Server) agentOptions(ctx context.Context, owner *store.User, t *store.Thread) map[string]any {
@@ -538,7 +617,7 @@ func (s *Server) agentStart(ctx, session context.Context, owner *store.User, t *
 	report := in.Report == nil || *in.Report
 
 	// the person approves the start (or always allows it)
-	tool := agentTools()[1]
+	tool := agentTool("pocket_agent_start")
 	where := s.machineName(ctx, host) + ": " + firstNonEmpty(nt.Cwd, "its home folder")
 	preview := map[string]any{
 		"agent":       strings.TrimSpace(providerName(provider) + " · " + firstNonEmpty(nt.Model, "default model") + " " + nt.Effort),
@@ -620,7 +699,7 @@ func (s *Server) agentWait(ctx, session context.Context, t *store.Thread, ids []
 	kids := []*store.Thread{}
 	seen := map[string]bool{}
 	for _, id := range ids {
-		c, err := s.childOf(ctx, t, id)
+		c, _, err := s.agentTarget(ctx, t, id)
 		if err != nil {
 			return toolFailure(err.Error() + ": " + id)
 		}
@@ -652,7 +731,7 @@ func (s *Server) agentWait(ctx, session context.Context, t *store.Thread, ids []
 		if done == len(kids) || (first && done > 0) {
 			for _, st := range states {
 				if st.Finished {
-					s.store.TakeReport(ctx, st.ID) // the answer is here: no message as well
+					s.store.TakeReportFrom(ctx, st.ID, t.ID) // the answer is here: no message as well
 				}
 			}
 			return toolResult(map[string]any{"agents": states}, false)
@@ -701,7 +780,7 @@ func (s *Server) agentTurnDone(childID string) {
 		return // pocket_agent_wait hands it over
 	}
 	c, err := s.store.GetThreadAny(ctx, childID)
-	if err != nil || c.Source != "agent" {
+	if err != nil {
 		return
 	}
 	st := s.agentState(ctx, c, true)
@@ -724,7 +803,7 @@ func (s *Server) agentTurnDone(childID string) {
 		s.log.Info("agent report not delivered: its parent is driven elsewhere", "agent", c.ID, "parent", p.ID)
 		return
 	}
-	if _, err := s.postMessage(ctx, owner, p, agentReport(st), nil); err != nil {
+	if _, err := s.postMessage(ctx, owner, p, agentReport(st, c.Source == "agent" && c.SourceRef == p.ID), nil); err != nil {
 		s.log.Warn("agent report not delivered", "agent", c.ID, "parent", p.ID, "err", err)
 		return
 	}
@@ -733,7 +812,11 @@ func (s *Server) agentTurnDone(childID string) {
 
 // agentReport is the message an agent's answer comes back as (the timeline
 // folds it into one row).
-func agentReport(st agentInfo) string {
+func agentReport(st agentInfo, started bool) string {
+	who := "The agent you started"
+	if !started {
+		who = "The conversation you messaged"
+	}
 	attr := func(v string) string {
 		return strings.NewReplacer(`"`, "'", "<", "‹", ">", "›", "\n", " ").Replace(v)
 	}
@@ -741,14 +824,14 @@ func agentReport(st agentInfo) string {
 	fmt.Fprintf(&b, "<pocket-agent-report from-name=\"%s\" agent-id=\"%s\" state=\"%s\">\n", attr(st.Title), st.ID, st.State)
 	switch st.State {
 	case "failed":
-		fmt.Fprintf(&b, "The agent you started stopped with an error: %s\n", firstNonEmpty(st.Error, "unknown error"))
+		fmt.Fprintf(&b, "%s stopped with an error: %s\n", who, firstNonEmpty(st.Error, "unknown error"))
 		if st.Reply != "" {
 			fmt.Fprintf(&b, "What it wrote before that:\n\n%s\n", st.Reply)
 		}
 	case "stopped":
-		fmt.Fprintf(&b, "The agent you started was stopped before it finished. What it wrote:\n\n%s\n", firstNonEmpty(st.Reply, "(nothing)"))
+		fmt.Fprintf(&b, "%s was stopped before it finished. What it wrote:\n\n%s\n", who, firstNonEmpty(st.Reply, "(nothing)"))
 	default:
-		fmt.Fprintf(&b, "The agent you started finished. Its answer:\n\n%s\n", firstNonEmpty(st.Reply, "(it wrote nothing)"))
+		fmt.Fprintf(&b, "%s finished. Its answer:\n\n%s\n", who, firstNonEmpty(st.Reply, "(it wrote nothing)"))
 	}
 	fmt.Fprintf(&b, "\n(agent_id %s — continue it with pocket_agent_send; the person can open it at %s)\n</pocket-agent-report>", st.ID, firstNonEmpty(st.URL, "/t/"+st.ID))
 	return b.String()
