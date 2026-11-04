@@ -8,7 +8,7 @@ import { openInParent, parentTabs } from '../lib/embed'
 import { openSSE } from '../lib/sse'
 import type { Item, Thread, ThreadDetail, Upload } from '../lib/types'
 import { SubagentsChip } from '../components/Subagents'
-import { AgentsChip, ParentChip } from '../components/AgentChildren'
+import { AgentsChip, HeartbeatsChip, ParentChip } from '../components/AgentChildren'
 import { RunBar, useForkNewTab } from '../components/RunBar'
 import { QueueStrip } from '../components/QueueStrip'
 import { AgentPicker } from '../components/AgentPicker'
@@ -133,6 +133,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   }, [id, load, setViewing])
 
   // live updates for this thread
+  const [hbRev, setHbRev] = useState(0) // heartbeats changed (SSE)
   useEffect(() => {
     if (!id) return
     let first = true
@@ -155,6 +156,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
       item_removed: d => { const { key } = d as { key: string }; setItems(list => list ? list.filter(x => x.key !== key) : list) },
       thread: d => { const th = d as Thread; if (th?.id === id) { setThread(th); upsertThread(th) } },
       revoked: () => { setMissing(true); dropThread(id) }, // no longer shared with you
+      heartbeats: () => setHbRev(n => n + 1),
       ping: () => {},
     }, { onOpen: () => { setStreamDown(false); if (!first) load(); first = false }, onDown: () => setStreamDown(true) })
     return close
@@ -452,7 +454,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
         {newBelow && !atBottom && <button type="button" className="new-below" onClick={() => { toBottom(true); setNewBelow(false) }}><Icon name="arrow-down" size={13} />New messages</button>}
         <div className="thread-bottom-inner">
           {(running || t.status === 'waiting' || !!t.subagents?.length || !!t.background?.length) && items ? <RunBar t={t} items={items} reconnecting={streamDown} />
-            : <div className="sub-dock">{t.provider === 'claude' && t.provider_session_id && <SubagentsChip t={t} />}<AgentsChip t={t} /></div>}
+            : <div className="sub-dock">{t.provider === 'claude' && t.provider_session_id && <SubagentsChip t={t} />}<AgentsChip t={t} /><HeartbeatsChip t={t} rev={hbRev} owner={owner} /></div>}
           <QueueStrip threadId={id} queued={queuedItems} agent={t.provider === 'codex' ? 'Codex' : 'Claude'} onClearAll={canSend ? clearQueue : undefined} onEdit={canSend ? async it => {
             const draft = await api.post<{ text: string; uploads: Upload[] }>(`${V1}/threads/${id}/queue/${encodeURIComponent(it.key)}/edit`)
             composer.current?.restoreDraft(draft.text, draft.uploads)

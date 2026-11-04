@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -201,11 +202,79 @@ for line in sys.stdin:
 		t.Fatalf("list: %v", listed)
 	}
 
-	// another conversation's agent is not this one's to message
-	other, _, _, otherTools := agentParent(t, s, u, root, "default")
-	_ = other
-	if res := otherTools.call("pocket_agent_send", map[string]any{"agent_id": childID, "message": "hi"}, true); !strings.Contains(res["error"].(string), "No agent with that id") {
-		t.Fatalf("foreign agent: %v", res)
+	// another conversation may message it too, but only with the person's OK
+	other, otherRun, _, otherTools := agentParent(t, s, u, root, "default")
+	res := make(chan map[string]any, 1)
+	go func() {
+		res <- otherTools.call("pocket_agent_send", map[string]any{"agent_id": childID, "message": "hi"}, true)
+	}()
+	rid := pendingRequest(t, otherRun)
+	c.want("POST", "/api/v1/threads/"+other.ID+"/requests/"+rid, map[string]string{"decision": "deny"}, 204, nil)
+	if out := <-res; !strings.Contains(out["error"].(string), "did not approve") {
+		t.Fatalf("other conversation: %v", out)
+	}
+	// someone else's conversations are out of reach
+	_, stranger := person(t, s, h, "stranger@example.test", "admin", true)
+	theirs := thread(t, s, stranger.ID, root)
+	if out := tools.call("pocket_agent_read", map[string]any{"agent_id": theirs.ID}, true); !strings.Contains(out["error"].(string), "No conversation with that id") {
+		t.Fatalf("stranger's conversation: %v", out)
+	}
+	all := tools.call("pocket_agent_list", map[string]any{"scope": "all"})
+	if l := all["agents"].([]any); len(l) != 2 { // the child and the other one, not itself, not the stranger's
+		t.Fatalf("list all: %v", all)
+	}
+}
+
+// A heartbeat: approved, sent to the idle conversation when due, skipped
+// while it works, removable; too-frequent ones are refused.
+func TestAgentHeartbeat(t *testing.T) {
+	s, h, root := testServer(t)
+	c, u := person(t, s, h, "beat@example.test", "admin", true)
+	parent, r, sess, tools := agentParent(t, s, u, root, "default")
+	ctx := context.Background()
+	if out := tools.call("pocket_agent_heartbeat_create", map[string]any{"prompt": "check", "spec": "every 1m"}, true); !strings.Contains(out["error"].(string), "5 minutes") {
+		t.Fatalf("every minute: %v", out)
+	}
+	res := make(chan map[string]any, 1)
+	go func() {
+		res <- tools.call("pocket_agent_heartbeat_create", map[string]any{"prompt": "Check the deploy", "spec": "every 30m", "max_runs": 2})
+	}()
+	rid := pendingRequest(t, r)
+	c.want("POST", "/api/v1/threads/"+parent.ID+"/requests/"+rid, map[string]string{"decision": "allow"}, 204, nil)
+	out := <-res
+	hb := out["heartbeat"].(map[string]any)
+	id := int64(hb["id"].(float64))
+	due := func() {
+		_, _ = s.store.DB.Exec(`UPDATE heartbeats SET next_at = '2000-01-01T00:00:00Z' WHERE id = ?`, id)
+	}
+
+	_, _ = s.store.DB.Exec(`UPDATE threads SET status = 'idle' WHERE id = ?`, parent.ID) // the turn that set it is over
+	due()
+	s.runHeartbeats(ctx)
+	select {
+	case in := <-sess.sent:
+		if !strings.HasPrefix(in.Text, `<pocket-heartbeat id=`) || !strings.Contains(in.Text, "Check the deploy") {
+			t.Fatalf("beat %q", in.Text)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the heartbeat was not sent")
+	}
+	// busy (the beat's own turn is still on): skipped, moved on
+	due()
+	s.runHeartbeats(ctx)
+	list, _ := s.store.ThreadHeartbeats(ctx, parent.ID)
+	if len(list) != 1 || list[0].Runs != 1 || list[0].NextAt == "2000-01-01T00:00:00Z" {
+		t.Fatalf("busy beat: %+v", list)
+	}
+	select {
+	case in := <-sess.sent:
+		t.Fatalf("sent while busy: %q", in.Text)
+	default:
+	}
+	c.want("GET", "/api/v1/threads/"+parent.ID+"/heartbeats", nil, 200, nil)
+	c.want("DELETE", "/api/v1/threads/"+parent.ID+"/heartbeats/"+strconv.FormatInt(id, 10), nil, 204, nil)
+	if list, _ := s.store.ThreadHeartbeats(ctx, parent.ID); len(list) != 0 {
+		t.Fatal("not removed")
 	}
 }
 

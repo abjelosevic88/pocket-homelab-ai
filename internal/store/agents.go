@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 )
 
 // Agents started by agents: a thread with source "agent" and source_ref =
@@ -107,4 +108,91 @@ func (s *Store) LastTurn(ctx context.Context, threadID string) (*TurnEnd, error)
 		return nil, err
 	}
 	return &v.Turn, nil
+}
+
+// TakeReportFrom removes the report child owes parent ("" when it owes it
+// to another conversation or nothing).
+func (s *Store) TakeReportFrom(ctx context.Context, childID, parentID string) bool {
+	res, err := s.DB.ExecContext(ctx, `DELETE FROM agent_reports WHERE child_id = ? AND parent_id = ?`, childID, parentID)
+	if err != nil {
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n > 0
+}
+
+// Heartbeat is a prompt that comes back to its conversation on a schedule.
+type Heartbeat struct {
+	ID        int64  `json:"id"`
+	ThreadID  string `json:"thread_id"`
+	UserID    int64  `json:"-"`
+	Prompt    string `json:"prompt"`
+	Spec      string `json:"spec"`
+	NextAt    string `json:"next_at"`
+	LastAt    string `json:"last_at"`
+	Runs      int    `json:"runs"`
+	MaxRuns   int    `json:"max_runs"`
+	EndsAt    string `json:"ends_at"`
+	CreatedAt string `json:"created_at"`
+}
+
+const heartbeatCols = `id, thread_id, user_id, prompt, spec, next_at, last_at, runs, max_runs, ends_at, created_at`
+
+func (s *Store) listHeartbeats(ctx context.Context, where string, args ...any) ([]*Heartbeat, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+heartbeatCols+` FROM heartbeats `+where, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*Heartbeat{}
+	for rows.Next() {
+		var h Heartbeat
+		if err := rows.Scan(&h.ID, &h.ThreadID, &h.UserID, &h.Prompt, &h.Spec, &h.NextAt, &h.LastAt, &h.Runs, &h.MaxRuns, &h.EndsAt, &h.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &h)
+	}
+	return out, rows.Err()
+}
+
+// AddHeartbeat stores a new heartbeat (ID and CreatedAt are set).
+func (s *Store) AddHeartbeat(ctx context.Context, h *Heartbeat) error {
+	h.CreatedAt = Now()
+	res, err := s.DB.ExecContext(ctx, `INSERT INTO heartbeats (thread_id, user_id, prompt, spec, next_at, max_runs, ends_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		h.ThreadID, h.UserID, h.Prompt, h.Spec, h.NextAt, h.MaxRuns, h.EndsAt, h.CreatedAt)
+	if err != nil {
+		return err
+	}
+	h.ID, err = res.LastInsertId()
+	return err
+}
+
+// ThreadHeartbeats lists a conversation's heartbeats, next first.
+func (s *Store) ThreadHeartbeats(ctx context.Context, threadID string) ([]*Heartbeat, error) {
+	return s.listHeartbeats(ctx, `WHERE thread_id = ? ORDER BY next_at, id`, threadID)
+}
+
+// DueHeartbeats lists the heartbeats whose time has come.
+func (s *Store) DueHeartbeats(ctx context.Context, now string) ([]*Heartbeat, error) {
+	return s.listHeartbeats(ctx, `WHERE next_at <= ? ORDER BY next_at`, now)
+}
+
+// BeatHeartbeat moves a heartbeat on (ran: one more run done).
+func (s *Store) BeatHeartbeat(ctx context.Context, id int64, next string, ran bool) error {
+	if ran {
+		_, err := s.DB.ExecContext(ctx, `UPDATE heartbeats SET next_at = ?, last_at = ?, runs = runs + 1 WHERE id = ?`, next, FormatTime(time.Now()), id)
+		return err
+	}
+	_, err := s.DB.ExecContext(ctx, `UPDATE heartbeats SET next_at = ? WHERE id = ?`, next, id)
+	return err
+}
+
+// DeleteHeartbeat removes one of a conversation's heartbeats.
+func (s *Store) DeleteHeartbeat(ctx context.Context, threadID string, id int64) bool {
+	res, err := s.DB.ExecContext(ctx, `DELETE FROM heartbeats WHERE id = ? AND thread_id = ?`, id, threadID)
+	if err != nil {
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n > 0
 }

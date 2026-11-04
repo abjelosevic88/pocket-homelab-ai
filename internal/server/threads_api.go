@@ -51,6 +51,8 @@ func (s *Server) threadRoutes(r chi.Router) {
 	r.Get("/threads/{id}/sent-file", s.handleSentFile) // sentfiles.go
 	r.Get("/threads/{id}/subagents", s.handleSubagents)
 	r.Get("/threads/{id}/subagents/{sid}", s.handleSubagent)
+	r.Get("/threads/{id}/heartbeats", s.handleThreadHeartbeats) // heartbeats.go
+	r.Delete("/threads/{id}/heartbeats/{hid}", s.handleDeleteHeartbeat)
 	s.shareRoutes(r)
 	r.Get("/running", s.handleRunning)
 	r.Get("/search", s.handleSearch)

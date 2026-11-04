@@ -732,3 +732,5 @@ button.privacy-badge:disabled { cursor: default; }
 .sub-chip.agents-chip.open svg:first-child { transform: none; }
 .agents-need { color: var(--warning); }
 .agents-meta { display: flex; align-items: center; gap: 6px; }
+.hb-row { cursor: default; }
+.hb-row .btn { flex-shrink: 0; }
