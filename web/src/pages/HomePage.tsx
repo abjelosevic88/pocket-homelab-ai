@@ -14,6 +14,7 @@ import { HostPicker } from '../components/HostPicker'
 import { WorktreeChooser } from '../components/Worktree'
 import { Icon } from '../components/icons'
 import { AskButton } from '../components/AskButton'
+import { AppChatStart, appChatParams } from '../components/AppChatStart'
 import { errMsg, Loading, useToast } from '../components/ui'
 import { embedded } from '../lib/embed'
 import { folderHistory, restoredFolder } from '../lib/folder-history'
@@ -294,6 +295,10 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
     const p = providers.find(x => x.id === pid)
     setChoice(c => c && pid ? { ...c, provider: pid, ...defaultsFor(p, settings) } : c)
   }
+
+  // an app's own chat (its floating chat button): Ask my apps, about that app
+  const appChat = embedded ? appChatParams(params) : null
+  if (appChat) return <AppChatStart {...appChat} />
 
   // Embedded in the app that prepared it: folder, agent and context are chosen there,
   // so only the prompt (filled in, ready to add to and send) and the composer's own chips

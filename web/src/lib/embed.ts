@@ -42,8 +42,9 @@ export function tellParent(path: string, status = '') {
 }
 
 /** Something of the framing page's item the person can add to a message with "@" (Pocket
- *  Projects: the issue's notes, attached files and links). */
-export interface ParentContextItem { id: string; kind: 'note' | 'file' | 'link'; title: string; sub?: string }
+ *  Projects: the issue's notes, attached files and links; in an app's own chat, the page
+ *  the person is looking at). */
+export interface ParentContextItem { id: string; kind: 'note' | 'file' | 'link' | 'page'; title: string; sub?: string }
 
 let ctxSeq = 0
 /** Asks the framing page and waits for its answer (only the parent window may answer). */
