@@ -47,10 +47,11 @@ if (parentLinks) {
     e.preventDefault()
     window.parent.postMessage({ type: 'pocket-ai', link: u.href }, '*')
   }, true)
-  // ⌘J / Ctrl+J opens and closes the app's chat: typed in here, the framing page does it
+  // ⌘I / Ctrl+I opens and closes the app's chat: typed in here, the framing page does it
   document.addEventListener('keydown', e => {
-    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'j') {
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'i') {
       e.preventDefault()
+      e.stopPropagation()
       window.parent.postMessage({ type: 'pocket-ai', key: 'toggle-chat' }, '*')
     }
   }, true)
