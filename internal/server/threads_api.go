@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -229,7 +230,11 @@ func (s *Server) createThread(ctx context.Context, u *store.User, in newThread, 
 		}
 		t.Speed = "" // a saved speed the account cannot use right now: run at standard speed
 	}
-	if host != nil {
+	if bg, _ := ctx.Value(startInBackground{}).(bool); host != nil && bg && remoteCwdKnown(host, in.Cwd) != "" {
+		// starting in the background: the start checks the folder there anyway
+		// (a gone one shows as an unsent message), so skip a cold ssh round trip now
+		t.Cwd = remoteCwdKnown(host, in.Cwd)
+	} else if host != nil {
 		// folders are the other machine's; workspaces are folders here
 		clean, err := s.checkRemoteDir(ctx, host, in.Cwd)
 		if err != nil {
@@ -279,6 +284,18 @@ func (s *Server) createThread(ctx context.Context, u *store.User, in newThread, 
 		return t, err
 	}
 	return s.rt.decorate(t), nil
+}
+
+// remoteCwdKnown is a host folder that needs no ssh to name: a clean absolute
+// path, or the home folder the host check saw. "" = ask the machine.
+func remoteCwdKnown(h *store.Host, p string) string {
+	switch {
+	case p == "" || p == "~":
+		return h.Info.Home
+	case strings.HasPrefix(p, "/") && path.Clean(p) == p:
+		return p
+	}
+	return ""
 }
 
 // checkSpeed accepts "" (standard) or a speed the provider offers, is usable
