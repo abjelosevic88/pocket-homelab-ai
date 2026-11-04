@@ -2,10 +2,13 @@
 // framing page hears which thread is open. Remembered for the frame's life,
 // so navigating inside the frame stays embedded.
 
+import { comboOf } from './shortcuts'
+
 const KEY = 'pai-embed'
 
 const TABS = 'pai-embed-tabs'
 const LINKS = 'pai-embed-links'
+const CHAT_KEY = 'pai-embed-chat-key'
 
 function detect(): boolean {
   if (window.parent === window) return false
@@ -13,6 +16,7 @@ function detect(): boolean {
   if (q.get('embed') === '1') sessionStorage.setItem(KEY, '1')
   if (q.get('tabs') === '1') sessionStorage.setItem(TABS, '1')
   if (q.get('links') === '1') sessionStorage.setItem(LINKS, '1')
+  if (q.get('chat_key')) sessionStorage.setItem(CHAT_KEY, q.get('chat_key')!.toLowerCase())
   return sessionStorage.getItem(KEY) === '1'
 }
 
@@ -47,9 +51,14 @@ if (parentLinks) {
     e.preventDefault()
     window.parent.postMessage({ type: 'pocket-ai', link: u.href }, '*')
   }, true)
-  // ⌘I / Ctrl+I opens and closes the app's chat: typed in here, the framing page does it
+  // the app's chat key (?chat_key=mod+i, the person's choice there; "off" = none)
+  // opens and closes its chat: typed in here, the framing page does it
+  window.addEventListener('message', e => {
+    if (e.source === window.parent && e.data?.type === 'pocket-ai-chat-key' && typeof e.data.keys === 'string') sessionStorage.setItem(CHAT_KEY, e.data.keys.toLowerCase())
+  })
   document.addEventListener('keydown', e => {
-    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'i') {
+    const keys = sessionStorage.getItem(CHAT_KEY) || 'mod+i'
+    if (keys !== 'off' && comboOf(e) === keys) {
       e.preventDefault()
       e.stopPropagation()
       window.parent.postMessage({ type: 'pocket-ai', key: 'toggle-chat' }, '*')
