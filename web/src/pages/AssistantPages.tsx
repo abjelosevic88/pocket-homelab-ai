@@ -11,7 +11,7 @@ import type { Thread } from '../lib/types'
 function Frame({ title, sub, onMenu, children }: { title: string; sub: string; onMenu?: () => void; children: ReactNode }) { return <div className="page"><PageHead title={title} sub={sub} onMenu={onMenu} /><div className="page-scroll"><div className="page-inner assistant-page">{children}</div></div></div> }
 interface Section { tool: string; data?: unknown; error?: string; checked_at: string; duration_ms: number }
 interface Overview { date?: string; timezone?: string; coverage: string; unavailable?: string[]; sections: Section[] }
-const sectionTitles: Record<string,string> = { pocket_tasks_summary:'Tasks', pocket_money_bills:'Bills & subscriptions', pocket_calendar_events:'Calendar', pocket_review_summary:'Reviews', pocket_garage_reminders:'Car maintenance', pocket_home_due:'Home upkeep', pocket_renewals_due:'What runs out', pocket_parcels_summary:'Deliveries', pocket_places_summary:'Places', pocket_voice_summary:'Voice', pocket_sign_summary:'Waiting for your signature' }
+const sectionTitles: Record<string,string> = { pocket_tasks_summary:'Tasks', pocket_money_bills:'Bills & subscriptions', pocket_calendar_events:'Calendar', pocket_review_summary:'Reviews', pocket_garage_reminders:'Car maintenance', pocket_home_due:'Home upkeep', pocket_renewals_due:'What runs out', pocket_parcels_summary:'Deliveries', pocket_places_summary:'Places', pocket_wallet_summary:'Wallet', pocket_voice_summary:'Voice', pocket_sign_summary:'Waiting for your signature' }
 function displayWhen(value: unknown) { const s=String(value); if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return new Date(s+'T12:00:00').toLocaleDateString(); if (s.includes('T') && !Number.isNaN(Date.parse(s))) return new Date(s).toLocaleString(); return s }
 function formatMinor(amount: number, currency: string) { try { const f = new Intl.NumberFormat(undefined, { style:'currency', currency }); const digits = f.resolvedOptions().maximumFractionDigits ?? 2; return f.format(amount / 10 ** digits) } catch { return `${amount} minor units (${currency})` } }
 function briefingContent(section: Section) {
@@ -42,6 +42,14 @@ function briefingContent(section: Section) {
   // the next planned visits; visits waiting for a rating are a count
   const planned = (result as Record<string, unknown>).planned
   if (Array.isArray(planned)) for (const v of planned.slice(0, 5)) if (v && typeof v === 'object') { const o = v as Record<string, unknown>; items.push({ ...o, title: `${o.place_name}${o.time ? `, ${o.time}` : ''}${o.with_whom ? ` (with ${o.with_whom})` : ''}` }) }
+ } else if (section.tool === 'pocket_wallet_summary' && result && typeof result === 'object' && !Array.isArray(result)) {
+  // today's tickets and flights, the next pass, then what runs out within a week, each opening in Wallet
+  const r = result as Record<string, unknown>
+  const at = (o: Record<string, unknown>) => typeof o.starts_at === 'string' && o.starts_at.length > 10 ? o.starts_at.slice(11, 16) : ''
+  const extra = (o: Record<string, unknown>) => [o.seat && `seat ${o.seat}`, o.gate && `gate ${o.gate}`].filter(Boolean).join(', ')
+  if (Array.isArray(r.today)) for (const v of r.today) if (v && typeof v === 'object') { const o = v as Record<string, unknown>; items.push({ ...o, title: `Today ${at(o)} ${o.name}${o.ref && o.kind === 'boarding' ? ` (${o.ref})` : ''}${extra(o) ? `, ${extra(o)}` : ''}`.replace(/\s+/g, ' ') }) }
+  if (r.next && typeof r.next === 'object') { const o = r.next as Record<string, unknown>; items.push({ ...o, title: `Next: ${o.name}, ${String(o.starts_at || '').slice(0, 10)}${at(o) ? ` ${at(o)}` : ''}` }) }
+  if (Array.isArray(r.expiring)) for (const v of r.expiring) if (v && typeof v === 'object') { const o = v as Record<string, unknown>; if (typeof o.days_left === 'number' && o.days_left <= 7) items.push({ ...o, title: `${o.name}${o.holder ? ` (${o.holder})` : ''} ${o.days_left === 0 ? 'runs out today' : o.days_left === 1 ? 'runs out tomorrow' : `runs out in ${o.days_left} days`}` }) }
  } else if (section.tool === 'pocket_voice_summary' && result && typeof result === 'object' && !Array.isArray(result)) {
   // the memos waiting in the inbox, each opening in Voice; memos still being written out are a count
   const inbox = (result as Record<string, unknown>).latest_inbox
@@ -56,6 +64,10 @@ function briefingContent(section: Section) {
   const r = result as Record<string, unknown>
   counts = ([['to_rate', r.to_rate], ['planned', Array.isArray(r.planned) ? r.planned.length : 0]] as [string, unknown][]).filter(([, n]) => typeof n === 'number' && n > 0)
  }
+ if (section.tool === 'pocket_wallet_summary' && result && typeof result === 'object' && !Array.isArray(result)) {
+  const r = result as Record<string, unknown>
+  counts = ([['today', Array.isArray(r.today) ? r.today.length : 0], ['runs_out_soon', Array.isArray(r.expiring) ? r.expiring.length : 0]] as [string, unknown][]).filter(([, n]) => typeof n === 'number' && n > 0)
+ }
  if (section.tool === 'pocket_voice_summary' && result && typeof result === 'object' && !Array.isArray(result)) {
   const r = result as Record<string, unknown>
   counts = ([['in_your_inbox', r.inbox], ['being_written_out', r.working]] as [string, unknown][]).filter(([, n]) => typeof n === 'number' && n > 0)
@@ -67,7 +79,7 @@ function briefingContent(section: Section) {
  const source = safeURL(envelope.source_url) ? envelope.source_url : safeURL(envelope.app_url) ? envelope.app_url : ''
  return { items, counts, source }
 }
-const sectionIcons: Record<string, string> = { pocket_calendar_events: 'calendar', pocket_tasks_summary: 'check', pocket_money_bills: 'receipt', pocket_review_summary: 'review', pocket_garage_reminders: 'wrench', pocket_home_due: 'home', pocket_renewals_due: 'clock', pocket_parcels_summary: 'package', pocket_sign_summary: 'pen', pocket_places_summary: 'pin', pocket_voice_summary: 'mic' }
+const sectionIcons: Record<string, string> = { pocket_calendar_events: 'calendar', pocket_tasks_summary: 'check', pocket_money_bills: 'receipt', pocket_review_summary: 'review', pocket_garage_reminders: 'wrench', pocket_home_due: 'home', pocket_renewals_due: 'clock', pocket_parcels_summary: 'package', pocket_sign_summary: 'pen', pocket_places_summary: 'pin', pocket_voice_summary: 'mic', pocket_wallet_summary: 'qr' }
 function BriefingCard({ section, onAsk, asking }: { section: Section; onAsk: (text: string) => void; asking: boolean }) {
  const [expanded, setExpanded] = useState(false)
  const { items, counts, source } = briefingContent(section)
@@ -82,7 +94,7 @@ function BriefingCard({ section, onAsk, asking }: { section: Section; onAsk: (te
     const when = item.due ?? item.due_date ?? item.next_date ?? item.start ?? item.date ?? item.return_by ?? item.expected_on ?? (section.tool === 'pocket_sign_summary' ? item.expires_at : undefined)
     const amount = typeof item.amount === 'number' && typeof item.currency === 'string' && section.tool.startsWith('pocket_money_') ? formatMinor(item.amount,item.currency) : ''
     return <li key={`${item.id ?? 'item'}-${i}`}><div className="briefing-item-content">{href ? <a href={href} target="_blank" rel="noopener noreferrer">{itemTitle}<Icon name="external" size={12} /></a> : <b>{itemTitle}</b>}<div className="briefing-item-meta">{when ? <span>{displayWhen(when)}</span> : null}{section.tool === 'pocket_sign_summary' ? (item.sender_name ? <span>From {String(item.sender_name)}</span> : null) : section.tool === 'pocket_voice_summary' ? (Number(item.suggestions) > 0 ? <span>{Number(item.suggestions) === 1 ? '1 suggestion' : `${item.suggestions} suggestions`}</span> : <span>No suggestions</span>) : item.status ? <span>{friendly(String(item.status))}</span> : null}{amount && <span className="briefing-amount">{amount}</span>}</div></div><button type="button" className="briefing-item-ask" disabled={asking} aria-label={`Ask about ${itemTitle}`} title={`Ask about ${itemTitle}`} onClick={() => onAsk(`Help me with “${itemTitle}” in ${friendly(section.tool)}. Source: ${href}. Record ID: ${item.id ?? 'not supplied'}. Read the current record, then show any proposed change for approval.`)}><Icon name="sparkles" size={14} /><span>Ask</span></button></li>
-   })}</ul> : <p className="briefing-empty">{section.tool === 'pocket_calendar_events' ? 'No calendar events in today’s overview.' : section.tool === 'pocket_voice_summary' ? 'No memos waiting in your inbox.' : 'No items in this overview.'}</p>}
+   })}</ul> : <p className="briefing-empty">{section.tool === 'pocket_calendar_events' ? 'No calendar events in today’s overview.' : section.tool === 'pocket_voice_summary' ? 'No memos waiting in your inbox.' : section.tool === 'pocket_wallet_summary' ? 'No tickets today and nothing runs out this week.' : 'No items in this overview.'}</p>}
    {items.length > 3 && <button type="button" className="briefing-expand" aria-expanded={expanded} onClick={() => setExpanded(v => !v)}>{expanded ? 'Show less' : `Show ${items.length - 3} more`}<Icon name={expanded ? 'chevron-up' : 'chevron-down'} size={14} /></button>}
   </>}
   <div className="briefing-source-link">{source && <a href={source} aria-label={`Open source: ${title}`} target="_blank" rel="noopener noreferrer">Open {title}<Icon name="external" size={12} /></a>}</div>
