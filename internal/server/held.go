@@ -27,10 +27,13 @@ import (
 // start of their thread attaches to them instead of starting another.
 
 // holdMeta is kept with a holder: how its CLI reaches the Pocket tools, so
-// the next Pocket AI serves them at the same place with the same key.
+// the next Pocket AI serves them at the same place with the same key, and
+// the login it was started on (its limits key), so a thread moved to another
+// login since does not take that CLI back.
 type holdMeta struct {
-	Port int    `json:"port,omitempty"`
-	Cap  string `json:"cap,omitempty"`
+	Port  int    `json:"port,omitempty"`
+	Cap   string `json:"cap,omitempty"`
+	Login string `json:"login,omitempty"`
 }
 
 type holderCache struct {
@@ -203,12 +206,27 @@ func (rt *engine) holdFor(ctx context.Context, t *store.Thread, h *store.Host, o
 	if !ok {
 		return nil
 	}
-	o.Hold.Adopt = true
-	// left running by the last Pocket AI: it never saw how that turn went
-	o.Hold.FromTurn = t.Status == "running" || t.Status == "waiting"
 	var m holdMeta
 	_ = json.Unmarshal([]byte(hd.Meta), &m)
+	// left running by the last Pocket AI: it never saw how that turn went
+	fromTurn := t.Status == "running" || t.Status == "waiting"
+	if m.Login != "" && m.Login != threadLogin(t, h) && !fromTurn {
+		// the thread was moved to another login while its CLI idled: that
+		// CLI still runs on the old one, so start anew on the new one
+		rt.s.log.Info("held agent on another login: starting anew", "thread", t.ID, "held", m.Login, "want", threadLogin(t, h))
+		stopHolder(ctx, h, bin, t.ID)
+		return nil
+	}
+	o.Hold.Adopt, o.Hold.FromTurn = true, fromTurn
 	return &m
+}
+
+// threadLogin is the limits key of the login thread t runs on.
+func threadLogin(t *store.Thread, h *store.Host) string {
+	if h != nil {
+		return hostLimitsKey(t.Provider, h.ID, t.HostHome)
+	}
+	return limitsKey(t.Provider, t.AccountID)
 }
 
 // serviceScope starts holders here outside Pocket AI's systemd unit, whose
@@ -223,13 +241,22 @@ func serviceScope() []string {
 	return []string{"systemd-run", "--user", "--scope", "--quiet", "--collect"}
 }
 
-// toolsMeta reads where o's CLI reaches the Pocket tools, to keep with it.
-func toolsMeta(o agent.Options) string {
+// holderMeta is what to keep with o's holder: where its CLI reaches the
+// Pocket tools and the login it runs on.
+func holderMeta(o agent.Options, login string) string {
+	m := holdMeta{Login: login}
+	m.Port, m.Cap = toolsMeta(o)
+	b, _ := json.Marshal(m)
+	return string(b)
+}
+
+// toolsMeta reads where o's CLI reaches the Pocket tools.
+func toolsMeta(o agent.Options) (port int, capKey string) {
 	raw := o.MCPConfig
 	if raw != "" && !strings.HasPrefix(strings.TrimSpace(raw), "{") {
 		b, err := os.ReadFile(raw)
 		if err != nil {
-			return ""
+			return 0, ""
 		}
 		raw = string(b)
 	}
@@ -240,25 +267,24 @@ func toolsMeta(o agent.Options) string {
 		} `json:"mcpServers"`
 	}
 	if json.Unmarshal([]byte(raw), &config) != nil {
-		return ""
+		return 0, ""
 	}
 	p, ok := config.Servers["pocket"]
 	if !ok {
-		return ""
+		return 0, ""
 	}
 	u, err := url.Parse(p.URL)
 	if err != nil {
-		return ""
+		return 0, ""
 	}
-	port, _ := strconv.Atoi(u.Port())
-	b, _ := json.Marshal(holdMeta{Port: port, Cap: strings.TrimPrefix(p.Headers["Authorization"], "Bearer ")})
-	return string(b)
+	port, _ = strconv.Atoi(u.Port())
+	return port, strings.TrimPrefix(p.Headers["Authorization"], "Bearer ")
 }
 
-// startSession starts the provider's CLI, held when o.Hold is set: it
-// adopts the running one when told to, or starts anew if that one has just
-// ended.
-func startSession(ctx context.Context, provider string, o agent.Options, sink agent.Sink) (agent.Session, error) {
+// startSession starts the provider's CLI on login (its limits key), held
+// when o.Hold is set: it adopts the running one when told to, or starts anew
+// if that one has just ended.
+func startSession(ctx context.Context, provider, login string, o agent.Options, sink agent.Sink) (agent.Session, error) {
 	start := func(o agent.Options) (agent.Session, error) {
 		switch provider {
 		case "claude":
@@ -269,7 +295,7 @@ func startSession(ctx context.Context, provider string, o agent.Options, sink ag
 		return nil, badRequest("unknown provider " + provider)
 	}
 	if o.Hold != nil {
-		o.Hold.Meta = toolsMeta(o)
+		o.Hold.Meta = holderMeta(o, login)
 	}
 	s, err := start(o)
 	if errors.Is(err, agent.ErrNotHeld) {
