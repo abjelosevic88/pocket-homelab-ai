@@ -32,6 +32,7 @@ export function AccountsSection() {
   const people = useAsync(() => isAdmin ? api.get<User[]>(`${V1}/users`) : Promise.resolve([] as User[]), [isAdmin])
   const remote = useAsync(() => api.get<HostLogin[]>(`${V1}/hosts/logins${refresh ? '?refresh=1' : ''}`), [refresh])
   const [adding, setAdding] = useState<ProviderId | null>(null)
+  const [addOn, setAddOn] = useState(0) // adding on that machine (its row's menu)
   const [edit, setEdit] = useState<Account | null>(null)
   const [signIn, setSignIn] = useState<SignInTarget | null>(null)
   const [del, setDel] = useState<Account | null>(null)
@@ -111,15 +112,16 @@ export function AccountsSection() {
                     </div>
                   </div>
                 )})}
-                {machines.map(h => <MachineRow key={`${h.host_id}:${h.dir}`} login={h} onSignIn={() => setSignIn(remoteSignIn(h))} onSignOut={() => signOutRemote(h)} />)}
+                {machines.map(h => <MachineRow key={`${h.host_id}:${h.dir}`} login={h} onSignIn={() => setSignIn(remoteSignIn(h))} onSignOut={() => signOutRemote(h)}
+                  onAdd={mayAdd ? () => { setAddOn(h.host_id); setAdding(h.provider) } : undefined} />)}
               </div>
             )
           })}
         </div>
       )}
       {list.error && <p className="danger-text small">{list.error}</p>}
-      {(adding || edit) && <AccountDialog account={edit} provider={adding || 'claude'} people={people.data || []} isAdmin={isAdmin} own={!!pi?.jailed} onClose={() => { setAdding(null); setEdit(null) }}
-        machines={remote.data || []} onMachine={h => { setAdding(null); setSignIn(remoteSignIn(h)) }}
+      {(adding || edit) && <AccountDialog account={edit} provider={adding || 'claude'} people={people.data || []} isAdmin={isAdmin} own={!!pi?.jailed} onClose={() => { setAdding(null); setAddOn(0); setEdit(null) }}
+        machines={remote.data || []} where={addOn} onMachine={(h, made) => { setAdding(null); setAddOn(0); if (made) done(); setSignIn(remoteSignIn(h)) }}
         onSaved={a => { const wasNew = !!adding; setAdding(null); setEdit(null); done(); if (wasNew && a) setSignIn(accountSignIn(a)) }} />}
       {signIn && <SignInDialog target={signIn} onClose={() => { setSignIn(null); done() }} />}
       {del && <Confirm title={`Remove ${del.label}?`} confirmLabel="Remove"
@@ -130,22 +132,42 @@ export function AccountsSection() {
   )
 }
 
-function AccountDialog({ account, provider: initial, people, isAdmin, own, machines, onMachine, onClose, onSaved }: { account: Account | null; provider: ProviderId; people: User[]; isAdmin: boolean; own: boolean; machines: HostLogin[]; onMachine: (h: HostLogin) => void; onClose: () => void; onSaved: (a?: Account) => void }) {
+/** The login picker's choice for making another login folder on the machine. */
+const NEW_LOGIN = '+new'
+const loginSlug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-+$/, '')
+
+function AccountDialog({ account, provider: initial, people, isAdmin, own, machines, where: initialWhere = 0, onMachine, onClose, onSaved }: { account: Account | null; provider: ProviderId; people: User[]; isAdmin: boolean; own: boolean; machines: HostLogin[]; where?: number; onMachine: (h: HostLogin, made: boolean) => void; onClose: () => void; onSaved: (a?: Account) => void }) {
   const { toast } = useToast()
   const [provider, setProvider] = useState<ProviderId>(account?.provider || initial)
   const [label, setLabel] = useState(account?.label || '')
   const [owner, setOwner] = useState<number>(account?.user_id ?? 0)
   const [busy, setBusy] = useState(false)
   // Where the login lives: 0 = this server, else one of the machines (Settings → Servers).
-  const [where, setWhere] = useState(0)
+  const [where, setWhere] = useState(initialWhere)
   const hosts = account ? [] : [...new Map(machines.map(h => [h.host_id, h.host])).entries()]
   // Ask the picked machine afresh: the list may be minutes old (a CLI just installed there).
   const fresh = useAsync(() => where ? api.get<HostLogin[]>(`${V1}/hosts/logins?host=${where}&refresh=1`) : Promise.resolve([] as HostLogin[]), [where])
   const checking = !!where && fresh.loading
-  const machine = where ? (fresh.data?.length ? fresh.data : machines).find(h => h.host_id === where && h.provider === provider && !h.dir) : undefined
+  const logins = where ? (fresh.data?.length ? fresh.data : machines).filter(h => h.host_id === where && h.provider === provider) : []
+  const machine = logins.find(h => !h.dir)
+  // a machine that has the CLI and answers: sign in one of its logins, or make another
+  const usable = !!machine && !machine.missing && !machine.error
+  const [pick, setPick] = useState<string | null>(null) // null: a new one when the default is signed in already
+  const sel = !usable ? '' : pick ?? (machine.signed_in ? NEW_LOGIN : '')
+  const picked = sel === NEW_LOGIN ? undefined : logins.find(h => (h.dir || '') === sel) || machine
+  const hostName = hosts.find(([id]) => id === where)?.[1] || machine?.host
   const runners = people.filter(p => p.role === 'admin' || p.can_run)
   const save = async () => {
-    if (machine) { onMachine(machine); return }
+    if (machine && sel === NEW_LOGIN) {
+      setBusy(true)
+      try {
+        const h = await api.post<HostLogin>(`${V1}/hosts/${where}/logins/${provider}`, { name: label.trim() })
+        toast(`Login added on ${h.host} — sign it in`)
+        onMachine(h, true)
+      } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
+      return
+    }
+    if (machine) { onMachine(picked || machine, false); return }
     setBusy(true)
     try {
       const body = isAdmin ? { label: label.trim(), user_id: owner || null } : { label: label.trim() }
@@ -157,16 +179,32 @@ function AccountDialog({ account, provider: initial, people, isAdmin, own, machi
   return (
     <Modal title={account ? `Edit ${account.label}` : 'Add an account'} size="sm" onClose={onClose} footer={<>
       <button type="button" className="btn" onClick={onClose}>Cancel</button>
-      <button type="button" className="btn primary" disabled={busy || checking || (machine ? !!machine.missing || !!machine.error : !label.trim())} onClick={save}>{account ? 'Save' : machine ? (machine.signed_in ? 'Sign in again' : 'Sign in') : 'Add and sign in'}</button>
+      <button type="button" className="btn primary" disabled={busy || checking || (machine ? !usable || (sel === NEW_LOGIN && !loginSlug(label)) : !label.trim())} onClick={save}>{busy ? <Spinner /> : null}{account ? 'Save' : machine && sel !== NEW_LOGIN ? (picked?.signed_in ? 'Sign in again' : 'Sign in') : 'Add and sign in'}</button>
     </>}>
       <div className="stack">
         {!account && <Field label="Agent" group><ProviderToggle value={provider} onChange={v => v && setProvider(v)} /></Field>}
         {hosts.length > 0 && <Field label="Where" help="This server, or one of your machines from Servers. Threads on a machine run on its login there.">
-          <Select label="Where" value={where} onChange={setWhere}
+          <Select label="Where" value={where} onChange={v => { setWhere(v); setPick(null) }}
             options={[{ value: 0, label: 'This server' }, ...hosts.map(([id, name]) => ({ value: id, label: name, description: machines.find(h => h.host_id === id)?.target }))]} />
         </Field>}
-        {checking ? <div className="loading"><Spinner /> Checking {hosts.find(([id]) => id === where)?.[1]}…</div>
-          : machine ? <MachineNote login={machine} onRecheck={fresh.reload} /> : <>
+        {checking ? <div className="loading"><Spinner /> Checking {hostName}…</div>
+          : machine && !usable ? <MachineNote login={machine} onRecheck={fresh.reload} />
+          : machine ? <>
+            <Field label="Login" help={`Each login on ${hostName} is a folder of its own there. A conversation on ${hostName} picks one next to the model and can switch.`}>
+              <Select label="Login" value={sel} onChange={setPick} options={[
+                ...logins.filter(h => !h.missing).map(h => ({ value: h.dir || '', label: h.label || 'Default login',
+                  description: [h.home.replace(/^\/(home|Users)\/[^/]+/, '~'), h.signed_in ? [h.plan && planName(h.plan), h.email].filter(Boolean).join(' · ') : 'not signed in'].filter(Boolean).join(' · ') })),
+                { value: NEW_LOGIN, label: 'New login…', description: `Another ${provider === 'claude' ? 'Claude' : 'ChatGPT'} account on ${hostName}, next to the ones there` },
+              ]} />
+            </Field>
+            {sel === NEW_LOGIN ? <>
+              <Field label="Name" help={loginSlug(label) ? <>Pocket AI makes <code>~/.{provider}-{loginSlug(label)}</code> on {hostName} and signs it in.</> : 'Shown in the login picker, e.g. “max” or “personal”.'}>
+                <input value={label} onChange={e => setLabel(e.target.value)} autoFocus maxLength={60} placeholder={provider === 'codex' ? 'second-pro' : 'max'}
+                  onKeyDown={e => { if (e.key === 'Enter' && loginSlug(label) && !busy) save() }} />
+              </Field>
+              <p className="muted small" style={{ margin: 0 }}>Settings, skills, plugins{provider === 'claude' ? ' and MCP servers' : ' and config.toml'} are shared with the default login there; the sign-in, history and limits are its own.</p>
+            </> : picked && <MachineNote login={picked} onRecheck={fresh.reload} />}
+          </> : <>
         <Field label="Name" help="Shown in the account picker, e.g. “Work Max” or “Second Pro”.">
           <input value={label} onChange={e => setLabel(e.target.value)} autoFocus maxLength={60} placeholder={provider === 'codex' ? 'Second ChatGPT Pro' : 'Work Max'} />
         </Field>
@@ -190,8 +228,8 @@ function MachineNote({ login: h, onRecheck }: { login: HostLogin; onRecheck: () 
   if (h.missing) return <div className="callout warn"><Icon name="alert" size={15} /><span>{name} is not installed on <b>{h.host}</b> yet. Install it there, then {again}</span></div>
   if (h.error) return <div className="callout danger"><Icon name="alert" size={15} /><span>{h.host}: {h.error} {again}</span></div>
   return <p className="muted small" style={{ margin: 0 }}>
-    {h.signed_in ? <>{name} on <b>{h.host}</b> is already signed in{h.email ? <> as <b>{h.email}</b></> : null}. Signing in again replaces that login.</>
-      : <>Signs in {name} on <b>{h.host}</b> (<code>{h.home.replace(/^\/(home|Users)\/[^/]+/, '~')}</code> there) over ssh. Threads on {h.host} run on it.</>}
+    {h.signed_in ? <>{machineLabel(h)} is already signed in{h.email ? <> as <b>{h.email}</b></> : null}. Signing in again replaces that login; to keep it, pick <b>New login…</b> instead.</>
+      : <>Signs in {name} on <b>{h.host}</b> (<code>{h.home.replace(/^\/(home|Users)\/[^/]+/, '~')}</code> there) over ssh. {h.dir ? <>Conversations on {h.host} use it when you pick it next to the model.</> : <>Threads on {h.host} run on it.</>}</>}
   </p>
 }
 
@@ -200,11 +238,12 @@ export const machineLabel = (h: { host: string; label?: string }) => h.label ? `
 const dirQuery = (h: HostLogin) => h.dir ? `?dir=${encodeURIComponent(h.dir)}` : ''
 
 /** Another machine's own login: signed in over ssh from here. */
-function MachineRow({ login: h, onSignIn, onSignOut }: { login: HostLogin; onSignIn: () => void; onSignOut: () => void }) {
+function MachineRow({ login: h, onSignIn, onSignOut, onAdd }: { login: HostLogin; onSignIn: () => void; onSignOut: () => void; onAdd?: () => void }) {
   const ctx = useContextMenu()
   const more: MenuItem[] = h.missing ? [] : [
     { label: h.signed_in ? 'Sign in again…' : 'Sign in…', icon: 'key', onSelect: onSignIn },
     ...(h.signed_in ? [{ label: 'Sign out', icon: 'log-out', onSelect: onSignOut }] : []),
+    ...(onAdd && !h.error ? ['sep' as const, { label: `Add another login on ${h.host}…`, icon: 'plus', onSelect: onAdd }] : []),
   ]
   const error = h.missing ? h.error?.replace(/^Not installed: /, '') : h.error
   return (
@@ -289,7 +328,7 @@ function SignInDialog({ target, onClose }: { target: SignInTarget; onClose: () =
           {st?.state === 'failed' && <button type="button" className="btn primary" onClick={() => { setSt(null); setCode(''); api.post<LoginState>(at()).then(setSt).catch(e => setSt({ state: 'failed', error: errMsg(e) })) }}>Try again</button>}
         </>}>
       {!st || st.state === 'starting' && !st.url ? <div className="loading"><Spinner /> Starting {isClaude ? 'claude auth login' : 'codex login'} {where ? `on ${where}` : 'on the server'}…</div>
-        : st.state === 'done' ? <div className="callout success"><Icon name="check-circle" size={15} /><span>{where ? <>Signed in. Threads on <b>{where}</b> run on this login now.</> : <>Signed in. New threads can use <b>{label}</b> now.</>}</span></div>
+        : st.state === 'done' ? <div className="callout success"><Icon name="check-circle" size={15} /><span>{where && target.query?.dir ? <>Signed in. In a conversation on that machine, pick <b>{where}</b> next to the model to run on it.</> : where ? <>Signed in. Threads on <b>{where}</b> run on this login now.</> : <>Signed in. New threads can use <b>{label}</b> now.</>}</span></div>
         : st.state === 'failed' ? <div className="callout danger"><Icon name="alert" size={15} /><span>{st.error || 'The sign-in did not finish.'}</span></div>
         : (
           <div className="stack">

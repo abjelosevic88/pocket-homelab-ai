@@ -27,6 +27,7 @@ func (s *Server) hostLoginRoutes(r chi.Router) {
 	r.Post("/hosts/{id}/login/{provider}/code", s.handleHostLoginCode)
 	r.Delete("/hosts/{id}/login/{provider}", s.handleHostLoginCancel)
 	r.Post("/hosts/{id}/logout/{provider}", s.handleHostLogout)
+	r.Post("/hosts/{id}/logins/{provider}", s.handleHostLoginAdd)
 }
 
 // hostLoginView is one login of one CLI on a machine: the default
@@ -353,6 +354,69 @@ func (s *Server) handleHostLoginCancel(w http.ResponseWriter, r *http.Request) {
 		s.cancelLogin(hostLoginKey(h.ID, p, dir))
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// hostAddLoginScript makes another login folder on a machine ($1 claude|codex,
+// $2 its name, then what it shares with the default login: SharedSetup) and
+// prints it. One that is already there is kept as it is (asked twice, or
+// made by hand before): Pocket AI just signs it in.
+const hostAddLoginScript = `p=$1; name=$2; shift 2
+if [ "$p" = claude ]; then d0="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; else d0="${CODEX_HOME:-$HOME/.codex}"; fi
+d="$HOME/.$p-$name"
+if [ -L "$d" ] || { [ -e "$d" ] && [ ! -d "$d" ]; }; then echo "$d is there already and is not a login folder" >&2; exit 4; fi
+[ -d "$d" ] || mkdir -m 700 "$d" || exit 3
+for f in "$@"; do [ -e "$d0/$f" ] && [ ! -e "$d/$f" ] && [ ! -L "$d/$f" ] && ln -s "$d0/$f" "$d/$f"; done
+# what tells Pocket AI it is a login folder (RemoteHomesSh) even before the sign-in
+if [ "$p" = claude ]; then [ -e "$d/settings.json" ] || printf '{}\n' > "$d/settings.json"
+else [ -e "$d/config.toml" ] || mkdir -p "$d/sessions"; fi
+printf '%s\n' "$d"
+`
+
+// handleHostLoginAdd makes another login of a CLI on a machine
+// (~/.claude-<name>) and answers it, for the sign-in that follows. Threads
+// on the machine pick it next to the model.
+func (s *Server) handleHostLoginAdd(w http.ResponseWriter, r *http.Request) {
+	h, provider, _ := s.loginHost(w, r)
+	if h == nil {
+		return
+	}
+	var in struct {
+		Name string `json:"name"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad request")
+		return
+	}
+	slug := strings.Trim(slugRe.ReplaceAllString(strings.ToLower(oneLine(in.Name, 60)), "-"), "-")
+	if len(slug) > 40 {
+		slug = strings.Trim(slug[:40], "-")
+	}
+	if slug == "" {
+		writeErr(w, http.StatusBadRequest, "give the login a name")
+		return
+	}
+	out, errOut, err := remoteOf(h).Run(r.Context(), 45*time.Second, hostAddLoginScript, append([]string{provider, slug}, agent.SharedSetup[provider]...)...)
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	dir := strings.TrimSpace(lines[len(lines)-1])
+	if err != nil || !agent.ValidHostHome(provider, h.Info.Home, dir) {
+		why := "it answered " + firstNonEmpty(strings.TrimSpace(out), "nothing")
+		if err != nil {
+			why = sshError(errOut, err)
+		}
+		writeErr(w, http.StatusBadGateway, "could not make the login on "+h.Name+": "+oneLine(stripANSI(why), 300))
+		return
+	}
+	s.log.Info("login added on a server", "host", h.Name, "provider", provider, "login", dir)
+	views := s.hostLogins(r.Context(), h, true)
+	s.rt.publishAccounts()
+	for _, v := range views {
+		if v.Provider == provider && v.Dir == dir {
+			writeJSON(w, http.StatusOK, v)
+			return
+		}
+	}
+	// the machine did not answer the check: what was made is enough to sign in
+	writeJSON(w, http.StatusOK, hostLoginView{HostID: h.ID, Host: h.Name, Target: h.Target, Provider: provider, Home: dir, Dir: dir, Label: agent.HomeLabel(dir)})
 }
 
 // handleHostLogout signs a machine's own login out.

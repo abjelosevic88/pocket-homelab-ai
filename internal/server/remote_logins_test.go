@@ -5,8 +5,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/agent"
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
 )
 
@@ -106,5 +108,46 @@ func TestSwitchMachineLogin(t *testing.T) {
 	_ = s.store.CreateThread(ctx, local)
 	if code, _ := owner.call("PATCH", "/api/v1/threads/"+local.ID, map[string]any{"host_home": "/home/arno/.claude-max"}); code != 400 {
 		t.Fatalf("local thread took a machine login: %d", code)
+	}
+}
+
+// Adding a login on a machine makes ~/.claude-<name> sharing the default's
+// setup, which the login list finds before it is signed in; asked again it
+// keeps what is there.
+func TestHostAddLoginScript(t *testing.T) {
+	home := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(home, ".claude", "skills"), 0o755)
+	_ = os.WriteFile(filepath.Join(home, ".claude", "settings.json"), []byte(`{"a":1}`), 0o600)
+	args := append([]string{"claude", "max"}, agent.SharedSetup["claude"]...)
+	got := strings.TrimSpace(runLoginSh(t, home, hostAddLoginScript, args...))
+	want := filepath.Join(home, ".claude-max")
+	if got != want {
+		t.Fatalf("made %q, want %q", got, want)
+	}
+	for _, f := range []string{"settings.json", "skills"} {
+		if l, err := os.Readlink(filepath.Join(want, f)); err != nil || l != filepath.Join(home, ".claude", f) {
+			t.Fatalf("%s not shared: %q %v", f, l, err)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(want, "CLAUDE.md")); err == nil {
+		t.Fatal("linked a file the default login does not have")
+	}
+	_ = os.WriteFile(filepath.Join(want, ".credentials.json"), []byte("x"), 0o600)
+	if again := strings.TrimSpace(runLoginSh(t, home, hostAddLoginScript, args...)); again != want {
+		t.Fatalf("asked again: %q", again)
+	}
+	if b, _ := os.ReadFile(filepath.Join(want, ".credentials.json")); string(b) != "x" {
+		t.Fatal("asked again, the login was touched")
+	}
+	homes := runLoginSh(t, home, agent.RemoteHomesSh+`homes claude`)
+	if !strings.Contains(homes, want+"\n") {
+		t.Fatalf("the login list does not find it: %q", homes)
+	}
+
+	// Codex with no config of its own yet: still found
+	args = append([]string{"codex", "second"}, agent.SharedSetup["codex"]...)
+	cx := strings.TrimSpace(runLoginSh(t, home, hostAddLoginScript, args...))
+	if !strings.Contains(runLoginSh(t, home, agent.RemoteHomesSh+`homes codex`), cx+"\n") {
+		t.Fatalf("codex login %q not found", cx)
 	}
 }
