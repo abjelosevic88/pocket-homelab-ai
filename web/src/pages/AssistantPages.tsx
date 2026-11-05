@@ -11,7 +11,7 @@ import type { Thread } from '../lib/types'
 function Frame({ title, sub, onMenu, children }: { title: string; sub: string; onMenu?: () => void; children: ReactNode }) { return <div className="page"><PageHead title={title} sub={sub} onMenu={onMenu} /><div className="page-scroll"><div className="page-inner assistant-page">{children}</div></div></div> }
 interface Section { tool: string; data?: unknown; error?: string; checked_at: string; duration_ms: number }
 interface Overview { date?: string; timezone?: string; coverage: string; unavailable?: string[]; sections: Section[] }
-const sectionTitles: Record<string,string> = { pocket_tasks_summary:'Tasks', pocket_money_bills:'Bills & subscriptions', pocket_calendar_events:'Calendar', pocket_review_summary:'Reviews', pocket_garage_reminders:'Car maintenance', pocket_home_due:'Home upkeep', pocket_renewals_due:'What runs out', pocket_parcels_summary:'Deliveries' }
+const sectionTitles: Record<string,string> = { pocket_tasks_summary:'Tasks', pocket_money_bills:'Bills & subscriptions', pocket_calendar_events:'Calendar', pocket_review_summary:'Reviews', pocket_garage_reminders:'Car maintenance', pocket_home_due:'Home upkeep', pocket_renewals_due:'What runs out', pocket_parcels_summary:'Deliveries', pocket_sign_summary:'Waiting for your signature' }
 function displayWhen(value: unknown) { const s=String(value); if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return new Date(s+'T12:00:00').toLocaleDateString(); if (s.includes('T') && !Number.isNaN(Date.parse(s))) return new Date(s).toLocaleString(); return s }
 function formatMinor(amount: number, currency: string) { try { const f = new Intl.NumberFormat(undefined, { style:'currency', currency }); const digits = f.resolvedOptions().maximumFractionDigits ?? 2; return f.format(amount / 10 ** digits) } catch { return `${amount} minor units (${currency})` } }
 function briefingContent(section: Section) {
@@ -35,16 +35,23 @@ function briefingContent(section: Section) {
   // what needs the person today; parcels still on their way stay in the source
   const parcels = ((result as Record<string, unknown>).parcels || {}) as Record<string, unknown>
   visit(parcels.today); visit(parcels.pickup); visit(parcels.problems); visit(parcels.returns_due)
+ } else if (section.tool === 'pocket_sign_summary' && result && typeof result === 'object' && !Array.isArray(result)) {
+  // what others sent the person to sign; their own documents waiting for others are a count
+  visit((result as Record<string, unknown>).to_sign)
  } else visit(result)
  let counts = result && !Array.isArray(result) && typeof result === 'object' ? Object.entries(result).filter(([k, v]) => typeof v === 'number' && /^(overdue|due_today|today|total|open|open_reviews|open_tasks|done_today|to_review|to_approve|completed|active|due|waiting)$/.test(k)) : []
  if (section.tool === 'pocket_parcels_summary' && result && typeof result === 'object' && !Array.isArray(result)) {
   const c = ((result as Record<string, unknown>).counts || {}) as Record<string, unknown>
   counts = (['today', 'pickup', 'problems', 'returns_due', 'on_the_way'] as const).filter(k => typeof c[k] === 'number' && (c[k] as number) > 0).map(k => [k, c[k]] as [string, unknown])
  }
+ if (section.tool === 'pocket_sign_summary' && result && typeof result === 'object' && !Array.isArray(result)) {
+  const c = ((result as Record<string, unknown>).counts || {}) as Record<string, unknown>
+  counts = ([['to_sign', c.to_sign], ['waiting_for_others', c.pending]] as [string, unknown][]).filter(([, n]) => typeof n === 'number' && n > 0)
+ }
  const source = safeURL(envelope.source_url) ? envelope.source_url : safeURL(envelope.app_url) ? envelope.app_url : ''
  return { items, counts, source }
 }
-const sectionIcons: Record<string, string> = { pocket_calendar_events: 'calendar', pocket_tasks_summary: 'check', pocket_money_bills: 'receipt', pocket_review_summary: 'review', pocket_garage_reminders: 'wrench', pocket_home_due: 'home', pocket_renewals_due: 'clock', pocket_parcels_summary: 'package' }
+const sectionIcons: Record<string, string> = { pocket_calendar_events: 'calendar', pocket_tasks_summary: 'check', pocket_money_bills: 'receipt', pocket_review_summary: 'review', pocket_garage_reminders: 'wrench', pocket_home_due: 'home', pocket_renewals_due: 'clock', pocket_parcels_summary: 'package', pocket_sign_summary: 'pen' }
 function BriefingCard({ section, onAsk, asking }: { section: Section; onAsk: (text: string) => void; asking: boolean }) {
  const [expanded, setExpanded] = useState(false)
  const { items, counts, source } = briefingContent(section)
@@ -56,9 +63,9 @@ function BriefingCard({ section, onAsk, asking }: { section: Section; onAsk: (te
    {counts.length > 0 && <div className="briefing-counts">{counts.map(([k, v]) => <span key={k}><b>{String(v)}</b> {friendly(k)}</span>)}</div>}
    {items.length ? <ul className="briefing-items">{visible.map((item, i) => {
     const itemTitle = String(item.title ?? item.name ?? item.summary), href = safeURL(item.item_url) ? item.item_url : source
-    const when = item.due ?? item.due_date ?? item.next_date ?? item.start ?? item.date ?? item.return_by ?? item.expected_on
+    const when = item.due ?? item.due_date ?? item.next_date ?? item.start ?? item.date ?? item.return_by ?? item.expected_on ?? (section.tool === 'pocket_sign_summary' ? item.expires_at : undefined)
     const amount = typeof item.amount === 'number' && typeof item.currency === 'string' && section.tool.startsWith('pocket_money_') ? formatMinor(item.amount,item.currency) : ''
-    return <li key={`${item.id ?? 'item'}-${i}`}><div className="briefing-item-content">{href ? <a href={href} target="_blank" rel="noopener noreferrer">{itemTitle}<Icon name="external" size={12} /></a> : <b>{itemTitle}</b>}<div className="briefing-item-meta">{when ? <span>{displayWhen(when)}</span> : null}{item.status ? <span>{friendly(String(item.status))}</span> : null}{amount && <span className="briefing-amount">{amount}</span>}</div></div><button type="button" className="briefing-item-ask" disabled={asking} aria-label={`Ask about ${itemTitle}`} title={`Ask about ${itemTitle}`} onClick={() => onAsk(`Help me with “${itemTitle}” in ${friendly(section.tool)}. Source: ${href}. Record ID: ${item.id ?? 'not supplied'}. Read the current record, then show any proposed change for approval.`)}><Icon name="sparkles" size={14} /><span>Ask</span></button></li>
+    return <li key={`${item.id ?? 'item'}-${i}`}><div className="briefing-item-content">{href ? <a href={href} target="_blank" rel="noopener noreferrer">{itemTitle}<Icon name="external" size={12} /></a> : <b>{itemTitle}</b>}<div className="briefing-item-meta">{when ? <span>{displayWhen(when)}</span> : null}{section.tool === 'pocket_sign_summary' ? (item.sender_name ? <span>From {String(item.sender_name)}</span> : null) : item.status ? <span>{friendly(String(item.status))}</span> : null}{amount && <span className="briefing-amount">{amount}</span>}</div></div><button type="button" className="briefing-item-ask" disabled={asking} aria-label={`Ask about ${itemTitle}`} title={`Ask about ${itemTitle}`} onClick={() => onAsk(`Help me with “${itemTitle}” in ${friendly(section.tool)}. Source: ${href}. Record ID: ${item.id ?? 'not supplied'}. Read the current record, then show any proposed change for approval.`)}><Icon name="sparkles" size={14} /><span>Ask</span></button></li>
    })}</ul> : <p className="briefing-empty">{section.tool === 'pocket_calendar_events' ? 'No calendar events in today’s overview.' : 'No items in this overview.'}</p>}
    {items.length > 3 && <button type="button" className="briefing-expand" aria-expanded={expanded} onClick={() => setExpanded(v => !v)}>{expanded ? 'Show less' : `Show ${items.length - 3} more`}<Icon name={expanded ? 'chevron-up' : 'chevron-down'} size={14} /></button>}
   </>}
