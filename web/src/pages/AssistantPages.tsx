@@ -11,9 +11,12 @@ import type { Thread } from '../lib/types'
 function Frame({ title, sub, onMenu, children }: { title: string; sub: string; onMenu?: () => void; children: ReactNode }) { return <div className="page"><PageHead title={title} sub={sub} onMenu={onMenu} /><div className="page-scroll"><div className="page-inner assistant-page">{children}</div></div></div> }
 interface Section { tool: string; data?: unknown; error?: string; checked_at: string; duration_ms: number }
 interface Overview { date?: string; timezone?: string; coverage: string; unavailable?: string[]; sections: Section[] }
-const sectionTitles: Record<string,string> = { pocket_tasks_summary:'Tasks', pocket_money_bills:'Bills & subscriptions', pocket_calendar_events:'Calendar', pocket_review_summary:'Reviews', pocket_garage_reminders:'Car maintenance', pocket_home_due:'Home upkeep', pocket_renewals_due:'What runs out', pocket_parcels_summary:'Deliveries', pocket_places_summary:'Places', pocket_wallet_summary:'Wallet', pocket_voice_summary:'Voice', pocket_sign_summary:'Waiting for your signature' }
+const sectionTitles: Record<string,string> = { pocket_tasks_summary:'Tasks', pocket_money_bills:'Bills & subscriptions', pocket_calendar_events:'Calendar', pocket_review_summary:'Reviews', pocket_garage_reminders:'Car maintenance', pocket_home_due:'Home upkeep', pocket_renewals_due:'What runs out', pocket_parcels_summary:'Deliveries', pocket_places_summary:'Places', pocket_wallet_summary:'Wallet', pocket_weather_summary:'Weather', pocket_voice_summary:'Voice', pocket_sign_summary:'Waiting for your signature' }
 function displayWhen(value: unknown) { const s=String(value); if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return new Date(s+'T12:00:00').toLocaleDateString(); if (s.includes('T') && !Number.isNaN(Date.parse(s))) return new Date(s).toLocaleString(); return s }
 function formatMinor(amount: number, currency: string) { try { const f = new Intl.NumberFormat(undefined, { style:'currency', currency }); const digits = f.resolvedOptions().maximumFractionDigits ?? 2; return f.format(amount / 10 ** digits) } catch { return `${amount} minor units (${currency})` } }
+// Weather's temperatures come in °C; shown in the unit set in Weather
+function weatherTemp(c: unknown, unit: unknown) { if (typeof c !== 'number') return ''; return `${Math.round(unit === 'f' ? c * 9 / 5 + 32 : c)}`}
+function weatherRange(day: unknown, unit: unknown) { const d = (day && typeof day === 'object' ? day : {}) as Record<string, unknown>; const lo = weatherTemp(d.t_min, unit), hi = weatherTemp(d.t_max, unit); return lo && hi ? `${lo}–${hi} ${unit === 'f' ? '°F' : '°C'}` : '' }
 function briefingContent(section: Section) {
  const envelope = (section.data && typeof section.data === 'object' ? section.data : {}) as Record<string, unknown>
  const result = envelope.result ?? section.data
@@ -50,6 +53,20 @@ function briefingContent(section: Section) {
   if (Array.isArray(r.today)) for (const v of r.today) if (v && typeof v === 'object') { const o = v as Record<string, unknown>; items.push({ ...o, title: `Today ${at(o)} ${o.name}${o.ref && o.kind === 'boarding' ? ` (${o.ref})` : ''}${extra(o) ? `, ${extra(o)}` : ''}`.replace(/\s+/g, ' ') }) }
   if (r.next && typeof r.next === 'object') { const o = r.next as Record<string, unknown>; items.push({ ...o, title: `Next: ${o.name}, ${String(o.starts_at || '').slice(0, 10)}${at(o) ? ` ${at(o)}` : ''}` }) }
   if (Array.isArray(r.expiring)) for (const v of r.expiring) if (v && typeof v === 'object') { const o = v as Record<string, unknown>; if (typeof o.days_left === 'number' && o.days_left <= 7) items.push({ ...o, title: `${o.name}${o.holder ? ` (${o.holder})` : ''} ${o.days_left === 0 ? 'runs out today' : o.days_left === 1 ? 'runs out tomorrow' : `runs out in ${o.days_left} days`}` }) }
+ } else if (section.tool === 'pocket_weather_summary' && result && typeof result === 'object' && !Array.isArray(result)) {
+  // the weather at home: now, today, tomorrow, then the warnings for those two days (nothing without a place)
+  const r = result as Record<string, unknown>, unit = (r.units as Record<string, unknown> | undefined)?.temp, deg = unit === 'f' ? '°F' : '°C'
+  const obj = (v: unknown) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {}) as Record<string, unknown>
+  const place = obj(r.place), now = obj(r.now), today = obj(r.today), tomorrow = obj(r.tomorrow)
+  const cond = (o: Record<string, unknown>) => String(o.text || (o.condition ? friendly(String(o.condition)) : ''))
+  if (r.place) {
+   const t = weatherTemp(now.temp, unit)
+   if (t) items.push({ id: 'now', title: `Now ${t} ${deg}${cond(now) ? `, ${cond(now).toLowerCase()}` : ''}`, detail: [place.name, r.stale ? 'may be out of date' : ''].filter(Boolean).join(' · ') })
+   if (weatherRange(today, unit) || r.text) items.push({ id: 'today', title: `Today ${weatherRange(today, unit)}`.trim(), detail: r.text })
+   if (weatherRange(tomorrow, unit)) items.push({ id: 'tomorrow', title: `Tomorrow ${weatherRange(tomorrow, unit)}${cond(tomorrow) ? `, ${cond(tomorrow).toLowerCase()}` : ''}` })
+   const days = [today.date, tomorrow.date].filter(Boolean)
+   if (Array.isArray(r.warnings)) for (const v of r.warnings.slice(0, 6)) if (v && typeof v === 'object') { const w = v as Record<string, unknown>; if (w.day && days.length && !days.includes(w.day)) continue; items.push({ id: w.id, title: String(w.title || friendly(String(w.kind || 'warning'))), detail: `${w.level === 'warning' ? 'Warning' : 'Heads-up'}${w.day === tomorrow.date ? ' for tomorrow' : w.day === today.date ? ' for today' : ''}`, level: w.level === 'warning' ? 'warning' : 'advisory' }) }
+  }
  } else if (section.tool === 'pocket_voice_summary' && result && typeof result === 'object' && !Array.isArray(result)) {
   // the memos waiting in the inbox, each opening in Voice; memos still being written out are a count
   const inbox = (result as Record<string, unknown>).latest_inbox
@@ -68,6 +85,7 @@ function briefingContent(section: Section) {
   const r = result as Record<string, unknown>
   counts = ([['today', Array.isArray(r.today) ? r.today.length : 0], ['runs_out_soon', Array.isArray(r.expiring) ? r.expiring.length : 0]] as [string, unknown][]).filter(([, n]) => typeof n === 'number' && n > 0)
  }
+ if (section.tool === 'pocket_weather_summary') counts = []
  if (section.tool === 'pocket_voice_summary' && result && typeof result === 'object' && !Array.isArray(result)) {
   const r = result as Record<string, unknown>
   counts = ([['in_your_inbox', r.inbox], ['being_written_out', r.working]] as [string, unknown][]).filter(([, n]) => typeof n === 'number' && n > 0)
@@ -79,12 +97,13 @@ function briefingContent(section: Section) {
  const source = safeURL(envelope.source_url) ? envelope.source_url : safeURL(envelope.app_url) ? envelope.app_url : ''
  return { items, counts, source }
 }
-const sectionIcons: Record<string, string> = { pocket_calendar_events: 'calendar', pocket_tasks_summary: 'check', pocket_money_bills: 'receipt', pocket_review_summary: 'review', pocket_garage_reminders: 'wrench', pocket_home_due: 'home', pocket_renewals_due: 'clock', pocket_parcels_summary: 'package', pocket_sign_summary: 'pen', pocket_places_summary: 'pin', pocket_voice_summary: 'mic', pocket_wallet_summary: 'qr' }
+const sectionIcons: Record<string, string> = { pocket_calendar_events: 'calendar', pocket_tasks_summary: 'check', pocket_money_bills: 'receipt', pocket_review_summary: 'review', pocket_garage_reminders: 'wrench', pocket_home_due: 'home', pocket_renewals_due: 'clock', pocket_parcels_summary: 'package', pocket_sign_summary: 'pen', pocket_places_summary: 'pin', pocket_voice_summary: 'mic', pocket_wallet_summary: 'qr', pocket_weather_summary: 'sun' }
 function BriefingCard({ section, onAsk, asking }: { section: Section; onAsk: (text: string) => void; asking: boolean }) {
  const [expanded, setExpanded] = useState(false)
  const { items, counts, source } = briefingContent(section)
  const title = sectionTitles[section.tool] || friendly(section.tool)
- const visible = expanded ? items : items.slice(0, 3)
+ const all = section.tool === 'pocket_weather_summary' // a few short lines; warnings never hide behind “Show more”
+ const visible = expanded || all ? items : items.slice(0, 3)
  return <article className="assistant-card briefing-card">
   <header className="briefing-card-head"><span className="briefing-card-icon"><Icon name={sectionIcons[section.tool] || 'search'} size={17} /></span><h2>{title}</h2><button type="button" className="briefing-ask" disabled={asking || !!section.error} aria-label={`Ask about ${title}`} onClick={() => onAsk(`Help me with ${friendly(section.tool)}. Read the current data and suggest the next action; show any proposed change for approval.`)}><Icon name="sparkles" size={14} />Ask</button></header>
   {section.error ? <p role="alert" className="briefing-empty">{section.error}</p> : <>
@@ -93,9 +112,9 @@ function BriefingCard({ section, onAsk, asking }: { section: Section; onAsk: (te
     const itemTitle = String(item.title ?? item.name ?? item.summary), href = safeURL(item.item_url) ? item.item_url : source
     const when = item.due ?? item.due_date ?? item.next_date ?? item.start ?? item.date ?? item.return_by ?? item.expected_on ?? (section.tool === 'pocket_sign_summary' ? item.expires_at : undefined)
     const amount = typeof item.amount === 'number' && typeof item.currency === 'string' && section.tool.startsWith('pocket_money_') ? formatMinor(item.amount,item.currency) : ''
-    return <li key={`${item.id ?? 'item'}-${i}`}><div className="briefing-item-content">{href ? <a href={href} target="_blank" rel="noopener noreferrer">{itemTitle}<Icon name="external" size={12} /></a> : <b>{itemTitle}</b>}<div className="briefing-item-meta">{when ? <span>{displayWhen(when)}</span> : null}{section.tool === 'pocket_sign_summary' ? (item.sender_name ? <span>From {String(item.sender_name)}</span> : null) : section.tool === 'pocket_voice_summary' ? (Number(item.suggestions) > 0 ? <span>{Number(item.suggestions) === 1 ? '1 suggestion' : `${item.suggestions} suggestions`}</span> : <span>No suggestions</span>) : item.status ? <span>{friendly(String(item.status))}</span> : null}{amount && <span className="briefing-amount">{amount}</span>}</div></div><button type="button" className="briefing-item-ask" disabled={asking} aria-label={`Ask about ${itemTitle}`} title={`Ask about ${itemTitle}`} onClick={() => onAsk(`Help me with “${itemTitle}” in ${friendly(section.tool)}. Source: ${href}. Record ID: ${item.id ?? 'not supplied'}. Read the current record, then show any proposed change for approval.`)}><Icon name="sparkles" size={14} /><span>Ask</span></button></li>
-   })}</ul> : <p className="briefing-empty">{section.tool === 'pocket_calendar_events' ? 'No calendar events in today’s overview.' : section.tool === 'pocket_voice_summary' ? 'No memos waiting in your inbox.' : section.tool === 'pocket_wallet_summary' ? 'No tickets today and nothing runs out this week.' : 'No items in this overview.'}</p>}
-   {items.length > 3 && <button type="button" className="briefing-expand" aria-expanded={expanded} onClick={() => setExpanded(v => !v)}>{expanded ? 'Show less' : `Show ${items.length - 3} more`}<Icon name={expanded ? 'chevron-up' : 'chevron-down'} size={14} /></button>}
+    return <li key={`${item.id ?? 'item'}-${i}`} className={item.level === 'warning' ? 'briefing-weather-warning' : item.level === 'advisory' ? 'briefing-weather-advisory' : undefined}><div className="briefing-item-content">{href ? <a href={href} target="_blank" rel="noopener noreferrer">{itemTitle}<Icon name="external" size={12} /></a> : <b>{itemTitle}</b>}<div className="briefing-item-meta">{when ? <span>{displayWhen(when)}</span> : null}{section.tool === 'pocket_sign_summary' ? (item.sender_name ? <span>From {String(item.sender_name)}</span> : null) : section.tool === 'pocket_weather_summary' ? (item.detail ? <span>{String(item.detail)}</span> : null) : section.tool === 'pocket_voice_summary' ? (Number(item.suggestions) > 0 ? <span>{Number(item.suggestions) === 1 ? '1 suggestion' : `${item.suggestions} suggestions`}</span> : <span>No suggestions</span>) : item.status ? <span>{friendly(String(item.status))}</span> : null}{amount && <span className="briefing-amount">{amount}</span>}</div></div><button type="button" className="briefing-item-ask" disabled={asking} aria-label={`Ask about ${itemTitle}`} title={`Ask about ${itemTitle}`} onClick={() => onAsk(`Help me with “${itemTitle}” in ${friendly(section.tool)}. Source: ${href}. Record ID: ${item.id ?? 'not supplied'}. Read the current record, then show any proposed change for approval.`)}><Icon name="sparkles" size={14} /><span>Ask</span></button></li>
+   })}</ul> : <p className="briefing-empty">{section.tool === 'pocket_calendar_events' ? 'No calendar events in today’s overview.' : section.tool === 'pocket_voice_summary' ? 'No memos waiting in your inbox.' : section.tool === 'pocket_wallet_summary' ? 'No tickets today and nothing runs out this week.' : section.tool === 'pocket_weather_summary' ? String(((section.data as Record<string, unknown> | undefined)?.result as Record<string, unknown> | undefined)?.text || 'No weather for home yet.') : 'No items in this overview.'}</p>}
+   {items.length > 3 && !all && <button type="button" className="briefing-expand" aria-expanded={expanded} onClick={() => setExpanded(v => !v)}>{expanded ? 'Show less' : `Show ${items.length - 3} more`}<Icon name={expanded ? 'chevron-up' : 'chevron-down'} size={14} /></button>}
   </>}
   <div className="briefing-source-link">{source && <a href={source} aria-label={`Open source: ${title}`} target="_blank" rel="noopener noreferrer">Open {title}<Icon name="external" size={12} /></a>}</div>
   <details className="briefing-source"><summary>Details &amp; source</summary><p>Checked {new Date(section.checked_at).toLocaleString()} · {(section.duration_ms / 1000).toFixed(1)}s</p><DataView value={section.data} /></details>
