@@ -2,7 +2,7 @@ import { Modal } from './ui'
 import { Snippets } from './Snippets'
 // The prompt box: text, images (paste / drop / camera / photo library), dictation, slash menu (the CLI's commands and skills; recipes run from ⌘J, never in here).
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { api, uploadWithProgress, V1 } from '../lib/api'
+import { api, upload, uploadWithProgress, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { isTouch } from '../lib/format'
 import { parentContext, parentContextItem, parentTabs, type ParentContextItem } from '../lib/embed'
@@ -170,6 +170,31 @@ function draftAttachments(key?: string): Attachment[] {
   } catch { return [] }
 }
 
+/** How the mic dictates: recorded here and written out by Pocket Voice on the person's server
+ *  (Core link Pocket AI → Voice on), else the browser's own speech recognition. Asked once in
+ *  a while; until known there is no mic, so a recording never goes to the wrong one. */
+interface Dictation { voice: boolean; engine?: string }
+let dictationCache: { at: number; got: Dictation } | null = null
+
+function useDictation(): Dictation | null {
+  const [got, setGot] = useState<Dictation | null>(() => dictationCache?.got ?? null)
+  useEffect(() => {
+    if (dictationCache && Date.now() - dictationCache.at < 120_000) return
+    let live = true
+    api.get<Dictation>(`${V1}/dictation`).then(d => {
+      dictationCache = { at: Date.now(), got: d }
+      if (live) setGot(d)
+    }).catch(() => {})
+    return () => { live = false }
+  }, [])
+  return got
+}
+
+// what the browser records in: Chrome and Firefox webm/opus, Safari mp4
+const recordTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']
+const recordExt = (type: string) => /mp4|aac/.test(type) ? 'm4a' : /ogg/.test(type) ? 'ogg' : 'webm'
+const MAX_DICTATION_MS = 5 * 60_000
+
 type SpeechCtor = new () => { lang: string; continuous: boolean; interimResults: boolean; start: () => void; stop: () => void; onresult: ((e: { resultIndex: number; results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> }) => void) | null; onend: (() => void) | null; onerror: ((e: { error: string }) => void) | null }
 
 export const Composer = React.forwardRef<ComposerHandle, {
@@ -194,6 +219,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
   const [sending, setSending] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [listening, setListening] = useState(false)
+  const [writing, setWriting] = useState(false) // a recording with Pocket Voice
   const [slashHi, setSlashHi] = useState(0)
   // "@": the person's Pocket apps, and the framing page's items (Pocket Projects: the issue's notes, files, links)
   const [caret, setCaret] = useState(0)
@@ -216,6 +242,12 @@ export const Composer = React.forwardRef<ComposerHandle, {
   useDismiss(attachMenu, () => setAttachOpen(false), attachOpen)
   const rec = useRef<InstanceType<SpeechCtor> | null>(null)
   const Speech = (window as unknown as { SpeechRecognition?: SpeechCtor; webkitSpeechRecognition?: SpeechCtor }).SpeechRecognition || (window as unknown as { webkitSpeechRecognition?: SpeechCtor }).webkitSpeechRecognition
+  const dictation = useDictation()
+  const recorder = useRef<MediaRecorder | null>(null)
+  const opening = useRef(false)
+  // Voice linked: only ever Voice (a browser that can't record gets no mic); else the browser's recognition, if it has one
+  const viaVoice = !!dictation?.voice
+  const canDictate = dictation !== null && (viaVoice ? typeof MediaRecorder !== 'undefined' && !!navigator.mediaDevices?.getUserMedia : !!Speech)
 
   // drafts survive switching threads
   useEffect(() => { if (draftKey) { setText(sessionStorage.getItem('pai-draft-' + draftKey) || ''); setAtts(draftAttachments(draftKey)) } }, [draftKey])
@@ -518,10 +550,43 @@ export const Composer = React.forwardRef<ComposerHandle, {
     if ((settings?.enter_sends ?? true) && !isTouch()) { e.preventDefault(); send() }
   }
 
-  const stopDictation = () => { rec.current?.stop(); rec.current = null; setListening(false) }
+  // a recording stopped (by the button, sending, the time cap) goes to Voice; its words join the box
+  const stopDictation = () => {
+    rec.current?.stop(); rec.current = null
+    if (recorder.current?.state === 'recording') recorder.current.stop()
+    recorder.current = null
+    setListening(false)
+  }
+  const recordForVoice = async () => {
+    if (opening.current) return
+    opening.current = true
+    let stream: MediaStream
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }) } catch { toast('Allow the microphone to dictate', 'err'); return } finally { opening.current = false }
+    const type = recordTypes.find(t => MediaRecorder.isTypeSupported(t))
+    const mr = new MediaRecorder(stream, type ? { mimeType: type } : undefined)
+    const chunks: Blob[] = []
+    const cap = setTimeout(() => { if (recorder.current === mr) stopDictation() }, MAX_DICTATION_MS)
+    mr.ondataavailable = e => { if (e.data.size) chunks.push(e.data) }
+    mr.onstop = async () => {
+      clearTimeout(cap)
+      stream.getTracks().forEach(t => t.stop())
+      const kind = mr.mimeType || type || 'audio/webm'
+      if (!chunks.length) return
+      setWriting(true)
+      try {
+        const r = await upload<{ text: string }>(`${V1}/dictation`, 'file', new File(chunks, `dictation.${recordExt(kind)}`, { type: kind }))
+        if (r.text) setText(t => (t && !/\s$/.test(t) ? t + ' ' : t) + r.text)
+        else toast('No words in that recording', 'err')
+      } catch (e) { toast(`Dictation: ${errMsg(e)}`, 'err') } finally { setWriting(false) }
+    }
+    mr.start()
+    recorder.current = mr
+    setListening(true)
+  }
   const toggleDictation = () => {
-    if (!Speech) return
     if (listening) { stopDictation(); return }
+    if (viaVoice) { void recordForVoice(); return }
+    if (!Speech) return
     const r = new Speech()
     r.lang = navigator.language || 'en-US'
     r.continuous = true
@@ -535,7 +600,13 @@ export const Composer = React.forwardRef<ComposerHandle, {
     r.onend = () => setListening(false)
     try { r.start(); rec.current = r; setListening(true) } catch { toast('Dictation is not available here', 'err') }
   }
-  useEffect(() => () => rec.current?.stop(), [])
+  useEffect(() => () => {
+    rec.current?.stop()
+    const mr = recorder.current // leaving: the recording is dropped, the microphone let go
+    if (mr) { mr.onstop = () => mr.stream.getTracks().forEach(t => t.stop()); mr.stop() }
+  }, [])
+  const micLabel = writing ? 'Writing it out…' : listening ? viaVoice ? 'Stop and write it out' : 'Stop dictation'
+    : !viaVoice ? 'Dictate' : dictation?.engine === 'api' ? 'Dictate — Pocket Voice writes it out with the speech service set in Voice' : 'Dictate — written out on your server by Pocket Voice'
 
   return (
     <div ref={box} className={`composer ${big ? 'big' : ''} ${disabled ? 'disabled' : ''}`}>
@@ -611,7 +682,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
           onClick={() => { if (isTouch()) setAttachOpen(o => !o); else fileInput.current?.click() }}><Icon name="plus" size={18} /></button>
         <button type="button" className="btn ghost icon-only sm" aria-label="Insert snippet" title="Snippets" disabled={disabled} onClick={() => setSnippetsOpen(true)}><Icon name="bookmark" size={17} /></button>
         <div className="composer-extra">{footer}</div>
-        {Speech && <button type="button" className={`btn ghost icon-only sm mic-btn ${listening ? 'rec' : ''}`} aria-label={listening ? 'Stop dictation' : 'Dictate'} title={listening ? 'Stop dictation' : 'Dictate'} disabled={disabled} onClick={toggleDictation}><Icon name="mic" size={17} /></button>}
+        {canDictate && <button type="button" className={`btn ghost icon-only sm mic-btn ${listening ? 'rec' : ''}`} aria-label={micLabel} title={micLabel} disabled={disabled || writing} onClick={toggleDictation}>{writing ? <Spinner size={15} /> : <Icon name="mic" size={17} />}</button>}
         {running && onStop && !text.trim() && atts.length === 0 ? (
           <button type="button" className="stop-round" aria-label="Stop" title="Stop (⌘.)" onClick={onStop}><span /></button>
         ) : (
@@ -636,6 +707,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
           setTimeout(() => ta.current?.focus(), 0)
         }} />
       </Modal>}
+      {writing && <div className="dictation-note" role="status"><Spinner size={12} />Writing it out…</div>}
       {dragging && <div className="drop-overlay"><div><Icon name="image" size={28} /><b>Drop images to attach</b></div></div>}
     </div>
   )

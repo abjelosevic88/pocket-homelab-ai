@@ -224,6 +224,9 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/v1/terminals/{tid}/ws", s.handleTerminalSocket)
 		// files: big uploads and downloads must not hit the request timeout (files.go)
 		s.fileRoutes(r)
+		// dictation written out by Pocket Voice: whisper on a long one may take longer (voice_dictation.go)
+		r.Get("/api/v1/dictation", s.handleDictation)
+		r.Post("/api/v1/dictation", s.handleDictate)
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {
@@ -448,7 +451,7 @@ func (s *Server) registerWithCore(ctx context.Context) error {
 		Icon:        "/favicon.svg", Version: Version,
 		URL: s.cfg.CoreAppURL, PublicURL: s.cfg.BaseURL, HealthPath: "/healthz", EnvPrefix: "AI",
 		Publishes: []string{"ai.turn_finished", "ai.needs_input", "ai.schedule_attention"},
-		Uses:      []core.Use{projectsUse},
+		Uses:      []core.Use{projectsUse, voiceUse},
 		Offers: []core.Offer{{Scope: core.InferenceScope, Name: "Generate text", Description: "Text-only generation with your Pocket AI account; no tools or conversation access"},
 			{Scope: ThreadsScope, Name: "Start coding conversations", Description: "Prepare a conversation with Claude Code or Codex in a folder on this server; you read the prompt and press send yourself"},
 			{Scope: ThreadsReadScope, Name: "See what your coding conversations changed", Description: "Which files the agent edited for a pull request or a branch, in order, with the sentence it said just before — never the rest of the conversation"}},
