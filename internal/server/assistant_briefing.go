@@ -176,21 +176,23 @@ func (s *Server) briefing(ctx context.Context, uid int64, tid string, cat map[st
 			unavailable = append(unavailable, r.Name)
 		}
 	}
-	// the Weather and Fitness cards come from Pocket Weather and Pocket Fitness
-	// over their Core links, alongside the rest, first in the briefing
+	// the Weather, Fitness and Nutrition cards come from Pocket Weather, Pocket
+	// Fitness and Pocket Nutrition over their Core links, alongside the rest,
+	// first in the briefing
 	type linkRead struct {
 		sec appSection
 		ok  bool
 	}
-	wch, fch := make(chan linkRead, 1), make(chan linkRead, 1)
+	wch, fch, nch := make(chan linkRead, 1), make(chan linkRead, 1), make(chan linkRead, 1)
 	go func() { sec, ok := s.weatherSection(ctx, uid, tid); wch <- linkRead{sec, ok} }()
 	go func() { sec, ok := s.fitnessSection(ctx, uid, tid); fch <- linkRead{sec, ok} }()
+	go func() { sec, ok := s.nutritionSection(ctx, uid, tid); nch <- linkRead{sec, ok} }()
 	sections := s.parallelReads(ctx, uid, tid, reads)
 	linked := []appSection{}
 	for _, l := range []struct {
 		ch   chan linkRead
 		tool string
-	}{{wch, weatherTool}, {fch, fitnessTool}} {
+	}{{wch, weatherTool}, {fch, fitnessTool}, {nch, nutritionTool}} {
 		if r := <-l.ch; r.ok {
 			linked = append(linked, r.sec)
 		} else {
@@ -198,7 +200,7 @@ func (s *Server) briefing(ctx context.Context, uid int64, tid string, cat map[st
 		}
 	}
 	sections = append(linked, sections...)
-	return map[string]any{"date": day, "timezone": now.Location().String(), "coverage": "The weather at home now, today and tomorrow, with any warnings; training: today's planned workout (or the one going on now), workouts this week against the weekly goal, the last workout and new personal records; calendar for today; task/review dashboards; recurring bills, car maintenance reminders and home upkeep due in the next two weeks; passports, insurance, warranties, domains and subscriptions that run out in the next 30 days or have run out; parcels arriving today, waiting for pick-up or with a problem, and return deadlines in the next week; documents waiting for your signature and how many of yours wait for others to sign; visits to your places waiting for a rating and your next planned visits; voice memos waiting in your inbox and how many are still being written out; today's tickets and flights from your wallet, the next pass, and IDs, memberships and gift cards that run out soon; books being read with today's pages and finish estimates. Collections are limited to 20 entries, and bill dates may be estimates.", "unavailable": unavailable, "sections": sections}
+	return map[string]any{"date": day, "timezone": now.Location().String(), "coverage": "The weather at home now, today and tomorrow, with any warnings; training: today's planned workout (or the one going on now), workouts this week against the weekly goal, the last workout and new personal records; food: today's calories against the budget and what's left, protein and water against their goals, this week's days logged and on goal with the average, and the days in a row logged; calendar for today; task/review dashboards; recurring bills, car maintenance reminders and home upkeep due in the next two weeks; passports, insurance, warranties, domains and subscriptions that run out in the next 30 days or have run out; parcels arriving today, waiting for pick-up or with a problem, and return deadlines in the next week; documents waiting for your signature and how many of yours wait for others to sign; visits to your places waiting for a rating and your next planned visits; voice memos waiting in your inbox and how many are still being written out; today's tickets and flights from your wallet, the next pass, and IDs, memberships and gift cards that run out soon; books being read with today's pages and finish estimates. Collections are limited to 20 entries, and bill dates may be estimates.", "unavailable": unavailable, "sections": sections}
 }
 func (s *Server) handleBriefing(w http.ResponseWriter, r *http.Request) {
 	cat, err := s.catalog(r.Context(), me(r))
