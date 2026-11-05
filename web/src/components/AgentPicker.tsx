@@ -129,19 +129,25 @@ const ASK_MODELS: Option<string>[] = [
 // A machine's logins (one per login folder there), shared by every picker
 // and asked again after a minute.
 const hostLoginCache = new Map<number, { at: number; list: Promise<HostLogin[]> }>()
-function useHostLogins(host: number) {
+let hostLoginsSeen: unknown = null
+/** A machine's logins. `changed` is the accounts list: it is new whenever a
+ *  login is added or signed in anywhere (SSE `accounts`), so it is asked again. */
+function useHostLogins(host: number, changed: unknown) {
   const [list, setList] = useState<HostLogin[]>([])
   useEffect(() => {
     if (!host) { setList([]); return }
     let c = hostLoginCache.get(host)
-    if (!c || Date.now() - c.at > 60e3) {
+    const stale = hostLoginsSeen !== null && changed !== hostLoginsSeen
+    hostLoginsSeen = changed
+    if (!c || stale || Date.now() - c.at > 60e3) {
+      if (stale) hostLoginCache.clear()
       c = { at: Date.now(), list: api.get<HostLogin[]>(`${V1}/hosts/logins?host=${host}`).catch(() => [] as HostLogin[]) }
       hostLoginCache.set(host, c)
     }
     let live = true
     c.list.then(l => { if (live) setList(l) })
     return () => { live = false }
-  }, [host])
+  }, [host, changed])
   return list
 }
 
@@ -174,7 +180,7 @@ export function AgentPicker({ value, onChange, allowDefault = false, compact = f
   const pid = (value.provider || settings?.default_provider || 'claude') as ProviderId
   const p = providers.find(x => x.id === pid)
   const accts = allowDefault || noAccount || host ? [] : accountOptions(accounts, pid, value.account_id || 0)
-  const machineLogins = machineLoginOptions(useHostLogins(allowDefault || noAccount ? 0 : host), pid, value.host_home || '')
+  const machineLogins = machineLoginOptions(useHostLogins(allowDefault || noAccount ? 0 : host, accounts), pid, value.host_home || '')
   const models = ask ? ASK_MODELS : modelOptions(p, allowDefault)
   const efforts = effortOptions(p, value.model, allowDefault)
   const modes = ask ? [] : modeOptions(p, allowDefault)

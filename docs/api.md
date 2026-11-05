@@ -82,6 +82,13 @@ keyed `claude` / `codex` for account 0 and `claude:3` for account 3 (with `label
 server", Today and Running now read every folder the person may use (`account_id` on each session).
 The SSE stream sends `accounts` when the list or a sign-in changes.
 
+Other machines (Servers) have logins of their own: `GET /hosts/logins[?host=&refresh=1]` lists each CLI's
+default (`dir: ""`) and its other login folders there (`~/.claude-max`, `dir` = that path). `POST
+/hosts/{id}/logins/{provider} {name}` makes another one (`~/.claude-<name>`, sharing the default's settings like
+the accounts above; one already there is kept) and answers it; sign it in with `POST
+/hosts/{id}/login/{provider}?dir=…` (then `/code`, as above). A thread on the machine switches with `PATCH
+/threads/{id} {host_home: dir}`.
+
 ## Threads
 
 `Thread`:
