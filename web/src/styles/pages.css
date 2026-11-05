@@ -269,6 +269,9 @@
 .briefing-item-content > a .icon { display:inline; vertical-align:middle; margin-left:5px; color:var(--muted); }
 .briefing-item-meta { display:flex; flex-wrap:wrap; gap:4px 10px; color:var(--muted); font-size:11.5px; margin-top:4px; }
 .briefing-item-meta .briefing-amount { color:var(--text); font-variant-numeric:tabular-nums; }
+.briefing-weather-advisory .briefing-item-content > a,.briefing-weather-advisory .briefing-item-content > b { color:var(--warning); }
+.briefing-weather-warning { box-shadow:inset 3px 0 0 var(--danger); padding-left:10px !important; }
+.briefing-weather-warning .briefing-item-content > a,.briefing-weather-warning .briefing-item-content > b { color:var(--danger); font-weight:650; }
 .briefing-item-ask { flex-shrink:0; padding:5px 6px; font-size:11px; }
 .briefing-empty { margin:15px 0; color:var(--muted); font-size:13px; line-height:1.6; }
 .briefing-expand { color:var(--accent-ink); margin:2px 0 8px; padding-left:0; }
