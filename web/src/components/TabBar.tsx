@@ -37,6 +37,14 @@ const loadGroups = (): TabGroup[] => {
       .map(g => g.auto?.startsWith('projects:') && g.name === g.auto.slice(9) ? { ...g, name: refKey(g.name) } : g)
   } catch { return [] }
 }
+/** A tab's own colour (tab id → GROUP_COLORS name), grouped or not. Per browser. */
+const COLORS = 'pai-tab-colors'
+const loadColors = (): Record<string, string> => {
+  try {
+    const v = JSON.parse(localStorage.getItem(COLORS) || '{}')
+    return v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).filter(([, c]) => GROUP_COLORS.includes(c as string))) as Record<string, string> : {}
+  } catch { return {} }
+}
 
 /** The open tabs; opening a thread adds its tab. */
 export function useTabs(enabled: boolean) {
@@ -146,6 +154,19 @@ export function useTabs(enabled: boolean) {
     rest.splice(i, 0, ...members)
     return rest.join() === t.join() ? t : rest
   }), [groups])
+  const [colors, setColors] = useState<Record<string, string>>(loadColors)
+  useEffect(() => { localStorage.setItem(COLORS, JSON.stringify(colors)) }, [colors])
+  useEffect(() => { // a colour stays while its tab is open or can be reopened
+    setColors(cs => {
+      const keep = Object.entries(cs).filter(([id]) => tabs.includes(id) || closed.includes(id))
+      return keep.length === Object.keys(cs).length ? cs : Object.fromEntries(keep)
+    })
+  }, [tabs, closed])
+  const colorTab = useCallback((id: string, c: string) => setColors(cs => {
+    const next = { ...cs }
+    if (c) next[id] = c; else delete next[id]
+    return next
+  }), [])
   const editGroup = useCallback((gid: string, p: Partial<Omit<TabGroup, 'id' | 'tabs'>>) => setGroups(gs => gs.map(g => g.id === gid ? { ...g, ...p } : g)), [])
   const ungroup = useCallback((gid: string) => setGroups(gs => gs.filter(g => g.id !== gid)), [])
   // A conversation a Projects issue started joins that issue's group (made on
@@ -163,10 +184,10 @@ export function useTabs(enabled: boolean) {
     const g = groups.find(x => x.auto === 'projects:' + ref)
     if (g) joinGroup(id, g.id); else newGroup([id], refKey(ref), 'projects:' + ref)
   }, [enabled, threads, proj?.on, proj?.threads, tabs, autoDone, groups, groupOf, joinGroup, newGroup])
-  return { tabs, active, close, move, moveGroup, closed: reopenable, reopen, step, groups, issues: proj?.on ? proj.issues : {}, groupOf, joinGroup, newGroup, leaveGroup, editGroup, ungroup }
+  return { tabs, active, close, move, moveGroup, closed: reopenable, reopen, step, groups, issues: proj?.on ? proj.issues : {}, groupOf, joinGroup, newGroup, leaveGroup, editGroup, ungroup, colors, colorTab }
 }
 
-export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, issues, groups, groupOf, joinGroup, newGroup, leaveGroup, editGroup, ungroup }: ReturnType<typeof useTabs>) {
+export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, issues, groups, groupOf, joinGroup, newGroup, leaveGroup, editGroup, ungroup, colors, colorTab }: ReturnType<typeof useTabs>) {
   const [naming, setNaming] = useState('') // group whose label is being renamed
   const { threads, running, user, terms, hosts } = useApp()
   const term = useTerminals()
@@ -194,6 +215,8 @@ export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, i
       { label: 'Add to new group', icon: 'plus', onSelect: () => setNaming(newGroup([id])) },
       ...groups.filter(g => !g.tabs.includes(id)).map(g => ({ label: <span className="row"><span className={`tg-dot tg-${g.color}`} />Add to “{g.name || 'Unnamed group'}”</span>, onSelect: () => joinGroup(id, g.id) })),
       ...(groupOf(id) ? [{ label: 'Remove from group', onSelect: () => leaveGroup(id) }] : []),
+      { heading: 'Tab colour' },
+      { colors: GROUP_COLORS, value: colors[id] || '', onPick: (c: string) => colorTab(id, c) },
       'sep' as const,
       { label: 'Close tab', icon: 'x', onSelect: () => close([id]) },
       { label: 'Close other tabs', disabled: shown.length < 2, onSelect: () => close(shown.filter(x => x !== id)) },
@@ -263,7 +286,7 @@ export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, i
           const file = isFileTab(id) ? parseFileTab(id) : null
           return (
             <div key={id} role="tab" aria-selected={on} tabIndex={0} draggable
-              className={`tab ${on ? 'on' : ''} ${drag === id ? 'dragging' : ''} ${t?.unread && !on ? 'unread' : ''} ${r.group ? `grouped tg-${r.group.color}` : ''} ${t?.pinned ? 'fav' : ''}`}
+              className={`tab ${on ? 'on' : ''} ${drag === id ? 'dragging' : ''} ${t?.unread && !on ? 'unread' : ''} ${r.group ? `grouped tg-${r.group.color}` : ''} ${t?.pinned ? 'fav' : ''} ${colors[id] ? `tc tc-${colors[id]}` : ''}`}
               title={file ? `${file.path} · ${file.host ? hosts.find(h => h.id === file.host)?.name || 'Server' : 'This server'}` : t ? threadTitle(t) : tLead ? `${tLead.title} · ${tLead.host_name}${tts.length > 1 ? ` · ${tts.length} panes` : ''}` : ''}
               onClick={() => navigate(tabPath(id))}
               onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(tabPath(id)) } }}
@@ -305,6 +328,7 @@ export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, i
         { label: 'Close this tab', icon: 'x', disabled: i < 0, onSelect: () => close([active]) },
         { label: 'Close other tabs', disabled: i < 0 || shown.length < 2, onSelect: () => close(shown.filter(x => x !== active)) },
         { label: 'Close tabs to the right', disabled: i < 0 || i === shown.length - 1, onSelect: () => close(shown.slice(i + 1)) },
+        ...(i >= 0 ? [{ heading: 'This tab’s colour' }, { colors: GROUP_COLORS, value: colors[active] || '', onPick: (c: string) => colorTab(active, c) }] : []),
         'sep',
         { label: 'Reopen closed tab', icon: 'history', hint: keyCaps(keys.reopen_tab).join(''), disabled: !closed.length, onSelect: () => reopen() },
         ...(closed.length > 1 ? [{ heading: 'Recently closed' }, ...closed.slice(0, 8).map(id => {
