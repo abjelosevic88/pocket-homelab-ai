@@ -11,7 +11,7 @@ import type { Thread } from '../lib/types'
 function Frame({ title, sub, onMenu, children }: { title: string; sub: string; onMenu?: () => void; children: ReactNode }) { return <div className="page"><PageHead title={title} sub={sub} onMenu={onMenu} /><div className="page-scroll"><div className="page-inner assistant-page">{children}</div></div></div> }
 interface Section { tool: string; data?: unknown; error?: string; checked_at: string; duration_ms: number }
 interface Overview { date?: string; timezone?: string; coverage: string; unavailable?: string[]; sections: Section[] }
-const sectionTitles: Record<string,string> = { pocket_tasks_summary:'Tasks', pocket_money_bills:'Bills & subscriptions', pocket_calendar_events:'Calendar', pocket_review_summary:'Reviews', pocket_garage_reminders:'Car maintenance', pocket_home_due:'Home upkeep', pocket_renewals_due:'What runs out', pocket_parcels_summary:'Deliveries', pocket_sign_summary:'Waiting for your signature' }
+const sectionTitles: Record<string,string> = { pocket_tasks_summary:'Tasks', pocket_money_bills:'Bills & subscriptions', pocket_calendar_events:'Calendar', pocket_review_summary:'Reviews', pocket_garage_reminders:'Car maintenance', pocket_home_due:'Home upkeep', pocket_renewals_due:'What runs out', pocket_parcels_summary:'Deliveries', pocket_places_summary:'Places', pocket_sign_summary:'Waiting for your signature' }
 function displayWhen(value: unknown) { const s=String(value); if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return new Date(s+'T12:00:00').toLocaleDateString(); if (s.includes('T') && !Number.isNaN(Date.parse(s))) return new Date(s).toLocaleString(); return s }
 function formatMinor(amount: number, currency: string) { try { const f = new Intl.NumberFormat(undefined, { style:'currency', currency }); const digits = f.resolvedOptions().maximumFractionDigits ?? 2; return f.format(amount / 10 ** digits) } catch { return `${amount} minor units (${currency})` } }
 function briefingContent(section: Section) {
@@ -38,11 +38,19 @@ function briefingContent(section: Section) {
  } else if (section.tool === 'pocket_sign_summary' && result && typeof result === 'object' && !Array.isArray(result)) {
   // what others sent the person to sign; their own documents waiting for others are a count
   visit((result as Record<string, unknown>).to_sign)
+ } else if (section.tool === 'pocket_places_summary' && result && typeof result === 'object' && !Array.isArray(result)) {
+  // the next planned visits; visits waiting for a rating are a count
+  const planned = (result as Record<string, unknown>).planned
+  if (Array.isArray(planned)) for (const v of planned.slice(0, 5)) if (v && typeof v === 'object') { const o = v as Record<string, unknown>; items.push({ ...o, title: `${o.place_name}${o.time ? `, ${o.time}` : ''}${o.with_whom ? ` (with ${o.with_whom})` : ''}` }) }
  } else visit(result)
  let counts = result && !Array.isArray(result) && typeof result === 'object' ? Object.entries(result).filter(([k, v]) => typeof v === 'number' && /^(overdue|due_today|today|total|open|open_reviews|open_tasks|done_today|to_review|to_approve|completed|active|due|waiting)$/.test(k)) : []
  if (section.tool === 'pocket_parcels_summary' && result && typeof result === 'object' && !Array.isArray(result)) {
   const c = ((result as Record<string, unknown>).counts || {}) as Record<string, unknown>
   counts = (['today', 'pickup', 'problems', 'returns_due', 'on_the_way'] as const).filter(k => typeof c[k] === 'number' && (c[k] as number) > 0).map(k => [k, c[k]] as [string, unknown])
+ }
+ if (section.tool === 'pocket_places_summary' && result && typeof result === 'object' && !Array.isArray(result)) {
+  const r = result as Record<string, unknown>
+  counts = ([['to_rate', r.to_rate], ['planned', Array.isArray(r.planned) ? r.planned.length : 0]] as [string, unknown][]).filter(([, n]) => typeof n === 'number' && n > 0)
  }
  if (section.tool === 'pocket_sign_summary' && result && typeof result === 'object' && !Array.isArray(result)) {
   const c = ((result as Record<string, unknown>).counts || {}) as Record<string, unknown>
@@ -51,7 +59,7 @@ function briefingContent(section: Section) {
  const source = safeURL(envelope.source_url) ? envelope.source_url : safeURL(envelope.app_url) ? envelope.app_url : ''
  return { items, counts, source }
 }
-const sectionIcons: Record<string, string> = { pocket_calendar_events: 'calendar', pocket_tasks_summary: 'check', pocket_money_bills: 'receipt', pocket_review_summary: 'review', pocket_garage_reminders: 'wrench', pocket_home_due: 'home', pocket_renewals_due: 'clock', pocket_parcels_summary: 'package', pocket_sign_summary: 'pen' }
+const sectionIcons: Record<string, string> = { pocket_calendar_events: 'calendar', pocket_tasks_summary: 'check', pocket_money_bills: 'receipt', pocket_review_summary: 'review', pocket_garage_reminders: 'wrench', pocket_home_due: 'home', pocket_renewals_due: 'clock', pocket_parcels_summary: 'package', pocket_sign_summary: 'pen', pocket_places_summary: 'pin' }
 function BriefingCard({ section, onAsk, asking }: { section: Section; onAsk: (text: string) => void; asking: boolean }) {
  const [expanded, setExpanded] = useState(false)
  const { items, counts, source } = briefingContent(section)
