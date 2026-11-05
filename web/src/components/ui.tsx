@@ -272,6 +272,8 @@ export function Popover({ anchor, onClose, children, prefer = 'side', width = 36
 // ---------- menus ----------
 
 export type MenuItem = { label: React.ReactNode; icon?: string; onSelect?: () => void; danger?: boolean; disabled?: boolean; hint?: React.ReactNode; checked?: boolean } | 'sep' | { heading: string }
+  /** a row of colour dots (the tab-group palette, `.tg-<colour>`) plus "none" */
+  | { colors: string[]; value: string; onPick: (c: string) => void }
 
 export function Menu({ items, onClose, anchor, align = 'left', width = 230 }: { items: MenuItem[]; onClose: () => void; anchor: Anchor; align?: 'left' | 'right'; width?: number }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -307,6 +309,15 @@ export function Menu({ items, onClose, anchor, align = 'left', width = 230 }: { 
       {items.map((it, i) => {
         if (it === 'sep') return <div key={i} className="menu-sep" />
         if ('heading' in it) return <div key={i} className="menu-heading">{it.heading}</div>
+        if ('colors' in it) return (
+          <div key={i} className="menu-colors">
+            {['', ...it.colors].map(c => {
+              const name = c ? c[0].toUpperCase() + c.slice(1) : 'No colour'
+              return <button key={c} type="button" className={`menu-swatch ${c ? `tg-${c}` : 'none'} ${it.value === c ? 'on' : ''}`} aria-label={name} title={name} aria-pressed={it.value === c}
+                onClick={() => { onClose(); it.onPick(c) }} />
+            })}
+          </div>
+        )
         return (
           <button key={i} type="button" role="menuitem" disabled={it.disabled} className={`menu-item ${it.danger ? 'danger' : ''} ${hi === i ? 'hi' : ''}`} onMouseEnter={() => setHi(i)}
             onClick={() => { onClose(); it.onSelect?.() }}>
