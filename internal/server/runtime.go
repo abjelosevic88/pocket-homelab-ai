@@ -67,6 +67,7 @@ type run struct {
 	account  int64  // the login it runs on (0 = the server's own)
 	host     int64  // the machine it runs on (0 = this server)
 	hostHome string // its login folder there ("" = the default)
+	login    string // limits key of the login its CLI really runs on, when not the thread's (an adopted CLI)
 	sess     agent.Session
 	cancel   context.CancelFunc
 
@@ -485,6 +486,9 @@ func (rt *engine) startRun(t *store.Thread) (*run, error) {
 	}
 	sink := &runSink{rt: rt, r: r}
 	pin := rt.holdFor(ctx, t, nil, &o)
+	if pin != nil && pin.Login != "" && pin.Login != threadLogin(t, nil) {
+		r.login, r.stale = pin.Login, true // mid-turn on the old login: it ends there, then moves
+	}
 	rt.costBase(ctx, t, nil, &o)
 	if t.Source == "ask" {
 		if err := rt.s.preparePocketTools(ctx, t, sink, &o, pin); err != nil {
@@ -503,7 +507,7 @@ func (rt *engine) startRun(t *store.Thread) (*run, error) {
 	case "codex":
 		o.Bin = rt.s.cfg.CodexBin
 	}
-	r.sess, err = startSession(ctx, t.Provider, o, sink)
+	r.sess, err = startSession(ctx, t.Provider, threadLogin(t, nil), o, sink)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -629,6 +633,9 @@ func (rt *engine) startRemote(t *store.Thread, h *store.Host) (*run, error) {
 		"\nThis conversation runs on the machine \"" + h.Name + "\" (" + firstNonEmpty(h.Info.Hostname, h.Target) + "), reached over ssh from the Pocket AI server."
 	sink := &runSink{rt: rt, r: r}
 	pin := rt.holdFor(ctx, t, h, &o)
+	if pin != nil && pin.Login != "" && pin.Login != threadLogin(t, h) {
+		r.login, r.stale = pin.Login, true
+	}
 	rt.costBase(ctx, t, h, &o)
 	// Pocket app tools: their endpoint is on this server's loopback, so the
 	// ssh connection carries it to the remote machine's loopback.
@@ -648,7 +655,7 @@ func (rt *engine) startRemote(t *store.Thread, h *store.Host) (*run, error) {
 		o.SystemPrompt += " Pocket app tools are not available here; for Pocket app data, the person can use a conversation on the Pocket AI server."
 	}
 	var err error
-	r.sess, err = startSession(ctx, t.Provider, o, sink)
+	r.sess, err = startSession(ctx, t.Provider, threadLogin(t, h), o, sink)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -1295,6 +1302,9 @@ func (k *runSink) Limits(provider string, w []agent.Window) {
 	key := limitsKey(provider, k.r.account)
 	if k.r.host != 0 {
 		key = hostLimitsKey(provider, k.r.host, k.r.hostHome) // that machine's own login
+	}
+	if k.r.login != "" {
+		key = k.r.login // an adopted CLI still on the login the thread left
 	}
 	k.rt.setLimits(key, w, nil, false, "")
 }
