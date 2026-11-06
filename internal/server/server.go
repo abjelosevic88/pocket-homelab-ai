@@ -243,6 +243,8 @@ func (s *Server) Router() http.Handler {
 		r.Get("/link/agent-options", s.handleLinkAgentOptions)
 		r.Post("/link/drafts", s.handleLinkCreateDraft)
 		r.Get("/link/threads", s.handleLinkThreads)
+		r.Post("/link/chats", s.handleLinkCreateChat)
+		r.Get("/link/chats", s.handleLinkChats)
 		r.Post("/link/threads/{draft}/unlink", s.handleLinkUnlink)
 		r.Delete("/link/threads/{draft}", s.handleLinkDelete)
 		r.Get("/link/dirs", s.handleLinkDirs)
@@ -454,6 +456,7 @@ func (s *Server) registerWithCore(ctx context.Context) error {
 		Uses:      []core.Use{projectsUse, voiceUse, weatherUse, fitnessUse, nutritionUse},
 		Offers: []core.Offer{{Scope: core.InferenceScope, Name: "Generate text", Description: "Text-only generation with your Pocket AI account; no tools or conversation access"},
 			{Scope: ThreadsScope, Name: "Start coding conversations", Description: "Prepare a conversation with Claude Code or Codex in a folder on this server; you read the prompt and press send yourself"},
+			{Scope: ChatsScope, Name: "Start chats about your items", Description: "Start an Ask chat about one of your items (a book, …) with its details, and list the chats about it; you read and continue them in Pocket AI"},
 			{Scope: ThreadsReadScope, Name: "See what your coding conversations changed", Description: "Which files the agent edited for a pull request or a branch, in order, with the sentence it said just before — never the rest of the conversation"}},
 	}
 	if s.cfg.BaseURL != "" {

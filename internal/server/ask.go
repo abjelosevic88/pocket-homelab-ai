@@ -142,6 +142,9 @@ type askCreate struct {
 	// app: its slug, address and name), not a question about one item. The page
 	// the person looks at comes with "@" as an attached file, when they add it.
 	AppChat bool `json:"app_chat"`
+	// Title names the conversation when set (an app's chat about an item:
+	// "<item> · <question>"); otherwise the item's title or the question.
+	Title string `json:"-"`
 }
 
 func (s *Server) createAsk(ctx context.Context, u *store.User, in askCreate) (*store.Thread, error) {
@@ -151,7 +154,7 @@ func (s *Server) createAsk(ctx context.Context, u *store.User, in askCreate) (*s
 	if in.Source.URL == "" {
 		in.Source = askSource{App: "ai", URL: s.cfg.BaseURL, Title: oneLine(in.Text, 160)}
 	}
-	title := firstNonEmpty(in.Source.Title, in.Text)
+	title := firstNonEmpty(in.Title, in.Source.Title, in.Text)
 	if in.AppChat {
 		// written here, not by the page: the app's name is all the browser supplies
 		name := oneLine(firstNonEmpty(in.Source.Title, in.Source.App), 80)
