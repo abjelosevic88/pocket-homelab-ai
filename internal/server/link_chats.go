@@ -57,7 +57,7 @@ func (s *Server) linkChatOf(t *store.Thread) linkChat {
 // handleLinkCreateChat starts an Ask chat about one item: the first message
 // is sent at once, context goes to the agent as the item's (untrusted) details.
 //
-//	POST /api/v1/link/chats {text, title, url, context?, model?: sonnet|opus|haiku, no_memory?}
+//	POST /api/v1/link/chats {text, title, url, context?, name?, model?: sonnet|opus|haiku, no_memory?}
 func (s *Server) handleLinkCreateChat(w http.ResponseWriter, r *http.Request) {
 	u, app := s.chatCaller(w, r)
 	if u == nil {
@@ -68,6 +68,7 @@ func (s *Server) handleLinkCreateChat(w http.ResponseWriter, r *http.Request) {
 		Title    string `json:"title"`
 		URL      string `json:"url"`
 		Context  string `json:"context"`
+		Name     string `json:"name"` // what the chat is called after the item (default: the question)
 		Model    string `json:"model"`
 		NoMemory bool   `json:"no_memory"`
 	}
@@ -82,7 +83,7 @@ func (s *Server) handleLinkCreateChat(w http.ResponseWriter, r *http.Request) {
 	item := oneLine(in.Title, 120)
 	t, err := s.createAsk(r.Context(), u, askCreate{Text: in.Text, Model: in.Model, NoMemory: in.NoMemory,
 		Source: askSource{App: app, URL: strings.TrimSpace(in.URL), Title: item, Selection: in.Context},
-		Title:  strings.TrimPrefix(item+" · "+oneLine(in.Text, 100), " · ")})
+		Title:  strings.TrimPrefix(item+" · "+oneLine(firstNonEmpty(strings.TrimSpace(in.Name), in.Text), 100), " · ")})
 	if err != nil {
 		if t != nil { // created, but the first message failed: say so with the chat
 			writeJSON(w, http.StatusCreated, s.linkChatOf(t))
