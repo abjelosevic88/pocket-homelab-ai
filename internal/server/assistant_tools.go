@@ -245,9 +245,11 @@ func (s *Server) callPocketTool(ctx, session context.Context, t *store.Thread, s
 	if tool.Annotations.ReadOnly {
 		return s.readApp(ctx, uid, t.ID, call.Name, args)
 	}
-	// a conversation started from a Projects issue changes only that issue
-	if msg := s.projectsPin(ctx, uid, t.ID, call.Name, args); msg != "" {
-		return toolFailure(msg)
+	// a conversation started from a Projects issue changes other issues only
+	// with the person's own Allow
+	outside, refuse := s.projectsPin(ctx, uid, t.ID, call.Name, args)
+	if refuse != "" {
+		return toolFailure(refuse)
 	}
 	callID := s.startAppCall(ctx, uid, t.ID, call.Name, call.Arguments, true)
 	if callID == "" {
@@ -280,7 +282,7 @@ func (s *Server) callPocketTool(ctx, session context.Context, t *store.Thread, s
 		}
 	}
 	_, _ = s.store.DB.ExecContext(ctx, `UPDATE app_calls SET status='pending' WHERE id=?`, callID)
-	req := agent.Request{ID: "ask-" + uuid.NewString(), Type: "permission", ToolName: call.Name, Title: askActionTitle(call.Name), Input: preview, Status: "pending", ForID: uid, For: byName, App: tool.Meta.App, Kind: tool.Meta.Kind}
+	req := agent.Request{ID: "ask-" + uuid.NewString(), Type: "permission", ToolName: call.Name, Title: askActionTitle(call.Name), Input: preview, Status: "pending", ForID: uid, For: byName, App: tool.Meta.App, Kind: tool.Meta.Kind, Note: outside}
 	match := awayMatch(call.Name, call.Arguments)
 	switch s.approveChange(ctx, session, t, sink, uid, tool, req, match) {
 	case "allow":
@@ -358,11 +360,12 @@ func (s *Server) undoNoteArgs(ctx context.Context, uid int64, id string) (json.R
 }
 
 // approveChange decides on a change an agent asked for through the Pocket
-// tools: the person's own auto-approve rule, an approval they gave while away,
+// tools: the person's own auto-approve rule (not for a change with a Note,
+// outside the issue its conversation is pinned to), an approval they gave while away,
 // "defer" while they are away (the caller saves it), else the card in the
 // thread, which waits up to 10 minutes. "allow", "deny" or "defer".
 func (s *Server) approveChange(ctx, session context.Context, t *store.Thread, sink *runSink, uid int64, tool askTool, req agent.Request, match string) string {
-	if why := s.appAutoRules(ctx, uid).allows(tool); why != "" {
+	if why := s.appAutoRules(ctx, uid).allows(tool); why != "" && req.Note == "" {
 		// the person's own rule: shown in the timeline as allowed, nobody waits
 		req.Status, req.Auto = "allowed", why
 		sink.rt.saveItem(sink.r.threadID, agent.Item{Key: "req-" + req.ID, Kind: "request", Request: &req})

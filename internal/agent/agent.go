@@ -117,6 +117,9 @@ type Request struct {
 	App  string `json:"app,omitempty"`
 	Kind string `json:"kind,omitempty"`
 	Auto string `json:"auto,omitempty"`
+	// Note: why this change asks although a rule would allow it (outside the
+	// issue a Projects conversation is pinned to).
+	Note string `json:"note,omitempty"`
 }
 
 // TurnInfo summarises a finished turn.

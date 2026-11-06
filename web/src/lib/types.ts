@@ -293,6 +293,8 @@ export interface AgentRequest {
   app?: string
   kind?: 'add' | 'change'
   auto?: string
+  /** Why it asks although a rule would allow it: outside the issue a Projects conversation is pinned to. */
+  note?: string
 }
 
 /** Away from keyboard: what the agents saved for you while you were away. */

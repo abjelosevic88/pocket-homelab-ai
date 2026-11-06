@@ -9,23 +9,29 @@ import (
 )
 
 // A conversation a Pocket Projects issue started ("Code with Pocket AI") is
-// pinned to that issue: its Projects changes may only touch the issue itself
-// (comment, update, pull request, shared notes), new sub-issues of it and its
-// team's AI memory. Reads stay open. Forks and rewinds keep the pin; the
-// person can lift it per conversation (Unpin on the thread page).
+// pinned to that issue: its Projects changes run on their own (the person's
+// auto-approve rules) only on the issue itself (comment, update, pull
+// request, shared notes), new sub-issues of it and its team's AI memory. A
+// change anywhere else — a related issue the agent found, another team, a
+// project — always waits for the person's Allow, rules or not. Reads stay
+// open. Forks and rewinds keep the pin; the person can lift it per
+// conversation (Unpin on the thread page).
 //
 // This is checked here, where the conversation's tool calls pass on their way
 // to Pocket Core: the agent can't name another conversation or skip it.
 
-// projectsPin says why a Projects change from conversation threadID is outside
-// its issue ("" = fine, or not a pinned conversation).
-func (s *Server) projectsPin(ctx context.Context, uid int64, threadID, tool string, args map[string]any) string {
+// projectsPin checks a Projects change from conversation threadID against its
+// issue. outside says why it is outside the issue (the person is asked, even
+// with an auto-approve rule); refuse, a call that doesn't name its workspace
+// although the pin is in one (nothing is sent). Both "" = fine, or not a
+// pinned conversation.
+func (s *Server) projectsPin(ctx context.Context, uid int64, threadID, tool string, args map[string]any) (outside, refuse string) {
 	if !strings.HasPrefix(tool, "pocket_projects_") {
-		return ""
+		return "", ""
 	}
 	c, err := s.store.GetThreadContext(ctx, threadID)
 	if err != nil || c.Source != "projects" || c.Ref == "" || c.Unpinned {
-		return ""
+		return "", ""
 	}
 	addr, ident := "", strings.ToUpper(c.Ref)
 	if i := strings.LastIndex(c.Ref, "/"); i > 0 {
@@ -45,9 +51,8 @@ func (s *Server) projectsPin(ctx context.Context, uid int64, threadID, tool stri
 	if addr != "" {
 		where += " (" + addr + ")"
 	}
-	refuse := func(what string) string {
-		return "This conversation is pinned to " + where + ": its Pocket Projects changes may only touch that issue, new sub-issues of it (parent_id " + ident + ") and team " + key + "'s memory. " + what +
-			" Nothing was sent. If the person wants other issues changed from here, they unpin the conversation in Pocket AI."
+	out := func(what string) (string, string) {
+		return "Outside " + where + ", the issue this conversation is pinned to: " + what, ""
 	}
 	str := func(m map[string]any, k string) string {
 		switch v := m[k].(type) {
@@ -58,30 +63,30 @@ func (s *Server) projectsPin(ctx context.Context, uid int64, threadID, tool stri
 		}
 		return ""
 	}
-	if ws := str(args, "workspace"); addr != "" && ws != "" && !strings.EqualFold(ws, addr) {
-		return refuse("This call is for " + ws + ".")
-	}
 	if str(args, "workspace") == "" && strings.Contains(c.Ref, "/") {
-		return refuse("Pass workspace " + addr + ".")
+		return "", "This conversation is pinned to " + where + ": pass workspace " + addr + " with Pocket Projects changes. Nothing was sent."
+	}
+	if ws := str(args, "workspace"); addr != "" && ws != "" && !strings.EqualFold(ws, addr) {
+		return out("this change is for workspace " + ws + ".")
 	}
 	data, _ := args["data"].(map[string]any)
 	switch strings.TrimPrefix(tool, "pocket_projects_") {
 	case "create_issue":
 		if p := str(data, "parent_id"); !strings.EqualFold(p, ident) {
-			return refuse("A new issue here must be a sub-issue of " + ident + ".")
+			return out("the new issue is not a sub-issue of " + ident + ".")
 		}
 	case "remember":
 		if t := str(args, "team"); !strings.EqualFold(t, key) {
-			return refuse("Team " + t + " is another team.")
+			return out("team " + t + "'s memory.")
 		}
 	case "create_project", "post_update":
-		return refuse("Projects are outside it.")
+		return out("a project.")
 	default:
 		if id := str(args, "id"); !strings.EqualFold(id, ident) {
-			return refuse("Issue " + id + " is another one (name it " + ident + ").")
+			return out("issue " + id + ".")
 		}
 	}
-	return ""
+	return "", ""
 }
 
 // POST /threads/{id}/pin {pinned}: the person pins or unpins a Projects

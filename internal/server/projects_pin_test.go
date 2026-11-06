@@ -24,8 +24,10 @@ func TestProjectsPin(t *testing.T) {
 	}
 	mk("t-remote", "projects.athena.example/ATH-12")
 	ws := "projects.athena.example"
+	// pin: why the change is outside the issue (asks the person) or refused
 	pin := func(thread, tool string, args map[string]any) string {
-		return s.projectsPin(ctx, u.ID, thread, tool, args)
+		outside, refuse := s.projectsPin(ctx, u.ID, thread, tool, args)
+		return outside + refuse
 	}
 	ok := []struct {
 		tool string
@@ -51,7 +53,6 @@ func TestProjectsPin(t *testing.T) {
 		{"pocket_projects_comment", map[string]any{"id": "ATH-13", "workspace": ws}},
 		{"pocket_projects_comment", map[string]any{"id": 12, "workspace": ws}},
 		{"pocket_projects_comment", map[string]any{"id": "ATH-12", "workspace": "projects.home.example"}},
-		{"pocket_projects_comment", map[string]any{"id": "ATH-12"}},
 		{"pocket_projects_create_issue", map[string]any{"workspace": ws, "data": map[string]any{"title": "Loose", "team": "ATH"}}},
 		{"pocket_projects_create_issue", map[string]any{"workspace": ws, "data": map[string]any{"title": "Elsewhere", "team": "ATH", "parent_id": "ATH-1"}}},
 		{"pocket_projects_remember", map[string]any{"team": "OPS", "workspace": ws}},
@@ -60,9 +61,15 @@ func TestProjectsPin(t *testing.T) {
 		{"pocket_projects_update_shared_note", map[string]any{"id": "ATH-2", "note": 9, "workspace": ws}},
 	}
 	for _, c := range no {
-		if msg := pin("t-remote", c.tool, c.args); !strings.Contains(msg, "pinned to ATH-12 (projects.athena.example)") {
-			t.Fatalf("%s %v went through: %q", c.tool, c.args, msg)
+		// outside the issue: not refused, the person is asked
+		outside, refuse := s.projectsPin(ctx, u.ID, "t-remote", c.tool, c.args)
+		if refuse != "" || !strings.Contains(outside, "Outside ATH-12 (projects.athena.example)") {
+			t.Fatalf("%s %v: outside %q, refuse %q", c.tool, c.args, outside, refuse)
 		}
+	}
+	// a call that doesn't name the workspace is refused: nothing is sent
+	if outside, refuse := s.projectsPin(ctx, u.ID, "t-remote", "pocket_projects_comment", map[string]any{"id": "ATH-12"}); outside != "" || !strings.Contains(refuse, "pass workspace projects.athena.example") {
+		t.Fatalf("no workspace: outside %q, refuse %q", outside, refuse)
 	}
 	// a conversation no issue started is not pinned
 	if err := s.store.CreateThread(ctx, &store.Thread{ID: "t-free", UserID: u.ID, Provider: "claude", Cwd: "/tmp"}); err != nil {

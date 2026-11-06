@@ -1,5 +1,5 @@
 // Where a thread came from when another Pocket app prepared it ("AS-2 · Pocket Projects"), or the issue the person attached it to, linking back.
-// A Projects conversation is pinned to its issue (its Projects changes touch only that issue); the person unpins it here.
+// A Projects conversation is pinned to its issue (Projects changes elsewhere always ask the person); the person unpins it here.
 import { useEffect, useState } from 'react'
 import { api, V1 } from '../lib/api'
 import { Icon } from './icons'
@@ -31,12 +31,12 @@ export function ThreadRefChip({ threadId, source, owner = true, attached = false
   if (c.source !== 'projects') return chip
   const pinned = !c.unpinned
   const toggle = () => api.post<ThreadContext>(`${V1}/threads/${threadId}/pin`, { pinned: !pinned })
-    .then(v => { setC(v); toast(v.unpinned ? `Unpinned: this conversation may change other issues too` : `Pinned to ${c.ref}`) })
+    .then(v => { setC(v); toast(v.unpinned ? `Unpinned: changes to other issues follow your approval rules too` : `Pinned to ${c.ref}`) })
     .catch(e => toast(errMsg(e), 'err'))
   return <>
     {chip}
     <button type="button" className={`privacy-badge ${pinned ? '' : 'muted'}`} disabled={!owner} onClick={toggle}
-      title={pinned ? `Pinned: its Pocket Projects changes may only touch ${c.ref}, new sub-issues of it and its team's memory. Click to let it change other issues too.` : `Not pinned: it may change any issue in the workspace open in Projects. Click to pin it to ${c.ref} again.`}>
+      title={pinned ? `Pinned: Pocket Projects changes to ${c.ref}, new sub-issues of it and its team's memory follow your approval rules; changes to other issues always ask you first. Click to let those follow your rules too.` : `Not pinned: changes to any issue follow your approval rules. Click to pin it to ${c.ref} again, so changes to other issues always ask you first.`}>
       <Icon name="pushpin" size={11} />{pinned ? 'Pinned' : 'Unpinned'}
     </button>
   </>
