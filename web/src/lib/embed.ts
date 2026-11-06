@@ -13,13 +13,24 @@ export const frameKey = (k: string) => window.parent === window ? k : `${k}:${wi
 
 const KEY = frameKey('pai-embed')
 
+/** A native app shows this page in its own web view (Pocket Bookshelf on iOS:
+ *  a WKWebView with a "pocketAI" message handler): it is embedded at the top
+ *  level and hears what a framing page would, through the handler. */
+const nativeHost = (window as unknown as { webkit?: { messageHandlers?: { pocketAI?: { postMessage(m: unknown): void } } } }).webkit?.messageHandlers?.pocketAI
+const framed = window.parent !== window || !!nativeHost
+/** Posts to the framing page, or to the native app around this page. */
+function toHost(msg: Record<string, unknown>) {
+  if (nativeHost) nativeHost.postMessage(msg)
+  else window.parent.postMessage(msg, '*')
+}
+
 const TABS = frameKey('pai-embed-tabs')
 const LINKS = frameKey('pai-embed-links')
 const CHAT_KEY = frameKey('pai-embed-chat-key')
 const APP_CHAT = frameKey('pai-app-chat')
 
 function detect(): boolean {
-  if (window.parent === window) return false
+  if (!framed) return false
   const q = new URLSearchParams(location.search)
   if (q.get('embed') === '1') sessionStorage.setItem(KEY, '1')
   if (q.get('tabs') === '1') sessionStorage.setItem(TABS, '1')
@@ -61,7 +72,7 @@ if (parentLinks) {
     const u = new URL(a.href, location.href)
     if ((u.protocol !== 'https:' && u.protocol !== 'http:') || u.origin === location.origin) return
     e.preventDefault()
-    window.parent.postMessage({ type: 'pocket-ai', link: u.href }, '*')
+    toHost({ type: 'pocket-ai', link: u.href })
   }, true)
   // the app's chat key (?chat_key=mod+i, the person's choice there; "off" = none)
   // opens and closes its chat: typed in here, the framing page does it
@@ -73,7 +84,7 @@ if (parentLinks) {
     if (keys !== 'off' && comboOf(e) === keys) {
       e.preventDefault()
       e.stopPropagation()
-      window.parent.postMessage({ type: 'pocket-ai', key: 'toggle-chat' }, '*')
+      toHost({ type: 'pocket-ai', key: 'toggle-chat' })
     }
   }, true)
 }
@@ -84,7 +95,7 @@ export function tellParent(path: string, status = '') {
   if (!embedded) return
   const m = path.match(/^\/t\/([^/]+)/)
   // frame-ancestors (Caddy) limits who can frame us; ids and states carry no content
-  window.parent.postMessage({ type: 'pocket-ai', path, thread_id: m ? m[1] : null, status }, '*')
+  toHost({ type: 'pocket-ai', path, thread_id: m ? m[1] : null, status })
 }
 
 /** Something of the framing page's item the person can add to a message with "@" (Pocket
