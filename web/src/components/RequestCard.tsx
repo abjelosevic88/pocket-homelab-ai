@@ -120,6 +120,7 @@ export function RequestCard({ threadId, req, onDone }: { threadId: string; req: 
   return (
     <div className="req-card permission">
       <div className="req-h"><Icon name="shield" size={16} /><b className="grow">{req.title || `Use ${req.tool_name}?`}</b><span className="badge">{req.tool_name}</span></div>
+      {req.note && <div className="muted small"><Icon name="pushpin" size={11} /> {req.note} Your auto-approve rules don't apply here.</div>}
       {pv.command && <pre className="tool-pre cmd">$ {pv.command}</pre>}
       {pv.path && !pv.command && <div className="mono small ellipsis">{pv.path}</div>}
       {pv.diff && <div className="req-diff"><Diff text={pv.diff} /></div>}
@@ -138,7 +139,7 @@ export function RequestCard({ threadId, req, onDone }: { threadId: string; req: 
           <button type="button" className="btn danger" disabled={!!busy} onClick={() => answer('deny', message.trim() ? { message: message.trim() } : {})}>{busy === 'deny' && <Spinner />}Deny</button>
         </> : <>
           <button type="button" className="btn" disabled={!!busy} onClick={() => setDenying(true)}>Deny…</button>
-          {req.app && req.id.startsWith('ask-') && <button type="button" className="btn" disabled={!!busy} onClick={() => setAlways(true)} title="Let this kind of change run without asking from now on">Always allow…</button>}
+          {req.app && req.id.startsWith('ask-') && !req.note && <button type="button" className="btn" disabled={!!busy} onClick={() => setAlways(true)} title="Let this kind of change run without asking from now on">Always allow…</button>}
           {req.can_allow_session && <button type="button" className="btn" disabled={!!busy} onClick={() => answer('allow_session')} title="Don't ask again for this in this thread">{busy === 'allow_session' && <Spinner />}Allow for session</button>}
           <button type="button" className="btn primary" disabled={!!busy} onClick={() => answer('allow')} autoFocus>{busy === 'allow' ? <Spinner /> : <Icon name="check" size={14} />}Allow</button>
         </>}

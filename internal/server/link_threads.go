@@ -567,7 +567,7 @@ func (s *Server) threadContextPrompt(ctx context.Context, t *store.Thread) strin
 	from := firstNonEmpty(c.RefLabel, c.Ref)
 	pin := ""
 	if c.Source == "projects" && !c.Unpinned {
-		pin = "\nThis conversation is pinned to " + c.Ref + ": Pocket AI refuses Pocket Projects changes to anything but that issue, new sub-issues of it and its team's memory (reads stay open). If the person wants another issue changed, say so and let them unpin the conversation.\n"
+		pin = "\nThis conversation is pinned to " + c.Ref + ": Pocket Projects changes to that issue, new sub-issues of it and its team's memory follow the person's usual approvals; a change anywhere else (e.g. a related issue you found) is allowed but always waits for the person's Allow, so make it only when it helps the work and say why (reads stay open).\n"
 	}
 	return "\n\nContext from Pocket " + titleCase(c.Source) + " for this conversation (" + from + "):\n" + c.System + pin
 }
