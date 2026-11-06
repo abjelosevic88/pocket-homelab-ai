@@ -33,7 +33,8 @@ func (s *Server) handleFork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		After string `json:"after"`
+		After    string `json:"after"`
+		Provider string `json:"provider"` // "" = the original's; the other one forks across CLIs
 	}
 	_ = decode(r, &in)
 	if live := s.rt.get(t.ID); live != nil {
@@ -59,7 +60,16 @@ func (s *Server) handleFork(w http.ResponseWriter, r *http.Request) {
 		rows = rows[:end]
 	}
 	ctx := r.Context()
-	if t.HostID == 0 {
+	n := &store.Thread{ID: uuid.NewString(), UserID: t.UserID, Title: "Fork of " + t.Title,
+		Provider: t.Provider, AccountID: t.AccountID, Model: t.Model, Effort: t.Effort, Mode: t.Mode, Speed: t.Speed,
+		Cwd: t.Cwd, WorkspaceID: t.WorkspaceID, WorktreeID: t.WorktreeID, NoMemory: t.NoMemory,
+		Source: "fork", SourceRef: t.ID, HostID: t.HostID, HostHome: t.HostHome, LogOffset: -1}
+	if in.Provider != "" && in.Provider != t.Provider {
+		if err := s.forkSettings(ctx, n, in.Provider); err != nil {
+			s.fail(w, err, "fork")
+			return
+		}
+	} else if t.HostID == 0 {
 		if err := s.checkAccount(ctx, userFrom(ctx), t.Provider, t.AccountID); err != nil {
 			s.fail(w, err, "account")
 			return
@@ -74,10 +84,6 @@ func (s *Server) handleFork(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "nothing to fork yet")
 		return
 	}
-	n := &store.Thread{ID: uuid.NewString(), UserID: t.UserID, Title: "Fork of " + t.Title,
-		Provider: t.Provider, AccountID: t.AccountID, Model: t.Model, Effort: t.Effort, Mode: t.Mode, Speed: t.Speed,
-		Cwd: t.Cwd, WorkspaceID: t.WorkspaceID, WorktreeID: t.WorktreeID, NoMemory: t.NoMemory,
-		Source: "fork", SourceRef: t.ID, HostID: t.HostID, HostHome: t.HostHome, LogOffset: -1}
 	if err := s.store.CreateThread(ctx, n); err != nil {
 		s.fail(w, err, "fork")
 		return
@@ -113,6 +119,53 @@ func (s *Server) handleFork(w http.ResponseWriter, r *http.Request) {
 	s.inheritLink(ctx, t, n)
 	s.rt.publishThread(n)
 	writeJSON(w, http.StatusCreated, n)
+}
+
+// forkSettings moves a fork to the other CLI. Model, effort, mode, speed and
+// login are that CLI's own, so they come from the person's defaults for it
+// (as for a new chat), not from the original. Folder, worktree and machine stay.
+func (s *Server) forkSettings(ctx context.Context, n *store.Thread, provider string) error {
+	if provider != "claude" && provider != "codex" {
+		return badRequest("provider must be claude or codex")
+	}
+	u := userFrom(ctx)
+	prov, ok := s.agentProvider(ctx, provider)
+	if n.HostID != 0 {
+		host, err := s.checkHostUse(ctx, u, n.HostID)
+		if err != nil {
+			return err
+		}
+		if why := hostMissing(host, provider, ""); why != "" && host.Info.OK {
+			return badRequest(host.Name + ": " + why)
+		}
+	} else if !ok {
+		return badRequest(firstNonEmpty(prov.Error, provider+" is not available on this server"))
+	}
+	st, _ := s.store.GetSettings(ctx, n.UserID)
+	def := st.Claude
+	if provider == "codex" {
+		def = st.Codex
+	}
+	n.Provider, n.Model = provider, firstNonEmpty(def.Model, prov.DefaultModel)
+	n.Effort, n.Mode = firstNonEmpty(def.Effort, prov.DefaultEffort), firstNonEmpty(def.Mode, prov.DefaultMode)
+	if !validMode(provider, n.Mode) {
+		n.Mode = prov.DefaultMode
+	}
+	n.HostHome, n.AccountID = "", 0 // a login folder belongs to one CLI; on a machine, its default login
+	if n.HostID == 0 {
+		n.AccountID = def.Account
+		if err := s.checkAccount(ctx, u, provider, n.AccountID); err != nil {
+			var uerr error
+			if n.AccountID, uerr = s.usableAccount(ctx, u, provider, n.AccountID); uerr != nil {
+				return uerr
+			}
+		}
+	}
+	n.Speed = def.Speed
+	if checkSpeed(prov, n.Model, n.Speed) != nil {
+		n.Speed = ""
+	}
+	return nil
 }
 
 // Keep conversation text, document excerpts and compact finished-tool labels.
