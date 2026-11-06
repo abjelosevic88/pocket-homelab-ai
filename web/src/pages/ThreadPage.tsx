@@ -274,9 +274,10 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
       toast(errMsg(e), 'err'); return false
     }
   }
-  const fork = async () => {
+  // provider: fork into the other CLI (fresh session, same chat history attached)
+  const fork = async (provider?: string) => {
     try {
-      const th = await api.post<Thread>(`${V1}/threads/${id}/fork`); upsertThread(th)
+      const th = await api.post<Thread>(`${V1}/threads/${id}/fork`, provider ? { provider } : undefined); upsertThread(th)
       if (parentTabs) { openInParent(th.id, th.title); toast('Forked — the copy opened in a new tab') } else { navigate(`/t/${th.id}`); toast('Forked — this is the copy') }
     } catch (e) { toast(errMsg(e), 'err') }
   }
@@ -331,6 +332,8 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   if (!t) return <div className="thread-page"><Loading /></div>
 
   const p = providers.find(x => x.id === t.provider)
+  const otherProvider = t.provider === 'claude' ? 'codex' : 'claude'
+  const otherProv = providers.find(x => x.id === otherProvider)
   const access = accessOf(t, user)
   const owner = access === 'owner'
   const canSend = canRun && access !== 'view'
@@ -378,7 +381,9 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
     ...(t.provider === 'claude' && t.source !== 'ask' && canRun ? [{ label: t.remote_control ? 'Turn off Remote Control' : 'Turn on Remote Control', icon: 'smartphone' as const, onSelect: () => remoteControl(!t.remote_control) }] : []),
     { label: 'MCP servers…', icon: 'server', disabled: t.source === 'ask' || !canRun || !!t.external, hint: '/mcp', onSelect: () => setMcpOpen(true) },
     { label: 'Restart session', icon: 'repeat', disabled: t.source === 'ask' || !canRun || !!t.external, hint: 'Reconnects MCP & connectors', onSelect: restartSession },
-    { label: 'Fork into a new thread', icon: 'fork', disabled: t.source === 'ask' || !t.provider_session_id || !canRun, onSelect: fork },
+    { label: 'Fork into a new thread', icon: 'fork', disabled: t.source === 'ask' || !t.provider_session_id || !canRun, onSelect: () => fork() },
+    { label: `Fork into ${providerName(otherProvider)}`, icon: 'fork', disabled: t.source === 'ask' || !t.provider_session_id || !canRun || (!t.host_id && !!otherProv && !otherProv.available),
+      hint: !t.host_id && otherProv && !otherProv.available ? otherProv.error || 'Not available on this server' : undefined, onSelect: () => fork(otherProvider) },
     { label: 'Export as Markdown', icon: 'download', onSelect: () => download(`${V1}/threads/${id}/export.md`) },
     'sep',
     { label: t.archived ? 'Move out of archive' : 'Archive', icon: 'archive', onSelect: async () => { const th = await patch({ archived: !t.archived }); if (th?.archived) { dropThread(id); toast('Archived') } } },

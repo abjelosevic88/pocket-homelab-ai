@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/agent"
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
@@ -187,4 +188,50 @@ func TestForkBeforeProviderSessionExists(t *testing.T) {
 	if nested.SourceRef != fork.ID || !strings.Contains(historyOfFork(t, s, nested).ExtractedText, "61% full") {
 		t.Fatal("fork of unopened fork lost history")
 	}
+}
+
+func TestForkToTheOtherProvider(t *testing.T) {
+	s, h, root := testServer(t)
+	owner, u := person(t, s, h, "fork-to@example.test", "admin", true)
+	ctx := t.Context()
+	s.provMu.Lock()
+	s.provList = []agent.Provider{
+		{ID: "claude", Name: "Claude Code", Available: true, Models: []agent.Model{{ID: "claude-default", Name: "Default"}},
+			Modes: agent.ClaudeModes, Speeds: []agent.Speed{}, DefaultModel: "claude-default", DefaultEffort: "high", DefaultMode: "default"},
+		{ID: "codex", Name: "Codex", Error: "not installed", Models: []agent.Model{}, Modes: agent.CodexModes, Speeds: []agent.Speed{}},
+	}
+	s.provAt = time.Now()
+	s.provMu.Unlock()
+
+	parent := thread(t, s, u.ID, root)
+	parent.Model, parent.Effort, parent.Mode, parent.Speed = "gpt-model", "xhigh", "full-access", "fast"
+	if err := s.store.UpdateThread(ctx, parent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.store.DB.ExecContext(ctx, `UPDATE threads SET provider='codex' WHERE id=?`, parent.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range []agent.Item{{Key: "u1", Kind: "user", Text: "codex said hello"}, {Key: "t1", Kind: "turn", Turn: &agent.TurnInfo{OK: true}}} {
+		data, _ := json.Marshal(it)
+		if _, err := s.store.UpsertItem(ctx, parent.ID, it.Key, it.Kind, data, it.Text); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st, _ := s.store.GetSettings(ctx, u.ID)
+	st.Claude.Model, st.Claude.Mode = "", "plan"
+	if err := s.store.SaveSettings(ctx, u.ID, st); err != nil {
+		t.Fatal(err)
+	}
+
+	var fork store.Thread
+	owner.want("POST", "/api/v1/threads/"+parent.ID+"/fork", map[string]any{"provider": "claude"}, 201, &fork)
+	if fork.Provider != "claude" || fork.Model != "claude-default" || fork.Effort != "high" || fork.Mode != "plan" || fork.Speed != "" || fork.Cwd != parent.Cwd {
+		t.Fatalf("fork kept the other CLI's settings: %+v", fork)
+	}
+	if !strings.Contains(historyOfFork(t, s, fork).ExtractedText, "codex said hello") {
+		t.Fatal("history did not cross over")
+	}
+	// back the other way: Codex is not installed here
+	owner.want("POST", "/api/v1/threads/"+fork.ID+"/fork", map[string]any{"provider": "codex"}, 400, nil)
+	owner.want("POST", "/api/v1/threads/"+parent.ID+"/fork", map[string]any{"provider": "gemini"}, 400, nil)
 }
