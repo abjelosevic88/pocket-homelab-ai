@@ -312,7 +312,8 @@ func (s *Server) handleAttention(w http.ResponseWriter, r *http.Request) {
 	result := []attention{}
 	for _, t := range threads {
 		s.rt.decorate(t)
-		if t.Status != "waiting" && t.Status != "error" && t.Pending == 0 {
+		// a failure is in it until it was seen; questions until answered
+		if t.Status != "waiting" && !(t.Status == "error" && t.Unread) && t.Pending == 0 {
 			continue
 		}
 		rows, err := s.store.ListItems(r.Context(), t.ID)

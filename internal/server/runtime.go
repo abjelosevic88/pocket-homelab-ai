@@ -1151,6 +1151,11 @@ func (rt *engine) setStatus(threadID, status, errMsg string) *store.Thread {
 	}
 	t.Status, t.Error = status, errMsg
 	t.ActivityAt = store.Now()
+	if status == "error" && !rt.viewing(t) {
+		// unseen until opened: only then is it in Needs you (a failure
+		// already looked at stays marked in the list, not in Needs you)
+		t.Unread = true
+	}
 	_ = rt.s.store.UpdateThread(rt.ctx, t)
 	rt.publishThread(t)
 	return t
@@ -2090,6 +2095,7 @@ func (k *runSink) Exited(err error) {
 	rt.mu.Unlock()
 	r.cancel()
 	r.mu.Lock()
+	busy := r.working() || len(r.pending) > 0
 	q := r.queue
 	r.queue = nil
 	wasRemote := r.remote
@@ -2101,7 +2107,15 @@ func (k *runSink) Exited(err error) {
 		}
 		go rt.reviveRemote(r.threadID)
 	}
-	if err != nil {
+	if t, e := rt.s.store.GetThreadAny(rt.ctx, r.threadID); err != nil && !busy && e == nil && t.Status != "running" && t.Status != "waiting" {
+		// An idle agent's process ended (its machine's connection dropped,
+		// the machine restarted): nothing was cut off and the next message
+		// starts it again, so the conversation is not marked failed or
+		// moved up. Otherwise every chat open on a machine that went away
+		// would land in Needs you at once.
+		rt.s.log.Info("idle agent exited", "thread", r.threadID, "err", err)
+		rt.publishThread(t)
+	} else if err != nil {
 		rt.s.log.Warn("agent exited", "thread", r.threadID, "err", err)
 		rt.s.pauseDeferredSource(rt.ctx, r.threadID, "The other chat lost its connection. Review it before sending this prompt.")
 		// a turn cut off by the exit already shows this error in its footer
