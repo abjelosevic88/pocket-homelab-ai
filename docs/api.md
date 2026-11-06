@@ -139,7 +139,7 @@ only their own calls.
 | POST | `/threads/{id}/remote-control` | `{on}` | thread — Claude Remote Control on/off (owner, Claude only, not Ask). On keeps the process up (no idle stop), reattaches to the same claude.ai session after restarts; `remote_control: {state, url, error}` on the thread |
 | POST | `/threads/{id}/requests/{requestId}` | `{decision: "allow"\|"allow_session"\|"deny", message?: string, answers?: {[questionId]: string[]}}` | 204 |
 | POST | `/threads/{id}/read` | | 204 — clears `unread` |
-| POST | `/threads/{id}/fork` | | `Thread` — an immediately frozen, independent agent session and attachment copy; active chats branch at their last finished reply, without inheriting live work, approvals or queued prompts |
+| POST | `/threads/{id}/fork` | `{after?: turnKey, provider?: "claude"\|"codex"}` | `Thread` — an immediately frozen, independent agent session and attachment copy; active chats branch at their last finished reply, without inheriting live work, approvals or queued prompts; `provider` (the other CLI) forks across: model, effort, mode, speed and login then come from the person's defaults for that CLI |
 | GET | `/threads/{id}/export.md` | | Markdown transcript (download) |
 | GET | `/threads/{id}/shares` | | owner only: `{shares: ThreadShare[], people: [{id, name, email, can_run}]}` |
 | PUT | `/threads/{id}/shares` | `{shares: [{user_id, role: "view"\|"chat"}]}` (the full list; `[]` = private again) | `Thread` — people removed lose it at once, open views included |
