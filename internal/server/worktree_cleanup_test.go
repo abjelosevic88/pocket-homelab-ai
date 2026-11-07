@@ -43,7 +43,7 @@ func cleanupRepo(t *testing.T) (*store.Worktree, string) {
 
 func cleanupInspect(t *testing.T, w *store.Worktree) map[string]string {
 	t.Helper()
-	return runSh(t, wtCleanupInspect, w.Path, w.Repo, w.Branch, w.Base, w.BaseSHA, "test")
+	return runSh(t, wtCleanupInspect, w.Path, w.Repo, "", w.Base, w.BaseSHA, "test")
 }
 
 func TestCleanupGitGuards(t *testing.T) {
@@ -61,14 +61,12 @@ func TestCleanupGitGuards(t *testing.T) {
 		{"dirty", "Uncommitted", func(t *testing.T, w *store.Worktree) {
 			_ = os.WriteFile(filepath.Join(w.Path, "file"), []byte("keep"), 0644)
 		}},
-		{"ignored", "Ignored local", func(t *testing.T, w *store.Worktree) {
-			gitT(t, w.Path, "config", "core.excludesFile", filepath.Join(w.Repo, ".git", "test-ignore"))
-			_ = os.WriteFile(filepath.Join(w.Repo, ".git", "test-ignore"), []byte(".env\n"), 0644)
-			_ = os.WriteFile(filepath.Join(w.Path, ".env"), []byte("keep"), 0644)
-		}},
 		{"locked", "locked", func(t *testing.T, w *store.Worktree) { gitT(t, w.Repo, "worktree", "lock", w.Path) }},
-		{"switched", "branch changed", func(t *testing.T, w *store.Worktree) { gitT(t, w.Path, "checkout", "-qb", "other") }},
-		{"detached", "branch changed", func(t *testing.T, w *store.Worktree) { gitT(t, w.Path, "checkout", "--detach") }},
+		{"switched to unmerged", "", func(t *testing.T, w *store.Worktree) {
+			gitT(t, w.Path, "checkout", "-qb", "other")
+			gitT(t, w.Path, "commit", "--allow-empty", "-qm", "unmerged")
+		}},
+		{"detached", "No branch", func(t *testing.T, w *store.Worktree) { gitT(t, w.Path, "checkout", "--detach") }},
 		{"assume unchanged", "Index flags", func(t *testing.T, w *store.Worktree) {
 			gitT(t, w.Path, "update-index", "--assume-unchanged", "file")
 			_ = os.WriteFile(filepath.Join(w.Path, "file"), []byte("hidden"), 0644)
@@ -83,7 +81,7 @@ func TestCleanupGitGuards(t *testing.T) {
 			w, _ := cleanupRepo(t)
 			gitT(t, w.Repo, "merge", "--ff-only", w.Branch)
 			tc.change(t, w)
-			if m := cleanupInspect(t, w); !strings.Contains(m["reason"], tc.reason) {
+			if m := cleanupInspect(t, w); !strings.Contains(m["reason"], tc.reason) || m["merged"] == "1" {
 				t.Fatalf("inspect: %v", m)
 			}
 			if _, err := os.Stat(w.Path); err != nil {
@@ -154,6 +152,56 @@ func TestCleanupRemoveRechecksAndRestores(t *testing.T) {
 	}
 }
 
+// Worktree setup copies .env files in and installs node_modules; agents
+// often switch to a branch named for their PR. Neither blocks cleanup.
+func TestCleanupIgnoredFilesAndSwitchedBranch(t *testing.T) {
+	s, h, _ := testServer(t)
+	s.cfg.PeopleDir = ""
+	_, u := person(t, s, h, "switched-cleanup@example.test", "member", true)
+	w, _ := cleanupRepo(t)
+	if err := os.WriteFile(filepath.Join(w.Repo, ".git", "info", "exclude"), []byte(".env\nnode_modules/\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(w.Path, ".env"), []byte("SECRET=1\n"), 0644)
+	_ = os.MkdirAll(filepath.Join(w.Path, "node_modules", "pkg"), 0755)
+	_ = os.WriteFile(filepath.Join(w.Path, "node_modules", "pkg", "index.js"), []byte("x"), 0644)
+	gitT(t, w.Path, "checkout", "-qb", "agent-pr")
+	gitT(t, w.Path, "commit", "--allow-empty", "-qm", "agent work")
+	gitT(t, w.Repo, "merge", "--ff-only", "agent-pr")
+	head := gitT(t, w.Path, "rev-parse", "HEAD")
+	m := cleanupInspect(t, w)
+	if m["merged"] != "1" || m["branch"] != "agent-pr" {
+		t.Fatalf("inspect: %v", m)
+	}
+	// Removal still refuses a branch other than the one inspected.
+	if _, _, err := shOn(context.Background(), nil, time.Minute, wtCleanupRemove, w.Path, w.Repo, "topic", head, "refs/pocket-ai/archive/x", "1"); err == nil {
+		t.Fatal("removed with a stale branch")
+	}
+	w.UserID = u.ID
+	ctx := context.Background()
+	if err := s.store.CreateWorktree(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	result := s.cleanupOne(ctx, u.ID, w.ID, cleanupInput{DeleteBranches: true})
+	if result.Status != "archived" || result.Branch != "agent-pr" {
+		t.Fatalf("cleanup: %+v", result)
+	}
+	if _, err := os.Stat(w.Path); !os.IsNotExist(err) {
+		t.Fatal("folder remains", err)
+	}
+	if out := gitT(t, w.Repo, "branch", "--list", "agent-pr"); out != "" {
+		t.Fatal("merged branch kept", out)
+	}
+	got, _ := s.store.GetWorktree(ctx, u.ID, w.ID)
+	if got.Branch != "agent-pr" {
+		t.Fatalf("restore would recreate the wrong branch: %+v", got)
+	}
+	runSh(t, wtRestore, w.Repo, w.Path, got.Branch, got.ArchiveRef)
+	if gitT(t, w.Path, "rev-parse", "HEAD") != head {
+		t.Fatal("restore did not recover the agent branch")
+	}
+}
+
 func TestCleanupAPIAndAutomatic(t *testing.T) {
 	s, h, _ := testServer(t)
 	s.cfg.PeopleDir = "" // fixture repos use shared server paths
@@ -193,7 +241,13 @@ func TestCleanupAPIAndAutomatic(t *testing.T) {
 	if s.store.UserSetting(ctx, bu.ID, "worktree_auto_cleanup") == "1" {
 		t.Fatal("setting leaked across users")
 	}
-	s.autoCleanupWorktrees(ctx)
+	// Turning it on runs a pass right away rather than an hour later.
+	for i := 0; i < 100; i++ {
+		if s.store.UserSetting(ctx, au.ID, "worktree_cleanup_result") != "" {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	got, _ = s.store.GetWorktree(ctx, au.ID, w.ID)
 	if got.Status != "archived" || got.ArchiveRef == "" {
 		t.Fatalf("automatic cleanup: %+v", got)

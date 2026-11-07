@@ -409,11 +409,13 @@ Same access rule as terminals (this server: owner/admins; people with a folder o
 - `GET /worktrees/cleanup` returns the latest completed cleanup result, including hourly automatic runs,
   or null before the first run. Preview does not replace this record.
 - `PUT /settings` accepts `{worktree_auto_cleanup: true|false}` (default false). The server checks opted-in
-  users after startup and hourly thereafter. Disabling it prevents subsequent passes.
+  users after startup and hourly thereafter, and right away when it is turned on. Disabling it prevents subsequent passes.
 
 Cleanups save the commit under `refs/pocket-ai/archive/<id>` and archive the worktree record; conversation
-history stays linked and Restore recreates the checkout. Ignored local files and custom teardown are kept
-for explicit manual review rather than silently discarded or executed by background cleanup. A merged
+history stays linked and Restore recreates the checkout (on the branch that was checked out, also when an
+agent switched branches). Ignored files (.env copies, node_modules, build output) are removed with the
+folder, as with Archive; custom teardown is kept for explicit manual review rather than executed by
+background cleanup. A merged
 GitHub PR only qualifies when its exact head, branch and base match and it is not from a fork; other forges
 can qualify via Git ancestry against the refreshed remote base. Missing PR credentials never authorize
 removal. Branch deletion uses an expected-commit check and never removes a remote branch.

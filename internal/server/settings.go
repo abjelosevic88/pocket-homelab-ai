@@ -230,6 +230,13 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	if in.NotifyToken != nil {
 		_ = s.store.SetUserSetting(ctx, u.ID, "notify_token", strings.TrimSpace(*in.NotifyToken))
 	}
+	if in.WorktreeAutoCleanup != nil && *in.WorktreeAutoCleanup && u.MayRun() {
+		base := s.rt.ctx // the server's lifetime, not this request's
+		if base == nil {
+			base = context.Background()
+		}
+		go s.autoCleanupUser(base, u.ID)
+	}
 	s.touch()
 	st, _ = s.store.GetSettings(ctx, u.ID)
 	writeJSON(w, http.StatusOK, s.publicSettings(ctx, u, st))

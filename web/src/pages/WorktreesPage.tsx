@@ -169,7 +169,7 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
     setBusy('auto')
     try {
       await saveSettings({ worktree_auto_cleanup: enabled })
-      toast(enabled ? 'Automatic cleanup enabled; checks run hourly' : 'Automatic cleanup turned off')
+      toast(enabled ? 'Automatic cleanup enabled; checking now, then hourly' : 'Automatic cleanup turned off')
     } catch (e) { toast(errMsg(e), 'err') } finally { setBusy('') }
   }
   const adopt = async (o: Other) => {
@@ -278,7 +278,7 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
           <section className="wt-cleanup" aria-label="Worktree cleanup">
             <div className="wt-cleanup-actions">{activeCount > 0 && <button type="button" className="btn sm" disabled={!!busy} onClick={() => cleanup(true)} title="Check current merge status and review what can be removed">{busy === 'cleanup' ? <Spinner /> : <Icon name="archive" size={13} />}Clean up merged…</button>}</div>
             <label className="row"><input type="checkbox" checked={!!settings?.worktree_auto_cleanup} disabled={!settings || !!busy} onChange={e => toggleAutoCleanup(e.target.checked)} /> Automatically clean up merged worktrees</label>
-            <p className="muted xsmall">Checks hourly, even when this page is closed. Only verified, clean, idle worktrees are removed. Conversations stay available, and archived worktrees can be restored.</p>
+            <p className="muted xsmall">Checks right away, then hourly, even when this page is closed. Only merged, idle worktrees without uncommitted work are removed; ignored files (.env copies, node_modules) go with the folder. Conversations stay available, and archived worktrees can be restored.</p>
             {cleanupResult && <details open>
               <summary className="xsmall">{cleanupResult.items.filter(i => i.status === 'ready').length ? `${ready.length} ready to clean up` : `${cleanupResult.archived.length} cleaned up`} · {cleanupResult.skipped.length} kept · checked {ago(cleanupResult.checked_at)}</summary>
               <div className="wt-cleanup-results" aria-live="polite">
