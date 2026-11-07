@@ -207,6 +207,9 @@ input.bare, textarea.bare { border-color: transparent; background: transparent; 
 .select-trigger.inline { width: auto; }
 .select-trigger.ghost { border-color: transparent; background: transparent; padding-left: 6px; }
 .select-trigger.ghost:hover { background: var(--hover); }
+/* borderless chips sit in clipped bars (composer): no outer ring, open = highlighted */
+.select-trigger.ghost[aria-expanded="true"] { border-color: transparent; box-shadow: none; background: var(--hover); color: var(--text); }
+.select-trigger.ghost:focus-visible { border-color: var(--accent); box-shadow: none; }
 .select-trigger:disabled { opacity: .55; cursor: default; }
 .select-value { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
 .select-value .placeholder { color: var(--faint); }
