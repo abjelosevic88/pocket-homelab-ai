@@ -121,6 +121,13 @@ func (s *Store) UpdateThread(ctx context.Context, t *Thread) error {
 	return err
 }
 
+// SetThreadProvider moves a chat that has not started yet to the other CLI
+// (UpdateThread leaves the provider alone: a started chat keeps its own).
+func (s *Store) SetThreadProvider(ctx context.Context, id, provider string) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE threads SET provider = ? WHERE id = ?`, provider, id)
+	return err
+}
+
 // claimSession records that the thread's CLI session is its person's (the
 // first claim wins).
 func (s *Store) claimSession(ctx context.Context, t *Thread) {

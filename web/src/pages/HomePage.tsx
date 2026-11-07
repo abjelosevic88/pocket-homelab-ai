@@ -6,7 +6,7 @@ import { api, ApiError, qs, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { shortPath } from '../lib/format'
 import type { ProviderId, Thread, WorktreeRepoInfo, WorktreeSpec } from '../lib/types'
-import { accountOptions, AgentPicker, type AgentValue, defaultsFor, ProviderToggle } from '../components/AgentPicker'
+import { accountOptions, AgentPicker, type AgentValue, defaultsFor } from '../components/AgentPicker'
 import { Composer, type ComposerHandle } from '../components/Composer'
 import { BranchButton } from '../components/BranchPicker'
 import { FolderButton } from '../components/FolderPicker'
@@ -291,11 +291,6 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
     send(draft.text, []).then(ok => { if (ok) sessionStorage.removeItem('pai-draft-link-' + draft.id); else { autoSent.current = 'failed'; setParams(p => { p.delete('send'); return p }, { replace: true }) } })
   }, [draft, choice]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const pickProvider = (pid: ProviderId | '') => {
-    const p = providers.find(x => x.id === pid)
-    setChoice(c => c && pid ? { ...c, provider: pid, ...defaultsFor(p, settings) } : c)
-  }
-
   // an app's own chat (its floating chat button): Ask my apps, about that app
   const appChat = embedded ? appChatParams(params) : null
   if (appChat) return <AppChatStart {...appChat} />
@@ -314,7 +309,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
         <DraftFiles files={draftFiles} source={draft.ref} onRemove={id => setDraftFiles(f => f.filter(x => x.id !== id))} />
         <Composer ref={serverComposer} big autoFocus draftKey={`link-${draft.id}`} onSend={send} onCommand={startFirst} skills={choice?.provider ? { provider: choice.provider, cwd: choice.cwd, account_id: choice.account_id, host_id: hostId } : undefined}
           placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} about ${draft.ref || 'this'}${hostId ? ` on ${hosts.find(h => h.id === hostId)?.name}` : ''}…`}
-          footer={<AgentPicker compact showProvider={false} host={hostId} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} remote={remoteSwitch} />} />
+          footer={<AgentPicker compact switchProvider host={hostId} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} remote={remoteSwitch} />} />
         </>
       )}
     </div>
@@ -376,7 +371,6 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
           ) : !choice ? null : (
             <>
               <div className="home-agent">
-                <ProviderToggle value={choice.provider} onChange={pickProvider} />
                 <div className="home-where">
                   {!draft && <HostPicker value={hostId} onChange={pickHost} />}
                   <WorktreeChooser cwd={choice.cwd} host={hostId} value={choice.worktree || null} onChange={wt => setChoice(c => c && { ...c, worktree: wt })} onRepo={setRepo} />
@@ -396,7 +390,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
               {draft && <DraftFiles files={draftFiles} source={draft.ref} onRemove={id => setDraftFiles(f => f.filter(x => x.id !== id))} />}
               <Composer ref={serverComposer} big autoFocus draftKey={draft ? `link-${draft.id}` : 'new'} onSend={send} onCommand={startFirst} skills={choice?.provider ? { provider: choice.provider, cwd: choice.cwd, account_id: choice.account_id, host_id: hostId } : undefined}
                 placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} anything${hostId ? ` on ${hosts.find(h => h.id === hostId)?.name}` : ''}${choice.cwd && !wtSpec ? ` in ${shortPath(choice.cwd)}` : ''}${wtWhere}… paste a screenshot, type / for recipes`}
-                footer={<AgentPicker compact showProvider={false} host={hostId} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} remote={remoteSwitch} />} />
+                footer={<AgentPicker compact switchProvider host={hostId} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} remote={remoteSwitch} />} />
               {providers.length > 0 && !providers.some(p => p.available) && (
                 <div className="callout danger mt-s"><Icon name="alert" size={15} /><span>Neither Claude Code nor Codex is available on the server. {providers.map(p => p.error).filter(Boolean).join(' ')}</span></div>
               )}

@@ -65,7 +65,7 @@ func (s *Server) handleFork(w http.ResponseWriter, r *http.Request) {
 		Cwd: t.Cwd, WorkspaceID: t.WorkspaceID, WorktreeID: t.WorktreeID, NoMemory: t.NoMemory,
 		Source: "fork", SourceRef: t.ID, HostID: t.HostID, HostHome: t.HostHome, LogOffset: -1}
 	if in.Provider != "" && in.Provider != t.Provider {
-		if err := s.forkSettings(ctx, n, in.Provider); err != nil {
+		if err := s.providerSettings(ctx, n, in.Provider); err != nil {
 			s.fail(w, err, "fork")
 			return
 		}
@@ -108,7 +108,7 @@ func (s *Server) handleFork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	notice := agent.Item{Key: forkHistoryKey, Kind: "notice", Level: "info",
-		Text:  "Fresh conversation. Earlier chat will be attached as Chat history.md to your first message.",
+		Text:  "Fresh conversation. Earlier chat will be attached as Chat history.md to your first message. Until then you can switch between Claude Code and Codex in the model menu.",
 		Files: []agent.Image{{ID: up.ID, Name: up.Name, URL: up.URL}}}
 	data, _ := json.Marshal(notice)
 	if _, err := s.store.UpsertItem(ctx, n.ID, notice.Key, notice.Kind, data, notice.Text); err != nil {
@@ -121,10 +121,39 @@ func (s *Server) handleFork(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, n)
 }
 
-// forkSettings moves a fork to the other CLI. Model, effort, mode, speed and
+// changeProvider moves a chat nobody has written in yet (a fresh fork) to the
+// other CLI. After the first message a chat keeps its CLI: the session, its
+// tools and its cache belong to that CLI, so switching would drop them.
+func (s *Server) changeProvider(ctx context.Context, t *store.Thread, provider string) error {
+	if t.Source == "ask" {
+		return badRequest("Ask chats run on Claude")
+	}
+	if t.External {
+		return badRequest("this conversation runs somewhere else")
+	}
+	started, err := s.store.HasUserItems(ctx, t.ID)
+	if err != nil {
+		return err
+	}
+	if started || t.ProviderSessionID != "" || t.Usage.Turns > 0 {
+		return errConflict("A chat keeps the agent it started with — fork it to continue in " + providerName(provider))
+	}
+	if run := s.rt.get(t.ID); run != nil {
+		run.mu.Lock()
+		busy := run.running || len(run.pending) > 0 || len(run.queue) > 0
+		run.mu.Unlock()
+		if busy {
+			return errConflict("A message is already on its way to " + providerName(t.Provider))
+		}
+		s.rt.stop(t.ID)
+	}
+	return s.providerSettings(ctx, t, provider)
+}
+
+// providerSettings moves a chat to the other CLI. Model, effort, mode, speed and
 // login are that CLI's own, so they come from the person's defaults for it
 // (as for a new chat), not from the original. Folder, worktree and machine stay.
-func (s *Server) forkSettings(ctx context.Context, n *store.Thread, provider string) error {
+func (s *Server) providerSettings(ctx context.Context, n *store.Thread, provider string) error {
 	if provider != "claude" && provider != "codex" {
 		return badRequest("provider must be claude or codex")
 	}

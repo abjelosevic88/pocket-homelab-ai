@@ -238,7 +238,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   }, [id, toast])
   const dropUnsent = useCallback((it: Item) => { api.del(`${V1}/threads/${id}/queue/${encodeURIComponent(it.key)}`).catch(e => toast(errMsg(e), 'err')) }, [id, toast])
 
-  const patch = async (p: Partial<Pick<Thread, 'title' | 'pinned' | 'archived' | 'model' | 'effort' | 'mode' | 'speed' | 'no_memory'>>) => {
+  const patch = async (p: Partial<Pick<Thread, 'title' | 'pinned' | 'archived' | 'provider' | 'model' | 'effort' | 'mode' | 'speed' | 'no_memory'>>) => {
     if (!t) return
     setThread({ ...t, ...p })
     try { const th = await api.patch<Thread>(`${V1}/threads/${id}`, p); setThread(th); upsertThread(th); return th } catch (e) { toast(errMsg(e), 'err'); load() }
@@ -274,11 +274,11 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
       toast(errMsg(e), 'err'); return false
     }
   }
-  // provider: fork into the other CLI (fresh session, same chat history attached)
-  const fork = async (provider?: string) => {
+  // a fresh session with the chat history attached; Claude Code or Codex is picked in the copy's model menu
+  const fork = async () => {
     try {
-      const th = await api.post<Thread>(`${V1}/threads/${id}/fork`, provider ? { provider } : undefined); upsertThread(th)
-      if (parentTabs) { openInParent(th.id, th.title); toast('Forked — the copy opened in a new tab') } else { navigate(`/t/${th.id}`); toast('Forked — this is the copy') }
+      const th = await api.post<Thread>(`${V1}/threads/${id}/fork`); upsertThread(th)
+      if (parentTabs) { openInParent(th.id, th.title); toast('Forked — the copy opened in a new tab') } else { navigate(`/t/${th.id}`); toast('Forked — pick Claude Code or Codex in the model menu before you send') }
     } catch (e) { toast(errMsg(e), 'err') }
   }
   // slash commands Pocket AI answers itself instead of the agent
@@ -332,8 +332,8 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   if (!t) return <div className="thread-page"><Loading /></div>
 
   const p = providers.find(x => x.id === t.provider)
-  const otherProvider = t.provider === 'claude' ? 'codex' : 'claude'
-  const otherProv = providers.find(x => x.id === otherProvider)
+  // nobody has written yet (a fresh fork): it can still move to the other CLI
+  const unstarted = t.source !== 'ask' && !t.external && !t.provider_session_id && !t.usage?.turns && !!items && !items.some(i => i.kind === 'user')
   const access = accessOf(t, user)
   const owner = access === 'owner'
   const canSend = canRun && access !== 'view'
@@ -381,9 +381,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
     ...(t.provider === 'claude' && t.source !== 'ask' && canRun ? [{ label: t.remote_control ? 'Turn off Remote Control' : 'Turn on Remote Control', icon: 'smartphone' as const, onSelect: () => remoteControl(!t.remote_control) }] : []),
     { label: 'MCP servers…', icon: 'server', disabled: t.source === 'ask' || !canRun || !!t.external, hint: '/mcp', onSelect: () => setMcpOpen(true) },
     { label: 'Restart session', icon: 'repeat', disabled: t.source === 'ask' || !canRun || !!t.external, hint: 'Reconnects MCP & connectors', onSelect: restartSession },
-    { label: 'Fork into a new thread', icon: 'fork', disabled: t.source === 'ask' || !t.provider_session_id || !canRun, onSelect: () => fork() },
-    { label: `Fork into ${providerName(otherProvider)}`, icon: 'fork', disabled: t.source === 'ask' || !t.provider_session_id || !canRun || (!t.host_id && !!otherProv && !otherProv.available),
-      hint: !t.host_id && otherProv && !otherProv.available ? otherProv.error || 'Not available on this server' : undefined, onSelect: () => fork(otherProvider) },
+    { label: 'Fork into a new thread', icon: 'fork', disabled: t.source === 'ask' || !t.provider_session_id || !canRun, hint: 'Claude Code or Codex', onSelect: fork },
     { label: 'Export as Markdown', icon: 'download', onSelect: () => download(`${V1}/threads/${id}/export.md`) },
     'sep',
     { label: t.archived ? 'Move out of archive' : 'Archive', icon: 'archive', onSelect: async () => { const th = await patch({ archived: !t.archived }); if (th?.archived) { dropThread(id); toast('Archived') } } },
@@ -486,7 +484,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
                 {t.source === 'ask' && owner && <span className="thread-pickers"><AgentPicker compact ask showProvider={false} value={{ provider: 'claude', model: t.model, effort: t.effort, mode: t.mode, account_id: t.account_id || 0 }}
                   onChange={ch => patch(ch as Partial<Thread>)} /></span>}
                 {!owner && <span className="muted small">{t.source === 'ask' ? `Shared Ask chat from ${t.owner_name || 'someone'} — your questions use your own apps` : `Chatting in ${t.owner_name || 'someone'}’s chat — the agent runs on their login and settings`}</span>}
-                {owner && p && t.source !== 'ask' && <span className="thread-pickers"><AgentPicker compact showProvider={false} host={t.host_id || 0} value={{ provider: t.provider, model: t.model, effort: t.effort, mode: t.mode, speed: t.speed || '', account_id: t.account_id || 0, host_home: t.host_home || '' }}
+                {owner && p && t.source !== 'ask' && <span className="thread-pickers"><AgentPicker compact switchProvider={unstarted} host={t.host_id || 0} value={{ provider: t.provider, model: t.model, effort: t.effort, mode: t.mode, speed: t.speed || '', account_id: t.account_id || 0, host_home: t.host_home || '' }}
                   onChange={ch => patch(ch as Partial<Thread>)} remote={canRun ? { on: !!t.remote_control, busy: rcBusy, state: t.remote_control?.state, onToggle: () => remoteControl(!t.remote_control) } : undefined} /></span>}
                 {owner && <CacheChip t={t} onTap={text => { if (isTouch()) toast(text) }} />}
               </>} />

@@ -583,10 +583,24 @@ func (s *Server) handlePatchThread(w http.ResponseWriter, r *http.Request) {
 		Speed    *string `json:"speed"`
 		Account  *int64  `json:"account_id"`
 		HostHome *string `json:"host_home"` // on a machine: its login folder ("" = the default)
+		Provider *string `json:"provider"`  // only before the first message: a chat keeps the CLI it started with
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
+	}
+	movedTo := ""
+	if in.Provider != nil && *in.Provider != t.Provider {
+		if !s.requireRun(w, r) {
+			return
+		}
+		if err := s.changeProvider(r.Context(), t, *in.Provider); err != nil {
+			s.fail(w, err, "switch agent")
+			return
+		}
+		// the new CLI's own login and defaults replace these
+		in.Account, in.HostHome = nil, nil
+		movedTo = t.Provider
 	}
 	if t.Source == "ask" && (in.Mode != nil || in.Speed != nil) {
 		writeErr(w, 400, "Ask uses fixed permissions")
@@ -683,6 +697,12 @@ func (s *Server) handlePatchThread(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.UpdateThread(r.Context(), t); err != nil {
 		s.fail(w, err, "update thread")
 		return
+	}
+	if movedTo != "" {
+		if err := s.store.SetThreadProvider(r.Context(), t.ID, movedTo); err != nil {
+			s.fail(w, err, "switch agent")
+			return
+		}
 	}
 	if restart {
 		// New flags need a new process; it resumes the same session.

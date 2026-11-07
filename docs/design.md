@@ -49,9 +49,11 @@ represented by filenames/counts, not copied image data.
 Forks also receive a work-scope instruction on every start/resume (local or remote). The user can explicitly
 ask to continue earlier work; an unrelated question does not authorize resuming the original's jobs. Older
 forks retain their existing native session and receive these scope instructions; they are not rewritten.
-A fork can also go to the other CLI (`provider`): the history is plain text, so a Codex chat continues in
-Claude Code and the other way round. Model, effort, mode, speed and login then come from the person's defaults
-for that CLI; the machine stays, with its default login folder.
+A fork can also go to the other CLI: the history is plain text, so a Codex chat continues in Claude Code and
+the other way round. The UI forks to the same CLI and the copy's model menu lists both CLIs' models until the
+first message (`PATCH /threads/{id} {provider}`); after that the chat keeps its CLI (409), because its session,
+tools and cache belong to it. Model, effort, mode, speed and login then come from the person's defaults for
+that CLI; the machine stays, with its default login folder.
 Forks keep the selected folder/worktree, which can still be shared with the original: this does not create
 filesystem or process isolation.
 
