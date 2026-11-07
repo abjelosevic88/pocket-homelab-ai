@@ -220,6 +220,7 @@ export function AgentPicker({ value, onChange, allowDefault = false, compact = f
       {machineLogins.length > 1 && named('Login', <Select size={size} className={cls} label="Login on that machine" value={value.host_home || ''} options={machineLogins} onChange={v => onChange({ host_home: v })} width={compact ? 320 : 'trigger'}
         renderValue={o => <span className="ellipsis">{compact && <Icon name="server" size={12} className="inline-ico" />}{o?.label ?? 'Login'}</span>} />)}
       {models.length > 0 && named('Model', <Select size={size} className={cls} label={both ? 'Agent and model' : 'Model'} value={both ? `${pid}:${value.model}` : value.model} options={models} onChange={pickModel} width={compact ? 280 : 'trigger'}
+        tabs={both} groupIcon={both ? g => { const id = providers.find(x => x.name === g)?.id; return id && <Icon name={id} size={13} className={`prov-glyph ${id}`} /> } : undefined}
         renderValue={compact ? o => <span className="ellipsis"><Icon name={pid} size={14} className={`inline-ico prov-glyph ${pid}`} />{shortLabel(String(o?.label ?? 'Model'))}</span> : undefined} />)}
       {efforts.length > 0 && named('Effort', <Select size={size} className={cls} label="Effort" value={value.effort} options={efforts} onChange={v => onChange({ effort: v })} width={compact ? 180 : 'trigger'}
         renderValue={o => <span className="ellipsis">{compact ? <Icon name="brain" size={12} className="inline-ico" /> : null}{o?.label ?? 'Effort'}</span>} />)}
