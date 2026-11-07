@@ -50,30 +50,31 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Title           *string              `json:"title"`
-		AppEffort       *string              `json:"app_effort"`
-		AppModel        *string              `json:"app_model"`
-		AppAccount      *int64               `json:"app_account_id"`
-		DefaultProvider *string              `json:"default_provider"`
-		DefaultCwd      *string              `json:"default_cwd"`
-		Claude          *store.AgentDefaults `json:"claude"`
-		Codex           *store.AgentDefaults `json:"codex"`
-		SystemPrompt    *string              `json:"system_prompt"`
-		NotifyKind      *string              `json:"notify_kind"`
-		NotifyURL       *string              `json:"notify_url"`
-		NotifyToken     *string              `json:"notify_token"`
-		NotifyFinished  *bool                `json:"notify_finished"`
-		NotifyInput     *bool                `json:"notify_input"`
-		NotifyFailed    *bool                `json:"notify_failed"`
-		NotifyOnlyAway  *bool                `json:"notify_only_away"`
-		EnterSendNow    *bool                `json:"enter_send_now"`
-		EnterSends      *bool                `json:"enter_sends"`
-		ShowThinking    *bool                `json:"show_thinking"`
-		UsageWidget     *bool                `json:"usage_widget"`
-		ThreadTabs      *bool                `json:"thread_tabs"`
-		UsagePinned     *[]string            `json:"usage_pinned"`
-		Sidebar         *[]string            `json:"sidebar"`
-		Shortcuts       *map[string]string   `json:"shortcuts"`
+		Title               *string              `json:"title"`
+		AppEffort           *string              `json:"app_effort"`
+		AppModel            *string              `json:"app_model"`
+		AppAccount          *int64               `json:"app_account_id"`
+		DefaultProvider     *string              `json:"default_provider"`
+		DefaultCwd          *string              `json:"default_cwd"`
+		Claude              *store.AgentDefaults `json:"claude"`
+		Codex               *store.AgentDefaults `json:"codex"`
+		SystemPrompt        *string              `json:"system_prompt"`
+		NotifyKind          *string              `json:"notify_kind"`
+		NotifyURL           *string              `json:"notify_url"`
+		NotifyToken         *string              `json:"notify_token"`
+		NotifyFinished      *bool                `json:"notify_finished"`
+		NotifyInput         *bool                `json:"notify_input"`
+		NotifyFailed        *bool                `json:"notify_failed"`
+		NotifyOnlyAway      *bool                `json:"notify_only_away"`
+		EnterSendNow        *bool                `json:"enter_send_now"`
+		EnterSends          *bool                `json:"enter_sends"`
+		ShowThinking        *bool                `json:"show_thinking"`
+		UsageWidget         *bool                `json:"usage_widget"`
+		WorktreeAutoCleanup *bool                `json:"worktree_auto_cleanup"`
+		ThreadTabs          *bool                `json:"thread_tabs"`
+		UsagePinned         *[]string            `json:"usage_pinned"`
+		Sidebar             *[]string            `json:"sidebar"`
+		Shortcuts           *map[string]string   `json:"shortcuts"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
@@ -217,7 +218,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		out *bool
 	}{{in.NotifyFinished, &st.NotifyFinished}, {in.NotifyInput, &st.NotifyInput}, {in.NotifyFailed, &st.NotifyFailed},
 		{in.NotifyOnlyAway, &st.NotifyOnlyAway}, {in.EnterSends, &st.EnterSends}, {in.EnterSendNow, &st.EnterSendNow}, {in.ShowThinking, &st.ShowThinking},
-		{in.UsageWidget, &st.UsageWidget}, {in.ThreadTabs, &st.ThreadTabs}} {
+		{in.WorktreeAutoCleanup, &st.WorktreeAutoCleanup}, {in.UsageWidget, &st.UsageWidget}, {in.ThreadTabs, &st.ThreadTabs}} {
 		if b.in != nil {
 			*b.out = *b.in
 		}
