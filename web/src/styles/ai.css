@@ -178,7 +178,7 @@
 .home-hero img { filter: drop-shadow(0 6px 16px rgba(124, 58, 237, .25)); }
 .home-hero h1 { font-size: 26px; letter-spacing: -.025em; margin-top: 6px; }
 .home-hero p { margin: 0; }
-.home-agent { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: space-between; }
+.home-agent { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .needyou-bar { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: var(--warning-soft); color: var(--text); }
 .needyou-bar > .icon { color: var(--warning); }
 .home-sec { margin-top: 16px; }

@@ -129,7 +129,7 @@ only their own calls.
 | GET | `/threads` | `?archived=1`, `?favorites=1` (pinned = favorites, archived or not), `?workspace=ID`, `?q=` (title filter) | `Thread[]` newest activity first, pinned first |
 | POST | `/threads` | `{provider, model?, effort?, mode?, cwd?, workspace_id?, title?, text, upload_ids?: string[]}` | `Thread` (201); the first turn starts right away |
 | GET | `/threads/{id}` | | `{thread: Thread, items: Item[]}` |
-| PATCH | `/threads/{id}` | any of `{title, pinned, archived, model, effort, mode}` | `Thread` |
+| PATCH | `/threads/{id}` | any of `{title, pinned, archived, model, effort, mode, provider}` | `Thread` — `provider` only before the first message (a fresh fork), with that CLI's defaults; 409 once the chat has started |
 | DELETE | `/threads/{id}` | | 204 (stops the agent, deletes the timeline; the CLI's own session file stays) |
 | POST | `/threads/{id}/messages` | `{text, upload_ids?: string[], send_now?: bool}` | `{queued: bool, thread: Thread}` — normally waits for the current turn; `send_now` prioritizes this message and interrupts the current turn, preserving older queued messages |
 | DELETE | `/threads/{id}/queue` | | 204 — drop queued messages |

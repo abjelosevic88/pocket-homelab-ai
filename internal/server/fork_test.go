@@ -235,3 +235,45 @@ func TestForkToTheOtherProvider(t *testing.T) {
 	owner.want("POST", "/api/v1/threads/"+fork.ID+"/fork", map[string]any{"provider": "codex"}, 400, nil)
 	owner.want("POST", "/api/v1/threads/"+parent.ID+"/fork", map[string]any{"provider": "gemini"}, 400, nil)
 }
+
+func TestSwitchAgentOnlyBeforeFirstMessage(t *testing.T) {
+	s, h, root := testServer(t)
+	owner, u := person(t, s, h, "switch@example.test", "admin", true)
+	ctx := t.Context()
+	s.provMu.Lock()
+	s.provList = []agent.Provider{
+		{ID: "claude", Name: "Claude Code", Available: true, Models: []agent.Model{{ID: "claude-default", Name: "Default"}, {ID: "claude-big", Name: "Big"}},
+			Modes: agent.ClaudeModes, Speeds: []agent.Speed{}, DefaultModel: "claude-default", DefaultEffort: "high", DefaultMode: "default"},
+		{ID: "codex", Name: "Codex", Available: true, Models: []agent.Model{{ID: "gpt-model", Name: "GPT"}},
+			Modes: agent.CodexModes, Speeds: []agent.Speed{}, DefaultModel: "gpt-model", DefaultEffort: "medium", DefaultMode: agent.CodexModes[0].ID},
+	}
+	s.provAt = time.Now()
+	s.provMu.Unlock()
+
+	parent := thread(t, s, u.ID, root)
+	var fork store.Thread
+	owner.want("POST", "/api/v1/threads/"+parent.ID+"/fork", map[string]any{}, 201, &fork)
+	var got store.Thread
+	owner.want("PATCH", "/api/v1/threads/"+fork.ID, map[string]any{"provider": "codex"}, 200, &got)
+	if got.Provider != "codex" || got.Model != "gpt-model" || got.Mode != "on-request" {
+		t.Fatalf("fork did not move to Codex with its defaults: %+v", got)
+	}
+	// provider and model in one go (the grouped model menu)
+	owner.want("PATCH", "/api/v1/threads/"+fork.ID, map[string]any{"provider": "claude", "model": "claude-big"}, 200, &got)
+	if got.Provider != "claude" || got.Model != "claude-big" {
+		t.Fatalf("model of the new CLI not kept: %+v", got)
+	}
+	if historyOfFork(t, s, got) == nil {
+		t.Fatal("history attachment lost on switch")
+	}
+	// once a message is in, the chat keeps its CLI
+	data, _ := json.Marshal(agent.Item{Key: "u1", Kind: "user", Text: "hi"})
+	if _, err := s.store.UpsertItem(ctx, fork.ID, "u1", "user", data, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	owner.want("PATCH", "/api/v1/threads/"+fork.ID, map[string]any{"provider": "codex"}, 409, nil)
+	// the original started long ago
+	owner.want("PATCH", "/api/v1/threads/"+parent.ID, map[string]any{"provider": "codex"}, 409, nil)
+	// the same provider is no switch
+	owner.want("PATCH", "/api/v1/threads/"+parent.ID, map[string]any{"provider": "claude", "title": "same"}, 200, nil)
+}
