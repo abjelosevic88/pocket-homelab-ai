@@ -225,7 +225,8 @@ func (s *Server) cleanupOne(ctx context.Context, uid, id int64, in cleanupInput)
 		item.Reason = "Custom teardown configured; use Archive from the worktree panel"
 		return item
 	}
-	out, stderr, err := shOn(ctx, h, 90*time.Second, wtCleanupInspect, wt.Path, wt.Repo, wt.Branch, wt.Base, wt.BaseSHA, strconv.FormatInt(wt.ID, 10))
+	// Agents often switch to a branch of their own; judge the one checked out.
+	out, stderr, err := shOn(ctx, h, 90*time.Second, wtCleanupInspect, wt.Path, wt.Repo, "", wt.Base, wt.BaseSHA, strconv.FormatInt(wt.ID, 10))
 	if err != nil {
 		item.Reason = "Could not verify merge: " + scriptErr(stderr, err).Error()
 		return item
@@ -235,11 +236,12 @@ func (s *Server) cleanupOne(ctx context.Context, uid, id int64, in cleanupInput)
 		item.Reason = m["reason"]
 		return item
 	}
-	head := m["head"]
-	if head == "" {
+	head, branch := m["head"], m["branch"]
+	if head == "" || branch == "" {
 		item.Reason = "Could not verify the current commit"
 		return item
 	}
+	item.Branch = branch
 	merged := m["merged"] == "1"
 	prURL := ""
 	if !merged {
@@ -253,7 +255,7 @@ func (s *Server) cleanupOne(ctx context.Context, uid, id int64, in cleanupInput)
 		}
 		if json.Unmarshal([]byte(m["prs"]), &prs) == nil {
 			for _, pr := range prs {
-				if pr.State == "MERGED" && pr.Head == head && pr.Branch == wt.Branch && pr.Base == m["base"] && !pr.Cross {
+				if pr.State == "MERGED" && pr.Head == head && pr.Branch == branch && pr.Base == m["base"] && !pr.Cross {
 					merged, prURL = true, pr.URL
 					break
 				}
@@ -280,12 +282,13 @@ func (s *Server) cleanupOne(ctx context.Context, uid, id int64, in cleanupInput)
 		del = "1"
 	}
 	// Rechecks HEAD, branch, registration and files immediately before removal.
-	out, stderr, err = shOn(ctx, h, time.Minute, wtCleanupRemove, wt.Path, wt.Repo, wt.Branch, head, ref, del)
+	out, stderr, err = shOn(ctx, h, time.Minute, wtCleanupRemove, wt.Path, wt.Repo, branch, head, ref, del)
 	if err != nil {
 		item.Status, item.Reason = "skipped", "Cleanup stopped: "+scriptErr(stderr, err).Error()
 		return item
 	}
-	wt.Status, wt.ArchivedAt, wt.MergedAt, wt.Setup, wt.ArchiveRef = "archived", store.Now(), store.Now(), "", ref
+	// Restore recreates the branch that was actually checked out.
+	wt.Branch, wt.Status, wt.ArchivedAt, wt.MergedAt, wt.Setup, wt.ArchiveRef = branch, "archived", store.Now(), store.Now(), "", ref
 	if prURL != "" {
 		wt.PRURL = prURL
 	}
@@ -333,15 +336,23 @@ func (s *Server) autoCleanupWorktrees(ctx context.Context) {
 		return
 	}
 	for _, u := range users {
-		if !u.MayRun() || s.store.UserSetting(ctx, u.ID, "worktree_auto_cleanup") != "1" {
-			continue
+		if u.MayRun() {
+			s.autoCleanupUser(ctx, u.ID)
 		}
-		// Bound a pass across offline hosts and leave shutdown cancellable.
-		passCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
-		_, err := s.cleanupWorktrees(passCtx, u.ID, cleanupInput{DeleteBranches: true})
-		cancel()
-		if err != nil && ctx.Err() == nil {
-			s.log.Warn("automatic worktree cleanup", "user", u.ID, "error", fmt.Sprint(err))
-		}
+	}
+}
+
+// autoCleanupUser runs one automatic pass for a person who opted in; also
+// right when they turn it on, instead of an hour later.
+func (s *Server) autoCleanupUser(ctx context.Context, uid int64) {
+	if s.store.UserSetting(ctx, uid, "worktree_auto_cleanup") != "1" {
+		return
+	}
+	// Bound a pass across offline hosts and leave shutdown cancellable.
+	passCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	defer cancel()
+	_, err := s.cleanupWorktrees(passCtx, uid, cleanupInput{DeleteBranches: true})
+	if err != nil && ctx.Err() == nil {
+		s.log.Warn("automatic worktree cleanup", "user", uid, "error", fmt.Sprint(err))
 	}
 }

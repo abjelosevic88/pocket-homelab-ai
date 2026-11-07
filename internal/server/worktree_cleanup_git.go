@@ -1,8 +1,11 @@
 package server
 
 // Both phases verify the checkout identity. Never operate on the main
-// checkout, a switched branch, an unregistered path, a locked worktree, or
-// a checkout with an unfinished operation. Arguments: path, main, branch.
+// checkout, a detached HEAD, an unregistered path, a locked worktree, or a
+// checkout with an unfinished operation. Arguments: path, main, branch. An
+// empty branch (inspection) accepts whatever branch an agent switched to;
+// removal passes the branch inspection saw. Ignored files (.env copies,
+// node_modules, build output) go with the folder, as with manual Archive.
 const wtCleanupGuard = `cd -- "$1" 2>/dev/null || fail "Worktree folder is missing"
 [ -f .git ] || fail "This is not a linked worktree"
 top=$(git rev-parse --show-toplevel) || fail "Could not inspect the repository"
@@ -12,7 +15,8 @@ common=$(cd -- "$common" && pwd -P) || fail "Could not find the repository"
 main_common=$(git -C "$2" rev-parse --git-common-dir) || fail "Main repository is missing"
 case "$main_common" in /*) ;; *) main_common="$2/$main_common" ;; esac
 [ "$common" = "$(cd -- "$main_common" && pwd -P)" ] || fail "Worktree belongs to a different repository"
-[ "$(git symbolic-ref --short -q HEAD)" = "$3" ] || fail "Checked-out branch changed"
+branch=$(git symbolic-ref --short -q HEAD) || fail "No branch is checked out"
+[ -z "$3" ] || [ "$branch" = "$3" ] || fail "Checked-out branch changed"
 gitdir=$(git rev-parse --absolute-git-dir) || fail "Could not inspect worktree registration"
 [ -f "$gitdir/gitdir" ] || fail "Worktree registration is missing"
 [ "$(cat "$gitdir/gitdir")" = "$top/.git" ] || fail "Worktree registration changed"
@@ -22,8 +26,7 @@ for marker in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply 
 done
 flags=$(git ls-files -v) || fail "Could not inspect index flags"
 if printf '%s\n' "$flags" | grep -q '^[a-zS]'; then fail "Index flags can hide local changes; review this worktree manually"; fi
-status=$(git status --porcelain --untracked-files=all --ignored=matching) || fail "Could not inspect local files"
-if printf '%s\n' "$status" | grep -q '^!!'; then fail "Ignored local files need review; use Archive manually after saving anything needed"; fi
+status=$(git status --porcelain --untracked-files=all) || fail "Could not inspect local files"
 [ -z "$status" ] || fail "Uncommitted or untracked files"
 head=$(git rev-parse --verify HEAD) || fail "Could not inspect the current commit"
 `
@@ -33,12 +36,13 @@ head=$(git rev-parse --verify HEAD) || fail "Could not inspect the current commi
 // agents too, whether or not Pocket AI previously saved their PR URL.
 const wtCleanupInspect = gitEnv + `fail() { printf 'reason=%s\n' "$1"; exit 0; }
 ` + wtCleanupGuard + `echo "head=$head"
+echo "branch=$branch"
 base=$4
 case "$base" in refs/heads/*) base=${base#refs/heads/} ;; refs/remotes/origin/*) base=${base#refs/remotes/origin/} ;; origin/*) base=${base#origin/} ;; esac
 git check-ref-format "refs/heads/$base" >/dev/null 2>&1 || fail "Base is not a branch"
-[ "$3" != "$base" ] || fail "This worktree is on the base branch"
+[ "$branch" != "$base" ] || fail "This worktree is on the base branch"
 default=$(git symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null)
-[ "$default" != "refs/remotes/origin/$3" ] || fail "This worktree is on the repository default branch"
+[ "$default" != "refs/remotes/origin/$branch" ] || fail "This worktree is on the repository default branch"
 echo "base=$base"
 origin=$(git remote get-url origin 2>/dev/null)
 if [ -n "$origin" ]; then
@@ -53,7 +57,7 @@ if [ "$head" != "$5" ] && git merge-base --is-ancestor "$head" "$target"; then e
 # Patch-equivalence can discard intentionally empty or merge-only commits.
 # For squash/rebase merges require the exact branch head reported by the PR.
 if [ -n "$origin" ] && command -v gh >/dev/null 2>&1; then
- prs=$(gh pr list --repo "$origin" --head "$3" --base "$base" --state merged --limit 100 --json state,headRefOid,headRefName,baseRefName,url,isCrossRepository 2>/dev/null) && printf 'prs=%s\n' "$prs" || echo "pr_error=1"
+ prs=$(gh pr list --repo "$origin" --head "$branch" --base "$base" --state merged --limit 100 --json state,headRefOid,headRefName,baseRefName,url,isCrossRepository 2>/dev/null) && printf 'prs=%s\n' "$prs" || echo "pr_error=1"
 else echo "pr_error=1"; fi
 exit 0
 `

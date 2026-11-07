@@ -47,7 +47,7 @@ try {
   await page.getByText('Cleaned up; conversation kept', { exact: true }).waitFor()
   assert.equal(cleaned, true)
   await page.getByRole('checkbox', { name: 'Automatically clean up merged worktrees' }).check()
-  await page.getByText('Automatic cleanup enabled; checks run hourly', { exact: true }).waitFor()
+  await page.getByText('Automatic cleanup enabled; checking now, then hourly', { exact: true }).waitFor()
   assert.equal(auto, true)
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
   assert.deepEqual(errors, [])
