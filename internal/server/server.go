@@ -61,8 +61,10 @@ type Server struct {
 	mobilePushMu sync.Mutex
 	mobileBadges map[int64]int
 
-	wtOnce sync.Once
-	wtHold *wtHolds // messages waiting for a worktree's setup: worktrees.go
+	wtUseMu     [64]sync.RWMutex // cleanup excludes agent starts and worktree mutations
+	wtCleanupMu sync.Mutex       // one cleanup pass at a time
+	wtOnce      sync.Once
+	wtHold      *wtHolds // messages waiting for a worktree's setup: worktrees.go
 
 	re reattachSet // agents still working from before a restart: reconnect.go
 
@@ -163,6 +165,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	// never automatically replayed into a coding agent.
 	_, _ = s.store.DB.ExecContext(ctx, `UPDATE deferred_prompts SET status='uncertain', error='Delivery was interrupted. Check this chat before sending the prompt again.' WHERE status='dispatching'`)
 	go s.deferredLoop(ctx)
+	go s.worktreeCleanupLoop(ctx)
 	go s.autoTitleLoop(ctx) // short names for threads still called after their first message (autotitle.go)
 	_, _ = s.store.DB.ExecContext(ctx, `UPDATE app_calls SET status=CASE WHEN status='pending' THEN 'denied' WHEN is_write=1 THEN 'unknown' ELSE 'interrupted' END WHERE status IN ('running','pending')`)
 	go agent.WarmSessions(s.homes(ctx))    // first parse of every session file takes a while

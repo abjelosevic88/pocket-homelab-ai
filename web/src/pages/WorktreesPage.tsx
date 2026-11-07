@@ -13,6 +13,8 @@ import { PageHead } from '../components/PageHead'
 import { WorktreePanel } from '../components/Worktree'
 import { type Anchor, Confirm, Empty, errMsg, Loading, Menu, type MenuItem, MenuButton, Spinner, useToast } from '../components/ui'
 
+interface CleanupResult { archived: string[]; skipped: string[]; checked_at: string; items: { id: number; branch: string; status: 'ready' | 'archived' | 'skipped'; reason: string }[] }
+
 interface Group { id: number; parent_id: number | null; name: string; position: number; collapsed: boolean; items: number[] }
 // what is being dragged: a worktree card or a group's heading
 type Drag = { kind: 'wt'; id: number } | { kind: 'group'; id: number }
@@ -22,7 +24,7 @@ interface Other { host_id: number; host_name?: string; repo: string; path: strin
 const size = (kb?: number) => !kb ? '' : kb < 1024 ? `${kb} KB` : kb < 1024 * 1024 ? `${(kb / 1024).toFixed(0)} MB` : `${(kb / 1024 / 1024).toFixed(1)} GB`
 
 export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
-  const { worktrees } = useApp()
+  const { worktrees, settings, saveSettings } = useApp()
   const { toast } = useToast()
   const navigate = useNavigate()
   const [list, setList] = useState<Worktree[] | null>(null)
@@ -32,6 +34,8 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
   // ?open=<id>: a link from another app (Pocket Projects' issue) opens that worktree
   const [open, setOpen] = useState<number | null>(() => Number(params.get('open')) || null)
   const [busy, setBusy] = useState('')
+  const [cleanupResult, setCleanupResult] = useState<CleanupResult | null>(null)
+  const [confirmCleanup, setConfirmCleanup] = useState(false)
   const [showArchived, setShowArchived] = useState(false)
   const [removing, setRemoving] = useState<Other | null>(null)
   // your own groups (drag worktrees into them); the rest shows by repository
@@ -57,6 +61,7 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
       setList(l => l && withSizes(l))
     }).catch(() => {})
     api.get<Other[]>(`${V1}/worktrees/others`).then(d => { if (live) setOthers(d) }).catch(() => {})
+    api.get<CleanupResult | null>(`${V1}/worktrees/cleanup`).then(d => { if (live) setCleanupResult(previous => previous?.items.some(i => i.status === 'ready') ? previous : d) }).catch(() => {})
     api.get<Group[]>(`${V1}/worktree-groups`).then(d => { if (live) setWGroups(d) }).catch(() => {})
     return () => { live = false }
   }, [n, worktrees.length]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -147,15 +152,24 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
     ]
   }
   const archived = (list || []).filter(w => w.status === 'archived')
-  const merged = (list || []).filter(w => w.status === 'active' && w.state?.merged)
+  const ready = cleanupResult?.items.filter(i => i.status === 'ready') || []
   const total = (list || []).reduce((s, w) => s + (w.state?.size_kb || 0), 0)
 
-  const cleanup = async () => {
+  const cleanup = async (preview: boolean) => {
     setBusy('cleanup')
     try {
-      const r = await api.post<{ archived: string[]; skipped: string[] }>(`${V1}/worktrees/cleanup`, { delete_branches: true })
-      toast(r.archived.length ? `Archived ${r.archived.length}: ${r.archived.join(', ')}${r.skipped.length ? ` · skipped ${r.skipped.join(', ')} (uncommitted work or an agent at work)` : ''}` : 'Nothing to clean up')
-      reload()
+      const r = await api.post<CleanupResult>(`${V1}/worktrees/cleanup`, { delete_branches: true, preview, ...(preview ? {} : { ids: ready.map(i => i.id) }) })
+      setCleanupResult(r)
+      const count = r.items.filter(i => i.status === 'ready').length
+      toast(preview ? (count ? `${count} ${count === 1 ? 'worktree is' : 'worktrees are'} ready to clean up` : 'No worktrees are ready; see the reasons below') : `Cleaned up ${r.archived.length} ${r.archived.length === 1 ? 'worktree' : 'worktrees'}${r.skipped.length ? `; kept ${r.skipped.length} for review` : ''}`)
+      if (!preview) reload()
+    } catch (e) { toast(errMsg(e), 'err') } finally { setBusy('') }
+  }
+  const toggleAutoCleanup = async (enabled: boolean) => {
+    setBusy('auto')
+    try {
+      await saveSettings({ worktree_auto_cleanup: enabled })
+      toast(enabled ? 'Automatic cleanup enabled; checks run hourly' : 'Automatic cleanup turned off')
     } catch (e) { toast(errMsg(e), 'err') } finally { setBusy('') }
   }
   const adopt = async (o: Other) => {
@@ -258,9 +272,25 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
     <div className="page">
       <PageHead title="Worktrees" icon="fork" onMenu={onMenu}
         sub="Each task in its own folder and branch. Start one with the Worktree switch next to the folder on the start page."
-        actions={<>{activeCount > 0 && <button type="button" className="btn sm ghost" onClick={() => { void newGroup() }} title="A group of your own: drag worktrees into it"><Icon name="plus" size={13} />New group</button>}{merged.length > 0 && <button type="button" className="btn sm" disabled={!!busy} onClick={cleanup} title="Archive every merged worktree without uncommitted work, and delete its branch">{busy === 'cleanup' ? <Spinner /> : <Icon name="archive" size={13} />}Clean up {merged.length} merged</button>}</>} />
+        actions={<>{activeCount > 0 && <button type="button" className="btn sm ghost" onClick={() => { void newGroup() }} title="A group of your own: drag worktrees into it"><Icon name="plus" size={13} />New group</button>}</>} />
       <div className="page-scroll">
         <div className="page-inner srv">
+          <section className="wt-cleanup" aria-label="Worktree cleanup">
+            <div className="wt-cleanup-actions">{activeCount > 0 && <button type="button" className="btn sm" disabled={!!busy} onClick={() => cleanup(true)} title="Check current merge status and review what can be removed">{busy === 'cleanup' ? <Spinner /> : <Icon name="archive" size={13} />}Clean up merged…</button>}</div>
+            <label className="row"><input type="checkbox" checked={!!settings?.worktree_auto_cleanup} disabled={!settings || !!busy} onChange={e => toggleAutoCleanup(e.target.checked)} /> Automatically clean up merged worktrees</label>
+            <p className="muted xsmall">Checks hourly, even when this page is closed. Only verified, clean, idle worktrees are removed. Conversations stay available, and archived worktrees can be restored.</p>
+            {cleanupResult && <details open>
+              <summary className="xsmall">{cleanupResult.items.filter(i => i.status === 'ready').length ? `${ready.length} ready to clean up` : `${cleanupResult.archived.length} cleaned up`} · {cleanupResult.skipped.length} kept · checked {ago(cleanupResult.checked_at)}</summary>
+              <div className="wt-cleanup-results" aria-live="polite">
+                {cleanupResult.items.map(i => <div key={i.id} className="wt-cleanup-result">
+                  <button type="button" className="link-btn ellipsis" onClick={() => setOpen(i.id)} title={i.branch}>{i.branch}</button>
+                  <span className={`badge ${i.status === 'skipped' ? '' : 'ok'}`}>{i.status === 'ready' ? 'Ready' : i.status === 'archived' ? 'Cleaned up' : 'Kept'}</span>
+                  <span className="muted xsmall">{i.reason}</span>
+                </div>)}
+              </div>
+              {ready.length > 0 && <button type="button" className="btn sm" disabled={!!busy} onClick={() => setConfirmCleanup(true)}>Clean up {ready.length} merged</button>}
+            </details>}
+          </section>
           {list === null ? <Loading label="Looking at the worktrees…" /> : !groups.length && !wgroups.length && !archived.length && !others.length ? (
             <Empty title="No worktrees yet" icon="fork">On the start page, pick a folder inside a git repository and switch on <b>Worktree</b>: the agent gets its own copy and branch, and you merge (or drop) its work from here or from the thread.</Empty>
           ) : <>
@@ -320,6 +350,9 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
           </>}
         </div>
       </div>
+      {confirmCleanup && <Confirm title={`Clean up ${ready.length} merged worktrees?`} confirmLabel="Clean up"
+        message="Remove the verified worktree folders and their local branches. Conversations stay available, and the worktrees can be restored from Archived. Each worktree is checked again; anything with new work or an active agent is skipped."
+        onCancel={() => setConfirmCleanup(false)} onConfirm={() => { setConfirmCleanup(false); void cleanup(false) }} />}
       {cardMenu && <Menu items={cardItems(cardMenu.w)} anchor={cardMenu.at} onClose={() => setCardMenu(null)} width={230} />}
       {open !== null && <WorktreePanel id={open} onClose={() => { setOpen(null); if (params.has('open')) setParams(p => { p.delete('open'); return p }, { replace: true }); reload() }} />}
       {removing && <Confirm title={`Remove ${removing.branch || 'this worktree'}?`} confirmLabel="Remove"

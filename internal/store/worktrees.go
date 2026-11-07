@@ -1,6 +1,9 @@
 package store
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 // Worktree is an isolated git checkout on its own branch that Pocket AI made
 // for a task (worktrees.go in server has the git side).
@@ -171,4 +174,36 @@ func (s *Store) DeleteWorktree(ctx context.Context, id int64) error {
 	}
 	_, err := s.DB.ExecContext(ctx, `DELETE FROM worktrees WHERE id = ?`, id)
 	return err
+}
+
+// MarkWorktreeMerged cannot overwrite a concurrent archive or restore.
+func (s *Store) MarkWorktreeMerged(ctx context.Context, id int64, at string) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE worktrees SET merged_at = ? WHERE id = ? AND status = 'active' AND merged_at = ''`, at, id)
+	return err
+}
+
+// WorktreeUse includes conversations started directly in this folder, not
+// only those explicitly linked to the worktree. LIKE wildcards are escaped.
+func (s *Store) WorktreeUse(ctx context.Context, hostID int64, path string, id int64) ([]*Thread, error) {
+	pattern := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(strings.TrimRight(path, "/")) + "/%"
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+threadCols+` FROM threads WHERE host_id = ? AND (worktree_id = ? OR cwd = ? OR cwd LIKE ? ESCAPE '\')`, hostID, id, path, pattern)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*Thread{}
+	for rows.Next() {
+		t, err := scanThread(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// WorktreeForFolder also finds threads/terminals opened directly in a
+// checkout subfolder. Prefix comparison treats %, _ and backslashes literally.
+func (s *Store) WorktreeForFolder(ctx context.Context, hostID int64, folder string) (*Worktree, error) {
+	return scanWorktree(s.DB.QueryRowContext(ctx, `SELECT `+worktreeCols+` FROM worktrees WHERE host_id = ? AND (path = ? OR substr(?, 1, length(path)+1) = path || '/') ORDER BY length(path) DESC, id DESC LIMIT 1`, hostID, folder, folder))
 }

@@ -238,7 +238,7 @@ counts=$(git rev-list --left-right --count "$2...HEAD" 2>/dev/null)
 echo "counts=$counts"
 if git merge-base --is-ancestor HEAD "$2" 2>/dev/null; then echo "inbase=1"
 elif [ "${counts##*[!0-9]}" -gt 0 ] 2>/dev/null && [ -z "$(git cherry "$2" HEAD 2>/dev/null | grep '^+')" ]; then echo "inbase=1"; echo "equivalent=1"; fi
-if [ -n "$3" ] && command -v gh >/dev/null 2>&1; then echo "prstate=$(gh pr view "$3" --json state -q .state 2>/dev/null)"; fi
+if [ -n "$3" ] && command -v gh >/dev/null 2>&1; then echo "prstate=$(gh pr view "$3" --json state,headRefOid --template '{{.state}} {{.headRefOid}}' 2>/dev/null)"; fi
 echo "dirty=$(git status --porcelain --untracked-files=normal | wc -l)"
 up=$(git rev-parse --abbrev-ref -q '@{upstream}' 2>/dev/null) && { echo "upstream=$up"; echo "unpushed=$(git rev-list --count '@{upstream}..HEAD' 2>/dev/null)"; }
 git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 && echo "merging=1"
@@ -311,7 +311,12 @@ func worktreeStatus(ctx context.Context, h *store.Host, w *store.Worktree) wtSta
 		case "unpushed":
 			st.Unpushed, _ = strconv.Atoi(strings.TrimSpace(v))
 		case "prstate":
-			st.PRState = v
+			if fields := strings.Fields(v); len(fields) == 2 {
+				st.PRState = fields[0]
+				if fields[0] == "MERGED" && fields[1] == st.Head {
+					st.Merged = true
+				}
+			}
 		case "merging":
 			st.Merging = true
 		case "rebasing":
@@ -326,7 +331,7 @@ func worktreeStatus(ctx context.Context, h *store.Host, w *store.Worktree) wtSta
 		}
 	}
 	// "merged" only once it made commits of its own that base now has
-	st.Merged = st.Merged && st.Head != "" && st.Head != w.BaseSHA || st.PRState == "MERGED"
+	st.Merged = st.Merged && st.Head != "" && st.Head != w.BaseSHA
 	return st
 }
 

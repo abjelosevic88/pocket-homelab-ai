@@ -610,3 +610,13 @@
 .sent-view-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .sent-frame { display: block; width: 100%; height: min(78vh, 900px); border: 0; border-radius: 8px; background: #fff; }
 .sent-media { display: block; width: 100%; max-height: 78vh; }
+
+.wt-cleanup { border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-bottom: 20px; }
+.wt-cleanup > p { margin: 8px 0; }
+.wt-cleanup summary { cursor: pointer; padding: 6px 0; }
+.wt-cleanup-results { max-height: 320px; overflow: auto; margin-bottom: 10px; }
+.wt-cleanup-result { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; padding: 9px 0; }
+.wt-cleanup-result > .link-btn { text-align: left; min-width: 0; }
+.wt-cleanup-result > .muted { grid-column: 1 / -1; overflow-wrap: anywhere; }
+
+.wt-cleanup-actions:not(:empty) { margin-bottom: 12px; }

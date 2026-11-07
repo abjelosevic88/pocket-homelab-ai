@@ -682,7 +682,7 @@ func (s *Server) worktreeView(ctx context.Context, w *store.Worktree, withState 
 		v.State = &st
 		if st.Merged && w.MergedAt == "" && w.Status == "active" {
 			w.MergedAt = store.Now()
-			_ = s.store.UpdateWorktree(ctx, w)
+			_ = s.store.MarkWorktreeMerged(ctx, w.ID, w.MergedAt)
 		}
 	}
 	return v
@@ -702,6 +702,7 @@ func (s *Server) worktreeRoutes(r chi.Router) {
 	r.Post("/worktrees/adopt", s.handleAdoptWorktree)
 	r.Post("/worktrees/others/remove", s.handleRemoveOtherWorktree)
 	r.Post("/worktrees/cleanup", s.handleCleanupWorktrees)
+	r.Get("/worktrees/cleanup", s.handleWorktreeCleanupResult)
 	r.Get("/worktrees/{id}", s.handleGetWorktree)
 	r.Get("/worktrees/{id}/diff", s.handleWorktreeDiff)
 	r.Post("/worktrees/{id}/commit", s.handleWorktreeCommit)
@@ -843,6 +844,8 @@ func (s *Server) busyThreads(ctx context.Context, wt *store.Worktree) []string {
 }
 
 func (s *Server) handleWorktreeCommit(w http.ResponseWriter, r *http.Request) {
+	unlock := s.lockWorktreeRequest(r)
+	defer unlock()
 	wt, h := s.worktree(w, r)
 	if wt == nil {
 		return
@@ -863,6 +866,8 @@ func (s *Server) handleWorktreeCommit(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWorktreeUpdate(w http.ResponseWriter, r *http.Request) {
+	unlock := s.lockWorktreeRequest(r)
+	defer unlock()
 	wt, h := s.worktree(w, r)
 	if wt == nil {
 		return
@@ -899,6 +904,8 @@ func splitLines(s string) []string {
 }
 
 func (s *Server) handleWorktreeMerge(w http.ResponseWriter, r *http.Request) {
+	unlock := s.lockWorktreeRequest(r)
+	defer unlock()
 	wt, h := s.worktree(w, r)
 	if wt == nil {
 		return
@@ -975,6 +982,8 @@ func defaultMergeMessage(wt *store.Worktree, st wtStatusInfo, how string) string
 }
 
 func (s *Server) handleWorktreePush(w http.ResponseWriter, r *http.Request) {
+	unlock := s.lockWorktreeRequest(r)
+	defer unlock()
 	wt, h := s.worktree(w, r)
 	if wt == nil {
 		return
@@ -1020,6 +1029,8 @@ func (s *Server) handleWorktreePush(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWorktreeSetup(w http.ResponseWriter, r *http.Request) {
+	unlock := s.lockWorktreeRequest(r)
+	defer func() { unlock() }()
 	wt, _ := s.worktree(w, r)
 	if wt == nil {
 		return
@@ -1030,6 +1041,8 @@ func (s *Server) handleWorktreeSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = decode(r, &in)
 	if in.Skip {
+		unlock()
+		unlock = func() {}
 		for _, id := range s.store.WorktreeThreads(r.Context(), wt.ID) {
 			s.holds().release(id)
 		}
@@ -1046,7 +1059,8 @@ func (s *Server) handleWorktreeSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	wt.Setup = "running"
 	_ = s.store.UpdateWorktree(r.Context(), wt)
-	go s.runSetup(wt, tid, false)
+	setupWT := *wt
+	go s.runSetup(&setupWT, tid, false)
 	writeJSON(w, http.StatusAccepted, s.worktreeView(r.Context(), wt, false))
 }
 
@@ -1096,6 +1110,8 @@ func (e conflictErr) Error() string { return e.msg }
 func errConflict(msg string) error  { return conflictErr{msg} }
 
 func (s *Server) handleWorktreeArchive(w http.ResponseWriter, r *http.Request) {
+	unlock := s.lockWorktreeRequest(r)
+	defer unlock()
 	wt, h := s.worktree(w, r)
 	if wt == nil {
 		return
@@ -1122,6 +1138,8 @@ func (s *Server) handleWorktreeArchive(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWorktreeRestore(w http.ResponseWriter, r *http.Request) {
+	unlock := s.lockWorktreeRequest(r)
+	defer unlock()
 	wt, h := s.worktree(w, r)
 	if wt == nil {
 		return
@@ -1135,15 +1153,18 @@ func (s *Server) handleWorktreeRestore(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, scriptErr(errOut, err), "restore")
 		return
 	}
-	wt.Status, wt.ArchivedAt = "active", ""
+	wt.Status, wt.ArchivedAt, wt.Setup = "active", "", "running"
 	_ = s.store.UpdateWorktree(r.Context(), wt)
 	// dependencies were not archived (ignored files): set it up again
-	go s.runSetup(wt, "", true)
+	setupWT := *wt
+	go s.runSetup(&setupWT, "", true)
 	s.publishWorktrees(wt.UserID)
 	writeJSON(w, http.StatusOK, s.worktreeView(r.Context(), wt, true))
 }
 
 func (s *Server) handleForgetWorktree(w http.ResponseWriter, r *http.Request) {
+	unlock := s.lockWorktreeRequest(r)
+	defer unlock()
 	wt, h := s.worktree(w, r)
 	if wt == nil {
 		return
@@ -1167,41 +1188,6 @@ func (s *Server) handleForgetWorktree(w http.ResponseWriter, r *http.Request) {
 	}
 	s.publishWorktrees(wt.UserID)
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// handleCleanupWorktrees archives every merged worktree that is clean and idle.
-func (s *Server) handleCleanupWorktrees(w http.ResponseWriter, r *http.Request) {
-	if !s.requireRun(w, r) {
-		return
-	}
-	var in struct {
-		DeleteBranches bool `json:"delete_branches"`
-	}
-	_ = decode(r, &in)
-	ctx := r.Context()
-	list, _ := s.store.ListWorktrees(ctx, me(r), "active")
-	done, skipped := []string{}, []string{}
-	for _, wt := range list {
-		h, err := s.host(ctx, wt.HostID)
-		if err != nil {
-			continue
-		}
-		st := worktreeStatus(ctx, h, wt)
-		if !st.Merged {
-			continue
-		}
-		if st.Dirty > 0 || len(s.busyThreads(ctx, wt)) > 0 {
-			skipped = append(skipped, wt.Branch)
-			continue
-		}
-		if err := s.archiveWorktree(ctx, h, wt, in.DeleteBranches); err != nil {
-			skipped = append(skipped, wt.Branch)
-			continue
-		}
-		done = append(done, wt.Branch)
-	}
-	s.publishWorktrees(me(r))
-	writeJSON(w, http.StatusOK, map[string]any{"archived": done, "skipped": skipped})
 }
 
 // ---------- repository settings and other worktrees ----------
