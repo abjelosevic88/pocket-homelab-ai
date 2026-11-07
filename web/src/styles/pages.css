@@ -374,6 +374,12 @@
 .srv-h .grow { flex: 1; }
 .srv-h .link-btn { display: inline-flex; align-items: center; gap: 4px; font: inherit; letter-spacing: inherit; text-transform: inherit; }
 .wt-other { align-items: center; cursor: default; }
+.wt-other:hover { background: transparent; }
+/* Adopt and Remove side by side, the same size, not a stack */
+.wt-other .srv-side { flex-direction: row; align-items: center; gap: 8px; padding-top: 0; }
+.wt-other .srv-side .btn { min-width: 72px; justify-content: center; }
+.wt-other .srv-side .btn.danger-ghost { border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+.wt-other .srv-side .btn.danger-ghost:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
 @media (max-width: 760px) { .wt-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
 /* files a prepared conversation brings along (HomePage DraftFiles) */

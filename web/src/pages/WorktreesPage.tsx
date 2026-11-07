@@ -328,7 +328,7 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
                     <span className="srv-side row">
                       {busy === o.path ? <Spinner /> : <>
                         {!o.missing && o.branch && <button type="button" className="btn sm" onClick={() => adopt(o)}>Adopt</button>}
-                        <button type="button" className="btn sm ghost" onClick={() => setRemoving(o)}>{o.missing ? 'Prune' : 'Remove…'}</button>
+                        <button type="button" className="btn sm danger-ghost" onClick={() => setRemoving(o)}>{o.missing ? 'Prune' : 'Remove…'}</button>
                       </>}
                     </span>
                   </div>
