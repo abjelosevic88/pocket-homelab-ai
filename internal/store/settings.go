@@ -54,7 +54,8 @@ type Settings struct {
 
 	// Open threads as tabs along the top (the tabs themselves live in the
 	// browser).
-	ThreadTabs bool `json:"thread_tabs"`
+	ThreadTabs          bool `json:"thread_tabs"`
+	WorktreeAutoCleanup bool `json:"worktree_auto_cleanup"`
 
 	// The sidebar menu: item ids in the person's order, "-id" = removed.
 	// Empty = the default menu; ids missing here keep their default place.
@@ -157,6 +158,8 @@ func (s *Store) GetSettings(ctx context.Context, userID int64) (Settings, error)
 			st.ShowThinking = v == "1"
 		case "usage_widget":
 			st.UsageWidget = v != "0"
+		case "worktree_auto_cleanup":
+			st.WorktreeAutoCleanup = v == "1"
 		case "thread_tabs":
 			st.ThreadTabs = v != "0"
 		case "usage_pinned":
@@ -190,8 +193,9 @@ func (s *Store) SaveSettings(ctx context.Context, userID int64, st Settings) err
 		"notify_input": b2s(st.NotifyInput), "notify_failed": b2s(st.NotifyFailed), "notify_only_away": b2s(st.NotifyOnlyAway),
 		"enter_send_now": b2s(st.EnterSendNow), "enter_sends": b2s(st.EnterSends), "show_thinking": b2s(st.ShowThinking),
 		"usage_widget": b2s(st.UsageWidget), "thread_tabs": b2s(st.ThreadTabs), "usage_pinned": strings.Join(st.UsagePinned, ","),
-		"sidebar":   strings.Join(st.Sidebar, ","),
-		"shortcuts": shortcutsJSON(st.Shortcuts),
+		"worktree_auto_cleanup": b2s(st.WorktreeAutoCleanup),
+		"sidebar":               strings.Join(st.Sidebar, ","),
+		"shortcuts":             shortcutsJSON(st.Shortcuts),
 	})
 }
 

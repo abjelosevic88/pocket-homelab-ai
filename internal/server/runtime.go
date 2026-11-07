@@ -406,6 +406,15 @@ func (rt *engine) systemPrompt(ctx context.Context, uid int64) string {
 
 // ensure returns the live process of a thread, starting (or resuming) it if needed.
 func (rt *engine) ensure(t *store.Thread) (*run, error) {
+	unlock, err := rt.s.useWorktreeFolder(rt.ctx, t.HostID, t.WorktreeID, t.Cwd)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	return rt.ensureUnlocked(t)
+}
+
+func (rt *engine) ensureUnlocked(t *store.Thread) (*run, error) {
 	if rt.get(t.ID) == nil {
 		// never a second process next to one from before a restart (reconnect.go)
 		rt.s.re.waitPending(t.ID)
@@ -756,7 +765,12 @@ func (rt *engine) enforceMax(keep string) {
 // send hands a message to the thread's agent, or queues it while a turn runs.
 // The user item is written by the caller.
 func (rt *engine) send(t *store.Thread, key string, in agent.Input, sendNow ...bool) (bool, error) {
-	r, err := rt.ensure(t)
+	unlock, err := rt.s.useWorktreeFolder(rt.ctx, t.HostID, t.WorktreeID, t.Cwd)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
+	r, err := rt.ensureUnlocked(t)
 	if err != nil {
 		return false, err
 	}

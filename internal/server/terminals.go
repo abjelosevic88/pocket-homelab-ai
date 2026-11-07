@@ -257,6 +257,13 @@ func (s *Server) handleCreateTerminal(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "you have "+strconv.Itoa(termPerPerson)+" terminals open already: close one first")
 		return
 	}
+	in.Cwd = strings.TrimSpace(in.Cwd)
+	unlock, err := s.useWorktreeFolder(r.Context(), in.HostID, 0, in.Cwd)
+	if err != nil {
+		s.fail(w, err, "terminal")
+		return
+	}
+	defer unlock()
 	cmd, name, err := s.terminalCmd(r.Context(), u, in.HostID, strings.TrimSpace(in.Cwd))
 	if err != nil {
 		s.fail(w, err, "terminal")

@@ -396,3 +396,24 @@ Same access rule as terminals (this server: owner/admins; people with a folder o
 | POST | `/api/v1/files/mkdir`, `/files/newfile` | `{host, path: folder, name}` → `{path}`; refused when the name is taken |
 | POST | `/api/v1/files/rename` | `{host, path, name}` (same folder, never over an existing entry) |
 | POST | `/api/v1/files/delete` | `{host, path}`; folders with everything in them; never `/`, a home folder or a person's own top folders |
+
+## Merged worktree cleanup
+
+- `POST /worktrees/cleanup` accepts `{preview: true, delete_branches: true}` to inspect active worktrees.
+  It refreshes the remote base without modifying the main checkout. `preview: false` performs cleanup,
+  rechecking all safety conditions. Optional `ids: [1, 2]` restricts the pass to reviewed worktrees;
+  an empty array cleans up none, and omission checks all active worktrees returned by the list (up to 500).
+- Response: `{archived: string[], skipped: string[], checked_at: string, items: [{id, branch, status, reason}]}`.
+  Status is `ready`, `archived` or `skipped`. Unverified, unavailable or timed-out worktrees are kept with a
+  reason. A simultaneous cleanup pass returns 409. User ownership and run permission are enforced.
+- `GET /worktrees/cleanup` returns the latest completed cleanup result, including hourly automatic runs,
+  or null before the first run. Preview does not replace this record.
+- `PUT /settings` accepts `{worktree_auto_cleanup: true|false}` (default false). The server checks opted-in
+  users after startup and hourly thereafter. Disabling it prevents subsequent passes.
+
+Cleanups save the commit under `refs/pocket-ai/archive/<id>` and archive the worktree record; conversation
+history stays linked and Restore recreates the checkout. Ignored local files and custom teardown are kept
+for explicit manual review rather than silently discarded or executed by background cleanup. A merged
+GitHub PR only qualifies when its exact head, branch and base match and it is not from a fork; other forges
+can qualify via Git ancestry against the refreshed remote base. Missing PR credentials never authorize
+removal. Branch deletion uses an expected-commit check and never removes a remote branch.

@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test:activity": "node --test tests/tool-activity.test.ts",
-    "test:mobile": "node tests/mobile.mjs"
+    "test:mobile": "node tests/mobile.mjs",
+    "test:worktrees": "node tests/worktree-cleanup.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
