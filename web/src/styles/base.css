@@ -219,6 +219,12 @@ input.bare, textarea.bare { border-color: transparent; background: transparent; 
 .select-pop:focus { outline: none; }
 .select-search { display: flex; align-items: center; gap: 8px; padding: 0 10px; border-bottom: 1px solid var(--border); color: var(--muted); }
 .select-search input { border: 0; box-shadow: none; padding: 0; height: 40px; background: transparent; }
+.select-tabs { flex: 0 0 41px; display: flex; align-items: center; gap: 2px; padding: 0 6px; border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
+.select-tabs button { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; color: var(--muted); font-size: 13px; font-weight: 550; height: 28px; padding: 0 10px; border-radius: 7px; cursor: pointer; white-space: nowrap; }
+.select-tabs button:hover { color: var(--text); background: var(--hover); }
+.select-tabs button.active { color: var(--text); background: var(--surface-2); box-shadow: 0 0 0 1px var(--hairline); }
+.select-tabs.searching button.active { background: transparent; box-shadow: none; color: var(--muted); }
+.select-group { display: flex; align-items: center; gap: 6px; }
 .select-list { overflow-y: auto; padding: 4px; overscroll-behavior: contain; }
 .select-group { font-size: 11px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); padding: 8px 8px 4px; }
 .select-option { display: flex; align-items: center; gap: 9px; padding: 7px 8px; border-radius: 6px; cursor: pointer; font-size: 13.5px; min-height: 32px; }
