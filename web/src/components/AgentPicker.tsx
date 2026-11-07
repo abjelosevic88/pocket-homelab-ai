@@ -165,7 +165,20 @@ export function machineLoginOptions(list: HostLogin[], pid: ProviderId, current:
 /** Claude Remote Control switch in the composer chips: on = the conversation is open in claude.ai/code and the Claude app. */
 export interface RemoteSwitch { on: boolean; busy?: boolean; state?: string; onToggle: () => void }
 
-export function AgentPicker({ value, onChange, allowDefault = false, compact = false, showProvider = true, noAccount = false, host = 0, ask = false, remote }: {
+/** Every CLI's models in one list, grouped by CLI: value "provider:model". */
+function allModelOptions(providers: Provider[], host: number): Option<string>[] {
+  return (['claude', 'codex'] as ProviderId[]).flatMap(id => {
+    const q = providers.find(x => x.id === id)
+    if (!q) return []
+    // availability is this server's; a machine is checked when the chat switches
+    const off = !host && !q.available ? q.error || 'Not available on the server' : ''
+    const list = modelOptions(q, false)
+    if (!list.length) return off ? [{ value: `${id}:`, label: q.name, group: q.name, description: off, disabled: true }] : []
+    return list.map(o => ({ ...o, value: `${id}:${o.value}`, group: q.name, description: off || o.description, disabled: !!off }))
+  })
+}
+
+export function AgentPicker({ value, onChange, allowDefault = false, compact = false, showProvider = true, noAccount = false, host = 0, ask = false, remote, switchProvider = false }: {
   value: AgentValue; onChange: (patch: Partial<AgentValue>) => void; allowDefault?: boolean; compact?: boolean; showProvider?: boolean
   /** no account to pick */
   noAccount?: boolean
@@ -175,13 +188,24 @@ export function AgentPicker({ value, onChange, allowDefault = false, compact = f
   ask?: boolean
   /** Claude Remote Control toggle (compact only, Claude only) */
   remote?: RemoteSwitch
+  /** the chat has not started: the model menu also lists the other CLI's models */
+  switchProvider?: boolean
 }) {
   const { providers, settings, accounts } = useApp()
   const pid = (value.provider || settings?.default_provider || 'claude') as ProviderId
   const p = providers.find(x => x.id === pid)
   const accts = allowDefault || noAccount || host ? [] : accountOptions(accounts, pid, value.account_id || 0)
   const machineLogins = machineLoginOptions(useHostLogins(allowDefault || noAccount ? 0 : host, accounts), pid, value.host_home || '')
-  const models = ask ? ASK_MODELS : modelOptions(p, allowDefault)
+  const both = switchProvider && !ask && !allowDefault
+  const models = ask ? ASK_MODELS : both ? allModelOptions(providers, host) : modelOptions(p, allowDefault)
+  const pickModel = (v: string) => {
+    if (!both) return onChange({ model: v })
+    const at = v.indexOf(':')
+    const np = v.slice(0, at) as ProviderId, model = v.slice(at + 1)
+    if (np === pid) return onChange({ model })
+    // another CLI: its own defaults, then the model picked
+    onChange({ provider: np, ...defaultsFor(providers.find(x => x.id === np), settings), ...(model ? { model } : {}) })
+  }
   const efforts = effortOptions(p, value.model, allowDefault)
   const modes = ask ? [] : modeOptions(p, allowDefault)
   const speeds = ask ? [] : speedOptions(p, value.model, allowDefault)
@@ -195,7 +219,7 @@ export function AgentPicker({ value, onChange, allowDefault = false, compact = f
         renderValue={o => <span className="ellipsis">{compact && <Icon name="user" size={12} className="inline-ico" />}{o?.label ?? 'Account'}</span>} />)}
       {machineLogins.length > 1 && named('Login', <Select size={size} className={cls} label="Login on that machine" value={value.host_home || ''} options={machineLogins} onChange={v => onChange({ host_home: v })} width={compact ? 320 : 'trigger'}
         renderValue={o => <span className="ellipsis">{compact && <Icon name="server" size={12} className="inline-ico" />}{o?.label ?? 'Login'}</span>} />)}
-      {models.length > 0 && named('Model', <Select size={size} className={cls} label="Model" value={value.model} options={models} onChange={v => onChange({ model: v })} width={compact ? 280 : 'trigger'}
+      {models.length > 0 && named('Model', <Select size={size} className={cls} label={both ? 'Agent and model' : 'Model'} value={both ? `${pid}:${value.model}` : value.model} options={models} onChange={pickModel} width={compact ? 280 : 'trigger'}
         renderValue={compact ? o => <span className="ellipsis"><Icon name={pid} size={14} className={`inline-ico prov-glyph ${pid}`} />{shortLabel(String(o?.label ?? 'Model'))}</span> : undefined} />)}
       {efforts.length > 0 && named('Effort', <Select size={size} className={cls} label="Effort" value={value.effort} options={efforts} onChange={v => onChange({ effort: v })} width={compact ? 180 : 'trigger'}
         renderValue={o => <span className="ellipsis">{compact ? <Icon name="brain" size={12} className="inline-ico" /> : null}{o?.label ?? 'Effort'}</span>} />)}

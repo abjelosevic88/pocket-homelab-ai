@@ -374,6 +374,7 @@ func badRequest(msg string) error { return userError{msg} }
 func (s *Server) fail(w http.ResponseWriter, err error, context string) {
 	var ue userError
 	var fb forbidden
+	var ce conflictErr
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		writeErr(w, http.StatusNotFound, "not found")
@@ -386,6 +387,9 @@ func (s *Server) fail(w http.ResponseWriter, err error, context string) {
 		return
 	case errors.As(err, &fb):
 		writeErr(w, http.StatusForbidden, fb.msg)
+		return
+	case errors.As(err, &ce):
+		writeErr(w, http.StatusConflict, ce.msg)
 		return
 	}
 	s.log.Error(context, "err", err)
