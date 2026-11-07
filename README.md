@@ -56,7 +56,7 @@ Personal app assistance: [Briefing, workflows, memory, sources and document uplo
   uncommitted work), push and open a pull request, or ask the agent to commit or resolve conflicts. Archiving
   saves uncommitted work first and Restore brings it back; the Worktrees page cleans up merged ones and adopts
   or removes worktrees made by hand or by Paseo. Works on other machines too.
-  **Clean up merged…** checks the current remote base and discovers merged GitHub PRs by branch, including
+  **Clean up merged** checks the current remote base and discovers merged GitHub PRs by branch, including
   squash merges (the PR head must match the checkout exactly). Review the eligible worktrees before removing
   them; every skipped worktree has a reason. Optional **Automatically clean up merged worktrees** runs hourly
   on the server for that person, including remote machines. Both paths preserve conversations and a recovery

@@ -38,7 +38,7 @@ try {
   const page = await context.newPage(), errors = []
   page.on('pageerror', e => errors.push(e.message))
   await page.goto(`${base}/worktrees`)
-  await page.getByRole('button', { name: 'Clean up merged…', exact: true }).click()
+  await page.getByRole('button', { name: 'Clean up merged', exact: true }).click()
   await page.getByText('Uncommitted or untracked files', { exact: true }).waitFor()
   assert.equal(previewed, true)
   assert.equal(cleaned, false)
