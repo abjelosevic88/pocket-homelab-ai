@@ -276,7 +276,7 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
       <div className="page-scroll">
         <div className="page-inner srv">
           <section className="wt-cleanup" aria-label="Worktree cleanup">
-            <div className="wt-cleanup-actions">{activeCount > 0 && <button type="button" className="btn sm" disabled={!!busy} onClick={() => cleanup(true)} title="Check current merge status and review what can be removed">{busy === 'cleanup' ? <Spinner /> : <Icon name="archive" size={13} />}Clean up merged…</button>}</div>
+            <div className="wt-cleanup-actions">{activeCount > 0 && <button type="button" className="btn sm" disabled={!!busy} onClick={() => cleanup(true)} title="Check current merge status and review what can be removed">{busy === 'cleanup' ? <Spinner /> : <Icon name="archive" size={13} />}Clean up merged</button>}</div>
             <label className="row"><input type="checkbox" checked={!!settings?.worktree_auto_cleanup} disabled={!settings || !!busy} onChange={e => toggleAutoCleanup(e.target.checked)} /> Automatically clean up merged worktrees</label>
             <p className="muted xsmall">Checks right away, then hourly, even when this page is closed. Only merged, idle worktrees without uncommitted work are removed; ignored files (.env copies, node_modules) go with the folder. Conversations stay available, and archived worktrees can be restored.</p>
             {cleanupResult && <details open>
@@ -328,7 +328,7 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
                     <span className="srv-side row">
                       {busy === o.path ? <Spinner /> : <>
                         {!o.missing && o.branch && <button type="button" className="btn sm" onClick={() => adopt(o)}>Adopt</button>}
-                        <button type="button" className="btn sm danger-ghost" onClick={() => setRemoving(o)}>{o.missing ? 'Prune' : 'Remove…'}</button>
+                        <button type="button" className="btn sm danger-ghost" onClick={() => setRemoving(o)}>{o.missing ? 'Prune' : 'Remove'}</button>
                       </>}
                     </span>
                   </div>
