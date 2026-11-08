@@ -87,6 +87,7 @@ type sessionScan struct {
 	lastAt    string // the last timestamp read
 	firstAt   time.Time
 	copied    bool  // Claude: the file starts with history copied from another session (a fork)
+	subagent  bool  // Codex: a sub-agent another session spawned (shown under its parent, not on its own)
 	tokTotal  int64 // Codex: tokens counted so far (a repeated update adds nothing)
 }
 
@@ -282,6 +283,7 @@ func (sc *sessionScan) feedCodex(line []byte) {
 			ID         string          `json:"id"`
 			Cwd        string          `json:"cwd"`
 			Originator string          `json:"originator"`
+			Source     json.RawMessage `json:"source"`
 			Model      string          `json:"model"`
 			Role       string          `json:"role"`
 			Message    string          `json:"message"`
@@ -325,6 +327,7 @@ func (sc *sessionScan) feedCodex(line []byte) {
 		sc.sessionID = firstNonEmpty(sc.sessionID, p.ID)
 		sc.cwd = firstNonEmpty(sc.cwd, p.Cwd)
 		sc.origin = p.Originator
+		sc.subagent = codexSubagent(p.Source)
 	case "turn_context":
 		if p.Model != "" {
 			sc.model = p.Model
@@ -558,6 +561,9 @@ func Runs(h Homes, paseoHome string, from, to time.Time) []Run {
 	out := []Run{}
 	for _, f := range accountFiles(h, from) {
 		sc := f.scan
+		if sc.subagent {
+			continue
+		}
 		origin := sc.originName(paseo)
 		title := sc.title
 		if p, ok := paseo[sc.sessionID]; ok && p.Title != "" {
@@ -588,7 +594,7 @@ func Sessions(h Homes, paseoHome string) []ServerSession {
 	out := []ServerSession{}
 	for _, f := range accountFiles(h, time.Time{}) {
 		sc := f.scan
-		if len(sc.runs) == 0 {
+		if len(sc.runs) == 0 || sc.subagent {
 			continue
 		}
 		s := ServerSession{Provider: f.provider, SessionID: sc.sessionID, Title: sc.title, Cwd: sc.cwd, Origin: sc.originName(paseo),
