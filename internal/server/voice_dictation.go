@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -20,7 +22,9 @@ import (
 // The Core link Pocket AI → Pocket Voice (voice:transcribe). While it is on,
 // the composer's mic records in the browser and Pocket AI hands the recording
 // to Voice as the person: whisper on this server writes it out with their
-// language and words settings, and Voice keeps nothing. While it is on there
+// language and words settings, and Voice keeps no recording; the words go to
+// the person's dictation history there, with where they were said (the phone
+// app or the web page). While it is on there
 // is no falling back to the browser's speech recognition (Chrome's sends the
 // audio to Google); while it is off the mic is that, as before.
 const voiceScope = "voice:transcribe"
@@ -73,7 +77,7 @@ func (s *Server) voiceCall(ctx context.Context, email, method, path, contentType
 		return 0, err
 	}
 	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
+	if res.StatusCode/100 != 2 {
 		var e struct {
 			Error string `json:"error"`
 		}
@@ -194,11 +198,25 @@ func (s *Server) handleDictate(w http.ResponseWriter, r *http.Request) {
 	var got struct {
 		Text     string `json:"text"`
 		Language string `json:"language"`
+		Engine   string `json:"engine"`
+		Segments []struct {
+			End int64 `json:"e"` // ms
+		} `json:"segments"`
 	}
+	at := time.Now()
 	code, err := s.voiceCall(ctx, u.Email, http.MethodPost, "/api/v1/transcribe", mw.FormDataContentType(), &body, &got)
 	switch {
 	case err == nil:
-		writeJSON(w, http.StatusOK, map[string]any{"text": strings.TrimSpace(got.Text), "language": got.Language})
+		text := strings.TrimSpace(got.Text)
+		writeJSON(w, http.StatusOK, map[string]any{"text": text, "language": got.Language})
+		if text != "" {
+			d := voiceDictation{Text: text, App: "Pocket AI", Engine: got.Engine, Language: got.Language, DictatedAt: at.UTC().Format(time.RFC3339Nano)}
+			d.Source, d.Device = dictationClient(r)
+			if n := len(got.Segments); n > 0 {
+				d.DurationMS = got.Segments[n-1].End
+			}
+			go s.keepDictation(context.WithoutCancel(ctx), u.Email, d)
+		}
 	case code == http.StatusUnprocessableEntity || code == http.StatusBadRequest:
 		writeErr(w, http.StatusUnprocessableEntity, "Pocket Voice couldn't write it out: "+err.Error())
 	default:
@@ -209,4 +227,99 @@ func (s *Server) handleDictate(w http.ResponseWriter, r *http.Request) {
 		}
 		writeErr(w, http.StatusBadGateway, "Pocket Voice: "+err.Error())
 	}
+}
+
+// voiceDictation is one dictation for the person's history in Pocket Voice
+// (POST /api/v1/dictations there).
+type voiceDictation struct {
+	Ref        string `json:"ref"`
+	Text       string `json:"text"`
+	App        string `json:"app"`
+	DurationMS int64  `json:"duration_ms"`
+	Engine     string `json:"engine"`
+	Language   string `json:"language"`
+	Device     string `json:"device"`
+	Source     string `json:"source"`
+	DictatedAt string `json:"dictated_at"`
+}
+
+// keepDictation adds what was just dictated to the person's dictation history
+// in Voice. The words are already back in the composer, so a failure here only
+// costs the history line.
+func (s *Server) keepDictation(ctx context.Context, email string, d voiceDictation) {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	var ref [16]byte
+	_, _ = rand.Read(ref[:])
+	d.Ref = "pocket-ai-" + hex.EncodeToString(ref[:])
+	b, _ := json.Marshal(d)
+	var out map[string]any
+	if code, err := s.voiceCall(ctx, email, http.MethodPost, "/api/v1/dictations", "application/json", bytes.NewReader(b), &out); err != nil {
+		s.log.Warn("voice dictation history", "status", code, "err", err)
+	}
+}
+
+// dictationClient is where a dictation in the composer was made, as Voice's
+// history shows it: the form's "source" and "device" when the client sends
+// them, else read from its User-Agent (the iPhone app's requests come from
+// iOS's URL loading, CFNetwork; anything else is the web page in a browser).
+func dictationClient(r *http.Request) (source, device string) {
+	source, device = clipRunes(strings.TrimSpace(r.FormValue("source")), 100), clipRunes(strings.TrimSpace(r.FormValue("device")), 100)
+	ua := r.UserAgent()
+	if source == "" {
+		source = "Pocket AI on the web"
+		if strings.Contains(ua, "CFNetwork") {
+			source = "Pocket AI app"
+		}
+	}
+	if device == "" {
+		device = uaDevice(ua)
+	}
+	return source, device
+}
+
+// uaDevice names the device (and the browser on it) a User-Agent comes from:
+// "iPhone", "Safari on Mac", "Chrome on Windows"; "" when it can't tell.
+func uaDevice(ua string) string {
+	if strings.Contains(ua, "CFNetwork") { // a native app on iOS
+		if strings.Contains(ua, "iPad") {
+			return "iPad"
+		}
+		return "iPhone"
+	}
+	osName := ""
+	switch {
+	case strings.Contains(ua, "iPhone"):
+		osName = "iPhone"
+	case strings.Contains(ua, "iPad"):
+		osName = "iPad"
+	case strings.Contains(ua, "Android"):
+		osName = "Android"
+	case strings.Contains(ua, "Macintosh"):
+		osName = "Mac"
+	case strings.Contains(ua, "Windows"):
+		osName = "Windows"
+	case strings.Contains(ua, "CrOS"):
+		osName = "Chromebook"
+	case strings.Contains(ua, "Linux"):
+		osName = "Linux"
+	}
+	browser := ""
+	switch {
+	case strings.Contains(ua, "Edg/") || strings.Contains(ua, "EdgiOS/"):
+		browser = "Edge"
+	case strings.Contains(ua, "Firefox/") || strings.Contains(ua, "FxiOS/"):
+		browser = "Firefox"
+	case strings.Contains(ua, "Chrome/") || strings.Contains(ua, "CriOS/"):
+		browser = "Chrome"
+	case strings.Contains(ua, "Safari/"):
+		browser = "Safari"
+	}
+	switch {
+	case osName == "":
+		return browser
+	case browser == "":
+		return osName
+	}
+	return browser + " on " + osName
 }
