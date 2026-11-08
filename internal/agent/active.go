@@ -29,6 +29,16 @@ type ActiveSession struct {
 	Account   int64  `json:"account_id"`
 }
 
+// codexSubagent says whether a Codex session_meta "source" names a sub-agent
+// spawned by another session (its log starts with the parent's prompt, so
+// it would look like a second copy of that chat).
+func codexSubagent(source json.RawMessage) bool {
+	var src struct {
+		Subagent json.RawMessage `json:"subagent"`
+	}
+	return json.Unmarshal(source, &src) == nil && len(src.Subagent) > 0 && string(src.Subagent) != "null"
+}
+
 // Running sessions older than this without a write are treated as dead
 // (a crashed CLI never writes "turn ended").
 const activeWindow = 15 * time.Minute
@@ -238,8 +248,8 @@ func activeCodex(home string, paseo map[string]paseoAgent) []ActiveSession {
 				continue
 			}
 			path := filepath.Join(dir, e.Name())
-			s, running := codexState(path)
-			if !running || s.SessionID == "" {
+			s, running, sub := codexState(path)
+			if !running || s.SessionID == "" || sub { // a sub-agent shows under its parent
 				continue
 			}
 			s.Provider, s.UpdatedAt = "codex", info.ModTime().UTC().Format(time.RFC3339)
@@ -258,8 +268,9 @@ func activeCodex(home string, paseo map[string]paseoAgent) []ActiveSession {
 	return out
 }
 
-func codexState(path string) (ActiveSession, bool) {
+func codexState(path string) (ActiveSession, bool, bool) {
 	var s ActiveSession
+	sub := false
 	// session_meta is the first line
 	if fh, err := OpenConfined(path); err == nil {
 		r := bufio.NewReaderSize(fh, 1<<16)
@@ -267,13 +278,15 @@ func codexState(path string) (ActiveSession, bool) {
 		fh.Close()
 		var m struct {
 			Payload struct {
-				ID         string `json:"id"`
-				Cwd        string `json:"cwd"`
-				Originator string `json:"originator"`
+				ID         string          `json:"id"`
+				Cwd        string          `json:"cwd"`
+				Originator string          `json:"originator"`
+				Source     json.RawMessage `json:"source"`
 			} `json:"payload"`
 		}
 		if json.Unmarshal(line, &m) == nil {
 			s.SessionID, s.Cwd = m.Payload.ID, m.Payload.Cwd
+			sub = codexSubagent(m.Payload.Source)
 			switch o := strings.ToLower(m.Payload.Originator); {
 			case o == "pocket-ai":
 				s.Origin = "pocket-ai"
@@ -331,7 +344,7 @@ func codexState(path string) (ActiveSession, bool) {
 			}
 		}
 	}
-	return s, running
+	return s, running, sub
 }
 
 // ---------- Paseo ----------
