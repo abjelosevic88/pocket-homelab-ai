@@ -22,15 +22,22 @@ export function useAgentChildren(id: string): Thread[] {
 
 const working = (t: Thread) => t.status === 'running' || t.status === 'waiting' || t.pending > 0
 
-/** "Started by …" in a started agent's header. */
+const parentKinds = {
+  agent: { icon: 'bot', label: 'Started by', fallback: 'an agent', title: 'Another agent started this conversation — open it' },
+  fork: { icon: 'fork', label: 'Forked from', fallback: 'the original', title: 'Open the conversation this was forked from' },
+  rewind: { icon: 'undo', label: 'Continued from', fallback: 'the original', title: 'Open the conversation this continues from' },
+} as const
+
+/** "Started by …", "Forked from …" or "Continued from …" in the header: opens the conversation it came from. */
 export function ParentChip({ t }: { t: Thread }) {
   const { threads } = useApp()
   const navigate = useNavigate()
-  if (t.source !== 'agent' || !t.source_ref) return null
+  const kind = parentKinds[t.source as keyof typeof parentKinds]
+  if (!kind || !t.source_ref) return null
   const parent = (threads || []).find(x => x.id === t.source_ref)
   return (
-    <button type="button" className="agent-parent-chip" onClick={() => navigate(`/t/${t.source_ref}`)} title="Another agent started this conversation — open it">
-      <Icon name="bot" size={12} /><span className="ellipsis">Started by {parent ? threadTitle(parent) : 'an agent'}</span>
+    <button type="button" className="agent-parent-chip" onClick={() => navigate(`/t/${t.source_ref}`)} title={kind.title}>
+      <Icon name={kind.icon} size={12} /><span className="ellipsis">{kind.label} {parent ? threadTitle(parent) : kind.fallback}</span>
     </button>
   )
 }
