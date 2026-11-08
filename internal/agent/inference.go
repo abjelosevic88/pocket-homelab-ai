@@ -15,6 +15,11 @@ type completion struct {
 // CompleteClaude runs one text-only turn. The caller supplies a private empty
 // workspace; no tools, hooks, MCP servers, session resume or file attachments.
 func CompleteClaude(ctx context.Context, o Options, prompt string) (string, TurnInfo, error) {
+	return CompleteClaudeInput(ctx, o, Input{Text: prompt})
+}
+
+// CompleteClaudeInput is CompleteClaude with pictures next to the prompt.
+func CompleteClaudeInput(ctx context.Context, o Options, in Input) (string, TurnInfo, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	o.Ephemeral = true
@@ -25,7 +30,7 @@ func CompleteClaude(ctx context.Context, o Options, prompt string) (string, Turn
 		return "", TurnInfo{}, err
 	}
 	defer s.Close()
-	if err := s.Send(Input{Text: prompt}); err != nil {
+	if err := s.Send(in); err != nil {
 		return "", TurnInfo{}, err
 	}
 	select {

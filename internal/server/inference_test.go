@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -53,7 +54,7 @@ for line in sys.stdin:
         print(json.dumps({'type':'control_response','response':{'request_id':'probe','response':{'models':[{'value':'default','displayName':'Default'},{'value':'sonnet','displayName':'Test Sonnet','supportedEffortLevels':['low','medium','high']},{'value':'opus','displayName':'Test Opus','supportedEffortLevels':['medium','high','max']},{'value':'legacy','displayName':'Legacy'}]}}}),flush=True)
         continue
     if m.get('type')=='user':
-        print(json.dumps({'type':'assistant','message':{'id':'answer','content':[{'type':'text','text':json.dumps({'ok':True,'effort':args[args.index('--effort')+1] if '--effort' in args else ''})}]}}),flush=True)
+        print(json.dumps({'type':'assistant','message':{'id':'answer','content':[{'type':'text','text':json.dumps({'ok':True,'effort':args[args.index('--effort')+1] if '--effort' in args else '','images':sum(1 for b in (m.get('message',{}).get('content') if isinstance(m.get('message',{}).get('content'),list) else []) if b.get('type')=='image')})}]}}),flush=True)
         print(json.dumps({'type':'result','subtype':'success','usage':{'input_tokens':3,'output_tokens':4}}),flush=True)
         break
 `
@@ -77,6 +78,19 @@ for line in sys.stdin:
 	code, body := c.do("POST", "/api/v1/inference", "application/json", []byte(`{"system":"Return JSON","prompt":"private","json":true}`))
 	if code != 200 || !strings.Contains(string(body), `pocket-ai/sonnet`) || !strings.Contains(string(body), `"input_tokens":3`) {
 		t.Fatalf("inference: %d %s", code, body)
+	}
+
+	// pictures go to the model with the prompt; bad ones are refused
+	pic := base64.StdEncoding.EncodeToString([]byte("\xff\xd8\xff\xe0 not really a jpeg"))
+	code, body = c.do("POST", "/api/v1/inference", "application/json", []byte(`{"prompt":"what is this","json":true,"images":[{"mime":"image/jpeg","data":"`+pic+`"}]}`))
+	if code != 200 || !strings.Contains(string(body), `\"images\": 1`) {
+		t.Fatalf("inference with an image: %d %s", code, body)
+	}
+	for _, bad := range []string{`[{"mime":"image/bmp","data":"` + pic + `"}]`, `[{"mime":"image/png","data":"%%%"}]`, `[{"mime":"image/png","data":"a"},{"mime":"image/png","data":"a"},{"mime":"image/png","data":"a"},{"mime":"image/png","data":"a"},{"mime":"image/png","data":"a"}]`} {
+		code, body = c.do("POST", "/api/v1/inference", "application/json", []byte(`{"prompt":"x","images":`+bad+`}`))
+		if code != 400 {
+			t.Fatalf("accepted bad images %s: %d %s", bad, code, body)
+		}
 	}
 
 	code, body = c.do("GET", "/api/v1/inference/models", "", nil)
