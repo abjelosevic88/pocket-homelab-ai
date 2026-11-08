@@ -16,7 +16,7 @@ import (
 
 // voiceSent is what the fake Pocket Voice received for one recording.
 type voiceSent struct {
-	auth, name, ctype, lang, audio string
+	auth, name, ctype, lang, model, audio string
 }
 
 // voiceCore fakes Pocket Core (the person's links, link tokens) and Pocket
@@ -27,7 +27,11 @@ func voiceCore(t *testing.T, s *Server, linkOn *bool) *[]voiceSent {
 	voice := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/speech":
-			json.NewEncoder(w).Encode(map[string]any{"engine": "local", "ready": true})
+			json.NewEncoder(w).Encode(map[string]any{"engine": "local", "ready": true, "dictation_model": "parakeet-tdt-0.6b-v3-q8_0", "models": []any{
+				map[string]any{"id": "parakeet-tdt-0.6b-v3-q8_0", "name": "Fastest", "engine": "parakeet", "ready": true, "runs": true},
+				map[string]any{"id": "large-v3-turbo-q5_0", "name": "Best", "engine": "whisper", "ready": true, "runs": true},
+				map[string]any{"id": "small", "name": "Good", "engine": "whisper", "ready": false, "runs": true},
+			}})
 		case "/api/v1/transcribe":
 			if err := r.ParseMultipartForm(1 << 20); err != nil {
 				w.WriteHeader(http.StatusBadRequest)
@@ -39,7 +43,7 @@ func voiceCore(t *testing.T, s *Server, linkOn *bool) *[]voiceSent {
 				return
 			}
 			b, _ := io.ReadAll(f)
-			*sent = append(*sent, voiceSent{auth: r.Header.Get("Authorization"), name: fh.Filename, ctype: fh.Header.Get("Content-Type"), lang: r.FormValue("language"), audio: string(b)})
+			*sent = append(*sent, voiceSent{auth: r.Header.Get("Authorization"), name: fh.Filename, ctype: fh.Header.Get("Content-Type"), lang: r.FormValue("language"), model: r.FormValue("model"), audio: string(b)})
 			if string(b) == "noise" {
 				w.WriteHeader(http.StatusUnprocessableEntity)
 				json.NewEncoder(w).Encode(map[string]string{"error": "there were no words in the recording"})
@@ -148,5 +152,45 @@ func TestVoiceDictation(t *testing.T) {
 	code, b = alice.do("POST", "/api/v1/dictation", ctype, body)
 	if code != 422 || !strings.Contains(string(b), "no words in the recording") {
 		t.Fatalf("noise: %d %s", code, b)
+	}
+}
+
+// The model for one dictation: GET /dictation lists the ones downloaded in
+// Voice and its default; POST /dictation passes the chosen one on, and none
+// when none was chosen (Voice's default, so other apps are unchanged).
+func TestVoiceDictationModel(t *testing.T) {
+	s, h, _ := testServer(t)
+	alice, _ := person(t, s, h, "voice-model@example.test", "member", true)
+	on := true
+	sent := voiceCore(t, s, &on)
+	var st struct {
+		Voice        bool         `json:"voice"`
+		DefaultModel string       `json:"default_model"`
+		Models       []voiceModel `json:"models"`
+	}
+	alice.want("GET", "/api/v1/dictation", nil, 200, &st)
+	if !st.Voice || st.DefaultModel != "parakeet-tdt-0.6b-v3-q8_0" || len(st.Models) != 2 || st.Models[1].ID != "large-v3-turbo-q5_0" || st.Models[1].Name != "Best" {
+		t.Fatalf("models: %+v", st)
+	}
+	withModel := func(model string) ([]byte, string) {
+		var buf bytes.Buffer
+		mw := multipart.NewWriter(&buf)
+		fw, _ := mw.CreateFormFile("file", "dictation.m4a")
+		_, _ = fw.Write([]byte("hello"))
+		_ = mw.WriteField("model", model)
+		_ = mw.Close()
+		return buf.Bytes(), mw.FormDataContentType()
+	}
+	body, ctype := recording("hello", "")
+	if code, b := alice.do("POST", "/api/v1/dictation", ctype, body); code != 200 || (*sent)[0].model != "" {
+		t.Fatalf("no model: %d %s %+v", code, b, *sent)
+	}
+	body, ctype = withModel("large-v3-turbo-q5_0")
+	if code, b := alice.do("POST", "/api/v1/dictation", ctype, body); code != 200 || (*sent)[1].model != "large-v3-turbo-q5_0" {
+		t.Fatalf("whisper: %d %s %+v", code, b, *sent)
+	}
+	body, ctype = withModel("../etc/passwd")
+	if code, b := alice.do("POST", "/api/v1/dictation", ctype, body); code != 400 || len(*sent) != 2 {
+		t.Fatalf("bad model: %d %s", code, b)
 	}
 }
