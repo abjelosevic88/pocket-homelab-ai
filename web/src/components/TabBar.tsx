@@ -1,7 +1,7 @@
 // Threads as tabs along the top, like Paseo or a browser: every thread you
 // open gets one. Click to switch, drag to reorder, middle-click or ✕ to
 // close. The list is kept per browser (localStorage).
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useApp } from '../lib/app-context'
 import { threadTitle } from '../lib/format'
@@ -205,6 +205,15 @@ export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, i
   const gone = tabs.filter(id => id !== active && !isFileTab(id) && (isTermTab(id) ? term.list !== null && !termGroup(id) : !!threads && !byId.has(id)))
   const shown = tabs.filter(id => !gone.includes(id))
   useEffect(() => { if (gone.length) close(gone, false) }, [gone.join()]) // eslint-disable-line react-hooks/exhaustive-deps
+  const scroller = useRef<HTMLDivElement>(null)
+  useEffect(() => { // the open tab scrolls into view when it changes (sideways only, never the page)
+    const box = scroller.current
+    const tab = box?.querySelector<HTMLElement>('.tab.on')
+    if (!box || !tab) return
+    const l = tab.getBoundingClientRect().left - box.getBoundingClientRect().left + box.scrollLeft, r = l + tab.offsetWidth
+    if (l < box.scrollLeft) box.scrollTo({ left: l - 24, behavior: 'smooth' })
+    else if (r > box.scrollLeft + box.clientWidth) box.scrollTo({ left: r - box.clientWidth + 24, behavior: 'smooth' })
+  }, [active, shown.length])
   if (!shown.length) return null
   const working = (t?: Thread) => !!t && (t.status === 'running' || t.status === 'waiting' || t.pending > 0 || running.some(r => r.thread_id === t.id || (!!t.provider_session_id && r.session_id === t.provider_session_id)))
   const i = shown.indexOf(active)
@@ -250,7 +259,7 @@ export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, i
       // the browser must not animate the dragged picture back to its start
       onDragOver={e => { if (drag || dragGroup) { e.preventDefault(); e.dataTransfer.dropEffect = 'move' } }}
       onDrop={e => { if (drag || dragGroup) { e.preventDefault(); setDrag(''); setDragGroup('') } }}>
-      <div className="tabbar-scroll">
+      <div className="tabbar-scroll" ref={scroller}>
         {row.map(r => {
           if (!('id' in r)) {
             const g = r.group
