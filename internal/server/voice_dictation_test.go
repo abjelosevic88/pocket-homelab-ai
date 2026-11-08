@@ -59,8 +59,12 @@ func voiceCoreKept(t *testing.T, s *Server, linkOn *bool) (*[]voiceSent, chan ma
 				json.NewEncoder(w).Encode(map[string]string{"error": "there were no words in the recording"})
 				return
 			}
-			json.NewEncoder(w).Encode(map[string]any{"text": " Call the plumber tomorrow. ", "language": "en", "engine": "parakeet",
-				"segments": []any{map[string]any{"s": 0, "e": 1200, "t": "Call the plumber"}, map[string]any{"s": 1200, "e": 2300, "t": "tomorrow."}}})
+			out := map[string]any{"text": " Call the plumber tomorrow. ", "language": "en", "engine": "parakeet",
+				"segments": []any{map[string]any{"s": 0, "e": 1200, "t": "Call the plumber"}, map[string]any{"s": 1200, "e": 2300, "t": "tomorrow."}}}
+			if string(b) == "short" { // Parakeet on a short clip: no timings, Voice says how long it was
+				out["segments"], out["duration_ms"] = []any{map[string]any{"s": 0, "e": 0, "t": "Call the plumber tomorrow."}}, 2650
+			}
+			json.NewEncoder(w).Encode(out)
 		case "/api/v1/dictations":
 			var d map[string]any
 			if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer pcx_voice" || json.NewDecoder(r.Body).Decode(&d) != nil {
@@ -236,12 +240,12 @@ func TestVoiceDictationHistory(t *testing.T) {
 		}
 		return nil
 	}
-	send := func(ua string, fields map[string]string) {
+	send := func(ua string, fields map[string]string, audio ...string) {
 		t.Helper()
 		var buf bytes.Buffer
 		mw := multipart.NewWriter(&buf)
 		fw, _ := mw.CreateFormFile("file", "dictation.m4a")
-		_, _ = fw.Write([]byte("hello"))
+		_, _ = fw.Write([]byte(append(audio, "hello")[0]))
 		for k, v := range fields {
 			_ = mw.WriteField(k, v)
 		}
@@ -277,5 +281,9 @@ func TestVoiceDictationHistory(t *testing.T) {
 	send("Pocket%20AI/412 CFNetwork/3826.500.131 Darwin/24.5.0", map[string]string{"source": " Pocket AI app ", "device": "Aleksandar’s iPhone"})
 	if d4 := next(); d4["source"] != "Pocket AI app" || d4["device"] != "Aleksandar’s iPhone" {
 		t.Fatalf("named by the client: %v", d4)
+	}
+	send("Pocket%20AI/412 CFNetwork/3826.500.131 Darwin/24.5.0", nil, "short")
+	if d5 := next(); d5["duration_ms"] != float64(2650) {
+		t.Fatalf("length from Voice: %v", d5)
 	}
 }
