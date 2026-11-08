@@ -10,6 +10,7 @@ import (
 	"net/textproto"
 	"strings"
 	"testing"
+	"time"
 
 	core "github.com/abjelosevic88/pocket-homelab-core/sdk"
 )
@@ -23,7 +24,16 @@ type voiceSent struct {
 // Voice behind it; a recording that says "noise" can't be written out.
 func voiceCore(t *testing.T, s *Server, linkOn *bool) *[]voiceSent {
 	t.Helper()
+	sent, _ := voiceCoreKept(t, s, linkOn)
+	return sent
+}
+
+// voiceCoreKept is voiceCore that also hands over each dictation Pocket AI
+// adds to the person's history in Voice (POST /api/v1/dictations).
+func voiceCoreKept(t *testing.T, s *Server, linkOn *bool) (*[]voiceSent, chan map[string]any) {
+	t.Helper()
 	sent := &[]voiceSent{}
+	kept := make(chan map[string]any, 64)
 	voice := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/speech":
@@ -49,7 +59,20 @@ func voiceCore(t *testing.T, s *Server, linkOn *bool) *[]voiceSent {
 				json.NewEncoder(w).Encode(map[string]string{"error": "there were no words in the recording"})
 				return
 			}
-			json.NewEncoder(w).Encode(map[string]any{"text": " Call the plumber tomorrow. ", "language": "en", "segments": []any{}, "engine": "whisper"})
+			json.NewEncoder(w).Encode(map[string]any{"text": " Call the plumber tomorrow. ", "language": "en", "engine": "parakeet",
+				"segments": []any{map[string]any{"s": 0, "e": 1200, "t": "Call the plumber"}, map[string]any{"s": 1200, "e": 2300, "t": "tomorrow."}}})
+		case "/api/v1/dictations":
+			var d map[string]any
+			if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer pcx_voice" || json.NewDecoder(r.Body).Decode(&d) != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			select {
+			case kept <- d:
+			default:
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]any{"dictation": d})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -67,7 +90,7 @@ func voiceCore(t *testing.T, s *Server, linkOn *bool) *[]voiceSent {
 	}))
 	t.Cleanup(upstream.Close)
 	s.core = core.New(upstream.URL, core.Options{DB: s.store.DB, Token: "app"})
-	return sent
+	return sent, kept
 }
 
 // recording is a browser's dictation upload: one webm file, maybe a language.
@@ -192,5 +215,67 @@ func TestVoiceDictationModel(t *testing.T) {
 	body, ctype = withModel("../etc/passwd")
 	if code, b := alice.do("POST", "/api/v1/dictation", ctype, body); code != 400 || len(*sent) != 2 {
 		t.Fatalf("bad model: %d %s", code, b)
+	}
+}
+
+// Each dictation written out goes to the person's dictation history in Voice,
+// with where it was said: the iPhone app (iOS's CFNetwork) or the web page
+// (the browser and device), or what the client says itself.
+func TestVoiceDictationHistory(t *testing.T) {
+	s, h, _ := testServer(t)
+	alice, _ := person(t, s, h, "history@example.test", "member", true)
+	on := true
+	_, kept := voiceCoreKept(t, s, &on)
+	next := func() map[string]any {
+		t.Helper()
+		select {
+		case d := <-kept:
+			return d
+		case <-time.After(3 * time.Second):
+			t.Fatal("no dictation reached Voice's history")
+		}
+		return nil
+	}
+	send := func(ua string, fields map[string]string) {
+		t.Helper()
+		var buf bytes.Buffer
+		mw := multipart.NewWriter(&buf)
+		fw, _ := mw.CreateFormFile("file", "dictation.m4a")
+		_, _ = fw.Write([]byte("hello"))
+		for k, v := range fields {
+			_ = mw.WriteField(k, v)
+		}
+		_ = mw.Close()
+		req := httptest.NewRequest("POST", "/api/v1/dictation", &buf)
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		req.Header.Set("Authorization", "Bearer "+alice.token)
+		req.Header.Set("User-Agent", ua)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != 200 {
+			t.Fatalf("dictation: %d %s", w.Code, w.Body.String())
+		}
+	}
+
+	send("Pocket%20AI/412 CFNetwork/3826.500.131 Darwin/24.5.0", nil)
+	d := next()
+	if d["source"] != "Pocket AI app" || d["device"] != "iPhone" || d["app"] != "Pocket AI" || d["text"] != "Call the plumber tomorrow." ||
+		d["engine"] != "parakeet" || d["language"] != "en" || d["duration_ms"] != float64(2300) || !strings.HasPrefix(d["ref"].(string), "pocket-ai-") {
+		t.Fatalf("from the app: %v", d)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, d["dictated_at"].(string)); err != nil {
+		t.Fatalf("dictated_at: %v", d["dictated_at"])
+	}
+	send("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", nil)
+	if d2 := next(); d2["source"] != "Pocket AI on the web" || d2["device"] != "Chrome on Mac" || d2["ref"] == d["ref"] {
+		t.Fatalf("from the web: %v", d2)
+	}
+	send("Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1", nil)
+	if d3 := next(); d3["source"] != "Pocket AI on the web" || d3["device"] != "Safari on iPhone" {
+		t.Fatalf("web on the phone: %v", d3)
+	}
+	send("Pocket%20AI/412 CFNetwork/3826.500.131 Darwin/24.5.0", map[string]string{"source": " Pocket AI app ", "device": "Aleksandar’s iPhone"})
+	if d4 := next(); d4["source"] != "Pocket AI app" || d4["device"] != "Aleksandar’s iPhone" {
+		t.Fatalf("named by the client: %v", d4)
 	}
 }
