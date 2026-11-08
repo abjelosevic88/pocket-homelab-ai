@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,9 +36,9 @@ func (s *Server) handleInference(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "resolve AI identity")
 		return
 	}
-	var body core.InferenceRequest
+	var body inferenceRequest
 	if r.Method == http.MethodPost {
-		r.Body = http.MaxBytesReader(w, r.Body, 512<<10)
+		r.Body = http.MaxBytesReader(w, r.Body, 24<<20)
 		dec := json.NewDecoder(r.Body)
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&body); err != nil || strings.TrimSpace(body.Prompt) == "" || len(body.Prompt)+len(body.System) > 300000 {
@@ -46,6 +47,10 @@ func (s *Server) handleInference(w http.ResponseWriter, r *http.Request) {
 		}
 		if dec.Decode(new(any)) != io.EOF {
 			writeErr(w, 400, "provide one JSON request object")
+			return
+		}
+		if msg := body.checkImages(); msg != "" {
+			writeErr(w, 400, msg)
 			return
 		}
 	}
@@ -117,7 +122,16 @@ func (s *Server) handleInference(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 140*time.Second)
 	defer cancel()
-	text, usage, err := agent.CompleteClaude(ctx, agent.Options{Bin: s.cfg.ClaudeBin, Cwd: cwd, Model: model, Effort: effort, SystemPrompt: system, Env: agent.AccountEnv("claude", home), Log: s.log}, body.Prompt)
+	input := agent.Input{Text: body.Prompt}
+	for i, im := range body.Images {
+		path := filepath.Join(cwd, fmt.Sprintf("image-%d", i))
+		if err := os.WriteFile(path, im.raw, 0600); err != nil {
+			s.fail(w, err, "inference image")
+			return
+		}
+		input.Images = append(input.Images, agent.ImageFile{Path: path, Mime: im.Mime})
+	}
+	text, usage, err := agent.CompleteClaudeInput(ctx, agent.Options{Bin: s.cfg.ClaudeBin, Cwd: cwd, Model: model, Effort: effort, SystemPrompt: system, Env: agent.AccountEnv("claude", home), Log: s.log}, input)
 	if err != nil {
 		s.log.Warn("app inference failed", "user", u.ID, "err", err)
 		writeErr(w, 502, "Pocket AI could not generate an answer; check your Claude account in Pocket AI")
@@ -131,6 +145,45 @@ func (s *Server) handleInference(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, 200, core.InferenceReply{Text: text, Model: "pocket-ai/" + model, InputTokens: int(usage.InputTokens), OutputTokens: int(usage.OutputTokens)})
+}
+
+// inferenceRequest is core.InferenceRequest with optional pictures: an app
+// may send up to four (JPEG, PNG, WebP or GIF, base64, 5 MB each) for the
+// model to look at with the prompt — a photo of a piece of clothing, a
+// receipt. They are written to the request's own temporary folder and
+// removed with it.
+type inferenceRequest struct {
+	core.InferenceRequest
+	Images []inferenceImage `json:"images,omitempty"`
+}
+
+type inferenceImage struct {
+	Mime string `json:"mime"`
+	Data string `json:"data"`
+	raw  []byte
+}
+
+func (b *inferenceRequest) checkImages() string {
+	if len(b.Images) > 4 {
+		return "send at most four images"
+	}
+	for i := range b.Images {
+		im := &b.Images[i]
+		switch im.Mime {
+		case "image/jpeg", "image/png", "image/webp", "image/gif":
+		default:
+			return "images are JPEG, PNG, WebP or GIF"
+		}
+		raw, err := base64.StdEncoding.DecodeString(im.Data)
+		if err != nil || len(raw) == 0 {
+			return "an image is not valid base64"
+		}
+		if len(raw) > 5<<20 {
+			return "an image is larger than 5 MB"
+		}
+		im.raw = raw
+	}
+	return ""
 }
 
 type inferenceModel struct {
