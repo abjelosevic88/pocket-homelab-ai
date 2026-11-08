@@ -199,6 +199,7 @@ func (s *Server) handleDictate(w http.ResponseWriter, r *http.Request) {
 		Text     string `json:"text"`
 		Language string `json:"language"`
 		Engine   string `json:"engine"`
+		Duration int64  `json:"duration_ms"` // the recording's length (Voice 0.7.9+)
 		Segments []struct {
 			End int64 `json:"e"` // ms
 		} `json:"segments"`
@@ -212,8 +213,9 @@ func (s *Server) handleDictate(w http.ResponseWriter, r *http.Request) {
 		if text != "" {
 			d := voiceDictation{Text: text, App: "Pocket AI", Engine: got.Engine, Language: got.Language, DictatedAt: at.UTC().Format(time.RFC3339Nano)}
 			d.Source, d.Device = dictationClient(r)
-			if n := len(got.Segments); n > 0 {
-				d.DurationMS = got.Segments[n-1].End
+			d.DurationMS = got.Duration
+			if n := len(got.Segments); d.DurationMS <= 0 && n > 0 {
+				d.DurationMS = got.Segments[n-1].End // an older Voice: where the words end
 			}
 			go s.keepDictation(context.WithoutCancel(ctx), u.Email, d)
 		}
