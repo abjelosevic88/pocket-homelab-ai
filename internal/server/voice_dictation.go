@@ -31,6 +31,8 @@ var voiceUse = core.Use{App: "voice", Scopes: []string{voiceScope},
 var (
 	voiceHTTP  = &http.Client{Timeout: 5 * time.Minute} // whisper on a long dictation takes a while
 	voiceExtRe = regexp.MustCompile(`^\.[a-z0-9]{1,5}$`)
+	// a Voice speech model id (GET /speech in Voice): parakeet-tdt-0.6b-v3-q8_0, large-v3-turbo-q5_0, …
+	voiceModelRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 )
 
 // voiceLinkOff is why dictation can't go to Voice for the person, "" when it can.
@@ -84,8 +86,18 @@ func (s *Server) voiceCall(ctx context.Context, email, method, path, contentType
 	return res.StatusCode, json.NewDecoder(http.MaxBytesReader(nil, res.Body, 4<<20)).Decode(out)
 }
 
+// voiceModel is a speech model Voice can write dictation out with, as GET /dictation lists it.
+type voiceModel struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Engine string `json:"engine"`
+	Note   string `json:"note"`
+}
+
 // GET /dictation: does the mic record for Pocket Voice (and how Voice writes
 // it out: "local" whisper here, or "api", the speech service set in Voice).
+// With "local", also the models downloaded there (`models`) and the one used
+// when POST /dictation names none (`default_model`).
 func (s *Server) handleDictation(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	u := userFrom(ctx)
@@ -95,18 +107,35 @@ func (s *Server) handleDictation(w http.ResponseWriter, r *http.Request) {
 	}
 	out := map[string]any{"voice": true}
 	var sp struct {
-		Engine string `json:"engine"`
+		Engine         string `json:"engine"`
+		DictationModel string `json:"dictation_model"`
+		Models         []struct {
+			voiceModel
+			Ready bool `json:"ready"`
+			Runs  bool `json:"runs"`
+		} `json:"models"`
 	}
 	quick, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if _, err := s.voiceCall(quick, u.Email, http.MethodGet, "/api/v1/speech", "", nil, &sp); err == nil && sp.Engine != "" {
 		out["engine"] = sp.Engine
+		models := []voiceModel{}
+		if sp.Engine == "local" {
+			for _, m := range sp.Models {
+				if m.Ready && m.Runs {
+					models = append(models, m.voiceModel)
+				}
+			}
+			out["default_model"] = sp.DictationModel
+		}
+		out["models"] = models
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
-// POST /dictation (multipart "file", optional "language"): the words of a
-// recording, written out by Pocket Voice.
+// POST /dictation (multipart "file", optional "language" and "model", an id
+// from the models GET /dictation lists): the words of a recording, written
+// out by Pocket Voice. Without "model", Voice's dictation model.
 func (s *Server) handleDictate(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	u := userFrom(ctx)
@@ -146,6 +175,13 @@ func (s *Server) handleDictate(w http.ResponseWriter, r *http.Request) {
 	}
 	if lang := strings.TrimSpace(r.FormValue("language")); err == nil && lang != "" {
 		err = mw.WriteField("language", lang)
+	}
+	if model := strings.TrimSpace(r.FormValue("model")); err == nil && model != "" {
+		if !voiceModelRe.MatchString(model) {
+			writeErr(w, http.StatusBadRequest, "model is a speech model id from GET /dictation")
+			return
+		}
+		err = mw.WriteField("model", model)
 	}
 	if err == nil {
 		err = mw.Close()
