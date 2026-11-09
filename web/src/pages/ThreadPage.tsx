@@ -11,6 +11,7 @@ import { SubagentsChip } from '../components/Subagents'
 import { AgentsChip, HeartbeatsChip, ParentChip } from '../components/AgentChildren'
 import { RunBar, useForkNewTab } from '../components/RunBar'
 import { QueueStrip } from '../components/QueueStrip'
+import { SideQuestions, useSideQuestions } from '../components/SideQuestions'
 import { AgentPicker } from '../components/AgentPicker'
 import { BranchButton } from '../components/BranchPicker'
 import { useHostName } from '../components/HostPicker'
@@ -87,6 +88,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const [newBelow, setNewBelow] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
   const composer = useRef<ComposerHandle>(null)
+  const side = useSideQuestions(id)
   const atBottomRef = useRef(true)
   const canRun = !!user && (user.role === 'admin' || user.can_run || thread?.source === 'ask')
   const forkNewTab = useForkNewTab(id)
@@ -478,6 +480,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
         <div className="thread-bottom-inner">
           {(running || t.status === 'waiting' || !!t.subagents?.length || !!t.background?.length) && items ? <RunBar t={t} items={items} reconnecting={streamDown} />
             : <div className="sub-dock">{t.provider === 'claude' && t.provider_session_id && <SubagentsChip t={t} />}<AgentsChip t={t} /><HeartbeatsChip t={t} rev={hbRev} owner={owner} /></div>}
+          <SideQuestions list={side.list} onDismiss={side.dismiss} onRetry={q => { void side.ask(q.question) }} />
           <QueueStrip threadId={id} queued={queuedItems} agent={t.provider === 'codex' ? 'Codex' : 'Claude'} onClearAll={canSend ? clearQueue : undefined} onEdit={canSend ? async it => {
             const draft = await api.post<{ text: string; uploads: Upload[] }>(`${V1}/threads/${id}/queue/${encodeURIComponent(it.key)}/edit`)
             composer.current?.restoreDraft(draft.text, draft.uploads)
@@ -498,7 +501,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
           {access === 'view' ? (
             <div className="callout info"><Icon name="eye" size={15} /><span>{t.owner_name || 'Someone'} shared this chat with you to read. They can let you chat in it too.</span></div>
           ) : canRun ? (
-            <Composer key={id} ref={composer} draftKey={id} autoFocus onSend={send} onCommand={localCommand} skills={t.source === 'ask' ? undefined : { provider: t.provider, cwd: t.cwd, account_id: t.account_id, host_id: t.host_id }} running={running} onStop={t.external && !t.live && !t.reattached ? undefined : interrupt} disabled={!!t.external && !t.live && !t.reattached}
+            <Composer key={id} ref={composer} draftKey={id} autoFocus onSend={send} onCommand={localCommand} onSide={owner && t.source !== 'ask' ? q => { void side.ask(q) } : undefined} skills={t.source === 'ask' ? undefined : { provider: t.provider, cwd: t.cwd, account_id: t.account_id, host_id: t.host_id }} running={running} onStop={t.external && !t.live && !t.reattached ? undefined : interrupt} disabled={!!t.external && !t.live && !t.reattached}
               placeholder={t.external && !t.live && !t.reattached ? 'It is running in another app right now — you can reply here once it has finished' : running ? 'Add a message — it is sent when the agent is done…' : pending.length ? 'Or type an answer…' : `Reply to ${providerName(t.provider)}…`}
               footer={<>
                 {t.source === 'ask' && owner && <span className="thread-pickers"><AgentPicker compact ask showProvider={false} value={{ provider: 'claude', model: t.model, effort: t.effort, mode: t.mode, account_id: t.account_id || 0 }}

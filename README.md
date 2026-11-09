@@ -119,6 +119,7 @@ Personal app assistance: [Briefing, workflows, memory, sources and document uplo
 - Full-text search over everything said, usage per day and per provider (cost for Claude, tokens for both) and the
   live 5-hour / weekly limit windows both CLIs report.
 - Fork into a fresh agent session with earlier chat attached as reference (pick Claude Code or Codex in the copy's model menu before the first message; after that a chat keeps its CLI), export as Markdown, pin, archive, workspaces for the folders
+- Side questions while the agent works: type `/btw <question>` or tap the ? button next to Send. A quick, tool-less answer from the chat so far appears above the composer; the agent is not interrupted and nothing joins its chat
   you use most, a folder picker limited to the folders you allow.
 - Per person, like every Pocket app: nobody sees anyone else's threads, admins included. Members may only run
   agents when an admin allows it. Sign in with Pocket Core, API tokens, Pocket Core events

@@ -211,7 +211,9 @@ export const Composer = React.forwardRef<ComposerHandle, {
   skills?: SkillScope
   /** A slash command Pocket AI runs itself (/mcp): true when handled, so it is not sent. */
   onCommand?: (name: string, args: string) => boolean
-}>(function Composer({ onSend, placeholder = 'Ask anything…', autoFocus, running, onStop, disabled, footer, draftKey, big, skills: skillScope, onCommand }, ref) {
+  /** Ask about the chat without sending to the agent (/btw, the ? button): answered on the side. */
+  onSide?: (question: string) => void
+}>(function Composer({ onSend, placeholder = 'Ask anything…', autoFocus, running, onStop, disabled, footer, draftKey, big, skills: skillScope, onCommand, onSide }, ref) {
   const { settings } = useApp()
   const { toast } = useToast()
   const [text, setText] = useState(() => (draftKey && sessionStorage.getItem('pai-draft-' + draftKey)) || '')
@@ -394,6 +396,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
     if (!canSend) return
     stopDictation()
     const cmd = !ready.length && /^\/(\S+)\s*([\s\S]*)$/.exec(text.trim())
+    if (cmd && cmd[1] === 'btw' && onSide) { if (cmd[2].trim()) { onSide(cmd[2].trim()); setText('') } return }
     if (cmd && onCommand?.(cmd[1], cmd[2].trim())) { setText(''); return }
     setSending(true)
     // Empty the box right away (starting an agent can take seconds); the
@@ -420,7 +423,8 @@ export const Composer = React.forwardRef<ComposerHandle, {
     .filter(k => k.name.toLowerCase().includes(slash) || (slash.length > 2 && k.description.toLowerCase().includes(slash)))
     .sort((a, b) => Number(!a.name.toLowerCase().startsWith(slash)) - Number(!b.name.toLowerCase().startsWith(slash)))
     .slice(0, max)
-  const commandList: Skill[] = lead === '/' ? byName(allCommands, 8) : []
+  const sideCommand: Skill[] = onSide ? [{ name: 'btw', description: 'Side question — answered from the chat so far, without interrupting the agent or joining its chat', argument_hint: '<question>', invoke: '/btw' }] : []
+  const commandList: Skill[] = lead === '/' ? byName([...sideCommand, ...allCommands.filter(c => !onSide || c.name !== 'btw')], 8) : []
   const skillList: Skill[] = lead === '/' || lead === '$' ? byName(allSkills, 8) : []
   type SlashPick = { skill: Skill; command?: boolean }
   const slashList: SlashPick[] = [...commandList.map(skill => ({ skill, command: true })), ...skillList.map(skill => ({ skill }))]
@@ -683,6 +687,10 @@ export const Composer = React.forwardRef<ComposerHandle, {
         <button type="button" className="btn ghost icon-only sm" aria-label="Insert snippet" title="Snippets" disabled={disabled} onClick={() => setSnippetsOpen(true)}><Icon name="bookmark" size={17} /></button>
         <div className="composer-extra">{footer}</div>
         {canDictate && <button type="button" className={`btn ghost icon-only sm mic-btn ${listening ? 'rec' : ''}`} aria-label={micLabel} title={micLabel} disabled={disabled || writing} onClick={toggleDictation}>{writing ? <Spinner size={15} /> : <Icon name="mic" size={17} />}</button>}
+        {onSide && text.trim() && !/^\/(?!btw\b)/.test(text.trim()) && atts.length === 0 && (
+          <button type="button" className="btn ghost icon-only sm side-btn" aria-label="Ask on the side" title="Side question — answered from the chat so far; the agent is not interrupted and nothing joins its chat (or type /btw)" disabled={disabled}
+            onClick={() => { const q = text.trim().replace(/^\/btw\b\s*/, ''); if (!q) return; stopDictation(); onSide(q); setText('') }}><Icon name="help-circle" size={17} /></button>
+        )}
         {running && onStop && !text.trim() && atts.length === 0 ? (
           <button type="button" className="stop-round" aria-label="Stop" title="Stop (⌘.)" onClick={onStop}><span /></button>
         ) : (
