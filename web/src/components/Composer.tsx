@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { api, upload, uploadWithProgress, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { isTouch } from '../lib/format'
+import { actionFor, keyCaps, useShortcuts } from '../lib/shortcuts'
 import { parentContext, parentContextItem, parentTabs, type ParentContextItem } from '../lib/embed'
 import type { ProviderId, Skill, Upload } from '../lib/types'
 import { Icon } from './icons'
@@ -392,6 +393,14 @@ export const Composer = React.forwardRef<ComposerHandle, {
   const canSend = !disabled && !sending && !uploading && (text.trim() !== '' || ready.length > 0)
 
   const defaultNow = !!settings?.enter_send_now
+  const shortcutKeys = useShortcuts()
+  const sideKeys = shortcutKeys.side_question
+  // what is in the box goes to a side question instead of the agent
+  const askSide = () => {
+    const q = text.trim().replace(/^\/btw\b\s*/, '')
+    if (!onSide || !q || disabled || atts.length) return
+    stopDictation(); onSide(q); setText('')
+  }
   const send = async (sendNow = defaultNow) => {
     if (!canSend) return
     stopDictation()
@@ -548,6 +557,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pick(slashList[slashHi]); return }
       if (e.key === 'Escape') { e.preventDefault(); setText(''); return }
     }
+    if (onSide && sideKeys && actionFor(e.nativeEvent, shortcutKeys) === 'side_question') { e.preventDefault(); askSide(); return }
     if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
     if (e.shiftKey || e.altKey) return
     if (e.metaKey || e.ctrlKey) { e.preventDefault(); void send(!defaultNow); return }
@@ -688,8 +698,8 @@ export const Composer = React.forwardRef<ComposerHandle, {
         <div className="composer-extra">{footer}</div>
         {canDictate && <button type="button" className={`btn ghost icon-only sm mic-btn ${listening ? 'rec' : ''}`} aria-label={micLabel} title={micLabel} disabled={disabled || writing} onClick={toggleDictation}>{writing ? <Spinner size={15} /> : <Icon name="mic" size={17} />}</button>}
         {onSide && text.trim() && !/^\/(?!btw\b)/.test(text.trim()) && atts.length === 0 && (
-          <button type="button" className="btn ghost icon-only sm side-btn" aria-label="Ask on the side" title="Side question — answered from the chat so far; the agent is not interrupted and nothing joins its chat (or type /btw)" disabled={disabled}
-            onClick={() => { const q = text.trim().replace(/^\/btw\b\s*/, ''); if (!q) return; stopDictation(); onSide(q); setText('') }}><Icon name="help-circle" size={17} /></button>
+          <button type="button" className="btn ghost icon-only sm side-btn" aria-label="Ask on the side" title={`Side question — answered from the chat so far; the agent is not interrupted and nothing joins its chat (${sideKeys ? keyCaps(sideKeys).join('') + ' or ' : ''}/btw)`} disabled={disabled}
+            onClick={askSide}><Icon name="help-circle" size={17} /></button>
         )}
         {running && onStop && !text.trim() && atts.length === 0 ? (
           <button type="button" className="stop-round" aria-label="Stop" title="Stop (⌘.)" onClick={onStop}><span /></button>

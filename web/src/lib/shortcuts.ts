@@ -3,7 +3,7 @@
 // change are saved (settings.shortcuts); "" turns one off.
 import { useApp } from './app-context'
 
-export type ShortcutId = 'palette' | 'recent' | 'recipes' | 'new_thread' | 'new_tab' | 'reopen_tab' | 'close_tab' | 'prev_tab' | 'next_tab' | 'stop'
+export type ShortcutId = 'palette' | 'recent' | 'recipes' | 'new_thread' | 'new_tab' | 'reopen_tab' | 'close_tab' | 'prev_tab' | 'next_tab' | 'stop' | 'side_question'
 
 export const SHORTCUTS: { id: ShortcutId; label: string; group: 'Anywhere' | 'Tabs' | 'In a thread'; keys: string }[] = [
   { id: 'palette', label: 'Search & commands', group: 'Anywhere', keys: 'mod+k' },
@@ -16,6 +16,7 @@ export const SHORTCUTS: { id: ShortcutId; label: string; group: 'Anywhere' | 'Ta
   { id: 'prev_tab', label: 'Previous tab', group: 'Tabs', keys: 'mod+shift+[' },
   { id: 'next_tab', label: 'Next tab', group: 'Tabs', keys: 'mod+shift+]' },
   { id: 'stop', label: 'Stop the agent', group: 'In a thread', keys: 'mod+.' },
+  { id: 'side_question', label: 'Ask what you typed on the side (no interruption)', group: 'In a thread', keys: 'mod+shift+enter' },
 ]
 
 export const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)
