@@ -43,6 +43,7 @@ func (s *Server) threadRoutes(r chi.Router) {
 	r.Post("/threads/{id}/requests/{rid}", s.handleRespond)
 	r.Post("/threads/{id}/read", s.handleMarkRead)
 	r.Post("/threads/{id}/fork", s.handleFork)
+	r.Post("/threads/{id}/side-question", s.handleSideQuestion) // side_question.go
 	r.Post("/threads/{id}/retitle", s.handleRetitle) // autotitle.go
 	r.Post("/threads/{id}/folder", s.handleMoveFolder)
 	r.Post("/threads/{id}/rewind", s.handleRewind)
