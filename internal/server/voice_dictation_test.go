@@ -287,3 +287,61 @@ func TestVoiceDictationHistory(t *testing.T) {
 		t.Fatalf("length from Voice: %v", d5)
 	}
 }
+
+// A dictation written out on the phone itself (Parakeet or Apple there) goes to
+// the person's history in Voice with the phone's ref, so the outbox can post
+// it again harmlessly; a bad one is refused before Voice hears of it, and
+// with the link off the phone is told to keep it.
+func TestKeepPhoneDictation(t *testing.T) {
+	s, h, _ := testServer(t)
+	alice, _ := person(t, s, h, "keep@example.test", "member", true)
+	on := false
+	_, kept := voiceCoreKept(t, s, &on)
+	post := func(v map[string]any) (int, string) {
+		b, _ := json.Marshal(v)
+		code, out := alice.do("POST", "/api/v1/dictations", "application/json", b)
+		return code, string(out)
+	}
+	good := map[string]any{"ref": "pocket-ai-app-1F2E", "text": "  Buy milk on the way home. ", "duration_ms": 2400,
+		"engine": "parakeet-v3", "language": "en", "dictated_at": "2026-11-09T08:30:00+01:00", "source": "Pocket AI app", "device": "iPhone"}
+
+	if code, b := post(good); code != 409 || !strings.Contains(b, "Links") {
+		t.Fatalf("link off: %d %s", code, b)
+	}
+	on = true
+	for _, bad := range []map[string]any{
+		{"ref": "", "text": "x"},
+		{"ref": "has spaces", "text": "x"},
+		{"ref": "r1", "text": "   "},
+		{"ref": "r1", "text": "x", "duration_ms": -1},
+		{"ref": "r1", "text": "x", "dictated_at": "yesterday"},
+	} {
+		if code, b := post(bad); code != 400 {
+			t.Fatalf("bad %v: %d %s", bad, code, b)
+		}
+	}
+	select {
+	case d := <-kept:
+		t.Fatalf("voice got a bad one: %v", d)
+	default:
+	}
+
+	if code, b := post(good); code != 201 || !strings.Contains(b, `"kept":true`) {
+		t.Fatalf("keep: %d %s", code, b)
+	}
+	d := <-kept
+	if d["ref"] != "pocket-ai-app-1F2E" || d["text"] != "Buy milk on the way home." || d["app"] != "Pocket AI" ||
+		d["engine"] != "parakeet-v3" || d["language"] != "en" || d["duration_ms"] != float64(2400) ||
+		d["source"] != "Pocket AI app" || d["device"] != "iPhone" || d["dictated_at"] != "2026-11-09T07:30:00Z" {
+		t.Fatalf("sent to voice: %v", d)
+	}
+
+	// a phone clock running ahead is taken as now (Voice refuses the future)
+	ahead := map[string]any{"ref": "r2", "text": "later", "dictated_at": time.Now().Add(time.Hour).Format(time.RFC3339)}
+	if code, b := post(ahead); code != 201 {
+		t.Fatalf("ahead: %d %s", code, b)
+	}
+	if at, _ := time.Parse(time.RFC3339Nano, (<-kept)["dictated_at"].(string)); at.After(time.Now().Add(time.Minute)) {
+		t.Fatalf("future time passed on: %v", at)
+	}
+}

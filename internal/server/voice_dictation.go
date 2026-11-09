@@ -261,6 +261,99 @@ func (s *Server) keepDictation(ctx context.Context, email string, d voiceDictati
 	}
 }
 
+// dictationRefRe is a client's own id for one dictation (a UUID, with a prefix).
+var dictationRefRe = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`)
+
+// POST /dictations (JSON {ref, text, duration_ms, engine, language,
+// dictated_at, source, device}): something dictated and written out on the
+// device itself (Parakeet or Apple's model on the phone), for the person's
+// dictation history in Voice. The phone posts each one from a retrying
+// outbox; `ref` (the phone's id for it) makes a repeat harmless: Voice answers
+// 200 with the row it already has. Answers 201 or 200 once Voice has it, 409
+// while the link is off (the outbox keeps it), 400 for a bad one (the outbox
+// drops it), 502 when Voice can't be reached (the outbox tries again later).
+func (s *Server) handleKeepDictation(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	u := userFrom(ctx)
+	var in struct {
+		Ref        string `json:"ref"`
+		Text       string `json:"text"`
+		DurationMS int64  `json:"duration_ms"`
+		Engine     string `json:"engine"`
+		Language   string `json:"language"`
+		DictatedAt string `json:"dictated_at"`
+		Source     string `json:"source"`
+		Device     string `json:"device"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256<<10)).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, "send the dictation as JSON")
+		return
+	}
+	text := strings.TrimSpace(in.Text)
+	switch {
+	case !dictationRefRe.MatchString(in.Ref):
+		writeErr(w, http.StatusBadRequest, "ref is the client's id for this dictation (1–64 letters, digits, . _ : -)")
+		return
+	case text == "":
+		writeErr(w, http.StatusBadRequest, "text is what was dictated")
+		return
+	case len([]rune(text)) > 20000:
+		writeErr(w, http.StatusBadRequest, "text is at most 20000 characters")
+		return
+	case in.DurationMS < 0:
+		writeErr(w, http.StatusBadRequest, "duration_ms is the speaking time, 0 or more")
+		return
+	}
+	at := time.Now()
+	if in.DictatedAt != "" {
+		t, err := time.Parse(time.RFC3339Nano, in.DictatedAt)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "dictated_at is RFC 3339 with an offset")
+			return
+		}
+		if t.After(at.Add(5 * time.Minute)) {
+			t = at // a phone clock running ahead: Voice would refuse it
+		}
+		at = t
+	}
+	if why := s.voiceLinkOff(ctx, u.Email); why != "" {
+		writeErr(w, http.StatusConflict, why)
+		return
+	}
+	d := voiceDictation{Ref: in.Ref, Text: text, App: "Pocket AI", DurationMS: in.DurationMS,
+		Engine: clipRunes(strings.TrimSpace(in.Engine), 60), Language: clipRunes(strings.TrimSpace(in.Language), 16),
+		DictatedAt: at.UTC().Format(time.RFC3339Nano)}
+	d.Source, d.Device = clipRunes(strings.TrimSpace(in.Source), 100), clipRunes(strings.TrimSpace(in.Device), 100)
+	if d.Source == "" || d.Device == "" {
+		src, dev := dictationClient(r)
+		if d.Source == "" {
+			d.Source = src
+		}
+		if d.Device == "" {
+			d.Device = dev
+		}
+	}
+	quick, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	b, _ := json.Marshal(d)
+	var out struct {
+		Dictation map[string]any `json:"dictation"`
+	}
+	code, err := s.voiceCall(quick, u.Email, http.MethodPost, "/api/v1/dictations", "application/json", bytes.NewReader(b), &out)
+	switch {
+	case err == nil:
+		if code != http.StatusCreated {
+			code = http.StatusOK
+		}
+		writeJSON(w, code, map[string]any{"kept": true, "ref": d.Ref})
+	case code == http.StatusBadRequest:
+		writeErr(w, http.StatusBadRequest, "Pocket Voice didn't take it: "+err.Error())
+	default:
+		s.log.Warn("voice dictation history", "status", code, "err", err)
+		writeErr(w, http.StatusBadGateway, "Pocket Voice can't be reached right now; try again later.")
+	}
+}
+
 // dictationClient is where a dictation in the composer was made, as Voice's
 // history shows it: the form's "source" and "device" when the client sends
 // them, else read from its User-Agent (the iPhone app's requests come from
