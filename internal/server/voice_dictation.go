@@ -101,7 +101,8 @@ type voiceModel struct {
 // GET /dictation: does the mic record for Pocket Voice (and how Voice writes
 // it out: "local" whisper here, or "api", the speech service set in Voice).
 // With "local", also the models downloaded there (`models`) and the one used
-// when POST /dictation names none (`default_model`).
+// when POST /dictation names none (`default_model`). `drop_fillers`: the
+// person's Voice setting, for dictation written out on the phone itself.
 func (s *Server) handleDictation(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	u := userFrom(ctx)
@@ -113,6 +114,7 @@ func (s *Server) handleDictation(w http.ResponseWriter, r *http.Request) {
 	var sp struct {
 		Engine         string `json:"engine"`
 		DictationModel string `json:"dictation_model"`
+		DropFillers    *bool  `json:"drop_fillers"`
 		Models         []struct {
 			voiceModel
 			Ready bool `json:"ready"`
@@ -133,6 +135,10 @@ func (s *Server) handleDictation(w http.ResponseWriter, r *http.Request) {
 			out["default_model"] = sp.DictationModel
 		}
 		out["models"] = models
+		// Voice's "Take out uh and um", for what the phone writes out itself
+		if sp.DropFillers != nil {
+			out["drop_fillers"] = *sp.DropFillers
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
