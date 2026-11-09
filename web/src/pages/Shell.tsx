@@ -114,7 +114,7 @@ function ShellInner() {
       // Ctrl+J is the shell's newline inside a terminal off a Mac: left to it
       if (action === 'recipes' && !isMac && (e.target as Element | null)?.closest?.('.xterm')) return
       const tabAction = action === 'new_tab' || action === 'reopen_tab' || action === 'prev_tab' || action === 'next_tab'
-      if (action && action !== 'stop' && !(tabAction && !tabsOn)) {
+      if (action && action !== 'stop' && action !== 'side_question' && !(tabAction && !tabsOn)) {
         e.preventDefault()
         if (action === 'palette') setPalette(p => p === 'all' ? '' : 'all')
         else if (action === 'recent') setPalette(p => p === 'recent' ? '' : 'recent') // while open, the palette moves down instead

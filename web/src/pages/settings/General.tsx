@@ -120,6 +120,7 @@ function ShortcutsSection() {
       const c = comboOf(e)
       if (!c) return
       if (!c.startsWith('mod+') && !c.startsWith('alt+')) { setWarn(`Hold ${isMac ? '⌘ or ⌥' : 'Ctrl or Alt'} with the key, so typing doesn’t trigger it.`); return }
+      if (c === 'mod+enter') { setWarn(`${keyCaps(c).join(' ')} already sends or queues a message. Pick other keys.`); return }
       const other = SHORTCUTS.find(s => s.id !== rec && keys[s.id] === c)
       if (other) { setWarn(`${keyCaps(c).join(' ')} is already “${other.label}”. Change that one first.`); return }
       set(rec, c); setRec(null); setWarn('')
