@@ -1,5 +1,5 @@
 // One conversation: live timeline, requests waiting above the composer, header controls.
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type TouchEvent, type WheelEvent } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { api, ApiError, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
@@ -173,23 +173,40 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
     return () => document.removeEventListener('visibilitychange', h)
   }, [t?.unread, id])
 
-  // stick to the bottom unless the person scrolled up
-  const onScroll = () => {
-    const el = scroller.current
-    if (!el) return
-    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 140
+  // stick to the bottom unless the person scrolled up: any move up lets go at
+  // once (a near-the-bottom margin pulled them back with every streamed word),
+  // and only coming back down to the very bottom follows new messages again
+  const lastTop = useRef(0)
+  const touching = useRef(false)
+  const setStick = (near: boolean) => {
     atBottomRef.current = near
     setAtBottom(near)
     if (near) setNewBelow(false)
   }
-  const toBottom = (smooth = false) => { const el = scroller.current; if (el) el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' }) }
+  const onScroll = () => {
+    const el = scroller.current
+    if (!el) return
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight
+    if (el.scrollTop < lastTop.current - 1 && dist > 2) setStick(false)
+    else if (dist < 24 && !touching.current) setStick(true)
+    lastTop.current = el.scrollTop
+  }
+  // wheel, touch and keys arrive before the scroll does: let go before the next word lands
+  const letGo = () => { if (atBottomRef.current) setStick(false) }
+  const touchY = useRef(0)
+  const onWheel = (e: WheelEvent) => { if (e.deltaY < 0) letGo() }
+  const onTouchStart = (e: TouchEvent) => { touching.current = true; touchY.current = e.touches[0]?.clientY ?? 0 }
+  const onTouchMove = (e: TouchEvent) => { if ((e.touches[0]?.clientY ?? 0) > touchY.current + 4) letGo() } // finger down: the page goes up
+  const onTouchEnd = () => { touching.current = false; onScroll() }
+  const onKeyDown = (e: ReactKeyboardEvent) => { if (['ArrowUp', 'PageUp', 'Home'].includes(e.key)) letGo() }
+  const toBottom = (smooth = false) => { const el = scroller.current; if (el) { el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' }); if (!smooth) lastTop.current = el.scrollTop } }
   const firstPaint = useRef(true)
   useEffect(() => { firstPaint.current = true }, [id])
   useLayoutEffect(() => {
     if (!items) return
     if (prependRef.current !== null) {
       const el = scroller.current
-      if (el) el.scrollTop = el.scrollHeight - prependRef.current
+      if (el) { el.scrollTop = el.scrollHeight - prependRef.current; lastTop.current = el.scrollTop }
       prependRef.current = null
       return
     }
@@ -201,6 +218,9 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
       toBottom()
       return
     }
+    // moved since the last scroll event (a scrollbar drag, a flick still in flight): theirs, not ours
+    const el = scroller.current
+    if (atBottomRef.current && el && el.scrollTop < lastTop.current - 1 && el.scrollHeight - el.scrollTop - el.clientHeight > 2) setStick(false)
     if (atBottomRef.current) toBottom()
     else setNewBelow(true)
   }, [items]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -432,7 +452,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
         </div>
       </header>
 
-      <div className="thread-scroll" ref={scroller} onScroll={onScroll}>
+      <div className="thread-scroll" ref={scroller} onScroll={onScroll} onWheel={onWheel} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onTouchCancel={onTouchEnd} onKeyDown={onKeyDown}>
         <div className="thread-inner">
           {items === null ? <Loading /> : (
             <>
