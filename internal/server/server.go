@@ -232,6 +232,7 @@ func (s *Server) Router() http.Handler {
 		// dictation written out by Pocket Voice: whisper on a long one may take longer (voice_dictation.go)
 		r.Get("/api/v1/dictation", s.handleDictation)
 		r.Post("/api/v1/dictation", s.handleDictate)
+		r.Post("/api/v1/dictations", s.handleKeepDictation)
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {
