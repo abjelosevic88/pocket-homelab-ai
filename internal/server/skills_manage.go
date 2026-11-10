@@ -32,6 +32,7 @@ type ownSkill struct {
 	Description string `json:"description"`
 	Body        string `json:"body,omitempty"`
 	Files       int    `json:"files"` // besides SKILL.md (references, scripts)
+	Sum         string `json:"sum"`   // cksum of SKILL.md (skills_hosts.go)
 	Path        string `json:"path"`
 }
 
@@ -42,6 +43,8 @@ func (s *Server) skillsManageRoutes(r chi.Router) {
 	r.Put("/skills/own/{name}", s.handleSaveOwnSkill)
 	r.Delete("/skills/own/{name}", s.handleDeleteOwnSkill)
 	r.Post("/skills/own/{name}/copy", s.handleCopyOwnSkill)
+	r.Post("/skills/own/{name}/to-host", s.handleCopySkillToHost)
+	r.Get("/skills/hosts", s.handleSkillsOnHosts)
 }
 
 // ownSkillsDir is the skills folder of the login the request names
@@ -358,7 +361,7 @@ func readOwnSkill(dir, name string, body bool) (*ownSkill, error) {
 		return nil, err
 	}
 	front, rest := splitFrontmatter(string(data))
-	sk := &ownSkill{Name: name, Description: frontmatterValue(front, "description"), Path: folder}
+	sk := &ownSkill{Name: name, Description: frontmatterValue(front, "description"), Path: folder, Sum: cksum(data)}
 	if body {
 		sk.Body = strings.TrimLeft(rest, "\n")
 	}

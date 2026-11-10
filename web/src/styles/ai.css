@@ -724,6 +724,9 @@ button.privacy-badge:disabled { cursor: default; }
 .skill-where { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 500; padding: 2px 8px; border-radius: 999px; border: 1px dashed var(--border); background: transparent; color: var(--muted); cursor: pointer; }
 .skill-where:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .skill-where.on { border-style: solid; border-color: transparent; background: var(--accent-soft); color: var(--accent); cursor: default; }
+.skill-where.differs { border-style: solid; border-color: color-mix(in srgb, var(--warning) 55%, var(--border)); color: var(--warning); }
+.skill-where.off { border-style: solid; opacity: .6; cursor: default; }
+.skill-machines { gap: 6px; margin-top: 6px; }
 
 /* Agents an agent started (pocket_agent_start): nested rows, the parent link, the chip */
 .th-row.th-child { position: relative; min-height: 40px; padding-left: 26px; }

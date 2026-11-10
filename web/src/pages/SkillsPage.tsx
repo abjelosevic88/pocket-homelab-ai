@@ -1,5 +1,6 @@
 // Skills: every skill the agents can use, which agent has each, and your own
-// skills to add, edit, remove and copy between Claude Code and Codex.
+// skills to add, edit, remove and copy between Claude Code and Codex, and to
+// the other machines (a chat on a machine only sees that machine's skills).
 import { useState } from 'react'
 import { api, qs, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
@@ -11,7 +12,11 @@ import { PageHead } from '../components/PageHead'
 import { Select } from '../components/Select'
 import { Confirm, copyText, Empty, errMsg, Field, Loading, MenuButton, Modal, Segmented, Spinner, Switch, noGrammarly, useAsync, useToast, type MenuItem } from '../components/ui'
 
-type OwnSkill = { name: string; description: string; body?: string; files: number; path: string }
+type OwnSkill = { name: string; description: string; body?: string; files: number; path: string; sum: string }
+type HostCopy = { home: string; sum: string }
+type HostSkills = { id: number; name: string; error?: string; homes: Partial<Record<ProviderId, string[]>>; skills: Record<ProviderId, Record<string, HostCopy[]>> }
+/** How a skill stands on one machine: per CLI it has here and there, all its login folders hold this copy, some do not, or none. */
+type OnHost = { state: 'on' | 'differs' | 'missing' | 'none' | 'error'; todo: ProviderId[]; title: string }
 type OwnList = { dir: string; skills: OwnSkill[]; error?: string }
 type Row = { name: string; claude?: OwnSkill; codex?: OwnSkill }
 type Draft = { name: string; description: string; body: string; files: number; provider?: ProviderId; to: Record<ProviderId, boolean> }
@@ -41,6 +46,9 @@ export default function SkillsPage({ onMenu }: { onMenu?: () => void }) {
   }, [acct.claude, acct.codex, refresh])
   const cli = useAsync(() => Promise.all(PROVIDERS.map(p => api.get<{ skills: Skill[]; error?: string }>(`${V1}/skills${qs({ provider: p, account: acct[p] || undefined, refresh: refresh ? 1 : undefined })}`)
     .then(r => ({ provider: p, skills: r.skills || [], error: r.error })).catch((e: unknown) => ({ provider: p, skills: [] as Skill[], error: errMsg(e) })))), [acct.claude, acct.codex, refresh])
+
+  const machines = useAsync(() => api.get<{ hosts: HostSkills[] }>(`${V1}/skills/hosts`).then(r => r.hosts || []), [refresh])
+  const [copying, setCopying] = useState('')
 
   const rows: Row[] = []
   for (const p of PROVIDERS) for (const s of own.data?.[p].skills || []) {
@@ -75,6 +83,38 @@ export default function SkillsPage({ onMenu }: { onMenu?: () => void }) {
       reload()
     } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
   }
+  const onHost = (r: Row, h: HostSkills): OnHost => {
+    if (h.error) return { state: 'error', todo: [], title: `${h.name}: ${h.error}` }
+    const todo: ProviderId[] = []
+    const lines: string[] = []
+    let have = 0, wanted = 0
+    for (const p of PROVIDERS) {
+      const mine = r[p], homes = h.homes[p] || []
+      if (!mine || homes.length === 0) continue
+      wanted++
+      const copies = h.skills[p]?.[r.name] || []
+      const same = copies.filter(c => c.sum === mine.sum)
+      if (copies.length) have++
+      if (same.length < homes.length) todo.push(p)
+      for (const home of homes) {
+        const c = copies.find(x => x.home === home)
+        lines.push(`${providerName(p)} ${home}: ${!c ? 'not there' : c.sum === mine.sum ? 'same as here' : 'a different version'}`)
+      }
+    }
+    if (wanted === 0) return { state: 'none', todo, title: `${h.name} has neither of these agents` }
+    const title = lines.join('\n')
+    if (todo.length === 0) return { state: 'on', todo, title }
+    return { state: have ? 'differs' : 'missing', todo, title }
+  }
+  const toHost = async (r: Row, h: HostSkills, todo: ProviderId[], update: boolean) => {
+    if (copying) return
+    setCopying(`${r.name}|${h.id}`)
+    try {
+      for (const p of todo) await api.post(`${V1}/skills/own/${r.name}/to-host${scope(p)}`, { host_id: h.id })
+      toast(`${update ? 'Updated' : 'Copied'} ${r.name} on ${h.name}`)
+      reload()
+    } catch (e) { toast(errMsg(e), 'err') } finally { setCopying('') }
+  }
   const remove = async () => {
     if (!del || busy) return
     setBusy(true)
@@ -100,6 +140,13 @@ export default function SkillsPage({ onMenu }: { onMenu?: () => void }) {
         items.push({ label: `Replace ${providerName(to)}'s copy with ${providerName(p)}'s`, icon: 'refresh', onSelect: () => send(r.name, p, { replace: true }) })
       }
     }
+    const hostItems: MenuItem[] = []
+    for (const h of machines.data || []) {
+      const o = onHost(r, h)
+      if (o.state === 'missing') hostItems.push({ label: `Copy to ${h.name}`, icon: 'server', onSelect: () => toHost(r, h, o.todo, false) })
+      if (o.state === 'differs') hostItems.push({ label: `Update on ${h.name}`, icon: 'refresh', onSelect: () => toHost(r, h, o.todo, true) })
+    }
+    if (hostItems.length) items.push('sep', ...hostItems)
     items.push('sep')
     for (const p of PROVIDERS) if (r[p]) items.push({ label: `Remove from ${providerName(p)}`, icon: 'trash', danger: true, onSelect: () => setDel({ name: r.name, provider: p }) })
     return items
@@ -147,6 +194,23 @@ export default function SkillsPage({ onMenu }: { onMenu?: () => void }) {
                   ? <span key={p} className="skill-where on" title={r[p]!.path}><Icon name="check" size={12} />{providerName(p)}</span>
                   : <button key={p} type="button" className="skill-where" disabled={busy} title={`Copy this skill to ${providerName(p)}`} onClick={() => send(r.name, other(p), {})}><Icon name="plus" size={12} />{providerName(p)}</button>)}
               </div>
+              <div className="row wrap skill-machines" aria-label={`Machines with ${r.name}`}>
+                <span className="muted xsmall">On</span>
+                <span className="skill-where on" title={PROVIDERS.filter(p => r[p]).map(p => r[p]!.path).join('\n')}><Icon name="server" size={12} />This server</span>
+                {machines.loading && !machines.data && <span className="muted xsmall">checking machines…</span>}
+                {machines.data?.map(h => {
+                  const o = onHost(r, h)
+                  const busyHere = copying === `${r.name}|${h.id}`
+                  if (o.state === 'on') return <span key={h.id} className="skill-where on" title={o.title}><Icon name="check" size={12} />{h.name}</span>
+                  if (o.state === 'none') return null
+                  if (o.state === 'error') return <span key={h.id} className="skill-where off" title={o.title}><Icon name="wifi-off" size={12} />{h.name}</span>
+                  const update = o.state === 'differs'
+                  return <button key={h.id} type="button" className={`skill-where ${update ? 'differs' : ''}`} disabled={!!copying}
+                    title={`${o.title}\n\n${update ? `Click to replace the copies on ${h.name} with this server's` : `Click to copy it to ${h.name}`}`}
+                    onClick={() => toHost(r, h, o.todo, update)}>
+                    {busyHere ? <Spinner /> : <Icon name={update ? 'refresh' : 'plus'} size={12} />}{h.name}{update && ' · different'}</button>
+                })}
+              </div>
             </div>
             <div className="list-card-actions">
               <button type="button" className="btn ghost icon-only" aria-label={`Edit skill: ${r.name}`} onClick={() => open(r.name, r.claude ? 'claude' : 'codex')}><Icon name="edit" size={15} /></button>
@@ -154,7 +218,8 @@ export default function SkillsPage({ onMenu }: { onMenu?: () => void }) {
             </div>
           </div>
         })}</div>
-        {own.data && <p className="muted xsmall">{PROVIDERS.map(p => own.data![p].dir && <span key={p}>{providerName(p)}: <code>{own.data![p].dir}</code><br /></span>)}</p>}
+        {own.data && <p className="muted xsmall">{PROVIDERS.map(p => own.data![p].dir && <span key={p}>{providerName(p)}: <code>{own.data![p].dir}</code><br /></span>)}
+          {(machines.data?.length ?? 0) > 0 && <>A chat on another machine only sees that machine's skills: copy one there from its card. Machines are set up in Settings → Agents → Servers.</>}</p>}
       </section>
 
       <section className="stack">
