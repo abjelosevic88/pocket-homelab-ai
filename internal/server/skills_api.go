@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -18,13 +19,25 @@ type skillsEntry struct {
 }
 
 var (
-	skillsMu    sync.Mutex
-	skillsCache = map[string]skillsEntry{}
+	skillsMu      sync.Mutex
+	skillsCache   = map[string]skillsEntry{}
+	skillsLoading = map[string]chan struct{}{} // a probe running for a key
+)
+
+// Skills change rarely. A list younger than skillsFresh is served as is; an
+// older one (up to skillsKeep) is served at once while the CLI is asked again
+// in the background, so the "/" menu never waits on a CLI start after the
+// first time. Saving, copying or deleting a skill drops the cache
+// (forgetSkills), so those show up at once.
+const (
+	skillsFresh = time.Minute
+	skillsKeep  = 24 * time.Hour
 )
 
 // handleSkills lists the skills a new message in this folder can use, as the
 // CLI itself reports them (user, project and plugin skills; the account's own
-// folder decides which). Remote hosts report none: their CLI is not probed.
+// folder decides which). On another machine its CLI is asked over ssh, in the
+// login folder the chat runs on (host_home).
 func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 	if !s.requireRun(w, r) {
 		return
@@ -37,59 +50,61 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "provider must be claude or codex")
 		return
 	}
-	if queryInt64(r, "host") != 0 {
-		writeJSON(w, http.StatusOK, map[string]any{"skills": agentCommandSkills(), "commands": remoteCommands(provider), "remote": true})
-		return
-	}
-	cwd := s.cfg.Home
-	if p := q.Get("cwd"); p != "" {
-		clean, err := s.checkDir(ctx, p)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, err.Error())
+	var probe func(context.Context) ([]agent.Skill, []agent.Skill, error)
+	var key string
+	if id := queryInt64(r, "host"); id != 0 {
+		h, err := s.checkHostUse(ctx, u, id)
+		if err != nil || h == nil {
+			writeJSON(w, http.StatusOK, map[string]any{"skills": agentCommandSkills(), "commands": remoteCommands(provider), "remote": true})
 			return
 		}
-		cwd = clean
+		cwd := q.Get("cwd") // a path over there: not checked here, the CLI just runs in it
+		home := strings.TrimSpace(q.Get("host_home"))
+		if home != "" && !agent.ValidHostHome(provider, h.Info.Home, home) {
+			home = ""
+		}
+		env, bin, rem := agent.HomeEnv(provider, home), hostBin(h, provider), remoteOf(h)
+		key = fmt.Sprintf("%s|host%d:%s|%s", provider, h.ID, home, cwd)
+		probe = func(ctx context.Context) ([]agent.Skill, []agent.Skill, error) {
+			if provider == "codex" {
+				l, err := agent.ListCodexSkills(ctx, bin, cwd, env, rem)
+				return l, agent.CodexCommands, err
+			}
+			return agent.ListClaudeSkills(ctx, bin, cwd, env, rem)
+		}
+	} else {
+		cwd := s.cfg.Home
+		if p := q.Get("cwd"); p != "" {
+			clean, err := s.checkDir(ctx, p)
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			cwd = clean
+		}
+		acct := queryInt64(r, "account")
+		if err := s.checkAccount(ctx, u, provider, acct); err != nil {
+			acct = 0
+		}
+		home, env := s.accountHome(ctx, provider, acct)
+		key = fmt.Sprintf("%s|%s|%s", provider, home, cwd)
+		probe = func(ctx context.Context) ([]agent.Skill, []agent.Skill, error) {
+			if provider == "codex" {
+				l, err := agent.ListCodexSkills(ctx, s.cfg.CodexBin, cwd, env)
+				return l, agent.CodexCommands, err
+			}
+			return agent.ListClaudeSkills(ctx, s.cfg.ClaudeBin, cwd, env)
+		}
 	}
-	acct := queryInt64(r, "account")
-	if err := s.checkAccount(ctx, u, provider, acct); err != nil {
-		acct = 0
-	}
-	home, env := s.accountHome(ctx, provider, acct)
-	key := fmt.Sprintf("%s|%s|%s", provider, home, cwd)
 
 	skillsMu.Lock()
 	e, ok := skillsCache[key]
 	skillsMu.Unlock()
-	// Skills change rarely; a minute keeps new ones showing up quickly.
-	if !ok || time.Since(e.at) > time.Minute || q.Get("refresh") == "1" {
-		prev, prevCmds := e.skills, e.commands
-		var list, cmds []agent.Skill
-		var err error
-		if provider == "codex" {
-			list, err = agent.ListCodexSkills(ctx, s.cfg.CodexBin, cwd, env)
-			cmds = agent.CodexCommands
-		} else {
-			list, cmds, err = agent.ListClaudeSkills(ctx, s.cfg.ClaudeBin, cwd, env)
-		}
-		e = skillsEntry{skills: list, commands: cmds, at: time.Now()}
-		if err != nil {
-			s.log.Warn("list skills", "provider", provider, "cwd", cwd, "err", err)
-			e.err = err.Error()
-			if len(e.skills) == 0 {
-				e.skills = prev // keep the last good list
-			}
-			if len(e.commands) == 0 {
-				e.commands = prevCmds
-			}
-		}
-		skillsMu.Lock()
-		for k, v := range skillsCache {
-			if time.Since(v.at) > 10*time.Minute {
-				delete(skillsCache, k)
-			}
-		}
-		skillsCache[key] = e
-		skillsMu.Unlock()
+	switch {
+	case !ok || q.Get("refresh") == "1":
+		e = s.loadSkills(ctx, key, probe) // nothing to show yet: wait for it
+	case time.Since(e.at) > skillsFresh:
+		go s.loadSkills(s.rt.ctx, key, probe) // show the last list, refresh behind it
 	}
 	if e.skills == nil {
 		e.skills = []agent.Skill{}
@@ -98,6 +113,54 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 		e.commands = []agent.Skill{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"skills": append(agentCommandSkills(e.skills, e.commands), e.skills...), "commands": e.commands, "error": e.err})
+}
+
+// loadSkills asks the CLI for key's list and caches it. One probe per key at
+// a time: a second caller waits for the running one and gets its result.
+func (s *Server) loadSkills(ctx context.Context, key string, probe func(context.Context) ([]agent.Skill, []agent.Skill, error)) skillsEntry {
+	skillsMu.Lock()
+	if ch, busy := skillsLoading[key]; busy {
+		skillsMu.Unlock()
+		select {
+		case <-ch:
+		case <-ctx.Done():
+		}
+		skillsMu.Lock()
+		e := skillsCache[key]
+		skillsMu.Unlock()
+		return e
+	}
+	ch := make(chan struct{})
+	skillsLoading[key] = ch
+	prev := skillsCache[key]
+	skillsMu.Unlock()
+
+	// not the request's context: a closed tab must not waste a probe others wait on
+	pctx, cancel := context.WithTimeout(s.rt.ctx, 45*time.Second)
+	list, cmds, err := probe(pctx)
+	cancel()
+	e := skillsEntry{skills: list, commands: cmds, at: time.Now()}
+	if err != nil {
+		s.log.Warn("list skills", "key", key, "err", err)
+		e.err = err.Error()
+		if len(e.skills) == 0 {
+			e.skills = prev.skills // keep the last good list
+		}
+		if len(e.commands) == 0 {
+			e.commands = prev.commands
+		}
+	}
+	skillsMu.Lock()
+	for k, v := range skillsCache {
+		if time.Since(v.at) > skillsKeep {
+			delete(skillsCache, k)
+		}
+	}
+	skillsCache[key] = e
+	delete(skillsLoading, key)
+	close(ch)
+	skillsMu.Unlock()
+	return e
 }
 
 // claudeBasicCommands stand in for Claude Code's built-in commands until it
