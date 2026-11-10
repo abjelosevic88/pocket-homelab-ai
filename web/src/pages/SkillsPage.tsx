@@ -1,7 +1,7 @@
 // Skills: every skill the agents can use, which agent has each, and your own
 // skills to add, edit, remove and copy between Claude Code and Codex, and to
 // the other machines (a chat on a machine only sees that machine's skills).
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { api, qs, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { providerName } from '../lib/format'
@@ -60,7 +60,6 @@ export default function SkillsPage({ onMenu }: { onMenu?: () => void }) {
   const match = (name: string, desc = '') => !q.trim() || `${name} ${desc}`.toLowerCase().includes(q.trim().toLowerCase())
   const inShow = (r: Row) => show === 'all' || (show === 'both' ? !!(r.claude && r.codex) : !!r[show])
   const shownRows = rows.filter(r => inShow(r) && match(r.name, (r.claude || r.codex)?.description))
-  const counts = { both: rows.filter(r => r.claude && r.codex).length, claude: rows.filter(r => r.claude && !r.codex).length, codex: rows.filter(r => r.codex && !r.claude).length }
   const mine = new Set(rows.map(r => r.name))
   const others = (cli.data || []).filter(l => show === 'all' || show === 'both' || l.provider === show)
     .flatMap(l => l.skills.filter(s => !mine.has(s.name) && match(s.name, s.description)).map(s => ({ ...s, provider: l.provider })))
@@ -153,93 +152,98 @@ export default function SkillsPage({ onMenu }: { onMenu?: () => void }) {
   }
   const logins = (p: ProviderId) => accountOptions(accounts, p, acct[p])
 
-  return <div className="page">
-    <PageHead title="Skills" icon="sparkles" onMenu={onMenu} sub={<>What the agents can use. Type <code>/name</code> (Claude Code) or <code>$name</code> (Codex) in a message, or let the agent pick one when the task fits.</>}
+  const hosts = machines.data || []
+  const where = (p: ProviderId) => own.data?.[p].dir
+  const legend = <span className="skills-legend muted xsmall">
+    <span><Icon name="check" size={12} /> there</span><span><Icon name="plus" size={12} /> copy there</span><span className="warn"><Icon name="refresh" size={12} /> different copy, click to update</span>
+  </span>
+
+  return <div className="page skills-page">
+    <PageHead title="Skills" icon="sparkles" onMenu={onMenu} sub={<>Type <code>/name</code> in a message to use one, or let the agent pick.</>}
       actions={<button type="button" className="btn primary" onClick={() => setEdit({ name: '', description: '', body: '', files: 0, to: both(true) })}><Icon name="plus" size={14} />New skill</button>} />
     <div className="page-scroll"><div className="page-inner stack">
-      <div className="row wrap">
-        <Segmented label="Show" size="sm" value={show} onChange={setShow} options={[
-          { value: 'all', label: 'All' }, { value: 'both', label: 'In both' },
-          { value: 'claude', label: 'Claude Code' }, { value: 'codex', label: 'Codex' }]} />
-        <span className="grow" />
-        <div className="sb-search" style={{ minWidth: 160 }}>
+      <div className="skills-bar">
+        <div className="sb-search">
           <Icon name="search" size={14} />
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Filter skills…" aria-label="Filter skills" onKeyDown={e => { if (e.key === 'Escape') setQ('') }} />
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Find a skill" aria-label="Find a skill" onKeyDown={e => { if (e.key === 'Escape') setQ('') }} />
         </div>
-        <button type="button" className="btn ghost sm" onClick={reload} disabled={cli.loading || own.loading}><Icon name="refresh" size={14} />Refresh</button>
-      </div>
-      {PROVIDERS.some(p => logins(p).length > 0) && <div className="row wrap">
-        {PROVIDERS.filter(p => logins(p).length > 0).map(p => <Select key={p} size="sm" value={acct[p]} onChange={v => setAcct({ ...acct, [p]: v })} label={`${providerName(p)} login`} width={280}
+        <Segmented label="Agent" size="sm" value={show} onChange={setShow} options={[
+          { value: 'all', label: 'All' }, { value: 'claude', label: 'Claude Code' }, { value: 'codex', label: 'Codex' }]} />
+        {PROVIDERS.filter(p => logins(p).length > 1).map(p => <Select key={p} size="sm" className="ghost" value={acct[p]} onChange={v => setAcct({ ...acct, [p]: v })} label={`${providerName(p)} login`} width={210}
           options={logins(p).map(o => ({ ...o, label: `${providerName(p)}: ${o.label}` }))} />)}
-      </div>}
+        <span className="grow" />
+        <button type="button" className="btn ghost icon-only" aria-label="Refresh" title="Check again" onClick={reload} disabled={cli.loading || own.loading || machines.loading}>
+          {machines.loading || own.loading ? <Spinner /> : <Icon name="refresh" size={15} />}</button>
+      </div>
 
-      <section className="stack">
-        <h3 className="srv-h">Your skills{own.data && rows.length > 0 && <span className="muted">{counts.both} in both · {counts.claude} Claude Code only · {counts.codex} Codex only</span>}</h3>
-        {PROVIDERS.map(p => own.data?.[p].error && <div key={p} className="callout warn" role="alert">{providerName(p)}: {own.data[p].error}</div>)}
-        {own.loading && !own.data && <Loading />}
-        {own.data && rows.length === 0 && <Empty icon="sparkles" title="No skills of your own yet">A skill is a set of instructions the agent loads when a task needs it, e.g. how you deploy, review or write.</Empty>}
-        {own.data && rows.length > 0 && shownRows.length === 0 && <p className="muted small">None match.</p>}
-        <div className="list-cards">{shownRows.map(r => {
-          const lead = (r.claude || r.codex)!
-          const differs = !!(r.claude && r.codex && r.claude.description !== r.codex.description)
-          return <div className="list-card" key={r.name}>
-            <div className="grow" style={{ minWidth: 0 }}>
-              <div className="list-card-title">{r.name}
-                {differs && <span className="spec-chip" title="The two copies have different descriptions">Differs</span>}
-                {lead.files > 0 && <span className="spec-chip" title="Files besides SKILL.md (references, scripts)">+{lead.files} file{lead.files === 1 ? '' : 's'}</span>}
-              </div>
-              <div className="list-card-sub">{lead.description || <span className="muted">No description</span>}</div>
-              <div className="row wrap" style={{ gap: 6 }}>
-                {PROVIDERS.map(p => r[p]
-                  ? <span key={p} className="skill-where on" title={r[p]!.path}><Icon name="check" size={12} />{providerName(p)}</span>
-                  : <button key={p} type="button" className="skill-where" disabled={busy} title={`Copy this skill to ${providerName(p)}`} onClick={() => send(r.name, other(p), {})}><Icon name="plus" size={12} />{providerName(p)}</button>)}
-              </div>
-              <div className="row wrap skill-machines" aria-label={`Machines with ${r.name}`}>
-                <span className="muted xsmall">On</span>
-                <span className="skill-where on" title={PROVIDERS.filter(p => r[p]).map(p => r[p]!.path).join('\n')}><Icon name="server" size={12} />This server</span>
-                {machines.loading && !machines.data && <span className="muted xsmall">checking machines…</span>}
-                {machines.data?.map(h => {
-                  const o = onHost(r, h)
-                  const busyHere = copying === `${r.name}|${h.id}`
-                  if (o.state === 'on') return <span key={h.id} className="skill-where on" title={o.title}><Icon name="check" size={12} />{h.name}</span>
-                  if (o.state === 'none') return null
-                  if (o.state === 'error') return <span key={h.id} className="skill-where off" title={o.title}><Icon name="wifi-off" size={12} />{h.name}</span>
-                  const update = o.state === 'differs'
-                  return <button key={h.id} type="button" className={`skill-where ${update ? 'differs' : ''}`} disabled={!!copying}
-                    title={`${o.title}\n\n${update ? `Click to replace the copies on ${h.name} with this server's` : `Click to copy it to ${h.name}`}`}
-                    onClick={() => toHost(r, h, o.todo, update)}>
-                    {busyHere ? <Spinner /> : <Icon name={update ? 'refresh' : 'plus'} size={12} />}{h.name}{update && ' · different'}</button>
-                })}
-              </div>
-            </div>
-            <div className="list-card-actions">
-              <button type="button" className="btn ghost icon-only" aria-label={`Edit skill: ${r.name}`} onClick={() => open(r.name, r.claude ? 'claude' : 'codex')}><Icon name="edit" size={15} /></button>
-              <MenuButton label={`More for ${r.name}`} align="right" width={290} items={() => menu(r)}><Icon name="more" size={16} /></MenuButton>
-            </div>
-          </div>
-        })}</div>
-        {own.data && <p className="muted xsmall">{PROVIDERS.map(p => own.data![p].dir && <span key={p}>{providerName(p)}: <code>{own.data![p].dir}</code><br /></span>)}
-          {(machines.data?.length ?? 0) > 0 && <>A chat on another machine only sees that machine's skills: copy one there from its card. Machines are set up in Settings → Agents → Servers.</>}</p>}
-      </section>
+      {PROVIDERS.map(p => own.data?.[p].error && <div key={p} className="callout warn" role="alert">{providerName(p)}: {own.data[p].error}</div>)}
+      {own.loading && !own.data && <Loading />}
+      {own.data && rows.length === 0 && <Empty icon="sparkles" title="No skills of your own yet">A skill is a set of instructions the agent loads when a task needs it, e.g. how you deploy, review or write.</Empty>}
+      {own.data && rows.length > 0 && <>
+        <div className="skills-table-wrap">
+          <table className="skills-table">
+            <thead><tr>
+              <th className="sk-name-h">Your skills <span className="muted">{rows.length}</span></th>
+              <th className="sk-agents-h">Agents</th>
+              <th className="sk-host-h" title={PROVIDERS.map(p => where(p) && `${providerName(p)}: ${where(p)}`).filter(Boolean).join('\n')}>This server</th>
+              {hosts.map(h => <th key={h.id} className={`sk-host-h ${h.error ? 'off' : ''}`} title={h.error ? `${h.name}: ${h.error}` : h.name}>
+                <span className="sk-host-name">{h.error && <Icon name="wifi-off" size={12} />}{h.name}</span></th>)}
+              {machines.loading && !machines.data && <th className="sk-host-h"><Spinner /></th>}
+              <th aria-label="Actions" />
+            </tr></thead>
+            <tbody>
+              {shownRows.length === 0 && <tr><td colSpan={4 + hosts.length} className="muted small sk-none">No skill matches.</td></tr>}
+              {shownRows.map(r => {
+                const lead = (r.claude || r.codex)!
+                return <tr key={r.name}>
+                  <td className="sk-name">
+                    <button type="button" className="sk-title" onClick={() => open(r.name, r.claude ? 'claude' : 'codex')} title="Edit">{r.name}</button>
+                    <div className="sk-desc" title={lead.description}>{lead.description || <span className="muted">No description</span>}</div>
+                  </td>
+                  <td className="sk-agents">{PROVIDERS.map(p => r[p]
+                    ? <span key={p} className={`sk-agent on prov-glyph ${p}`} title={`In ${providerName(p)}\n${r[p]!.path}`}><Icon name={p} size={15} /></span>
+                    : <button key={p} type="button" className="sk-agent" disabled={busy} title={`Not in ${providerName(p)}. Click to copy it there.`} aria-label={`Copy ${r.name} to ${providerName(p)}`} onClick={() => send(r.name, other(p), {})}><Icon name={p} size={15} /></button>)}
+                  </td>
+                  <td className="sk-cell"><span className="sk-mark on" title={PROVIDERS.filter(p => r[p]).map(p => r[p]!.path).join('\n')}><Icon name="check" size={14} /></span></td>
+                  {hosts.map(h => {
+                    const o = onHost(r, h)
+                    const label = `${r.name} on ${h.name}`
+                    let mark: ReactNode
+                    if (copying === `${r.name}|${h.id}`) mark = <span className="sk-mark"><Spinner /></span>
+                    else if (o.state === 'on') mark = <span className="sk-mark on" title={o.title} aria-label={`${label}: there`}><Icon name="check" size={14} /></span>
+                    else if (o.state === 'none' || o.state === 'error') mark = <span className="sk-mark none" title={o.title}>–</span>
+                    else {
+                      const update = o.state === 'differs'
+                      mark = <button type="button" className={`sk-mark btn-mark ${update ? 'differs' : 'add'}`} disabled={!!copying} aria-label={update ? `Update ${label}` : `Copy ${r.name} to ${h.name}`}
+                        title={`${o.title}\n\n${update ? `Click to replace it with this server's copy` : `Click to copy it to ${h.name}`}`} onClick={() => toHost(r, h, o.todo, update)}>
+                        <Icon name={update ? 'refresh' : 'plus'} size={14} /></button>
+                    }
+                    return <td key={h.id} className="sk-cell">{mark}</td>
+                  })}
+                  {machines.loading && !machines.data && <td />}
+                  <td className="sk-more"><MenuButton label={`More for ${r.name}`} align="right" width={290} items={() => menu(r)}><Icon name="more" size={16} /></MenuButton></td>
+                </tr>
+              })}
+            </tbody>
+          </table>
+        </div>
+        {hosts.length > 0 && <span className="muted xsmall sk-scroll-hint">Swipe the table sideways to see every machine.</span>}
+        {legend}
+      </>}
 
-      <section className="stack">
-        <h3 className="srv-h">Also available</h3>
-        <p className="muted small">From plugins, projects, your claude.ai account and the agents themselves. These are read-only here.</p>
+      <details className="skills-more">
+        <summary><Icon name="chevron-right" size={14} />Also available{cli.data && <span className="muted"> · {others.length}</span>}<span className="muted xsmall sk-more-from">from plugins, projects and claude.ai</span></summary>
         {cli.loading && !cli.data && <Loading label="Asking Claude Code and Codex…" />}
         {cli.data?.map(l => l.error && <div key={l.provider} className="callout warn">{providerName(l.provider)}: {l.error}</div>)}
         {cli.data && others.length === 0 && <p className="muted small">Nothing else.</p>}
-        <div className="list-cards">{others.map(s => <div className="list-card" key={s.provider + s.name}>
-          <div className="grow" style={{ minWidth: 0 }}>
-            <div className="list-card-title">{s.name.slice(s.name.indexOf(':') + 1)}
-              <span className={`prov prov-${s.provider} xs`}>{s.provider === 'codex' ? 'Codex' : 'Claude'}</span>
-              {origin(s) && <span className="spec-chip">{origin(s)}</span>}</div>
-            <div className="list-card-sub">{s.description || <span className="muted">No description</span>}</div>
-          </div>
-          <div className="list-card-actions">
-            <button type="button" className="btn sm" aria-label={`Copy ${s.invoke}`} onClick={() => copy(s.invoke)}><Icon name="copy" size={14} />Copy</button>
-          </div>
-        </div>)}</div>
-      </section>
+        <ul className="skills-more-list">{others.map(s => <li key={s.provider + s.name}>
+          <span className={`prov-glyph ${s.provider}`} title={providerName(s.provider)}><Icon name={s.provider} size={14} /></span>
+          <span className="sk-title static">{s.name.slice(s.name.indexOf(':') + 1)}</span>
+          <span className="sk-desc grow" title={s.description}>{s.description}</span>
+          {origin(s) && <span className="spec-chip">{origin(s)}</span>}
+          <button type="button" className="btn ghost icon-only sm" aria-label={`Copy ${s.invoke}`} title={`Copy ${s.invoke}`} onClick={() => copy(s.invoke)}><Icon name="copy" size={14} /></button>
+        </li>)}</ul>
+      </details>
     </div></div>
     {edit && <SkillEditor draft={edit} scope={scope} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); reload() }} />}
     {del && <Confirm title={`Remove “${del.name}” from ${providerName(del.provider)}?`} confirmLabel="Remove" message={busy ? 'Removing…' : `${providerName(del.provider)} stops using it. Its folder moves to .pocket-ai-trash next to the skills folder, so you can bring it back.`}
