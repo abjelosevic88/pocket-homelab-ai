@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os/exec"
 	"sort"
 	"strings"
 	"syscall"
@@ -32,15 +33,22 @@ var claudeHidden = map[string]bool{
 // ListClaudeSkills asks Claude Code which skills and custom commands it loads
 // in cwd (user, project and plugin ones) and which built-in commands it runs
 // without a terminal (/compact, /context, /mcp, /code-review …). The
-// initialize handshake only: no prompt, no session file.
-func ListClaudeSkills(ctx context.Context, bin, cwd string, env []string) (skills, commands []Skill, err error) {
+// initialize handshake only: no prompt, no session file. With a remote it
+// asks the CLI on that machine (over ssh).
+func ListClaudeSkills(ctx context.Context, bin, cwd string, env []string, remote ...*Remote) (skills, commands []Skill, err error) {
 	if bin == "" {
 		bin = "claude"
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	cmd, err := LocalCmd(ctx, cwd, env, bin, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-		"--no-session-persistence", "--permission-prompt-tool", "stdio", "--settings", `{"disableAllHooks":true}`)
+	args := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+		"--no-session-persistence", "--permission-prompt-tool", "stdio", "--settings", `{"disableAllHooks":true}`}
+	var cmd *exec.Cmd
+	if len(remote) > 0 && remote[0] != nil {
+		cmd, err = remote[0].command(cwd, env, nil, bin, args)
+	} else {
+		cmd, err = LocalCmd(ctx, cwd, env, bin, args...)
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -50,6 +58,8 @@ func ListClaudeSkills(ctx context.Context, bin, cwd string, env []string) (skill
 	if err := cmd.Start(); err != nil {
 		return nil, nil, err
 	}
+	stop := context.AfterFunc(ctx, func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }) // the ssh one has no ctx
+	defer stop()
 	defer func() {
 		_ = stdin.Close()
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
@@ -102,9 +112,10 @@ func ListClaudeSkills(ctx context.Context, bin, cwd string, env []string) (skill
 	return nil, nil, errors.New("Claude Code did not list its skills")
 }
 
-// ListCodexSkills asks the Codex app-server for the enabled skills in cwd.
-func ListCodexSkills(ctx context.Context, bin, cwd string, env []string) ([]Skill, error) {
-	c, err := startRPC(bin, cwd, env)
+// ListCodexSkills asks the Codex app-server for the enabled skills in cwd
+// (on the remote machine, when given).
+func ListCodexSkills(ctx context.Context, bin, cwd string, env []string, remote ...*Remote) ([]Skill, error) {
+	c, err := startRPC(bin, cwd, env, remote...)
 	if err != nil {
 		return nil, err
 	}

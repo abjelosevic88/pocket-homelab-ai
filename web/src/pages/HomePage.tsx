@@ -307,7 +307,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
           if (from && text.includes(from)) serverComposer.current?.setText(text.split(from).join(to))
         }} />}
         <DraftFiles files={draftFiles} source={draft.ref} onRemove={id => setDraftFiles(f => f.filter(x => x.id !== id))} />
-        <Composer ref={serverComposer} big autoFocus draftKey={`link-${draft.id}`} onSend={send} onCommand={startFirst} skills={choice?.provider ? { provider: choice.provider, cwd: choice.cwd, account_id: choice.account_id, host_id: hostId } : undefined}
+        <Composer ref={serverComposer} big autoFocus draftKey={`link-${draft.id}`} onSend={send} onCommand={startFirst} skills={choice?.provider ? { provider: choice.provider, cwd: choice.cwd, account_id: choice.account_id, host_id: hostId, host_home: hostId ? choice.host_home : undefined } : undefined}
           placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} about ${draft.ref || 'this'}${hostId ? ` on ${hosts.find(h => h.id === hostId)?.name}` : ''}…`}
           footer={<AgentPicker compact switchProvider host={hostId} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} remote={remoteSwitch} />} />
         </>
@@ -388,7 +388,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
                 </div>
               )}
               {draft && <DraftFiles files={draftFiles} source={draft.ref} onRemove={id => setDraftFiles(f => f.filter(x => x.id !== id))} />}
-              <Composer ref={serverComposer} big autoFocus draftKey={draft ? `link-${draft.id}` : 'new'} onSend={send} onCommand={startFirst} skills={choice?.provider ? { provider: choice.provider, cwd: choice.cwd, account_id: choice.account_id, host_id: hostId } : undefined}
+              <Composer ref={serverComposer} big autoFocus draftKey={draft ? `link-${draft.id}` : 'new'} onSend={send} onCommand={startFirst} skills={choice?.provider ? { provider: choice.provider, cwd: choice.cwd, account_id: choice.account_id, host_id: hostId, host_home: hostId ? choice.host_home : undefined } : undefined}
                 placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} anything${hostId ? ` on ${hosts.find(h => h.id === hostId)?.name}` : ''}${choice.cwd && !wtSpec ? ` in ${shortPath(choice.cwd)}` : ''}${wtWhere}… paste a screenshot, type / for recipes`}
                 footer={<AgentPicker compact switchProvider host={hostId} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} remote={remoteSwitch} />} />
               {providers.length > 0 && !providers.some(p => p.available) && (

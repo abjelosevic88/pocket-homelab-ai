@@ -79,15 +79,15 @@ function strayPaste(e: ClipboardEvent) {
 }
 
 /** Where a message would run: decides which skills the CLI offers. */
-export interface SkillScope { provider: ProviderId; cwd?: string; account_id?: number; host_id?: number }
+export interface SkillScope { provider: ProviderId; cwd?: string; account_id?: number; host_id?: number; host_home?: string }
 
 type SkillList = { skills: Skill[]; commands: Skill[] }
 const noSkills: SkillList = { skills: [], commands: [] }
 const skillCache = new Map<string, { at: number } & SkillList>()
 
-/** The skills and built-in commands for a scope, fetched once the slash menu opens (cached a minute). */
+/** The skills and built-in commands for a scope, fetched when the box gets the focus, so they are there when "/" is typed (cached a minute; the server answers from its own cache and refreshes behind it). */
 function useSkills(scope: SkillScope | undefined, wanted: boolean): SkillList {
-  const key = scope ? `${scope.provider}|${scope.cwd || ''}|${scope.account_id || 0}|${scope.host_id || 0}` : ''
+  const key = scope ? `${scope.provider}|${scope.cwd || ''}|${scope.account_id || 0}|${scope.host_id || 0}|${scope.host_home || ''}` : ''
   const [skills, setSkills] = useState<SkillList>(() => skillCache.get(key) || noSkills)
   useEffect(() => {
     if (!scope || !wanted) return
@@ -95,7 +95,7 @@ function useSkills(scope: SkillScope | undefined, wanted: boolean): SkillList {
     if (hit) setSkills(hit)
     if (hit && Date.now() - hit.at < 60_000) return
     let live = true
-    const q = new URLSearchParams({ provider: scope.provider, cwd: scope.cwd || '', account: String(scope.account_id || 0), host: String(scope.host_id || 0) })
+    const q = new URLSearchParams({ provider: scope.provider, cwd: scope.cwd || '', account: String(scope.account_id || 0), host: String(scope.host_id || 0), host_home: scope.host_home || '' })
     api.get<{ skills: Skill[]; commands?: Skill[] }>(`${V1}/skills?${q}`).then(r => {
       const got = { skills: r.skills || [], commands: r.commands || [] }
       skillCache.set(key, { at: Date.now(), ...got })
@@ -377,7 +377,8 @@ export const Composer = React.forwardRef<ComposerHandle, {
       if (!pasteTargets.length) window.removeEventListener('paste', strayPaste)
     }
   }, [insert])
-  const markUsed = () => { lastPasteTarget = pasteTargets.find(p => p.el() === ta.current) || null }
+  const [primed, setPrimed] = useState(false) // focused once: load the skills ahead of "/"
+  const markUsed = () => { lastPasteTarget = pasteTargets.find(p => p.el() === ta.current) || null; setPrimed(true) }
 
   const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const files = Array.from(e.clipboardData.items).filter(i => i.kind === 'file').map(i => i.getAsFile()).filter((f): f is File => !!f)
@@ -427,7 +428,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
   const lead = text[0]
   const trigger = lead === '/' || (lead === '$' && skillScope?.provider === 'codex')
   const slash = trigger && !/\s/.test(text) && text !== slashShut ? text.slice(1).toLowerCase() : null
-  const { skills: allSkills, commands: allCommands } = useSkills(skillScope, slash !== null)
+  const { skills: allSkills, commands: allCommands } = useSkills(skillScope, slash !== null || primed)
   const byName = (list: Skill[], max: number) => slash === null ? [] : list
     .filter(k => k.name.toLowerCase().includes(slash) || (slash.length > 2 && k.description.toLowerCase().includes(slash)))
     .sort((a, b) => Number(!a.name.toLowerCase().startsWith(slash)) - Number(!b.name.toLowerCase().startsWith(slash)))
