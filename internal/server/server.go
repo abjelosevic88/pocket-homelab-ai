@@ -158,6 +158,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	s.repairCostsOnce(ctx)    // before any agent runs: turns recorded before 0.48.0 (cost_repair.go)
 	s.repairAllCostsOnce(ctx) // then replayed copies, and every conversation from its session file (cost_repair_full.go)
 	go s.housekeeping(ctx)
+	go s.shareSkills(ctx) // one set of skills for every login (skills_share.go)
 	go s.scheduleLoop(ctx)
 	_, _ = s.store.DB.ExecContext(ctx, `UPDATE workflows SET last_status='interrupted' WHERE last_status='running'`)
 	go s.workflowLoop(ctx)

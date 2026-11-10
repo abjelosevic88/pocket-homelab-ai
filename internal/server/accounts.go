@@ -406,6 +406,7 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	if !person {
 		agent.ShareSetup(in.Provider, s.defaultHome(in.Provider), home)
+		_, _, _ = linkSkills(filepath.Join(s.defaultHome(in.Provider), "skills"), filepath.Join(home, "skills")) // even before the shared folder exists
 		if in.Provider == "claude" {
 			s.copyClaudeMCP(home)
 		}

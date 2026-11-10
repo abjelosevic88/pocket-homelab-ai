@@ -3,13 +3,10 @@
 // the other machines (a chat on a machine only sees that machine's skills).
 import { useState, type ReactNode } from 'react'
 import { api, qs, V1 } from '../lib/api'
-import { useApp } from '../lib/app-context'
 import { providerName } from '../lib/format'
 import type { ProviderId, Skill } from '../lib/types'
-import { accountOptions } from '../components/AgentPicker'
 import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
-import { Select } from '../components/Select'
 import { Confirm, copyText, Empty, errMsg, Field, Loading, MenuButton, Modal, Segmented, Spinner, Switch, noGrammarly, useAsync, useToast, type MenuItem } from '../components/ui'
 
 type OwnSkill = { name: string; description: string; body?: string; files: number; path: string; sum: string }
@@ -29,23 +26,22 @@ const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace
 const both = (v: boolean) => ({ claude: v, codex: v }) as Record<ProviderId, boolean>
 
 export default function SkillsPage({ onMenu }: { onMenu?: () => void }) {
-  const { accounts } = useApp()
   const { toast } = useToast()
-  const [acct, setAcct] = useState({ claude: 0, codex: 0 } as Record<ProviderId, number>)
   const [show, setShow] = useState<Show>('all')
   const [q, setQ] = useState('')
   const [refresh, setRefresh] = useState(0)
   const [edit, setEdit] = useState<Draft | null>(null)
   const [del, setDel] = useState<{ name: string; provider: ProviderId } | null>(null)
   const [busy, setBusy] = useState(false)
-  const scope = (p: ProviderId) => qs({ provider: p, account: acct[p] || undefined })
+  // every login shares one skills folder (server: skills_share.go), so no login to pick
+  const scope = (p: ProviderId) => qs({ provider: p })
   const own = useAsync(async () => {
     const [claude, codex] = await Promise.all(PROVIDERS.map(p => api.get<OwnList>(`${V1}/skills/own${scope(p)}`)
       .catch((e: unknown): OwnList => ({ dir: '', skills: [], error: errMsg(e) }))))
     return { claude, codex } as Record<ProviderId, OwnList>
-  }, [acct.claude, acct.codex, refresh])
-  const cli = useAsync(() => Promise.all(PROVIDERS.map(p => api.get<{ skills: Skill[]; error?: string }>(`${V1}/skills${qs({ provider: p, account: acct[p] || undefined, refresh: refresh ? 1 : undefined })}`)
-    .then(r => ({ provider: p, skills: r.skills || [], error: r.error })).catch((e: unknown) => ({ provider: p, skills: [] as Skill[], error: errMsg(e) })))), [acct.claude, acct.codex, refresh])
+  }, [refresh])
+  const cli = useAsync(() => Promise.all(PROVIDERS.map(p => api.get<{ skills: Skill[]; error?: string }>(`${V1}/skills${qs({ provider: p, refresh: refresh ? 1 : undefined })}`)
+    .then(r => ({ provider: p, skills: r.skills || [], error: r.error })).catch((e: unknown) => ({ provider: p, skills: [] as Skill[], error: errMsg(e) })))), [refresh])
 
   const machines = useAsync(() => api.get<{ hosts: HostSkills[] }>(`${V1}/skills/hosts`).then(r => r.hosts || []), [refresh])
   const [copying, setCopying] = useState('')
@@ -77,7 +73,7 @@ export default function SkillsPage({ onMenu }: { onMenu?: () => void }) {
     const to = other(from)
     setBusy(true)
     try {
-      await api.post(`${V1}/skills/own/${name}/copy${scope(from)}`, { to, to_account: acct[to] || 0, ...opts })
+      await api.post(`${V1}/skills/own/${name}/copy${scope(from)}`, { to, ...opts })
       toast(`${opts.move ? 'Moved' : 'Copied'} ${name} to ${providerName(to)}`)
       reload()
     } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
@@ -150,7 +146,6 @@ export default function SkillsPage({ onMenu }: { onMenu?: () => void }) {
     for (const p of PROVIDERS) if (r[p]) items.push({ label: `Remove from ${providerName(p)}`, icon: 'trash', danger: true, onSelect: () => setDel({ name: r.name, provider: p }) })
     return items
   }
-  const logins = (p: ProviderId) => accountOptions(accounts, p, acct[p])
 
   const hosts = machines.data || []
   const where = (p: ProviderId) => own.data?.[p].dir
@@ -159,7 +154,7 @@ export default function SkillsPage({ onMenu }: { onMenu?: () => void }) {
   </span>
 
   return <div className="page skills-page">
-    <PageHead title="Skills" icon="sparkles" onMenu={onMenu} sub={<>Type <code>/name</code> in a message to use one, or let the agent pick.</>}
+    <PageHead title="Skills" icon="sparkles" onMenu={onMenu} sub={<>Type <code>/name</code> in a message to use one. All your logins on a machine share the same skills.</>}
       actions={<button type="button" className="btn primary" onClick={() => setEdit({ name: '', description: '', body: '', files: 0, to: both(true) })}><Icon name="plus" size={14} />New skill</button>} />
     <div className="page-scroll"><div className="page-inner stack">
       <div className="skills-bar">
@@ -169,8 +164,6 @@ export default function SkillsPage({ onMenu }: { onMenu?: () => void }) {
         </div>
         <Segmented label="Agent" size="sm" value={show} onChange={setShow} options={[
           { value: 'all', label: 'All' }, { value: 'claude', label: 'Claude Code' }, { value: 'codex', label: 'Codex' }]} />
-        {PROVIDERS.filter(p => logins(p).length > 1).map(p => <Select key={p} size="sm" className="ghost" value={acct[p]} onChange={v => setAcct({ ...acct, [p]: v })} label={`${providerName(p)} login`} width={210}
-          options={logins(p).map(o => ({ ...o, label: `${providerName(p)}: ${o.label}` }))} />)}
         <span className="grow" />
         <button type="button" className="btn ghost icon-only" aria-label="Refresh" title="Check again" onClick={reload} disabled={cli.loading || own.loading || machines.loading}>
           {machines.loading || own.loading ? <Spinner /> : <Icon name="refresh" size={15} />}</button>

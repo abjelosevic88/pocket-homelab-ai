@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -61,6 +62,9 @@ func (s *Server) skillsDirFor(r *http.Request, provider string, acct int64) (str
 	}
 	if provider != "claude" && provider != "codex" {
 		return "", badRequest("provider must be claude or codex")
+	}
+	if acct == 0 && s.jailed(ctx, u.ID) {
+		acct = s.firstOwnAccount(ctx, u.ID, provider) // the server's own skills are not theirs to change
 	}
 	if err := s.checkAccount(ctx, u, provider, acct); err != nil {
 		return "", err
@@ -446,4 +450,19 @@ func setFrontmatter(front, name, desc string) string {
 		}
 	}
 	return strings.Join(out, "\n") + "\n"
+}
+
+// firstOwnAccount: a person's first login of a CLI (0 when they have none).
+func (s *Server) firstOwnAccount(ctx context.Context, uid int64, provider string) int64 {
+	list, err := s.store.ListAccounts(ctx)
+	if err != nil {
+		return 0
+	}
+	var best int64
+	for _, a := range list {
+		if a.Provider == provider && a.UserID != nil && *a.UserID == uid && (best == 0 || a.ID < best) {
+			best = a.ID
+		}
+	}
+	return best
 }
