@@ -399,6 +399,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
     { label: t.no_memory ? 'Enable saved memory' : 'Don’t use memory in this conversation', icon: 'bookmark', onSelect: () => patch({ no_memory: !t.no_memory }) },
     ...(document.querySelector('pocket-ask-launcher') ? [{ label: 'Ask about an item…', icon: 'sparkles' as const, onSelect: () => window.dispatchEvent(new Event('pocket-ask-pick')) }] : []),
     { label: t.pinned ? 'Remove from favorites' : 'Add to favorites', icon: 'star', onSelect: async () => { const th = await patch({ pinned: !t.pinned }); if (th) toast(th.pinned ? 'Added to favorites' : 'Removed from favorites') } },
+    ...(t.notebook ? [{ label: 'New chat in this notebook', icon: 'book' as const, onSelect: () => navigate(`/notebooks/${t.notebook}`) }] : []),
     { label: 'Rename', icon: 'edit', onSelect: () => { setTitleDraft(t.title || threadTitle(t)); setEditingTitle(true) } },
     { label: 'Regenerate title', icon: 'sparkles', onSelect: async () => { const th = await retitleThread(id, toast); if (th) { setThread(th); upsertThread(th) } } },
     { label: 'Move to another folder…', icon: 'folder', disabled: t.source === 'ask' || !canRun || running, onSelect: () => setMoving(true) },
@@ -543,7 +544,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   return (
     <div className={`nb-split ${nbPane ? 'open' : ''}`}>
       {page}
-      {nbPane && <NotebookPane id={t.notebook} onClose={() => showNbPane(false)} onAsk={prefix => {
+      {nbPane && <NotebookPane id={t.notebook} threadId={t.id} onClose={() => showNbPane(false)} onAsk={prefix => {
         composer.current?.setText(prefix)
         if (mobile) showNbPane(false)
       }} />}
