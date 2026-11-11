@@ -58,20 +58,6 @@ export interface Reading { title: string; file: string; kind: NotebookSourceKind
 /** Prefix a message with the open source (not slash commands: they must start the message). */
 export const withReading = (r: Reading | null | undefined, text: string) => r && !text.trimStart().startsWith('/') ? askPrefix(r) + text : text
 
-/** Above a notebook chat's box: which source the next question is about. */
-export function ReadingChip({ reading, on, onToggle }: { reading: Reading; on: boolean; onToggle: (on: boolean) => void }) {
-  return on ? (
-    <div className="nb-reading on" title="Your next message says it is about this source; the chat can still look at the others">
-      <Icon name={reading.mime.startsWith('image/') ? 'image' : 'file'} size={13} />
-      <span className="grow ellipsis">About <strong>{reading.title}</strong></span>
-      <button type="button" className="btn ghost icon-only xs" aria-label="Not about this source" title="Ask about all sources instead" onClick={() => onToggle(false)}><Icon name="x" size={12} /></button>
-    </div>
-  ) : (
-    <button type="button" className="nb-reading off" onClick={() => onToggle(true)} title="Point the next message at the open source">
-      <Icon name="plus" size={12} /><span className="ellipsis">About <strong>{reading.title}</strong></span>
-    </button>
-  )
-}
 
 /** The web address a source came from, if any. */
 export function sourceLink(x: NotebookSource): string {

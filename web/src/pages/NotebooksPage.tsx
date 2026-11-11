@@ -13,7 +13,7 @@ import type { Notebook, NotebookFull, NotebookSource, ProviderId, Thread } from 
 import { AgentPicker, defaultsFor, type AgentValue } from '../components/AgentPicker'
 import { Composer, type ComposerHandle } from '../components/Composer'
 import { Icon } from '../components/icons'
-import { AddSource, hasProjectsSources, ReadingChip, withReading, type Reading, sourceIcon, importProjects, nbURL, ProjectsPicker, reportToast, SourceList, SourceViewer, useNotebook, type ImportReport, type ProjectsPick } from '../components/Notebook'
+import { AddSource, hasProjectsSources, withReading, type Reading, sourceIcon, importProjects, nbURL, ProjectsPicker, reportToast, SourceList, SourceViewer, useNotebook, type ImportReport, type ProjectsPick } from '../components/Notebook'
 import { useProjectsLink } from '../lib/projects'
 import { PageHead } from '../components/PageHead'
 import { Confirm, Empty, errMsg, Loading, MenuButton, Modal, Segmented, Spinner, useIsMobile, useToast, type MenuItem } from '../components/ui'
@@ -130,7 +130,7 @@ export function NotebookPage({ onMenu }: { onMenu?: () => void }) {
   const { nb, setNb, error, reload } = useNotebook(id)
   const { upsertThread, accounts } = useApp()
   const [params, setParams] = useSearchParams()
-  const srcParam = params.get('source') // absent: the first source opens (on a computer); 'none': closed
+  const srcParam = params.get('source')
   const chatParam = params.get('chat')
   const [editing, setEditing] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -147,7 +147,6 @@ export function NotebookPage({ onMenu }: { onMenu?: () => void }) {
   const [width, setWidth] = useState(() => Math.min(900, Math.max(320, Number(pref('chat-w', '460')) || 460)))
   const [focus, setFocus] = useState(() => pref('focus', '0') === '1')
   const [phone, setPhone] = useState<'sources' | 'read' | 'chat'>(Number(srcParam) ? 'read' : 'sources')
-  const [readingOff, setReadingOff] = useState('') // "not about this source" for the new-chat box
 
   useEffect(() => { setFocusMode(focus && !mobile); setPref('focus', focus ? '1' : '0') }, [focus, mobile])
   useEffect(() => () => { setFocusMode(false) }, [])
@@ -161,11 +160,11 @@ export function NotebookPage({ onMenu }: { onMenu?: () => void }) {
   if (error && !nb) return <div className="page"><PageHead title="Notebook" icon="book" onMenu={onMenu} /><div className="page-inner"><div className="callout error" role="alert">{error}</div></div></div>
   if (!nb) return <div className="page"><PageHead title="Notebook" icon="book" onMenu={onMenu} /><Loading /></div>
 
-  const srcId = srcParam === null ? (mobile ? 0 : nb.source_list[0]?.id || 0) : Number(srcParam) || 0
+  const srcId = Number(srcParam) || 0 // nothing open: questions are about all sources
   const open = nb.source_list.find(x => x.id === srcId) || null
   const reading: Reading | null = open && { title: open.title, file: open.file, kind: open.kind, mime: open.mime }
-  const aboutOn = !!reading && readingOff !== reading.file
-  const openSource = (x: NotebookSource | null) => { set('source', x ? String(x.id) : 'none'); if (x && mobile) setPhone('read') }
+  const aboutOn = !!reading
+  const openSource = (x: NotebookSource | null) => { set('source', x ? String(x.id) : ''); if (x && mobile) setPhone('read') }
 
   const send = async (text: string, uploadIds: string[]) => {
     if (!choice) return false
@@ -221,13 +220,12 @@ export function NotebookPage({ onMenu }: { onMenu?: () => void }) {
             <div className="nb-newchat-hello">
               <Icon name="sparkles" size={18} />
               <div><strong>Ask about {nb.source_list.length === 1 ? 'this source' : `these ${nb.source_list.length} sources`}</strong>
-                <div className="muted small">Each question here starts its own chat, and every chat reads all the sources. While a source is open, questions are about it.</div></div>
+                <div className="muted small">Each question here starts its own chat, and every chat reads all the sources. With a source open, questions are about that one; with none open, about all of them.</div></div>
             </div>
             {nb.chat_list.length > 0 && <div className="nb-chats-block"><div className="nb-h">Earlier chats</div>
               {nb.chat_list.slice(0, 8).map(t => <button type="button" key={t.id} className="nb-chat" onClick={() => set('chat', t.id)}><ThreadStatus t={t} /><span className="grow ellipsis">{threadTitle(t)}</span><span className="muted xsmall">{ago(t.activity_at)}</span></button>)}
             </div>}
             <div className="grow" />
-            {reading && <ReadingChip reading={reading} on={aboutOn} onToggle={on => setReadingOff(on ? '' : reading.file)} />}
             <Composer ref={composer} draftKey={`nb-${nb.id}`} autoFocus={!mobile && !open} onSend={send}
               skills={choice?.provider ? { provider: choice.provider as ProviderId, cwd: nb.folder, account_id: choice.account_id } : undefined}
               placeholder={nb.source_list.length ? 'Ask about the sources…' : 'Add a source first, or just ask…'}
@@ -244,7 +242,7 @@ export function NotebookPage({ onMenu }: { onMenu?: () => void }) {
         : <div className="nb-overview">
           <div className="nb-overview-inner">
             <h2>{nb.source_list.length ? 'Open a source to read it here' : 'Add the first source'}</h2>
-            <p className="muted small">{nb.source_list.length ? 'The chat stays beside it, and your questions are about the source you have open.' : 'Files, web links, Pocket notes, documents, an issue or project from Pocket Projects, or pasted text.'}</p>
+            <p className="muted small">{nb.source_list.length ? 'Until you open one, the chat answers about all of them. With a source open, your questions are about that one.' : 'Files, web links, Pocket notes, documents, an issue or project from Pocket Projects, or pasted text.'}</p>
             {nb.instructions && <div className="callout info"><Icon name="info" size={14} /><span><strong>Instructions:</strong> {nb.instructions}</span></div>}
             <div className="nb-src-grid">
               {nb.source_list.map(x => (
