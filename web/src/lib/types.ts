@@ -612,13 +612,17 @@ export interface Notebook {
   id: number
   name: string
   instructions: string
+  /** what it was started from ("projects-issue:athena/ATH-340"), '' = nothing */
+  link: string
+  link_label: string
+  link_url: string
   created_at: string
   updated_at: string
   sources: number
   chats: number
 }
 
-export type NotebookSourceKind = 'file' | 'link' | 'note' | 'document' | 'pocket-file' | 'text'
+export type NotebookSourceKind = 'file' | 'link' | 'note' | 'document' | 'pocket-file' | 'text' | 'issue' | 'project' | 'shared-note' | 'project-doc'
 
 export interface NotebookSource {
   id: number
