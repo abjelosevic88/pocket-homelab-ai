@@ -130,7 +130,7 @@ export function NotebookPage({ onMenu }: { onMenu?: () => void }) {
   const { nb, setNb, error, reload } = useNotebook(id)
   const { upsertThread, accounts } = useApp()
   const [params, setParams] = useSearchParams()
-  const srcId = Number(params.get('source')) || 0
+  const srcParam = params.get('source') // absent: the first source opens (on a computer); 'none': closed
   const chatParam = params.get('chat')
   const [editing, setEditing] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -146,7 +146,7 @@ export function NotebookPage({ onMenu }: { onMenu?: () => void }) {
   const [side, setSide] = useState<'left' | 'right'>(() => pref('side', 'right') === 'left' ? 'left' : 'right')
   const [width, setWidth] = useState(() => Math.min(900, Math.max(320, Number(pref('chat-w', '460')) || 460)))
   const [focus, setFocus] = useState(() => pref('focus', '0') === '1')
-  const [phone, setPhone] = useState<'sources' | 'read' | 'chat'>(srcId ? 'read' : 'sources')
+  const [phone, setPhone] = useState<'sources' | 'read' | 'chat'>(Number(srcParam) ? 'read' : 'sources')
   const [readingOff, setReadingOff] = useState('') // "not about this source" for the new-chat box
 
   useEffect(() => { setFocusMode(focus && !mobile); setPref('focus', focus ? '1' : '0') }, [focus, mobile])
@@ -161,10 +161,11 @@ export function NotebookPage({ onMenu }: { onMenu?: () => void }) {
   if (error && !nb) return <div className="page"><PageHead title="Notebook" icon="book" onMenu={onMenu} /><div className="page-inner"><div className="callout error" role="alert">{error}</div></div></div>
   if (!nb) return <div className="page"><PageHead title="Notebook" icon="book" onMenu={onMenu} /><Loading /></div>
 
+  const srcId = srcParam === null ? (mobile ? 0 : nb.source_list[0]?.id || 0) : Number(srcParam) || 0
   const open = nb.source_list.find(x => x.id === srcId) || null
   const reading: Reading | null = open && { title: open.title, file: open.file, kind: open.kind, mime: open.mime }
   const aboutOn = !!reading && readingOff !== reading.file
-  const openSource = (x: NotebookSource | null) => { set('source', x ? String(x.id) : ''); if (x && mobile) setPhone('read') }
+  const openSource = (x: NotebookSource | null) => { set('source', x ? String(x.id) : 'none'); if (x && mobile) setPhone('read') }
 
   const send = async (text: string, uploadIds: string[]) => {
     if (!choice) return false
