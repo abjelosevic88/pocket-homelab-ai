@@ -114,7 +114,9 @@ Personal app assistance: [Briefing, workflows, memory, sources and document uplo
   tap to run, or `#` in the message box. Starter recipes for server health, a misbehaving app, disk space, container updates, recent errors.
 - **Notebooks** collect sources to ask about: uploaded files (PDF, Word, Excel, PowerPoint, text, pictures), web
   links, notes from Pocket Notes, Pocket Documents and Pocket Files, pasted text. A chat in a notebook answers from
-  them and names the source; open any source next to the chat and tap "Ask about this".
+  them and names the source; open any source next to the chat and tap "Ask about this". With Pocket Projects
+  connected, a notebook can start from an issue (description, sub-issues, comments, shared notes, files, notes
+  about it) or a project (overview, updates, milestones, docs, its issues) and be updated from Projects later.
 - **Schedules** run a prompt every N minutes/hours, daily, on weekdays, weekly or on a cron line. The agent ends
   with `OK: …` or `ATTENTION: …`; you are notified always, only on attention, or never.
 

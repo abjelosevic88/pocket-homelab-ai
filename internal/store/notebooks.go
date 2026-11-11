@@ -10,8 +10,13 @@ type Notebook struct {
 	UserID       int64  `json:"-"`
 	Name         string `json:"name"`
 	Instructions string `json:"instructions"`
-	CreatedAt    string `json:"created_at"`
-	UpdatedAt    string `json:"updated_at"`
+	// Link: what it was started from ("projects-issue:athena/ATH-340",
+	// "projects-project:athena/12"), its label and page; "" = nothing.
+	Link      string `json:"link"`
+	LinkLabel string `json:"link_label"`
+	LinkURL   string `json:"link_url"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 	// filled by the list
 	Sources int `json:"sources"`
 	Chats   int `json:"chats"`
@@ -35,11 +40,11 @@ type NotebookSource struct {
 	UpdatedAt  string `json:"updated_at"`
 }
 
-const notebookCols = `id, user_id, name, instructions, created_at, updated_at`
+const notebookCols = `id, user_id, name, instructions, link, link_label, link_url, created_at, updated_at`
 
 func scanNotebook(row interface{ Scan(...any) error }) (*Notebook, error) {
 	var n Notebook
-	if err := row.Scan(&n.ID, &n.UserID, &n.Name, &n.Instructions, &n.CreatedAt, &n.UpdatedAt); err != nil {
+	if err := row.Scan(&n.ID, &n.UserID, &n.Name, &n.Instructions, &n.Link, &n.LinkLabel, &n.LinkURL, &n.CreatedAt, &n.UpdatedAt); err != nil {
 		return nil, notFound(err)
 	}
 	return &n, nil
@@ -55,7 +60,7 @@ func (s *Store) ListNotebooks(ctx context.Context, userID int64) ([]*Notebook, e
 	out := []*Notebook{}
 	for rows.Next() {
 		var n Notebook
-		if err := rows.Scan(&n.ID, &n.UserID, &n.Name, &n.Instructions, &n.CreatedAt, &n.UpdatedAt, &n.Sources); err != nil {
+		if err := rows.Scan(&n.ID, &n.UserID, &n.Name, &n.Instructions, &n.Link, &n.LinkLabel, &n.LinkURL, &n.CreatedAt, &n.UpdatedAt, &n.Sources); err != nil {
 			return nil, err
 		}
 		out = append(out, &n)
@@ -70,7 +75,7 @@ func (s *Store) GetNotebook(ctx context.Context, userID, id int64) (*Notebook, e
 func (s *Store) SaveNotebook(ctx context.Context, n *Notebook) error {
 	now := Now()
 	if n.ID == 0 {
-		res, err := s.DB.ExecContext(ctx, `INSERT INTO notebooks (user_id, name, instructions, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`, n.UserID, n.Name, n.Instructions, now, now)
+		res, err := s.DB.ExecContext(ctx, `INSERT INTO notebooks (user_id, name, instructions, link, link_label, link_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, n.UserID, n.Name, n.Instructions, n.Link, n.LinkLabel, n.LinkURL, now, now)
 		if err != nil {
 			return err
 		}
@@ -78,7 +83,7 @@ func (s *Store) SaveNotebook(ctx context.Context, n *Notebook) error {
 		n.CreatedAt, n.UpdatedAt = now, now
 		return err
 	}
-	res, err := s.DB.ExecContext(ctx, `UPDATE notebooks SET name=?, instructions=?, updated_at=? WHERE id=? AND user_id=?`, n.Name, n.Instructions, now, n.ID, n.UserID)
+	res, err := s.DB.ExecContext(ctx, `UPDATE notebooks SET name=?, instructions=?, link=?, link_label=?, link_url=?, updated_at=? WHERE id=? AND user_id=?`, n.Name, n.Instructions, n.Link, n.LinkLabel, n.LinkURL, now, n.ID, n.UserID)
 	if err != nil {
 		return err
 	}

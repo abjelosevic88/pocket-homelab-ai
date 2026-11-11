@@ -92,3 +92,11 @@
   .nb-pane { position: fixed; inset: 0; z-index: 60; width: auto; border-left: 0; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
   .nb-toggle-label { display: none; }
 }
+
+/* picking an issue or project */
+button.nb-pick { border: 0; background: none; font: inherit; color: var(--text); text-align: left; width: 100%; }
+.nb-pick.on { background: var(--row-sel); color: var(--accent-ink); }
+.nb-start { display: grid; gap: 10px; padding: 12px; border-radius: 12px; background: var(--surface-2); }
+.nb-start .nb-pick-list { max-height: min(34vh, 280px); background: var(--surface); border-radius: 10px; margin: 0; padding: 4px; }
+.page-sub .nb-from { color: var(--accent-ink); text-decoration: none; font-weight: 500; }
+.page-sub .nb-from:hover { text-decoration: underline; }

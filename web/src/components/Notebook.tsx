@@ -4,7 +4,8 @@
 // viewer with "Ask about this".
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, upload, V1 } from '../lib/api'
+import { api, qs, upload, V1 } from '../lib/api'
+import { useProjectsLink } from '../lib/projects'
 import { ago, fmtBytes } from '../lib/format'
 import type { NotebookFull, NotebookSource, NotebookSourceKind } from '../lib/types'
 import { Icon } from './icons'
@@ -32,7 +33,14 @@ const KIND: Record<NotebookSourceKind, { icon: string; label: string }> = {
   document: { icon: 'file-edit', label: 'Pocket Documents' },
   'pocket-file': { icon: 'folder', label: 'Pocket Files' },
   text: { icon: 'text', label: 'Pasted text' },
+  issue: { icon: 'check-square', label: 'Pocket Projects issue' },
+  project: { icon: 'layers', label: 'Pocket Projects project' },
+  'shared-note': { icon: 'users', label: 'Shared note' },
+  'project-doc': { icon: 'file-edit', label: 'Project doc' },
 }
+
+/** Issues and projects in it: what "Update from Pocket Projects" reads again. */
+export const hasProjectsSources = (nb: NotebookFull) => nb.source_list.some(x => x.kind === 'issue' || x.kind === 'project')
 
 export function sourceIcon(x: NotebookSource) {
   if (x.kind === 'file' && x.mime.startsWith('image/')) return 'image'
@@ -110,9 +118,10 @@ async function uploadSources(id: number, list: File[], toast: ReturnType<typeof 
 
 export function AddSource({ nbId, onAdded, label = 'Add' }: { nbId: number; onAdded: () => void; label?: string }) {
   const [menu, setMenu] = useState<Anchor | null>(null)
-  const [dialog, setDialog] = useState<'' | 'link' | 'text' | 'notes' | 'documents' | 'files'>('')
+  const [dialog, setDialog] = useState<'' | 'link' | 'text' | 'notes' | 'documents' | 'files' | 'projects'>('')
   const input = useRef<HTMLInputElement>(null)
   const { toast } = useToast()
+  const projects = useProjectsLink()
   const items: MenuItem[] = [
     { label: 'Upload files…', icon: 'upload', hint: 'PDF, Word, Excel, text, pictures', onSelect: () => input.current?.click() },
     { label: 'Web link…', icon: 'globe', onSelect: () => setDialog('link') },
@@ -120,6 +129,7 @@ export function AddSource({ nbId, onAdded, label = 'Add' }: { nbId: number; onAd
     { label: 'From Pocket Notes…', icon: 'note', onSelect: () => setDialog('notes') },
     { label: 'From Pocket Documents…', icon: 'file-edit', onSelect: () => setDialog('documents') },
     { label: 'From Pocket Files…', icon: 'folder', onSelect: () => setDialog('files') },
+    ...(projects?.configured && projects.on ? [{ label: 'From Pocket Projects…', icon: 'layers', hint: 'An issue or a project, with its files and notes', onSelect: () => setDialog('projects') }] : []),
     'sep',
     { label: 'Paste text…', icon: 'text', onSelect: () => setDialog('text') },
   ]
@@ -129,6 +139,7 @@ export function AddSource({ nbId, onAdded, label = 'Add' }: { nbId: number; onAd
     {menu && <Menu anchor={menu} align="right" width={250} items={items} onClose={() => setMenu(null)} />}
     {dialog === 'link' && <LinkDialog nbId={nbId} onClose={() => setDialog('')} onAdded={onAdded} />}
     {dialog === 'text' && <PasteDialog nbId={nbId} onClose={() => setDialog('')} onAdded={onAdded} />}
+    {dialog === 'projects' && <ProjectsDialog nbId={nbId} onClose={() => setDialog('')} onAdded={onAdded} />}
     {(dialog === 'notes' || dialog === 'documents' || dialog === 'files') && <PocketDialog nbId={nbId} app={dialog} onClose={() => setDialog('')} onAdded={onAdded} />}
   </>
 }
@@ -239,6 +250,89 @@ function PocketDialog({ nbId, app: first, onClose, onAdded }: { nbId: number; ap
   </Modal>
 }
 
+// ---------- from Pocket Projects ----------
+
+export interface ProjectsPick { kind: 'issue' | 'project'; ref: string; title: string }
+interface PickIssue { ref: string; identifier: string; title: string; state_type: string }
+interface PickProject { ref: string; name: string; status: string; summary: string }
+
+/** Search the person's issues or projects in Pocket Projects (the workspace open to Pocket AI). */
+export function ProjectsPicker({ kind, picked, onPick }: { kind: 'issue' | 'project'; picked: ProjectsPick | null; onPick: (p: ProjectsPick) => void }) {
+  const [q, setQ] = useState('')
+  const dq = useDebounce(q.trim(), 250)
+  const [rows, setRows] = useState<ProjectsPick[] | null>(null)
+  const [sub, setSub] = useState<Record<string, string>>({})
+  const [error, setError] = useState('')
+  const [ws, setWs] = useState('')
+  useEffect(() => {
+    let live = true
+    setRows(null); setError('')
+    const done = (list: ProjectsPick[], subs: Record<string, string>, w: string) => { if (live) { setRows(list); setSub(subs); setWs(w) } }
+    const fail = (e: unknown) => { if (live) { setRows([]); setError(errMsg(e)) } }
+    if (kind === 'issue') api.get<{ workspace: string; issues: PickIssue[] }>(`${V1}/projects-issues${qs({ q: dq || undefined })}`)
+      .then(r => done(r.issues.map(i => ({ kind, ref: i.ref, title: `${i.identifier} ${i.title}` })), Object.fromEntries(r.issues.map(i => [i.ref, i.state_type])), r.workspace), fail)
+    else api.get<{ workspace: string; projects: PickProject[] }>(`${V1}/projects-projects${qs({ q: dq || undefined })}`)
+      .then(r => done(r.projects.map(p => ({ kind, ref: p.ref, title: p.name })), Object.fromEntries(r.projects.map(p => [p.ref, [p.status, p.summary].filter(Boolean).join(' · ')])), r.workspace), fail)
+    return () => { live = false }
+  }, [kind, dq])
+  return <div className="stack tight">
+    <input value={q} onChange={e => setQ(e.target.value)} placeholder={kind === 'issue' ? 'Search issues, or type a key like ATH-340' : 'Search projects'} aria-label={kind === 'issue' ? 'Search issues' : 'Search projects'} spellCheck={false} />
+    {ws && <div className="muted xsmall">In <strong>{ws}</strong>, the workspace open to Pocket AI in Projects.</div>}
+    <div className="nb-pick-list" role="listbox">
+      {rows === null ? <Loading /> : error ? <p className="callout error" role="alert">{error}</p>
+        : rows.length === 0 ? <p className="muted small center" style={{ padding: 18 }}>Nothing found.</p>
+        : rows.map(r => (
+          <button type="button" role="option" aria-selected={picked?.ref === r.ref} key={r.ref} className={`nb-pick ${picked?.ref === r.ref ? 'on' : ''}`} onClick={() => onPick(r)}>
+            <Icon name={kind === 'issue' ? 'check-square' : 'layers'} size={15} />
+            <span className="grow" style={{ minWidth: 0 }}><span className="ellipsis nb-pick-title">{r.title}</span>{sub[r.ref] && <span className="ellipsis muted xsmall">{sub[r.ref]}</span>}</span>
+            {picked?.ref === r.ref && <Icon name="check" size={15} />}
+          </button>
+        ))}
+    </div>
+  </div>
+}
+
+export interface ImportReport { added: number; updated: number; failed: string[] }
+
+/** Bring an issue or project in; the toast says what came. */
+export async function importProjects(nbId: number, pick: ProjectsPick, toast: ReturnType<typeof useToast>['toast']): Promise<NotebookFull | null> {
+  try {
+    const r = await api.post<{ report: ImportReport; notebook: NotebookFull }>(`${nbURL(nbId)}/sources/projects`, { kind: pick.kind, ref: pick.ref })
+    reportToast(r.report, toast)
+    return r.notebook
+  } catch (e) { toast(errMsg(e), 'err', undefined, 9000); return null }
+}
+
+export function reportToast(r: ImportReport, toast: ReturnType<typeof useToast>['toast']) {
+  const parts = [r.added && `${r.added} added`, r.updated && `${r.updated} updated`].filter(Boolean).join(', ') || 'Nothing new'
+  if (r.failed?.length) toast(`${parts}. Not added: ${r.failed.join('; ')}`, 'err', undefined, 10000)
+  else toast(parts)
+}
+
+function ProjectsDialog({ nbId, onClose, onAdded }: { nbId: number; onClose: () => void; onAdded: () => void }) {
+  const [kind, setKind] = useState<'issue' | 'project'>('issue')
+  const [pick, setPick] = useState<ProjectsPick | null>(null)
+  const [busy, setBusy] = useState(false)
+  const { toast } = useToast()
+  const add = async () => {
+    if (!pick) return
+    setBusy(true)
+    const nb = await importProjects(nbId, pick, toast)
+    setBusy(false)
+    if (nb) { onAdded(); onClose() }
+  }
+  return <Modal title="Add from Pocket Projects" onClose={onClose} footer={<>
+    <span className="grow muted small">{kind === 'issue' ? 'Description, sub-issues, comments, shared notes, files and notes about it' : 'Overview, updates, milestones, docs and its issues'}</span>
+    <button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button>
+    <button type="button" className="btn primary" disabled={!pick || busy} onClick={add}>{busy && <Spinner />}Add</button>
+  </>}>
+    <div className="stack tight">
+      <Segmented size="sm" value={kind} onChange={k => { setKind(k); setPick(null) }} options={[{ value: 'issue', label: 'Issue' }, { value: 'project', label: 'Project' }]} label="What" />
+      <ProjectsPicker kind={kind} picked={pick} onPick={setPick} />
+    </div>
+  </Modal>
+}
+
 // ---------- the viewer ----------
 
 export function SourceViewer({ nbId, source: x, onAsk, onClose, onChanged }: {
@@ -276,7 +370,8 @@ export function SourceViewer({ nbId, source: x, onAsk, onClose, onChanged }: {
   const menu: MenuItem[] = [
     { label: 'Rename', icon: 'edit', onSelect: () => setRenaming(true) },
     ...(x.kind === 'link' || x.kind === 'note' || x.kind === 'document' || x.kind === 'pocket-file' ? [{ label: 'Read it again', icon: 'refresh', hint: 'Get the latest version', onSelect: refresh }] : []),
-    ...(link ? [{ label: x.kind === 'link' ? 'Open the page' : 'Open in Pocket', icon: 'external', onSelect: () => window.open(link, '_blank', 'noopener') }] : []),
+    ...(x.kind === 'issue' || x.kind === 'project' || x.kind === 'shared-note' || x.kind === 'project-doc' ? [{ label: 'Update from Pocket Projects', icon: 'refresh', hint: x.kind === 'issue' || x.kind === 'project' ? 'With its notes, docs and files' : 'With the rest of its issue or project', onSelect: refresh }] : []),
+    ...(link ? [{ label: x.kind === 'link' ? 'Open the page' : x.kind === 'issue' || x.kind === 'shared-note' ? 'Open the issue' : x.kind === 'project' || x.kind === 'project-doc' ? 'Open the project' : 'Open in Pocket', icon: 'external', onSelect: () => window.open(link, '_blank', 'noopener') }] : []),
     ...(x.original ? [{ label: 'Download the original', icon: 'download', onSelect: () => window.open(`${url}/raw`, '_blank', 'noopener') }] : []),
     'sep',
     { label: 'Remove from notebook', icon: 'trash', danger: true, onSelect: () => setRemoving(true) },

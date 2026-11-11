@@ -11,9 +11,10 @@ import { AgentPicker, defaultsFor, type AgentValue } from '../components/AgentPi
 import { ThreadStatus } from '../components/bits'
 import { Composer, type ComposerHandle } from '../components/Composer'
 import { Icon } from '../components/icons'
-import { askPrefix, nbURL, SourceList, SourceViewer, useNotebook } from '../components/Notebook'
+import { askPrefix, hasProjectsSources, importProjects, nbURL, ProjectsPicker, reportToast, SourceList, SourceViewer, useNotebook, type ImportReport, type ProjectsPick } from '../components/Notebook'
+import { useProjectsLink } from '../lib/projects'
 import { PageHead } from '../components/PageHead'
-import { Confirm, Empty, errMsg, Loading, MenuButton, Modal, Spinner, useIsMobile, useToast } from '../components/ui'
+import { Confirm, Empty, errMsg, Loading, MenuButton, Modal, Segmented, Spinner, useIsMobile, useToast, type MenuItem } from '../components/ui'
 
 export function NotebooksPage({ onMenu }: { onMenu?: () => void }) {
   const [list, setList] = useState<Notebook[] | null>(null)
@@ -50,24 +51,49 @@ export function NotebooksPage({ onMenu }: { onMenu?: () => void }) {
 function NotebookDialog({ nb, onClose, onSaved }: { nb?: Notebook; onClose: () => void; onSaved: (n: NotebookFull) => void }) {
   const [name, setName] = useState(nb?.name || '')
   const [instructions, setInstructions] = useState(nb?.instructions || '')
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
+  const projects = useProjectsLink()
+  const canStart = !nb && !!projects?.configured && !!projects.on
+  const [from, setFrom] = useState<'' | 'issue' | 'project'>('')
+  const [pick, setPick] = useState<ProjectsPick | null>(null)
+  const [autoName, setAutoName] = useState('')
+  const { toast } = useToast()
+  const choose = (p: ProjectsPick) => {
+    setPick(p)
+    // the picked title names it, unless the person wrote a name of their own
+    if (!name.trim() || name === autoName) { setName(p.title); setAutoName(p.title) }
+  }
   const save = async () => {
-    setBusy(true); setError('')
+    if (from && !pick) { setError(from === 'issue' ? 'Choose an issue, or start from nothing' : 'Choose a project, or start from nothing'); return }
+    setBusy(from && pick ? 'Creating…' : 'Saving…'); setError('')
     try {
-      const n = nb ? await api.put<NotebookFull>(nbURL(nb.id), { name, instructions }) : await api.post<NotebookFull>(`${V1}/notebooks`, { name, instructions })
+      let n = nb ? await api.put<NotebookFull>(nbURL(nb.id), { name, instructions }) : await api.post<NotebookFull>(`${V1}/notebooks`, { name, instructions })
+      if (from && pick) {
+        setBusy(from === 'issue' ? 'Bringing in the issue, its notes and files…' : 'Bringing in the project and its docs…')
+        n = await importProjects(n.id, pick, toast) || n
+      }
       onSaved(n); onClose()
-    } catch (e) { setError(errMsg(e)); setBusy(false) }
+    } catch (e) { setError(errMsg(e)); setBusy('') }
   }
   return <Modal title={nb ? 'Notebook settings' : 'New notebook'} onClose={onClose} footer={<>
-    <button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button>
-    <button type="button" className="btn primary" onClick={save} disabled={busy}>{busy && <Spinner />}{nb ? 'Save' : 'Create'}</button>
+    {busy && from && <span className="grow muted small">{busy}</span>}
+    <button type="button" className="btn" onClick={onClose} disabled={!!busy}>Cancel</button>
+    <button type="button" className="btn primary" onClick={save} disabled={!!busy || (!!from && !pick)}>{busy && <Spinner />}{nb ? 'Save' : 'Create'}</button>
   </>}>
     <form className="stack tight" onSubmit={e => { e.preventDefault(); void save() }}>
+      {canStart && <div className="nb-start">
+        <Segmented size="sm" value={from} onChange={v => { setFrom(v); setPick(null); if (name === autoName) { setName(''); setAutoName('') } }} label="Start from"
+          options={[{ value: '', label: 'Empty' }, { value: 'issue', label: 'Projects issue' }, { value: 'project', label: 'Projects project' }]} />
+        {from ? <>
+          <ProjectsPicker kind={from} picked={pick} onPick={choose} />
+          <span className="muted xsmall">{from === 'issue' ? 'Brings in its description, sub-issues, comments, shared notes, files and the Pocket notes about it.' : 'Brings in its overview, milestones, updates, docs and the list of its issues with their descriptions.'} “Update from Pocket Projects” gets the latest later.</span>
+        </> : <span className="muted xsmall">Or start from a Pocket Projects issue or project, with everything in it.</span>}
+      </div>}
       <label className="stack tight"><span className="small">Name</span>
-        <input autoFocus value={name} maxLength={120} placeholder="e.g. ATH-340 search plan" onChange={e => setName(e.target.value)} /></label>
+        <input autoFocus={!canStart} value={name} maxLength={120} placeholder="e.g. ATH-340 search plan" onChange={e => setName(e.target.value)} /></label>
       <label className="stack tight"><span className="small">Instructions <span className="muted">(optional)</span></span>
-        <textarea rows={4} value={instructions} placeholder="How answers should be, e.g. “Answer in Serbian”, “Quote the exact wording”, “Assume I am the developer”." onChange={e => setInstructions(e.target.value)} /></label>
+        <textarea rows={canStart && from ? 2 : 4} value={instructions} placeholder="How answers should be, e.g. “Answer in Serbian”, “Quote the exact wording”, “Assume I am the developer”." onChange={e => setInstructions(e.target.value)} /></label>
       {error && <p className="callout error" role="alert">{error}</p>}
     </form>
   </Modal>
@@ -103,6 +129,8 @@ export function NotebookPage({ onMenu }: { onMenu?: () => void }) {
   const navigate = useNavigate()
   const { toast } = useToast()
   const mobile = useIsMobile()
+  const projects = useProjectsLink()
+  const [syncing, setSyncing] = useState(false)
 
   // the open source follows its latest version (renamed, read again)
   useEffect(() => { if (open && nb) setOpen(nb.source_list.find(x => x.id === open.id) || null) }, [nb]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -123,6 +151,12 @@ export function NotebookPage({ onMenu }: { onMenu?: () => void }) {
       navigate(`/t/${t.id}`)
       return true
     } catch (e) { toast(errMsg(e), 'err'); return false }
+  }
+
+  const sync = async () => {
+    setSyncing(true)
+    try { const r = await api.post<{ report: ImportReport; notebook: NotebookFull }>(`${nbURL(nb.id)}/sync`); setNb(r.notebook); reportToast(r.report, toast) } catch (e) { toast(errMsg(e), 'err') }
+    setSyncing(false)
   }
 
   const ask = (
@@ -149,13 +183,14 @@ export function NotebookPage({ onMenu }: { onMenu?: () => void }) {
 
   return <div className="page nb-page">
     <PageHead title={nb.name} icon="book" onMenu={onMenu}
-      sub={<>{nb.source_list.length} {nb.source_list.length === 1 ? 'source' : 'sources'} · {nb.chat_list.length} {nb.chat_list.length === 1 ? 'chat' : 'chats'}{nb.instructions && <> · <span title={nb.instructions}>has instructions</span></>}</>}
-      actions={<MenuButton label="Notebook menu" align="right" items={[
+      sub={<>{nb.link_label && <>{nb.link_url ? <a className="nb-from" href={nb.link_url} target="_blank" rel="noopener noreferrer" title="Open in Pocket Projects">From {nb.link_label} ↗</a> : <>From {nb.link_label}</>} · </>}{nb.source_list.length} {nb.source_list.length === 1 ? 'source' : 'sources'} · {nb.chat_list.length} {nb.chat_list.length === 1 ? 'chat' : 'chats'}{nb.instructions && <> · <span title={nb.instructions}>has instructions</span></>}</>}
+      actions={<>{syncing && <Spinner />}<MenuButton label="Notebook menu" align="right" items={[
         { label: 'All notebooks', icon: 'book', onSelect: () => navigate('/notebooks') },
+        ...(hasProjectsSources(nb) && projects?.configured ? [{ label: 'Update from Pocket Projects', icon: 'refresh', disabled: !projects.on || syncing, hint: projects.on ? 'Latest comments, notes, docs and files' : 'Turn on Pocket AI → Pocket Projects in Pocket Core', onSelect: sync }] as MenuItem[] : []),
         { label: 'Name and instructions…', icon: 'edit', onSelect: () => setEditing(true) },
         'sep',
         { label: 'Delete notebook…', icon: 'trash', danger: true, onSelect: () => setDeleting(true) },
-      ]}><Icon name="more" size={17} /></MenuButton>} />
+      ]}><Icon name="more" size={17} /></MenuButton></>} />
     <div className={`nb-body ${open ? 'has-open' : ''}`}>
       <aside className="nb-side">
         <SourceList nb={nb} selected={open?.id} onSelect={x => setOpen(o => o?.id === x.id ? null : x)} onChanged={reload} />

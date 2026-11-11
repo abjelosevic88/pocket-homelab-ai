@@ -57,6 +57,8 @@ func (s *Server) notebookRoutes(r chi.Router) {
 	r.Post("/notebooks/{id}/sources/link", s.handleNotebookLink)
 	r.Post("/notebooks/{id}/sources/pocket", s.handleNotebookPocket)
 	r.Post("/notebooks/{id}/sources/text", s.handleNotebookText)
+	r.Post("/notebooks/{id}/sources/projects", s.handleNotebookProjects) // notebook_projects.go
+	r.Post("/notebooks/{id}/sync", s.handleNotebookSync)
 	r.Get("/notebooks/{id}/sources/{sid}/text", s.handleSourceText)
 	r.Get("/notebooks/{id}/sources/{sid}/raw", s.handleSourceRaw)
 	r.Post("/notebooks/{id}/sources/{sid}/refresh", s.handleSourceRefresh)
@@ -795,6 +797,22 @@ func (s *Server) handleSourceRefresh(w http.ResponseWriter, r *http.Request) {
 		title := x.Title
 		text, data, name, err = s.fetchSource(r.Context(), x)
 		x.Title = title
+	case "issue", "project", "shared-note", "project-doc":
+		// read again with everything else of its issue or project
+		key, _, _ := strings.Cut(originKey(x.Origin), "#")
+		kind, ref, _ := strings.Cut(strings.TrimPrefix(key, "projects-"), ":")
+		u := userFrom(r.Context())
+		if !s.projectsLinkReady(w, r, u.Email) {
+			return
+		}
+		if _, err = s.importFrom(r.Context(), u, nb, kind, ref); err == nil {
+			s.writeNotebookIndex(r.Context(), nb)
+			if fresh, gerr := s.store.GetNotebookSource(r.Context(), nb.ID, x.ID); gerr == nil {
+				x = fresh
+			}
+			writeJSON(w, 200, x)
+			return
+		}
 	case "note", "document", "pocket-file":
 		ref, _, _ := strings.Cut(x.Origin, " ")
 		app, id, _ := strings.Cut(ref, ":")
