@@ -231,6 +231,7 @@ export function NotebookPage({ onMenu }: { onMenu?: () => void }) {
             </div>}
             <div className="grow" />
             <Composer ref={composer} draftKey={`nb-${nb.id}`} autoFocus={!mobile && !open} onSend={send}
+              skills={choice?.provider ? { provider: choice.provider as ProviderId, cwd: nb.folder, account_id: choice.account_id } : undefined}
               placeholder={nb.source_list.length ? 'Ask about the sources…' : 'Add a source first, or just ask…'}
               footer={choice ? <AgentPicker compact switchProvider value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} /> : undefined} />
           </div>
