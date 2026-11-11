@@ -13,7 +13,7 @@ import type { Notebook, NotebookFull, NotebookSource, ProviderId, Thread } from 
 import { AgentPicker, defaultsFor, type AgentValue } from '../components/AgentPicker'
 import { Composer, type ComposerHandle } from '../components/Composer'
 import { Icon } from '../components/icons'
-import { AddSource, askPrefix, COMPOSE_EVENT, hasProjectsSources, sourceIcon, importProjects, nbURL, ProjectsPicker, reportToast, SourceList, SourceViewer, useNotebook, type ImportReport, type ProjectsPick } from '../components/Notebook'
+import { AddSource, hasProjectsSources, ReadingChip, withReading, type Reading, sourceIcon, importProjects, nbURL, ProjectsPicker, reportToast, SourceList, SourceViewer, useNotebook, type ImportReport, type ProjectsPick } from '../components/Notebook'
 import { useProjectsLink } from '../lib/projects'
 import { PageHead } from '../components/PageHead'
 import { Confirm, Empty, errMsg, Loading, MenuButton, Modal, Segmented, Spinner, useIsMobile, useToast, type MenuItem } from '../components/ui'
@@ -147,6 +147,7 @@ export function NotebookPage({ onMenu }: { onMenu?: () => void }) {
   const [width, setWidth] = useState(() => Math.min(900, Math.max(320, Number(pref('chat-w', '460')) || 460)))
   const [focus, setFocus] = useState(() => pref('focus', '0') === '1')
   const [phone, setPhone] = useState<'sources' | 'read' | 'chat'>(srcId ? 'read' : 'sources')
+  const [readingOff, setReadingOff] = useState('') // "not about this source" for the new-chat box
 
   useEffect(() => { setFocusMode(focus && !mobile); setPref('focus', focus ? '1' : '0') }, [focus, mobile])
   useEffect(() => () => { setFocusMode(false) }, [])
@@ -161,6 +162,8 @@ export function NotebookPage({ onMenu }: { onMenu?: () => void }) {
   if (!nb) return <div className="page"><PageHead title="Notebook" icon="book" onMenu={onMenu} /><Loading /></div>
 
   const open = nb.source_list.find(x => x.id === srcId) || null
+  const reading: Reading | null = open && { title: open.title, file: open.file, kind: open.kind, mime: open.mime }
+  const aboutOn = !!reading && readingOff !== reading.file
   const openSource = (x: NotebookSource | null) => { set('source', x ? String(x.id) : ''); if (x && mobile) setPhone('read') }
 
   const send = async (text: string, uploadIds: string[]) => {
@@ -169,19 +172,12 @@ export function NotebookPage({ onMenu }: { onMenu?: () => void }) {
       const t = await api.post<Thread>(`${nbURL(nb.id)}/chats`, {
         provider: choice.provider, model: choice.model || undefined, effort: choice.effort || undefined, mode: choice.mode || undefined, speed: choice.speed ?? undefined,
         account_id: accounts.some(a => a.provider === choice.provider && a.id === choice.account_id && a.signed_in) ? choice.account_id : undefined,
-        text, upload_ids: uploadIds,
+        text: aboutOn ? withReading(reading, text) : text, upload_ids: uploadIds,
       })
       upsertThread(t)
       set('chat', t.id) // it opens right here, next to the source
       return true
     } catch (e) { toast(errMsg(e), 'err'); return false }
-  }
-  const askAbout = (x: NotebookSource) => {
-    if (!chatOn) { setChatOn(true); setPref('chat', '1') }
-    if (mobile) setPhone('chat')
-    const text = askPrefix(x)
-    if (chatId) setTimeout(() => window.dispatchEvent(new CustomEvent(COMPOSE_EVENT, { detail: { id: chatId, text } })), 50)
-    else setTimeout(() => composer.current?.setText(text), 50)
   }
   const sync = async () => {
     setSyncing(true)
@@ -219,17 +215,18 @@ export function NotebookPage({ onMenu }: { onMenu?: () => void }) {
         {!mobile && <button type="button" className="btn ghost icon-only" title="Hide the chat" aria-label="Hide the chat" onClick={() => toggle('chat', false)}><Icon name="x" size={16} /></button>}
       </div>
       <div className="nb-chatcol-body">
-        {chatId ? <ThreadPage key={chatId} threadId={chatId} embedded /> : (
+        {chatId ? <ThreadPage key={chatId} threadId={chatId} embedded reading={reading} /> : (
           <div className="nb-newchat">
             <div className="nb-newchat-hello">
               <Icon name="sparkles" size={18} />
               <div><strong>Ask about {nb.source_list.length === 1 ? 'this source' : `these ${nb.source_list.length} sources`}</strong>
-                <div className="muted small">Each question here starts its own chat; every chat reads the same sources. “Ask about this” on a source points it at that one.</div></div>
+                <div className="muted small">Each question here starts its own chat, and every chat reads all the sources. While a source is open, questions are about it.</div></div>
             </div>
             {nb.chat_list.length > 0 && <div className="nb-chats-block"><div className="nb-h">Earlier chats</div>
               {nb.chat_list.slice(0, 8).map(t => <button type="button" key={t.id} className="nb-chat" onClick={() => set('chat', t.id)}><ThreadStatus t={t} /><span className="grow ellipsis">{threadTitle(t)}</span><span className="muted xsmall">{ago(t.activity_at)}</span></button>)}
             </div>}
             <div className="grow" />
+            {reading && <ReadingChip reading={reading} on={aboutOn} onToggle={on => setReadingOff(on ? '' : reading.file)} />}
             <Composer ref={composer} draftKey={`nb-${nb.id}`} autoFocus={!mobile && !open} onSend={send}
               skills={choice?.provider ? { provider: choice.provider as ProviderId, cwd: nb.folder, account_id: choice.account_id } : undefined}
               placeholder={nb.source_list.length ? 'Ask about the sources…' : 'Add a source first, or just ask…'}
@@ -242,11 +239,11 @@ export function NotebookPage({ onMenu }: { onMenu?: () => void }) {
 
   const reader = (
     <section className="nb-reader" aria-label="Source">
-      {open ? <SourceViewer nbId={nb.id} source={open} onClose={() => openSource(null)} onChanged={gone => { if (gone) openSource(null); void reload() }} onAsk={askAbout} />
+      {open ? <SourceViewer nbId={nb.id} source={open} onClose={() => openSource(null)} onChanged={gone => { if (gone) openSource(null); void reload() }} />
         : <div className="nb-overview">
           <div className="nb-overview-inner">
             <h2>{nb.source_list.length ? 'Open a source to read it here' : 'Add the first source'}</h2>
-            <p className="muted small">{nb.source_list.length ? 'The chat stays beside it; “Ask about this” points your question at the open source.' : 'Files, web links, Pocket notes, documents, an issue or project from Pocket Projects, or pasted text.'}</p>
+            <p className="muted small">{nb.source_list.length ? 'The chat stays beside it, and your questions are about the source you have open.' : 'Files, web links, Pocket notes, documents, an issue or project from Pocket Projects, or pasted text.'}</p>
             {nb.instructions && <div className="callout info"><Icon name="info" size={14} /><span><strong>Instructions:</strong> {nb.instructions}</span></div>}
             <div className="nb-src-grid">
               {nb.source_list.map(x => (

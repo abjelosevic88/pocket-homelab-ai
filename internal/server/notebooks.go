@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -294,6 +295,9 @@ func dayOf(ts string) string {
 
 type notebookCwd struct{}
 
+// aboutPrefix starts a question about the open source (web: askPrefix).
+var aboutPrefix = regexp.MustCompile(`^About “[^”]{1,300}” \(sources/[^)\s]+\): `)
+
 func (s *Server) handleNotebookChat(w http.ResponseWriter, r *http.Request) {
 	if !s.requireRun(w, r) {
 		return
@@ -313,6 +317,10 @@ func (s *Server) handleNotebookChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeNotebookIndex(r.Context(), nb)
+	if strings.TrimSpace(in.Title) == "" {
+		// named after the question, not the "About “source” (file):" it starts with
+		in.Title = titleFrom(aboutPrefix.ReplaceAllString(in.Text, ""))
+	}
 	// here, in the notebook's folder: no other machine, worktree or folder
 	in.HostID, in.HostHome, in.Worktree, in.WorkspaceID, in.Cwd = 0, "", nil, nil, dir
 	ctx := context.WithValue(context.WithValue(r.Context(), startInBackground{}, true), notebookCwd{}, dir)

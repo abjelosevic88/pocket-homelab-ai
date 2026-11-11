@@ -15,8 +15,6 @@ import { Confirm, errMsg, Loading, Menu, Modal, rectOf, Segmented, Spinner, useD
 
 export const nbURL = (id: number) => `${V1}/notebooks/${id}`
 
-/** Put text in a chat's composer (detail: {id, text}): "Ask about this". */
-export const COMPOSE_EVENT = 'pai:compose'
 
 /** The notebook with its sources and chats; null while loading. */
 export function useNotebook(id: number) {
@@ -51,8 +49,29 @@ export function sourceIcon(x: NotebookSource) {
   return KIND[x.kind]?.icon || 'file'
 }
 
-/** What the composer starts with to ask about one source. */
-export const askPrefix = (x: NotebookSource) => `About “${x.title}” (${x.file}): `
+/** What a question about the open source starts with (the agent finds the file by it). */
+export const askPrefix = (x: Pick<NotebookSource, 'title' | 'file'>) => `About “${x.title}” (${x.file}): `
+
+/** The source open next to a chat: questions are about it unless turned off. */
+export interface Reading { title: string; file: string; kind: NotebookSourceKind; mime: string }
+
+/** Prefix a message with the open source (not slash commands: they must start the message). */
+export const withReading = (r: Reading | null | undefined, text: string) => r && !text.trimStart().startsWith('/') ? askPrefix(r) + text : text
+
+/** Above a notebook chat's box: which source the next question is about. */
+export function ReadingChip({ reading, on, onToggle }: { reading: Reading; on: boolean; onToggle: (on: boolean) => void }) {
+  return on ? (
+    <div className="nb-reading on" title="Your next message says it is about this source; the chat can still look at the others">
+      <Icon name={reading.mime.startsWith('image/') ? 'image' : 'file'} size={13} />
+      <span className="grow ellipsis">About <strong>{reading.title}</strong></span>
+      <button type="button" className="btn ghost icon-only xs" aria-label="Not about this source" title="Ask about all sources instead" onClick={() => onToggle(false)}><Icon name="x" size={12} /></button>
+    </div>
+  ) : (
+    <button type="button" className="nb-reading off" onClick={() => onToggle(true)} title="Point the next message at the open source">
+      <Icon name="plus" size={12} /><span className="ellipsis">About <strong>{reading.title}</strong></span>
+    </button>
+  )
+}
 
 /** The web address a source came from, if any. */
 export function sourceLink(x: NotebookSource): string {
@@ -339,8 +358,10 @@ function ProjectsDialog({ nbId, onClose, onAdded }: { nbId: number; onClose: () 
 
 // ---------- the viewer ----------
 
-export function SourceViewer({ nbId, source: x, onAsk, onClose, onChanged }: {
-  nbId: number; source: NotebookSource; onAsk?: (x: NotebookSource) => void; onClose: () => void; onChanged: (gone?: boolean) => void
+/** One source, to read: a single bar (name, where from, view, menu, close)
+ * over its text set for reading. The chat beside it knows it is open. */
+export function SourceViewer({ nbId, source: x, onClose, onChanged }: {
+  nbId: number; source: NotebookSource; onClose: () => void; onChanged: (gone?: boolean) => void
 }) {
   const [text, setText] = useState<string | null>(null)
   const [error, setError] = useState('')
@@ -381,25 +402,23 @@ export function SourceViewer({ nbId, source: x, onAsk, onClose, onChanged }: {
     { label: 'Remove from notebook', icon: 'trash', danger: true, onSelect: () => setRemoving(true) },
   ]
   const [menuAt, setMenuAt] = useState<Anchor | null>(null)
+  const linkLabel = x.kind === 'link' ? 'Open the page' : x.kind === 'issue' || x.kind === 'shared-note' ? 'Open the issue in Pocket Projects' : x.kind === 'project' || x.kind === 'project-doc' ? 'Open the project in Pocket Projects' : x.kind === 'note' ? 'Open in Pocket Notes' : 'Open in Pocket'
   return (
     <div className="nb-viewer">
-      <div className="nb-viewer-head">
-        <button type="button" className="btn ghost icon-only" aria-label="Close the source" title="Close" onClick={onClose}><Icon name="x" size={16} /></button>
+      <div className="nb-viewer-bar">
         <span className={`nb-source-icon k-${x.kind}`}><Icon name={sourceIcon(x)} size={15} /></span>
-        <div className="grow" style={{ minWidth: 0 }}>
-          {renaming ? <input className="input sm" autoFocus value={title} onChange={e => setTitle(e.target.value)} onBlur={rename} onKeyDown={e => { if (e.key === 'Enter') void rename(); if (e.key === 'Escape') { setTitle(x.title); setRenaming(false) } }} aria-label="Source name" />
-            : <div className="nb-viewer-title ellipsis" onDoubleClick={() => setRenaming(true)}>{x.title}</div>}
-          <div className="muted xsmall ellipsis">{sourceSub(x)} · added {ago(x.created_at)}{link && <> · <a href={link} target="_blank" rel="noopener noreferrer">open ↗</a></>}</div>
+        <div className="grow nb-viewer-name">
+          {renaming ? <input autoFocus value={title} onChange={e => setTitle(e.target.value)} onBlur={rename} onKeyDown={e => { if (e.key === 'Enter') void rename(); if (e.key === 'Escape') { setTitle(x.title); setRenaming(false) } }} aria-label="Source name" />
+            : <div className="nb-viewer-title ellipsis" title={x.title} onDoubleClick={() => setRenaming(true)}>{x.title}</div>}
+          <div className="nb-viewer-meta ellipsis">{sourceSub(x)} · added {ago(x.created_at)}</div>
         </div>
         {busy && <Spinner />}
-        <button type="button" className="btn ghost icon-only" aria-label="Source menu" onClick={e => setMenuAt(rectOf(e.currentTarget))}><Icon name="more" size={16} /></button>
-      </div>
-      {(visual || text !== null) && <div className="nb-viewer-tools">
         {visual && <Segmented size="sm" value={view} onChange={setView} options={[{ value: 'text', label: 'Text' }, { value: 'original', label: x.mime === 'application/pdf' ? 'PDF' : 'Picture' }]} label="View" />}
-        {view === 'text' && <button type="button" className={`btn ghost sm ${plain ? 'on' : ''}`} onClick={() => setPlain(!plain)}>{plain ? 'Formatted' : 'Plain text'}</button>}
-        <span className="grow" />
-        {onAsk && <button type="button" className="btn primary sm" onClick={() => onAsk(x)}><Icon name="sparkles" size={14} />Ask about this</button>}
-      </div>}
+        {view === 'text' && text !== null && <button type="button" className={`btn ghost icon-only ${plain ? 'on' : ''}`} aria-pressed={plain} title={plain ? 'Show it formatted' : 'Show the plain text'} aria-label="Plain text" onClick={() => setPlain(!plain)}><Icon name="text" size={16} /></button>}
+        {link && <a className="btn ghost icon-only" href={link} target="_blank" rel="noopener noreferrer" title={linkLabel} aria-label={linkLabel}><Icon name="external" size={15} /></a>}
+        <button type="button" className="btn ghost icon-only" aria-label="Source menu" title="More" onClick={e => setMenuAt(rectOf(e.currentTarget))}><Icon name="more" size={16} /></button>
+        <button type="button" className="btn ghost icon-only" aria-label="Close the source" title="Close" onClick={onClose}><Icon name="x" size={16} /></button>
+      </div>
       <div className="nb-viewer-body">
         {view === 'original' && visual ? (
           x.mime === 'application/pdf'
@@ -421,7 +440,7 @@ export function SourceViewer({ nbId, source: x, onAsk, onClose, onChanged }: {
 
 /** A notebook chat's side pane: its sources (one open next to the chat;
  * "Ask about this" starts the next message about it) and its other chats. */
-export function NotebookPane({ id, threadId, onAsk, onClose }: { id: number; threadId: string; onAsk: (prefix: string) => void; onClose: () => void }) {
+export function NotebookPane({ id, threadId, onReading, onClose }: { id: number; threadId: string; onReading: (r: Reading | null) => void; onClose: () => void }) {
   const { nb, error, reload } = useNotebook(id)
   const [open, setOpen] = useState<NotebookSource | null>(null)
   const [tab, setTab] = useState<'sources' | 'chats'>('sources')
@@ -430,6 +449,8 @@ export function NotebookPane({ id, threadId, onAsk, onClose }: { id: number; thr
   // another chat of it opened (or a new one started): its list follows
   const first = useRef(true)
   useEffect(() => { if (first.current) { first.current = false; return } void reload() }, [threadId]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { onReading(open) }, [open?.id, open?.title]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => onReading(null), []) // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <aside className="nb-pane" aria-label="Notebook">
       <div className="nb-pane-head">
@@ -446,7 +467,7 @@ export function NotebookPane({ id, threadId, onAsk, onClose }: { id: number; thr
       </div>}
       {error ? <div className="callout error" role="alert" style={{ margin: 12 }}>{error}</div>
         : !nb ? <Loading />
-        : open ? <SourceViewer nbId={id} source={open} onClose={() => setOpen(null)} onChanged={gone => { if (gone) setOpen(null); void reload() }} onAsk={x => onAsk(askPrefix(x))} />
+        : open ? <SourceViewer nbId={id} source={open} onClose={() => setOpen(null)} onChanged={gone => { if (gone) setOpen(null); void reload() }} />
         : tab === 'chats' ? <div className="nb-pane-list"><NotebookChats nb={nb} current={threadId} onNew={() => navigate(`/notebooks/${id}`)} /></div>
         : <div className="nb-pane-list"><SourceList nb={nb} onSelect={setOpen} onChanged={reload} /></div>}
     </aside>
