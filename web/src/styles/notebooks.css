@@ -45,11 +45,7 @@
 
 /* the viewer */
 .nb-viewer { display: flex; flex-direction: column; min-height: 0; }
-.nb-viewer-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px 8px 8px; }
-.nb-viewer-title { font-weight: 600; font-size: 14.5px; }
-.nb-viewer-tools { display: flex; align-items: center; gap: 8px; padding: 0 12px 8px; border-bottom: 1px solid var(--hairline); flex-wrap: wrap; }
 .nb-viewer-body { flex: 1; min-height: 0; overflow-y: auto; }
-.nb-text { padding: 16px 22px 40px; max-width: 760px; }
 .nb-plain { margin: 0; padding: 16px 20px 40px; white-space: pre-wrap; word-break: break-word; font-size: 12.5px; line-height: 1.55; }
 .nb-pdf { width: 100%; height: 100%; min-height: 60vh; border: 0; display: block; background: var(--surface-2); }
 .nb-picture { padding: 16px; display: grid; place-items: center; }
@@ -69,8 +65,7 @@
 .thread-sub .nb-chip:hover { background: var(--accent-soft); color: var(--accent-ink); }
 
 @media (max-width: 760px) {
-  .nb-text { padding: 12px 14px 30px; }
-  .nb-pane { position: fixed; inset: 0; z-index: 60; width: auto; border-left: 0; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+    .nb-pane { position: fixed; inset: 0; z-index: 60; width: auto; border-left: 0; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
   .nb-toggle-label { display: none; }
 }
 
@@ -100,8 +95,7 @@ button.nb-pick { border: 0; background: none; font: inherit; color: var(--text);
 .nb-rail { width: 270px; flex: none; overflow-y: auto; background: var(--sidebar); border-right: 1px solid var(--hairline); }
 .nb-reader { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
 .nb-reader > .nb-viewer { flex: 1; }
-.nb-reader .nb-text { max-width: 860px; margin: 0 auto; padding: 22px 32px 60px; }
-.nb-chatcol { flex: none; display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--bg); border-left: 1px solid var(--hairline); }
+.nb-reader .nb-chatcol { flex: none; display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--bg); border-left: 1px solid var(--hairline); }
 .nb-resize { flex: none; width: 5px; margin: 0 -3px 0 -2px; cursor: col-resize; z-index: 2; position: relative; }
 .nb-resize:hover, .nb-resize:active { background: var(--accent-ring); }
 /* the chat on the left: chat | source | list */
@@ -134,11 +128,56 @@ button.nb-pick { border: 0; background: none; font: inherit; color: var(--text);
   .nb-phone-tabs { padding: 8px 10px; border-bottom: 1px solid var(--hairline); }
   .nb-phone-tabs .segmented { width: 100%; }
   .nb-rail, .nb-chatcol { width: auto; flex: 1; border: 0; }
-  .nb-reader .nb-text { padding: 14px 16px 40px; }
-  .nb-sources { min-height: 0; }
+  .nb-reader   .nb-sources { min-height: 0; }
 }
 /* the chat column names the chat already: no second title, no notebook chip */
 .nb-chatcol-body .thread-title, .nb-chatcol-body .nb-chip { display: none; }
 .nb-chatcol-body .thread-head { padding-top: 6px; padding-bottom: 6px; }
 .nb-phone-tabs .segmented { display: flex; }
 .nb-phone-tabs .segmented > * { flex: 1; }
+
+/* ---------- reading a source ---------- */
+.nb-viewer-bar { display: flex; align-items: center; gap: 4px; padding: 10px 10px 10px 16px; border-bottom: 1px solid var(--hairline); min-height: 58px; }
+.nb-viewer-bar .nb-source-icon { margin-right: 6px; }
+.nb-viewer-bar .btn.on { background: var(--accent-soft); color: var(--accent-ink); }
+.nb-viewer-bar .segmented { margin: 0 4px; }
+.nb-viewer-name { min-width: 0; display: flex; flex-direction: column; gap: 1px; margin-right: 6px; }
+.nb-viewer-title { font-weight: 600; font-size: 14.5px; line-height: 1.3; }
+.nb-viewer-meta { font-size: 12px; color: var(--muted); }
+.nb-viewer-name input { height: 30px; font-weight: 600; }
+
+/* text set for reading: a comfortable measure, room between parts */
+.nb-text { max-width: 720px; margin: 0 auto; padding: 36px 40px 96px; }
+.nb-text .md { font-size: 15.5px; line-height: 1.72; color: var(--text); }
+.nb-text .md p { margin: 0 0 16px; }
+.nb-text .md h1 { font-size: 25px; line-height: 1.25; letter-spacing: -.02em; margin: 0 0 20px; }
+.nb-text .md h2 { font-size: 19px; line-height: 1.3; letter-spacing: -.01em; margin: 36px 0 12px; padding-top: 18px; border-top: 1px solid var(--hairline); }
+.nb-text .md h1 + h2 { border-top: 0; padding-top: 0; margin-top: 8px; }
+.nb-text .md h3 { font-size: 16.5px; margin: 26px 0 8px; }
+.nb-text .md h4 { font-size: 15.5px; margin: 20px 0 6px; color: var(--text-2); }
+.nb-text .md ul, .nb-text .md ol { margin: 0 0 16px; padding-left: 24px; }
+.nb-text .md li { margin: 6px 0; padding-left: 2px; }
+.nb-text .md li::marker { color: var(--faint); }
+.nb-text .md strong { font-weight: 650; }
+.nb-text .md code { font-size: 13.5px; padding: 1px 6px; }
+.nb-text .md blockquote { margin: 0 0 16px; padding: 4px 16px; border-left-width: 3px; }
+.nb-text .md table { font-size: 14px; margin: 0 0 18px; }
+.nb-text .md hr { margin: 28px 0; border: 0; border-top: 1px solid var(--hairline); }
+.nb-pane .nb-text { padding: 22px 22px 60px; }
+.nb-pane .nb-text .md { font-size: 14.5px; }
+.nb-plain { max-width: 820px; margin: 0 auto; padding: 28px 32px 80px; font-size: 13px; }
+
+/* the source the next question is about */
+.nb-reading { display: flex; align-items: center; gap: 7px; min-width: 0; margin: 0 2px 6px; padding: 5px 6px 5px 10px; border-radius: 8px; font-size: 12.5px; }
+.nb-reading.on { background: var(--accent-soft); color: var(--accent-ink); }
+.nb-reading.on strong { font-weight: 600; }
+.nb-reading.off { border: 1px dashed var(--border-strong); background: none; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; width: fit-content; max-width: 100%; padding-right: 10px; }
+.nb-reading.off:hover { color: var(--accent-ink); border-color: var(--accent-ring); }
+.nb-reading strong { font-weight: 500; }
+
+@media (max-width: 760px) {
+  .nb-text { padding: 20px 18px 60px; }
+  .nb-text .md { font-size: 15px; }
+  .nb-viewer-bar { padding: 8px 6px 8px 12px; }
+}
+.msg.user .about-chip { display: flex; align-items: center; gap: 5px; width: fit-content; max-width: 100%; margin-bottom: 6px; padding: 2px 8px; border-radius: 6px; background: var(--surface); color: var(--accent-ink); font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

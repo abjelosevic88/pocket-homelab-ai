@@ -225,7 +225,7 @@ export const ItemView = memo(function ItemView({ item, showThinking, threadId, o
           <div className="bubble">
             {pics.length > 0 && <Images images={pics} />}
             {item.files?.map(f => <a className="file-chip" key={f.id} href={f.url} download={f.name}>📄 {f.name}</a>)}
-            {f ? <><FoldedNote f={f} />{f.rest && <UserText text={f.rest} />}</> : item.text && <UserText text={item.text} />}
+            {f ? <><FoldedNote f={f} />{f.rest && <UserText text={f.rest} />}</> : item.text && <AboutSource text={item.text} />}
           </div>
           {item.queued && <div className="queued-tag"><Icon name="clock" size={11} />queued — sent when the agent is done</div>}
         </div>
@@ -368,3 +368,12 @@ function ByLine({ name, id }: { name: string; id?: number }) {
   return <div className="msg-by">{id && id === user?.id ? 'You' : name}</div>
 }
 
+
+// A notebook question about the open source: "About “Title” (sources/…): …"
+// reads as a small tag with the source's name over the question.
+const aboutRe = /^About “([^”]{1,300})” \((sources\/[^)\s]+)\): ([\s\S]*)$/
+function AboutSource({ text }: { text: string }) {
+  const m = text.match(aboutRe)
+  if (!m) return <UserText text={text} />
+  return <><span className="about-chip" title={m[2]}><Icon name="file" size={11} />{m[1]}</span><UserText text={m[3]} /></>
+}

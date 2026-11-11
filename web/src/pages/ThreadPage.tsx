@@ -28,7 +28,7 @@ import { ThreadRefChip } from '../components/ThreadRefChip'
 import { projectsPaused, projectsRef, refKey, reloadProjectsLink, useProjectsLink } from '../lib/projects'
 import { AttachIssueDialog } from '../components/AttachIssueDialog'
 import { Timeline } from '../components/Timeline'
-import { COMPOSE_EVENT, NotebookPane } from '../components/Notebook'
+import { NotebookPane, ReadingChip, withReading, type Reading } from '../components/Notebook'
 import { PrivacyBadge, ShareDialog } from '../components/ShareDialog'
 import { accessOf } from '../lib/share'
 import { actionFor, useShortcuts } from '../lib/shortcuts'
@@ -61,7 +61,7 @@ function upsert(list: Item[], it: Item): Item[] {
 
 /** Also shown inside a notebook's chat column (threadId + embedded): no
  * notebook pane of its own there. */
-export default function ThreadPage({ onMenu, threadId, embedded }: { onMenu?: () => void; threadId?: string; embedded?: boolean }) {
+export default function ThreadPage({ onMenu, threadId, embedded, reading }: { onMenu?: () => void; threadId?: string; embedded?: boolean; reading?: Reading | null }) {
   const params = useParams()
   const id = threadId ?? params.id ?? ''
 
@@ -95,12 +95,11 @@ export default function ThreadPage({ onMenu, threadId, embedded }: { onMenu?: ()
   const [newBelow, setNewBelow] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
   const composer = useRef<ComposerHandle>(null)
-  // "Ask about this" in a notebook: the text the next message starts with
-  useEffect(() => {
-    const on = (e: Event) => { const d = (e as CustomEvent<{ id: string; text: string }>).detail; if (d?.id === id) composer.current?.setText(d.text) }
-    window.addEventListener(COMPOSE_EVENT, on)
-    return () => window.removeEventListener(COMPOSE_EVENT, on)
-  }, [id])
+  // a notebook chat: the source open next to it is what the next message is about
+  const [paneReading, setPaneReading] = useState<Reading | null>(null)
+  const readingNow = embedded ? reading ?? null : paneReading
+  const [readingOff, setReadingOff] = useState('') // the file the person said "not about this" for
+  const aboutOn = !!readingNow && readingOff !== readingNow.file
   const side = useSideQuestions(id)
   // a notebook chat: its sources beside it (open by default on wide screens)
   const mobile = useIsMobile()
@@ -522,7 +521,8 @@ export default function ThreadPage({ onMenu, threadId, embedded }: { onMenu?: ()
           {access === 'view' ? (
             <div className="callout info"><Icon name="eye" size={15} /><span>{t.owner_name || 'Someone'} shared this chat with you to read. They can let you chat in it too.</span></div>
           ) : canRun ? (
-            <Composer key={id} ref={composer} draftKey={id} autoFocus onSend={send} onCommand={localCommand} onSide={owner && t.source !== 'ask' ? q => { void side.ask(q) } : undefined} skills={t.source === 'ask' ? undefined : { provider: t.provider, cwd: t.cwd, account_id: t.account_id, host_id: t.host_id, host_home: t.host_home }} running={running} onStop={t.external && !t.live && !t.reattached ? undefined : interrupt} disabled={!!t.external && !t.live && !t.reattached}
+            <>{readingNow && <ReadingChip reading={readingNow} on={aboutOn} onToggle={on => setReadingOff(on ? '' : readingNow.file)} />}
+            <Composer key={id} ref={composer} draftKey={id} autoFocus onSend={(text, up, now) => send(aboutOn ? withReading(readingNow, text) : text, up, now)} onCommand={localCommand} onSide={owner && t.source !== 'ask' ? q => { void side.ask(q) } : undefined} skills={t.source === 'ask' ? undefined : { provider: t.provider, cwd: t.cwd, account_id: t.account_id, host_id: t.host_id, host_home: t.host_home }} running={running} onStop={t.external && !t.live && !t.reattached ? undefined : interrupt} disabled={!!t.external && !t.live && !t.reattached}
               placeholder={t.external && !t.live && !t.reattached ? 'It is running in another app right now — you can reply here once it has finished' : running ? 'Add a message — it is sent when the agent is done…' : pending.length ? 'Or type an answer…' : `Reply to ${providerName(t.provider)}…`}
               footer={<>
                 {t.source === 'ask' && owner && <span className="thread-pickers"><AgentPicker compact ask showProvider={false} value={{ provider: 'claude', model: t.model, effort: t.effort, mode: t.mode, account_id: t.account_id || 0 }}
@@ -531,7 +531,7 @@ export default function ThreadPage({ onMenu, threadId, embedded }: { onMenu?: ()
                 {owner && p && t.source !== 'ask' && <span className="thread-pickers"><AgentPicker compact switchProvider={unstarted} host={t.host_id || 0} value={{ provider: t.provider, model: t.model, effort: t.effort, mode: t.mode, speed: t.speed || '', account_id: t.account_id || 0, host_home: t.host_home || '' }}
                   onChange={ch => patch(ch as Partial<Thread>)} remote={canRun ? { on: !!t.remote_control, busy: rcBusy, state: t.remote_control?.state, onToggle: () => remoteControl(!t.remote_control) } : undefined} /></span>}
                 {owner && <CacheChip t={t} onTap={text => { if (isTouch()) toast(text) }} />}
-              </>} />
+              </>} /></>
           ) : (
             <div className="callout info"><Icon name="lock" size={15} /><span>An admin has to allow you to run agents before you can reply.</span></div>
           )}
@@ -554,10 +554,7 @@ export default function ThreadPage({ onMenu, threadId, embedded }: { onMenu?: ()
   return (
     <div className={`nb-split ${nbPane ? 'open' : ''}`}>
       {page}
-      {nbPane && <NotebookPane id={t.notebook} threadId={t.id} onClose={() => showNbPane(false)} onAsk={prefix => {
-        composer.current?.setText(prefix)
-        if (mobile) showNbPane(false)
-      }} />}
+      {nbPane && <NotebookPane id={t.notebook} threadId={t.id} onClose={() => showNbPane(false)} onReading={setPaneReading} />}
     </div>
   )
 }

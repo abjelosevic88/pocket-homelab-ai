@@ -246,3 +246,9 @@ func TestNotebookFromProjects(t *testing.T) {
 	}
 	alice.want("POST", base+"/sources/projects", map[string]any{"kind": "issue", "ref": "ATH-999"}, 404, nil)
 }
+
+func TestNotebookChatTitleSkipsTheSource(t *testing.T) {
+	if got := titleFrom(aboutPrefix.ReplaceAllString("About “Plan (v2)” (sources/001-plan.md): How often is it re-indexed?", "")); got != "How often is it re-indexed?" {
+		t.Fatalf("title %q", got)
+	}
+}
