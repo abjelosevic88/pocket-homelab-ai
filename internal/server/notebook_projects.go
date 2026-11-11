@@ -305,8 +305,9 @@ func (im *importer) importIssue(ref string) error {
 			Size     int64  `json:"size"`
 		} `json:"attachment_list"`
 		SharedNotes []struct {
-			ID    int64  `json:"id"`
-			Title string `json:"title"`
+			ID         int64  `json:"id"`
+			Title      string `json:"title"`
+			SourceNote string `json:"source_note"`
 		} `json:"shared_notes"`
 		Comments []struct {
 			UserID     *int64  `json:"user_id"`
@@ -450,7 +451,14 @@ func (im *importer) importIssue(ref string) error {
 		im.put(&store.NotebookSource{Kind: "file", Title: name, Origin: okey, Mime: ctype}, text, data, name)
 	}
 
-	// Pocket Notes that mention the issue (the issue's Notes panel)
+	// Pocket Notes that mention the issue (the issue's Notes panel), except
+	// the ones shared into it
+	shared := map[string]bool{}
+	for _, n := range d.SharedNotes {
+		if n.SourceNote != "" {
+			shared[n.SourceNote] = true
+		}
+	}
 	var notes struct {
 		Status string           `json:"status"`
 		Items  []map[string]any `json:"items"`
@@ -460,8 +468,8 @@ func (im *importer) importIssue(ref string) error {
 			id, _ := it["id"].(string)
 			title, _ := it["title"].(string)
 			link, _ := it["url"].(string)
-			if id == "" {
-				continue
+			if id == "" || shared[id] {
+				continue // shared into the issue already: that copy is a source
 			}
 			text, _, err := im.s.pocketText(im.ctx, im.uid, "notes", id, notebookTextMax)
 			if err != nil {

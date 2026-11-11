@@ -141,14 +141,14 @@ func projectsNotebookCore(t *testing.T, s *Server, email string, comment *string
 				"state_type": "started", "priority": 2, "url": "https://projects.example/issue/ATH-340",
 				"sub_issues":      []map[string]any{{"identifier": "ATH-341", "title": "Halfvec table", "state_type": "backlog", "description": "Own HNSW index."}},
 				"attachment_list": []map[string]any{{"id": 55, "kind": "file", "file_name": "measurements.csv", "size": 30}, {"id": 56, "kind": "link", "title": "PR #5244", "url": "https://git.example/pr/5244"}},
-				"shared_notes":    []map[string]any{{"id": 9, "title": "ATH-340 plan"}},
+				"shared_notes":    []map[string]any{{"id": 9, "title": "ATH-340 plan", "source_note": "77"}},
 				"comment_list":    []map[string]any{{"user_id": 4, "body": *comment, "created_at": "2026-11-11T09:00:00Z"}}})
 		case "/api/v1/issues/ATH-340/shared-notes/9":
 			send(map[string]any{"title": "ATH-340 plan", "body": "Embed one sheet profile per sheet."})
 		case "/api/v1/attachments/55/file":
 			w.Write([]byte("source,rows\nvs-production,36862\n")) //nolint:errcheck
 		case "/api/v1/issues/ATH-340/notes":
-			send(map[string]any{"status": "off", "items": []any{}})
+			send(map[string]any{"status": "ok", "items": []any{map[string]any{"id": "77", "title": "ATH-340 plan"}}}) // the shared note's own
 		case "/api/v1/projects/12":
 			send(map[string]any{"id": 12, "name": "Unified search", "summary": "One search for every agent.", "status": "started", "lead_id": 4,
 				"docs": []map[string]any{{"id": 3, "title": "Architecture", "body": "Postgres 16 with pgvector."}}, "updates": []map[string]any{{"user_id": 4, "health": "on_track", "body": "Halfway there.", "created_at": "2026-11-10T08:00:00Z"}}})

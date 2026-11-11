@@ -2,15 +2,18 @@
 // sources on the left, on the right either a new question and its chats, or
 // the open source next to a question about it.
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
-import { ago } from '../lib/format'
+import { ago, threadTitle } from '../lib/format'
+import { setFocusMode } from '../lib/sidebar'
+import { ThreadStatus } from '../components/bits'
+import ThreadPage from './ThreadPage'
 import type { Notebook, NotebookFull, NotebookSource, ProviderId, Thread } from '../lib/types'
 import { AgentPicker, defaultsFor, type AgentValue } from '../components/AgentPicker'
 import { Composer, type ComposerHandle } from '../components/Composer'
 import { Icon } from '../components/icons'
-import { askPrefix, hasProjectsSources, NotebookChats, importProjects, nbURL, ProjectsPicker, reportToast, SourceList, SourceViewer, useNotebook, type ImportReport, type ProjectsPick } from '../components/Notebook'
+import { AddSource, askPrefix, COMPOSE_EVENT, hasProjectsSources, sourceIcon, importProjects, nbURL, ProjectsPicker, reportToast, SourceList, SourceViewer, useNotebook, type ImportReport, type ProjectsPick } from '../components/Notebook'
 import { useProjectsLink } from '../lib/projects'
 import { PageHead } from '../components/PageHead'
 import { Confirm, Empty, errMsg, Loading, MenuButton, Modal, Segmented, Spinner, useIsMobile, useToast, type MenuItem } from '../components/ui'
@@ -116,11 +119,19 @@ function useAgentChoice() {
   return [choice, setChoice] as const
 }
 
+const pref = (k: string, d: string) => localStorage.getItem('pai-nb-' + k) ?? d
+const setPref = (k: string, v: string) => localStorage.setItem('pai-nb-' + k, v)
+
+/** One notebook as a workspace: its sources, the open source in the middle,
+ * a chat beside it (left or right, as wide as you drag it). The app's
+ * sidebar can fold away (Focus). On a phone: one of the three at a time. */
 export function NotebookPage({ onMenu }: { onMenu?: () => void }) {
   const id = Number(useParams().id) || 0
   const { nb, setNb, error, reload } = useNotebook(id)
   const { upsertThread, accounts } = useApp()
-  const [open, setOpen] = useState<NotebookSource | null>(null)
+  const [params, setParams] = useSearchParams()
+  const srcId = Number(params.get('source')) || 0
+  const chatParam = params.get('chat')
   const [editing, setEditing] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [choice, setChoice] = useAgentChoice()
@@ -130,75 +141,168 @@ export function NotebookPage({ onMenu }: { onMenu?: () => void }) {
   const mobile = useIsMobile()
   const projects = useProjectsLink()
   const [syncing, setSyncing] = useState(false)
+  const [rail, setRail] = useState(() => pref('rail', '1') === '1')
+  const [chatOn, setChatOn] = useState(() => pref('chat', '1') === '1')
+  const [side, setSide] = useState<'left' | 'right'>(() => pref('side', 'right') === 'left' ? 'left' : 'right')
+  const [width, setWidth] = useState(() => Math.min(900, Math.max(320, Number(pref('chat-w', '460')) || 460)))
+  const [focus, setFocus] = useState(() => pref('focus', '0') === '1')
+  const [phone, setPhone] = useState<'sources' | 'read' | 'chat'>(srcId ? 'read' : 'sources')
 
-  // the open source follows its latest version (renamed, read again)
-  useEffect(() => { if (open && nb) setOpen(nb.source_list.find(x => x.id === open.id) || null) }, [nb]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setFocusMode(focus && !mobile); setPref('focus', focus ? '1' : '0') }, [focus, mobile])
+  useEffect(() => () => { setFocusMode(false) }, [])
+  // the latest chat unless one is asked for; '' = a new one
+  const chatId = chatParam !== null ? chatParam : nb?.chat_list[0]?.id || ''
+  // a chat started here, or another one opened: the list follows
+  useEffect(() => { if (chatId && nb && !nb.chat_list.some(t => t.id === chatId)) void reload() }, [chatId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const set = (k: 'source' | 'chat', v: string) => setParams(p => { const n = new URLSearchParams(p); if (v === '' && k === 'source') n.delete(k); else n.set(k, v); return n }, { replace: true })
 
   if (error && !nb) return <div className="page"><PageHead title="Notebook" icon="book" onMenu={onMenu} /><div className="page-inner"><div className="callout error" role="alert">{error}</div></div></div>
   if (!nb) return <div className="page"><PageHead title="Notebook" icon="book" onMenu={onMenu} /><Loading /></div>
 
+  const open = nb.source_list.find(x => x.id === srcId) || null
+  const openSource = (x: NotebookSource | null) => { set('source', x ? String(x.id) : ''); if (x && mobile) setPhone('read') }
+
   const send = async (text: string, uploadIds: string[]) => {
     if (!choice) return false
-    const body = open ? askPrefix(open) + text : text
     try {
       const t = await api.post<Thread>(`${nbURL(nb.id)}/chats`, {
         provider: choice.provider, model: choice.model || undefined, effort: choice.effort || undefined, mode: choice.mode || undefined, speed: choice.speed ?? undefined,
         account_id: accounts.some(a => a.provider === choice.provider && a.id === choice.account_id && a.signed_in) ? choice.account_id : undefined,
-        text: body, upload_ids: uploadIds,
+        text, upload_ids: uploadIds,
       })
       upsertThread(t)
-      navigate(`/t/${t.id}`)
+      set('chat', t.id) // it opens right here, next to the source
       return true
     } catch (e) { toast(errMsg(e), 'err'); return false }
   }
-
+  const askAbout = (x: NotebookSource) => {
+    if (!chatOn) { setChatOn(true); setPref('chat', '1') }
+    if (mobile) setPhone('chat')
+    const text = askPrefix(x)
+    if (chatId) setTimeout(() => window.dispatchEvent(new CustomEvent(COMPOSE_EVENT, { detail: { id: chatId, text } })), 50)
+    else setTimeout(() => composer.current?.setText(text), 50)
+  }
   const sync = async () => {
     setSyncing(true)
     try { const r = await api.post<{ report: ImportReport; notebook: NotebookFull }>(`${nbURL(nb.id)}/sync`); setNb(r.notebook); reportToast(r.report, toast) } catch (e) { toast(errMsg(e), 'err') }
     setSyncing(false)
   }
+  const drag = (e: React.PointerEvent) => {
+    e.preventDefault()
+    const x0 = e.clientX, w0 = width
+    const move = (ev: PointerEvent) => {
+      const dx = ev.clientX - x0
+      setWidth(Math.round(Math.min(Math.max(320, side === 'right' ? w0 - dx : w0 + dx), Math.min(900, window.innerWidth * 0.7))))
+    }
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); setWidth(w => { setPref('chat-w', String(w)); return w }) }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+  const toggle = (k: 'rail' | 'chat', v: boolean) => { (k === 'rail' ? setRail : setChatOn)(v); setPref(k, v ? '1' : '0') }
 
-  const ask = (
-    <div className="nb-ask">
-      <Composer ref={composer} draftKey={`nb-${nb.id}${open ? '-' + open.id : ''}`} autoFocus={!mobile} onSend={send}
-        placeholder={open ? `Ask about “${open.title}”…` : nb.source_list.length ? `Ask about ${nb.source_list.length === 1 ? 'this source' : `these ${nb.source_list.length} sources`}…` : 'Add a source first, or just ask…'}
-        footer={choice ? <AgentPicker compact switchProvider value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} /> : undefined} />
-      {open && <div className="muted xsmall nb-ask-note"><Icon name="info" size={12} />Starts a new chat about this source; it can still look at the others.</div>}
-    </div>
+  const current = nb.chat_list.find(t => t.id === chatId)
+  const chatMenu: MenuItem[] = [
+    { label: 'New chat', icon: 'plus', onSelect: () => set('chat', '') },
+    ...(nb.chat_list.length ? ['sep' as const, { heading: 'Chats in this notebook' }] : []),
+    ...nb.chat_list.map(t => ({ label: threadTitle(t), icon: 'message', checked: t.id === chatId, hint: ago(t.activity_at), onSelect: () => set('chat', t.id) })),
+  ]
+  const chatCol = (
+    <section className="nb-chatcol" style={mobile ? undefined : { width }} aria-label="Chat">
+      <div className="nb-chatcol-head">
+        <MenuButton label="Choose a chat" className="btn ghost sm nb-chat-pick" items={chatMenu} width={320}>
+          <Icon name="message" size={14} /><span className="ellipsis">{current ? threadTitle(current) : 'New chat'}</span><Icon name="chevron-down" size={13} />
+        </MenuButton>
+        <span className="grow" />
+        {chatId && <button type="button" className="btn ghost icon-only" title="New chat" aria-label="New chat" onClick={() => set('chat', '')}><Icon name="plus" size={16} /></button>}
+        {chatId && <button type="button" className="btn ghost icon-only" title="Open this chat on its own" aria-label="Open this chat on its own" onClick={() => navigate(`/t/${chatId}`)}><Icon name="external" size={15} /></button>}
+        {!mobile && <button type="button" className="btn ghost icon-only" title="Hide the chat" aria-label="Hide the chat" onClick={() => toggle('chat', false)}><Icon name="x" size={16} /></button>}
+      </div>
+      <div className="nb-chatcol-body">
+        {chatId ? <ThreadPage key={chatId} threadId={chatId} embedded /> : (
+          <div className="nb-newchat">
+            <div className="nb-newchat-hello">
+              <Icon name="sparkles" size={18} />
+              <div><strong>Ask about {nb.source_list.length === 1 ? 'this source' : `these ${nb.source_list.length} sources`}</strong>
+                <div className="muted small">Each question here starts its own chat; every chat reads the same sources. “Ask about this” on a source points it at that one.</div></div>
+            </div>
+            {nb.chat_list.length > 0 && <div className="nb-chats-block"><div className="nb-h">Earlier chats</div>
+              {nb.chat_list.slice(0, 8).map(t => <button type="button" key={t.id} className="nb-chat" onClick={() => set('chat', t.id)}><ThreadStatus t={t} /><span className="grow ellipsis">{threadTitle(t)}</span><span className="muted xsmall">{ago(t.activity_at)}</span></button>)}
+            </div>}
+            <div className="grow" />
+            <Composer ref={composer} draftKey={`nb-${nb.id}`} autoFocus={!mobile && !open} onSend={send}
+              placeholder={nb.source_list.length ? 'Ask about the sources…' : 'Add a source first, or just ask…'}
+              footer={choice ? <AgentPicker compact switchProvider value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} /> : undefined} />
+          </div>
+        )}
+      </div>
+    </section>
   )
 
-  const chats = (
-    <div className="nb-chats-block">
-      <div className="nb-h">Chats <span className="muted">{nb.chat_list.length || ''}</span></div>
-      <NotebookChats nb={nb} />
-      {nb.chat_list.length === 0 && <p className="muted small">Each question above starts its own chat here; all of them read the same sources.</p>}
-    </div>
-  )
-
-  return <div className="page nb-page">
-    <PageHead title={nb.name} icon="book" onMenu={onMenu}
-      sub={<>{nb.link_label && <>{nb.link_url ? <a className="nb-from" href={nb.link_url} target="_blank" rel="noopener noreferrer" title="Open in Pocket Projects">From {nb.link_label} ↗</a> : <>From {nb.link_label}</>} · </>}{nb.source_list.length} {nb.source_list.length === 1 ? 'source' : 'sources'} · {nb.chat_list.length} {nb.chat_list.length === 1 ? 'chat' : 'chats'}{nb.instructions && <> · <span title={nb.instructions}>has instructions</span></>}</>}
-      actions={<>{syncing && <Spinner />}<MenuButton label="Notebook menu" align="right" items={[
-        { label: 'All notebooks', icon: 'book', onSelect: () => navigate('/notebooks') },
-        ...(hasProjectsSources(nb) && projects?.configured ? [{ label: 'Update from Pocket Projects', icon: 'refresh', disabled: !projects.on || syncing, hint: projects.on ? 'Latest comments, notes, docs and files' : 'Turn on Pocket AI → Pocket Projects in Pocket Core', onSelect: sync }] as MenuItem[] : []),
-        { label: 'Name and instructions…', icon: 'edit', onSelect: () => setEditing(true) },
-        'sep',
-        { label: 'Delete notebook…', icon: 'trash', danger: true, onSelect: () => setDeleting(true) },
-      ]}><Icon name="more" size={17} /></MenuButton></>} />
-    <div className={`nb-body ${open ? 'has-open' : ''}`}>
-      <aside className="nb-side">
-        <SourceList nb={nb} selected={open?.id} onSelect={x => setOpen(o => o?.id === x.id ? null : x)} onChanged={reload} />
-      </aside>
-      <section className="nb-main">
-        {open ? <>
-          <SourceViewer nbId={nb.id} source={open} onClose={() => setOpen(null)} onChanged={gone => { if (gone) setOpen(null); void reload() }}
-            onAsk={() => composer.current?.focus()} />
-          {ask}
-        </> : <div className="nb-main-scroll">
-          {ask}
-          {chats}
+  const reader = (
+    <section className="nb-reader" aria-label="Source">
+      {open ? <SourceViewer nbId={nb.id} source={open} onClose={() => openSource(null)} onChanged={gone => { if (gone) openSource(null); void reload() }} onAsk={askAbout} />
+        : <div className="nb-overview">
+          <div className="nb-overview-inner">
+            <h2>{nb.source_list.length ? 'Open a source to read it here' : 'Add the first source'}</h2>
+            <p className="muted small">{nb.source_list.length ? 'The chat stays beside it; “Ask about this” points your question at the open source.' : 'Files, web links, Pocket notes, documents, an issue or project from Pocket Projects, or pasted text.'}</p>
+            {nb.instructions && <div className="callout info"><Icon name="info" size={14} /><span><strong>Instructions:</strong> {nb.instructions}</span></div>}
+            <div className="nb-src-grid">
+              {nb.source_list.map(x => (
+                <button type="button" key={x.id} className="nb-src-card" onClick={() => openSource(x)}>
+                  <span className={`nb-source-icon k-${x.kind}`}><Icon name={sourceIcon(x)} size={15} /></span>
+                  <span className="nb-src-card-title">{x.title}</span>
+                </button>
+              ))}
+            </div>
+            <div><AddSource nbId={nb.id} onAdded={reload} label="Add a source" /></div>
+          </div>
         </div>}
-      </section>
+    </section>
+  )
+
+  const railCol = <aside className="nb-rail" aria-label="Sources"><SourceList nb={nb} selected={open?.id} onSelect={x => openSource(open?.id === x.id ? null : x)} onChanged={reload} /></aside>
+  const menu: MenuItem[] = [
+    { label: 'All notebooks', icon: 'book', onSelect: () => navigate('/notebooks') },
+    { label: 'Name and instructions…', icon: 'edit', onSelect: () => setEditing(true) },
+    ...(hasProjectsSources(nb) && projects?.configured ? [{ label: 'Update from Pocket Projects', icon: 'refresh', disabled: !projects.on || syncing, hint: projects.on ? 'Latest comments, notes, docs and files' : 'Turn on Pocket AI → Pocket Projects in Pocket Core', onSelect: sync }] as MenuItem[] : []),
+    ...(!mobile ? ['sep' as const,
+      { label: rail ? 'Hide the source list' : 'Show the source list', icon: 'sidebar', onSelect: () => toggle('rail', !rail) },
+      { label: chatOn ? 'Hide the chat' : 'Show the chat', icon: 'message', onSelect: () => toggle('chat', !chatOn) },
+      { label: side === 'right' ? 'Chat on the left' : 'Chat on the right', icon: 'split-right', onSelect: () => { const v = side === 'right' ? 'left' : 'right'; setSide(v); setPref('side', v) } },
+      { label: focus ? 'Show the app sidebar' : 'Fold the app sidebar away', icon: 'maximize', onSelect: () => setFocus(!focus) }] : []),
+    'sep',
+    { label: 'Delete notebook…', icon: 'trash', danger: true, onSelect: () => setDeleting(true) },
+  ]
+
+  return <div className={`page nb-work chat-${side}`}>
+    <header className="nb-work-head">
+      {onMenu && <button type="button" className="btn ghost icon-only" aria-label="Menu" title="Menu" onClick={onMenu}><Icon name="menu" size={19} /></button>}
+      {!mobile && <button type="button" className={`btn ghost icon-only ${rail ? 'on' : ''}`} aria-pressed={rail} title={rail ? 'Hide the source list' : 'Show the source list'} aria-label="Source list" onClick={() => toggle('rail', !rail)}><Icon name="sidebar" size={16} /></button>}
+      <span className="page-ico"><Icon name="book" size={15} /></span>
+      <div className="grow nb-work-title">
+        <h1 className="ellipsis" title={nb.name}>{nb.name}</h1>
+        <div className="muted xsmall ellipsis">{nb.link_label && <>{nb.link_url ? <a className="nb-from" href={nb.link_url} target="_blank" rel="noopener noreferrer" title={`Open ${nb.link_label} in Pocket Projects`}>From {nb.link_label.split(' ')[0]} ↗</a> : <>From {nb.link_label}</>} · </>}{nb.source_list.length} {nb.source_list.length === 1 ? 'source' : 'sources'} · {nb.chat_list.length} {nb.chat_list.length === 1 ? 'chat' : 'chats'}</div>
+      </div>
+      {syncing && <Spinner />}
+      {!mobile && <>
+        <button type="button" className={`btn ghost icon-only ${focus ? 'on' : ''}`} aria-pressed={focus} title={focus ? 'Show the app sidebar' : 'Use the whole width (fold the app sidebar into ☰)'} aria-label="Focus" onClick={() => setFocus(!focus)}><Icon name="maximize" size={15} /></button>
+        <button type="button" className="btn ghost icon-only" title={side === 'right' ? 'Move the chat to the left' : 'Move the chat to the right'} aria-label="Swap the chat side" onClick={() => { const v = side === 'right' ? 'left' : 'right'; setSide(v); setPref('side', v) }}><Icon name="split-right" size={15} /></button>
+        <button type="button" className={`btn ghost sm ${chatOn ? 'on' : ''}`} aria-pressed={chatOn} title={chatOn ? 'Hide the chat' : 'Show the chat'} onClick={() => toggle('chat', !chatOn)}><Icon name="message" size={15} />Chat</button>
+      </>}
+      <MenuButton label="Notebook menu" align="right" items={menu}><Icon name="more" size={17} /></MenuButton>
+    </header>
+    {mobile && <div className="nb-phone-tabs">
+      <Segmented size="sm" value={phone} onChange={setPhone} label="Show" options={[
+        { value: 'sources', label: `Sources ${nb.source_list.length || ''}` }, { value: 'read', label: open ? 'Reading' : 'Read' }, { value: 'chat', label: 'Chat' }]} />
+    </div>}
+    <div className="nb-work-body">
+      {mobile ? (phone === 'sources' ? railCol : phone === 'read' ? reader : chatCol) : <>
+        {rail && railCol}
+        {reader}
+        {chatOn && <div className="nb-resize" onPointerDown={drag} role="separator" aria-orientation="vertical" aria-label="Chat width" title="Drag to change the chat's width" />}
+        {chatOn && chatCol}
+      </>}
     </div>
     {editing && <NotebookDialog nb={nb} onClose={() => setEditing(false)} onSaved={n => setNb(n)} />}
     {deleting && <Confirm title="Delete this notebook?" message={`Its ${nb.source_list.length} sources are deleted from the server. Its chats move to the archive and can no longer continue.`}

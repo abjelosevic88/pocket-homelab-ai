@@ -1,5 +1,5 @@
 // The app shell: thread sidebar (a drawer on phones) + the page; palette and shortcuts.
-import { SHOW_ARCHIVE, SHOW_FAVORITES } from '../lib/sidebar'
+import { FOCUS_MODE, SHOW_ARCHIVE, SHOW_FAVORITES } from '../lib/sidebar'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { useApp } from '../lib/app-context'
@@ -60,7 +60,14 @@ function ShellInner() {
   const loc = useLocation()
   const mobile = useIsMobile()
   const narrow = useMediaQuery('(max-width: 980px)')
-  const drawer = !embedded && (mobile || narrow)
+  // a page that wants the whole width (a notebook) folds the sidebar into the drawer
+  const [focus, setFocus] = useState(false)
+  useEffect(() => {
+    const on = (e: Event) => setFocus(!!(e as CustomEvent<boolean>).detail)
+    window.addEventListener(FOCUS_MODE, on)
+    return () => window.removeEventListener(FOCUS_MODE, on)
+  }, [])
+  const drawer = !embedded && (mobile || narrow || focus)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [palette, setPalette] = useState<'' | 'all' | 'recent' | 'recipes'>('')
   const [shortcuts, setShortcuts] = useState(false)

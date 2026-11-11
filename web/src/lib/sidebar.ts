@@ -71,3 +71,8 @@ export function sidebarSetting(layout: SidebarEntry[]): string[] {
 export const SHOW_ARCHIVE = 'pai:show-archive'
 /** …and Favorites the favorite threads. */
 export const SHOW_FAVORITES = 'pai:show-favorites'
+
+/** A page asks for the whole width: the sidebar folds into the ☰ drawer
+ * (detail: true) or comes back (false). The notebook page uses it. */
+export const FOCUS_MODE = 'pai:focus-mode'
+export const setFocusMode = (on: boolean) => window.dispatchEvent(new CustomEvent(FOCUS_MODE, { detail: on }))

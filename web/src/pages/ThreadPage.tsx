@@ -28,7 +28,7 @@ import { ThreadRefChip } from '../components/ThreadRefChip'
 import { projectsPaused, projectsRef, refKey, reloadProjectsLink, useProjectsLink } from '../lib/projects'
 import { AttachIssueDialog } from '../components/AttachIssueDialog'
 import { Timeline } from '../components/Timeline'
-import { NotebookPane } from '../components/Notebook'
+import { COMPOSE_EVENT, NotebookPane } from '../components/Notebook'
 import { PrivacyBadge, ShareDialog } from '../components/ShareDialog'
 import { accessOf } from '../lib/share'
 import { actionFor, useShortcuts } from '../lib/shortcuts'
@@ -59,8 +59,12 @@ function upsert(list: Item[], it: Item): Item[] {
   return next
 }
 
-export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
-  const { id = '' } = useParams()
+/** Also shown inside a notebook's chat column (threadId + embedded): no
+ * notebook pane of its own there. */
+export default function ThreadPage({ onMenu, threadId, embedded }: { onMenu?: () => void; threadId?: string; embedded?: boolean }) {
+  const params = useParams()
+  const id = threadId ?? params.id ?? ''
+
   const navigate = useNavigate()
   const loc = useLocation()
   const { user, settings, providers, threads, upsertThread, dropThread, setViewing } = useApp()
@@ -91,6 +95,12 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const [newBelow, setNewBelow] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
   const composer = useRef<ComposerHandle>(null)
+  // "Ask about this" in a notebook: the text the next message starts with
+  useEffect(() => {
+    const on = (e: Event) => { const d = (e as CustomEvent<{ id: string; text: string }>).detail; if (d?.id === id) composer.current?.setText(d.text) }
+    window.addEventListener(COMPOSE_EVENT, on)
+    return () => window.removeEventListener(COMPOSE_EVENT, on)
+  }, [id])
   const side = useSideQuestions(id)
   // a notebook chat: its sources beside it (open by default on wide screens)
   const mobile = useIsMobile()
@@ -450,7 +460,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
             {hostName && <span className="host-chip" title={`Runs on ${hostName} over ssh`}><Icon name="server" size={12} />{hostName}</span>}
             {t.source === 'ask' ? <span className="ask-chip" title="Works on your Pocket apps; each change waits for your approval"><Icon name="sparkles" size={12} />Ask my apps
               {askSource(t.source_ref) && <a className="ask-source" href={t.source_ref} target="_blank" rel="noopener noreferrer" title="Open the item this chat started from">Source ↗</a>}</span>
-              : t.notebook ? <button type="button" className="host-chip nb-chip" title="Open the notebook" onClick={() => navigate(`/notebooks/${t.notebook}`)}><Icon name="book" size={12} />Notebook</button>
+              : t.notebook ? <button type="button" className="host-chip nb-chip" title="Open in the notebook: sources and this chat side by side" onClick={() => navigate(`/notebooks/${t.notebook}?chat=${t.id}`)}><Icon name="book" size={12} />Notebook</button>
               : <span className="ellipsis mono" title={t.cwd}>{shortPath(t.cwd)}</span>}
             {canRun && t.source !== 'ask' && t.cwd && !t.worktree_id && !t.notebook && <BranchButton cwd={t.cwd} host={t.host_id} className="btn ghost" refreshKey={`${id}:${t.status}`}
               lockedReason={running || t.status === 'waiting' || t.external || t.subagents?.length || t.background?.length ? 'The agent is working in this folder — switch once it is done.' : undefined} />}
@@ -459,7 +469,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
           </div>
         </div>
         <div className="thread-head-actions">
-          {!!t.notebook && <button type="button" className={`btn ghost sm nb-toggle ${nbPane ? 'on' : ''}`} aria-pressed={nbPane} title={nbPane ? 'Hide the sources' : 'Show the notebook’s sources next to the chat'} onClick={() => showNbPane(!nbPane)}><Icon name="book" size={15} /><span className="nb-toggle-label">Sources</span></button>}
+          {!!t.notebook && !embedded && <button type="button" className={`btn ghost sm nb-toggle ${nbPane ? 'on' : ''}`} aria-pressed={nbPane} title={nbPane ? 'Hide the sources' : 'Show the notebook’s sources next to the chat'} onClick={() => showNbPane(!nbPane)}><Icon name="book" size={15} /><span className="nb-toggle-label">Sources</span></button>}
           <AskButton />
           <MenuButton items={menu} label="Thread menu" align="right"><Icon name="more" size={17} /></MenuButton>
         </div>
@@ -540,7 +550,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
       {confirmDelete && <Confirm title="Delete this thread?" message="The conversation disappears from Pocket AI. The CLI’s own session file on the server stays." onCancel={() => setConfirmDelete(false)} onConfirm={remove} />}
     </div>
   )
-  if (!t.notebook) return page
+  if (!t.notebook || embedded) return page
   return (
     <div className={`nb-split ${nbPane ? 'open' : ''}`}>
       {page}
