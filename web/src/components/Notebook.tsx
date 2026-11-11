@@ -15,6 +15,9 @@ import { Confirm, errMsg, Loading, Menu, Modal, rectOf, Segmented, Spinner, useD
 
 export const nbURL = (id: number) => `${V1}/notebooks/${id}`
 
+/** Put text in a chat's composer (detail: {id, text}): "Ask about this". */
+export const COMPOSE_EVENT = 'pai:compose'
+
 /** The notebook with its sources and chats; null while loading. */
 export function useNotebook(id: number) {
   const [nb, setNb] = useState<NotebookFull | null>(null)
