@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -21,6 +22,8 @@ func (s *Server) scheduleRoutes(r chi.Router) {
 	r.Put("/schedules/{id}", s.handleSaveSchedule)
 	r.Delete("/schedules/{id}", s.handleDeleteSchedule)
 	r.Post("/schedules/{id}/run", s.handleRunSchedule)
+	r.Get("/heartbeats", s.handleMyHeartbeats) // heartbeats.go
+	r.Delete("/heartbeats/{hid}", s.handleDeleteMyHeartbeat)
 }
 
 // scheduleSuffix asks the agent for a verdict line we can read.
@@ -30,9 +33,11 @@ const scheduleSuffix = "\n\n---\nThis is a scheduled run and nobody is watching.
 
 // ---------- spec ----------
 
-// Spec is a parsed schedule: an interval, or a cron-like matcher.
+// Spec is a parsed schedule: an interval, a cron-like matcher, or one time
+// ("once 2026-11-12 09:00", in the person's time zone).
 type Spec struct {
 	Every   time.Duration
+	once    *[5]int // year, month, day, hour, minute
 	minutes [60]bool
 	hours   [24]bool
 	doms    [32]bool
@@ -80,6 +85,22 @@ func ParseSpec(spec string) (*Spec, error) {
 		return nil
 	}
 	switch f[0] {
+	case "once":
+		if len(f) != 3 {
+			return nil, fmt.Errorf("write it like: once 2026-11-12 09:00")
+		}
+		d, err := time.Parse("2006-01-02", f[1])
+		if err != nil {
+			return nil, fmt.Errorf("date %q must look like 2026-11-12", f[1])
+		}
+		h, m, err := hm(f[2])
+		if err != nil {
+			return nil, err
+		}
+		sp.once = &[5]int{d.Year(), int(d.Month()), d.Day(), h, m}
+		return sp, nil
+	case "in", "today", "tomorrow":
+		return nil, fmt.Errorf("%q has to be turned into a date first", spec)
 	case "every":
 		if len(f) != 2 {
 			return nil, fmt.Errorf("write it like: every 30m, every 6h, every 2d")
@@ -208,8 +229,74 @@ func cronField(v string, set []bool, lo, hi int) error {
 	return nil
 }
 
-// Next returns the first run strictly after t (in loc).
+// Once reports whether the schedule runs one time only.
+func (sp *Spec) Once() bool { return sp.once != nil }
+
+// IsOnce reports whether spec is a one-time schedule (or will be one once normalized).
+func IsOnce(spec string) bool {
+	f := strings.Fields(strings.ToLower(spec))
+	return len(f) > 0 && (f[0] == "once" || f[0] == "in" || f[0] == "today" || f[0] == "tomorrow")
+}
+
+// NormalizeSpec turns the relative one-time forms ("in 30m", "in 2h",
+// "in 1h30m", "in 3d", "today 15:00", "tomorrow 09:00", "once
+// 2026-11-12T09:00") into "once YYYY-MM-DD HH:MM" in loc; other specs are
+// returned as they are (trimmed).
+func NormalizeSpec(spec string, now time.Time, loc *time.Location) (string, error) {
+	spec = strings.TrimSpace(spec)
+	f := strings.Fields(strings.ToLower(spec))
+	if len(f) == 0 {
+		return spec, nil
+	}
+	format := func(t time.Time) string { return "once " + t.In(loc).Format("2006-01-02 15:04") }
+	switch f[0] {
+	case "once":
+		if len(f) == 2 && strings.Contains(f[1], "t") { // 2026-11-12T09:00 (from a datetime-local input)
+			if t, err := time.ParseInLocation("2006-01-02t15:04", f[1], loc); err == nil {
+				return format(t), nil
+			}
+		}
+		return strings.Join(f, " "), nil
+	case "in":
+		v := strings.Join(f[1:], "")
+		v = strings.NewReplacer("minutes", "m", "minute", "m", "mins", "m", "min", "m", "hours", "h", "hour", "h", "days", "d", "day", "d").Replace(v)
+		var d time.Duration
+		if n, err := strconv.Atoi(strings.TrimSuffix(v, "d")); err == nil && strings.HasSuffix(v, "d") {
+			d = time.Duration(n) * 24 * time.Hour
+		} else if pd, err := time.ParseDuration(v); err == nil {
+			d = pd
+		}
+		if d < time.Minute {
+			return "", fmt.Errorf("write it like: in 30m, in 2h, in 1h30m, in 3d")
+		}
+		// to the next whole minute, so "in 1h" is never a little early
+		return format(now.Add(d).Add(time.Minute - time.Nanosecond).Truncate(time.Minute)), nil
+	case "today", "tomorrow":
+		if len(f) != 2 {
+			return "", fmt.Errorf("write it like: %s 09:00", f[0])
+		}
+		var h, m int
+		if _, err := fmt.Sscanf(f[1], "%d:%d", &h, &m); err != nil || h < 0 || h > 23 || m < 0 || m > 59 {
+			return "", fmt.Errorf("time %q must look like 09:00", f[1])
+		}
+		day := now.In(loc)
+		if f[0] == "tomorrow" {
+			day = day.AddDate(0, 0, 1)
+		}
+		return format(time.Date(day.Year(), day.Month(), day.Day(), h, m, 0, 0, loc)), nil
+	}
+	return spec, nil
+}
+
+// Next returns the first run strictly after t (in loc); zero when there is none.
 func (sp *Spec) Next(t time.Time, loc *time.Location) time.Time {
+	if o := sp.once; o != nil {
+		at := time.Date(o[0], time.Month(o[1]), o[2], o[3], o[4], 0, 0, loc)
+		if at.After(t) {
+			return at
+		}
+		return time.Time{}
+	}
 	if sp.Every > 0 {
 		return t.Add(sp.Every).Truncate(time.Minute)
 	}
@@ -269,10 +356,11 @@ func (s *Server) scheduleLoop(ctx context.Context) {
 // runSchedule starts one run and moves next_run_at forward.
 func (s *Server) runSchedule(ctx context.Context, sc *store.Schedule) (*store.Thread, error) {
 	loc := s.loc(ctx, sc.UserID)
-	if sp, err := ParseSpec(sc.Spec); err == nil {
+	if sp, err := ParseSpec(sc.Spec); err == nil && !sp.Once() {
 		sc.NextRunAt = store.FormatTime(sp.Next(time.Now(), loc))
 	} else {
-		sc.Enabled = false
+		// a one-time schedule is done once it ran (now or at its time)
+		sc.Enabled, sc.NextRunAt = false, ""
 	}
 	u, err := s.store.GetUser(ctx, sc.UserID)
 	if err != nil || !u.MayRun() {
@@ -287,6 +375,11 @@ func (s *Server) runSchedule(ctx context.Context, sc *store.Schedule) (*store.Th
 		Text: sc.Prompt + scheduleSuffix, Title: title}, "schedule", strconv.FormatInt(sc.ID, 10))
 	if t != nil {
 		sc.LastThreadID = t.ID
+		if sc.Report && sc.FromThreadID != "" { // (also when it did not start: a retry there reports)
+			if from, ferr := s.store.GetThreadAny(ctx, sc.FromThreadID); ferr == nil && from.UserID == sc.UserID && !from.Archived {
+				_ = s.store.OweReport(ctx, t.ID, from.ID) // its answer goes back there (agentTurnDone)
+			}
+		}
 	}
 	if err != nil {
 		sc.LastStatus, sc.LastSummary = "failed", err.Error()
@@ -343,6 +436,8 @@ func (s *Server) scheduleFinished(t *store.Thread, ti agent.TurnInfo, text strin
 
 // ---------- API ----------
 
+var errPast = errors.New("that time has already passed")
+
 func (s *Server) handleListSchedules(w http.ResponseWriter, r *http.Request) {
 	list, err := s.store.ListSchedules(r.Context(), me(r))
 	if err != nil {
@@ -353,12 +448,19 @@ func (s *Server) handleListSchedules(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePreviewSchedule(w http.ResponseWriter, r *http.Request) {
-	sp, err := ParseSpec(r.URL.Query().Get("spec"))
+	loc := s.loc(r.Context(), me(r))
+	spec, err := NormalizeSpec(r.URL.Query().Get("spec"), time.Now(), loc)
+	var sp *Spec
+	if err == nil {
+		sp, err = ParseSpec(spec)
+	}
+	if err == nil && sp.Once() && sp.Next(time.Now(), loc).IsZero() {
+		err = errPast
+	}
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "next": []string{}})
 		return
 	}
-	loc := s.loc(r.Context(), me(r))
 	next := []string{}
 	t := time.Now()
 	for i := 0; i < 3; i++ {
@@ -368,7 +470,7 @@ func (s *Server) handlePreviewSchedule(w http.ResponseWriter, r *http.Request) {
 		}
 		next = append(next, t.Format(time.RFC3339))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "next": next, "error": ""})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "next": next, "error": "", "spec": spec, "once": sp.Once()})
 }
 
 func (s *Server) handleSaveSchedule(w http.ResponseWriter, r *http.Request) {
@@ -402,17 +504,39 @@ func (s *Server) handleSaveSchedule(w http.ResponseWriter, r *http.Request) {
 	default:
 		in.Notify = "attention"
 	}
+	loc := s.loc(ctx, in.UserID)
+	spec, err := NormalizeSpec(in.Spec, time.Now(), loc)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	in.Spec = spec
 	sp, err := ParseSpec(in.Spec)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if sc.ID == 0 && in.FromThreadID != "" {
+		if from, ferr := s.store.GetThreadAny(ctx, in.FromThreadID); ferr != nil || from.UserID != in.UserID {
+			in.FromThreadID, in.Report = "", false
+		}
+	} else if sc.ID != 0 {
+		in.FromThreadID = sc.FromThreadID
+	}
+	if in.FromThreadID == "" {
+		in.Report = false
 	}
 	if err := s.checkAgentOn(ctx, userFrom(ctx), in.HostID, &in.Provider, &in.Mode, &in.Cwd); err != nil {
 		s.fail(w, err, "schedule")
 		return
 	}
 	if in.Enabled && (in.Spec != sc.Spec || in.NextRunAt == "" || !sc.Enabled) {
-		in.NextRunAt = store.FormatTime(sp.Next(time.Now(), s.loc(ctx, in.UserID)))
+		next := sp.Next(time.Now(), loc)
+		if next.IsZero() {
+			writeErr(w, http.StatusBadRequest, "That time has already passed; pick a later one")
+			return
+		}
+		in.NextRunAt = store.FormatTime(next)
 	}
 	if !in.Enabled {
 		in.NextRunAt = ""
@@ -470,7 +594,7 @@ func (s *Server) handleRunSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 	next := sc.NextRunAt
 	t, err := s.runSchedule(r.Context(), sc)
-	// a manual run does not move the regular one
+	// a manual run does not move the regular one (a one-time one is done)
 	if sc.Enabled && next != "" {
 		sc.NextRunAt = next
 		_ = s.store.SaveSchedule(r.Context(), sc)

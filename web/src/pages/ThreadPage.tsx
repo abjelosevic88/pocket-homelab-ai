@@ -9,6 +9,7 @@ import { openSSE } from '../lib/sse'
 import type { Item, Thread, ThreadDetail, Upload } from '../lib/types'
 import { SubagentsChip } from '../components/Subagents'
 import { AgentsChip, HeartbeatsChip, ParentChip } from '../components/AgentChildren'
+import { ScheduleDialog, draftFromThread } from './SchedulesPage'
 import { RunBar, useForkNewTab } from '../components/RunBar'
 import { QueueStrip } from '../components/QueueStrip'
 import { SideQuestions, useSideQuestions } from '../components/SideQuestions'
@@ -84,6 +85,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
   const [refRev, setRefRev] = useState(0) // the header's issue chip loads again after an attach or detach
   const [moving, setMoving] = useState(false)
   const [mcpOpen, setMcpOpen] = useState(false)
+  const [scheduling, setScheduling] = useState(false)
   const [atBottom, setAtBottom] = useState(true)
   const [newBelow, setNewBelow] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
@@ -387,6 +389,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
     { label: 'Export as Markdown', icon: 'download', onSelect: () => download(`${V1}/threads/${id}/export.md`) },
   ] : [
     { label: t.shares?.length ? 'Sharing…' : 'Share…', icon: 'users', onSelect: () => setSharing(true) }, 'sep',
+    { label: 'Run something later…', icon: 'clock', disabled: t.source === 'ask' || !canRun, hint: 'A one-time or repeating schedule', onSelect: () => setScheduling(true) },
     { label: 'Save as workflow', icon: 'zap', onSelect: () => navigate('/workflows', { state: { name: t.title, prompt: t.last_prompt || '' } }) },
     { label: t.no_memory ? 'Enable saved memory' : 'Don’t use memory in this conversation', icon: 'bookmark', onSelect: () => patch({ no_memory: !t.no_memory }) },
     ...(document.querySelector('pocket-ask-launcher') ? [{ label: 'Ask about an item…', icon: 'sparkles' as const, onSelect: () => window.dispatchEvent(new Event('pocket-ask-pick')) }] : []),
@@ -517,6 +520,7 @@ export default function ThreadPage({ onMenu }: { onMenu?: () => void }) {
         </div>
       </div>
 
+      {scheduling && <ScheduleDialog draft={draftFromThread(t)} onClose={() => setScheduling(false)} onSaved={() => setScheduling(false)} />}
       {mcpOpen && <McpDialog threadId={id} onClose={() => setMcpOpen(false)} onRestart={restartSession} />}
       {moving && <FolderPicker value={t.cwd} host={t.host_id || 0} onClose={() => setMoving(false)} onPick={async cwd => {
         try { const th = await api.post<Thread>(`${V1}/threads/${id}/folder`, { cwd }); setThread(th); upsertThread(th); toast(`Moved to ${shortPath(th.cwd)}`) } catch (e) { toast(errMsg(e), 'err') }

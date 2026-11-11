@@ -150,13 +150,13 @@ func (s *Store) CountRecipeRun(ctx context.Context, id int64) {
 // ---------- schedules ----------
 
 const scheduleCols = `id, user_id, name, prompt, provider, model, effort, mode, speed, host_id, cwd, spec, notify, enabled, next_run_at, last_run_at,
-	last_thread_id, last_status, last_summary, created_at, updated_at`
+	last_thread_id, last_status, last_summary, from_thread_id, report, created_at, updated_at`
 
 func scanSchedule(row interface{ Scan(...any) error }) (*Schedule, error) {
 	var sc Schedule
 	if err := row.Scan(&sc.ID, &sc.UserID, &sc.Name, &sc.Prompt, &sc.Provider, &sc.Model, &sc.Effort, &sc.Mode, &sc.Speed, &sc.HostID, &sc.Cwd, &sc.Spec,
 		&sc.Notify, &sc.Enabled, &sc.NextRunAt, &sc.LastRunAt, &sc.LastThreadID, &sc.LastStatus, &sc.LastSummary,
-		&sc.CreatedAt, &sc.UpdatedAt); err != nil {
+		&sc.FromThreadID, &sc.Report, &sc.CreatedAt, &sc.UpdatedAt); err != nil {
 		return nil, notFound(err)
 	}
 	return &sc, nil
@@ -184,6 +184,13 @@ func (s *Store) ListSchedules(ctx context.Context, userID int64) ([]*Schedule, e
 	return s.listSchedules(ctx, `WHERE user_id = ? ORDER BY name COLLATE NOCASE`, userID)
 }
 
+// CountWaitingSchedulesFrom counts the enabled schedules set from a conversation.
+func (s *Store) CountWaitingSchedulesFrom(ctx context.Context, threadID string) (int, error) {
+	var n int
+	err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM schedules WHERE from_thread_id = ? AND enabled = 1`, threadID).Scan(&n)
+	return n, err
+}
+
 // DueSchedules lists enabled schedules whose next run is at or before now.
 func (s *Store) DueSchedules(ctx context.Context, now string) ([]*Schedule, error) {
 	return s.listSchedules(ctx, `WHERE enabled = 1 AND next_run_at <> '' AND next_run_at <= ? ORDER BY next_run_at`, now)
@@ -205,9 +212,9 @@ func (s *Store) SaveSchedule(ctx context.Context, sc *Schedule) error {
 	sc.UpdatedAt = now
 	if sc.ID == 0 {
 		sc.CreatedAt = now
-		res, err := s.DB.ExecContext(ctx, `INSERT INTO schedules (user_id, name, prompt, provider, model, effort, mode, speed, host_id, cwd, spec, notify, enabled, next_run_at, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sc.UserID, sc.Name, sc.Prompt, sc.Provider, sc.Model, sc.Effort, sc.Mode, sc.Speed, sc.HostID, sc.Cwd,
-			sc.Spec, sc.Notify, boolInt(sc.Enabled), sc.NextRunAt, now, now)
+		res, err := s.DB.ExecContext(ctx, `INSERT INTO schedules (user_id, name, prompt, provider, model, effort, mode, speed, host_id, cwd, spec, notify, enabled, next_run_at, from_thread_id, report, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sc.UserID, sc.Name, sc.Prompt, sc.Provider, sc.Model, sc.Effort, sc.Mode, sc.Speed, sc.HostID, sc.Cwd,
+			sc.Spec, sc.Notify, boolInt(sc.Enabled), sc.NextRunAt, sc.FromThreadID, boolInt(sc.Report), now, now)
 		if err != nil {
 			return err
 		}
@@ -215,9 +222,9 @@ func (s *Store) SaveSchedule(ctx context.Context, sc *Schedule) error {
 		return nil
 	}
 	_, err := s.DB.ExecContext(ctx, `UPDATE schedules SET name = ?, prompt = ?, provider = ?, model = ?, effort = ?, mode = ?, speed = ?, host_id = ?, cwd = ?, spec = ?,
-		notify = ?, enabled = ?, next_run_at = ?, last_run_at = ?, last_thread_id = ?, last_status = ?, last_summary = ?, updated_at = ?
+		notify = ?, enabled = ?, next_run_at = ?, last_run_at = ?, last_thread_id = ?, last_status = ?, last_summary = ?, report = ?, updated_at = ?
 		WHERE id = ? AND user_id = ?`, sc.Name, sc.Prompt, sc.Provider, sc.Model, sc.Effort, sc.Mode, sc.Speed, sc.HostID, sc.Cwd, sc.Spec, sc.Notify,
-		boolInt(sc.Enabled), sc.NextRunAt, sc.LastRunAt, sc.LastThreadID, sc.LastStatus, sc.LastSummary, now, sc.ID, sc.UserID)
+		boolInt(sc.Enabled), sc.NextRunAt, sc.LastRunAt, sc.LastThreadID, sc.LastStatus, sc.LastSummary, boolInt(sc.Report), now, sc.ID, sc.UserID)
 	return err
 }
 

@@ -202,6 +202,8 @@ type Schedule struct {
 	LastThreadID string `json:"last_thread_id"`
 	LastStatus   string `json:"last_status"`
 	LastSummary  string `json:"last_summary"`
+	FromThreadID string `json:"from_thread_id"` // the conversation it was set from ("" = the Schedules page)
+	Report       bool   `json:"report"`         // send each run's answer back to FromThreadID
 	CreatedAt    string `json:"created_at"`
 	UpdatedAt    string `json:"updated_at"`
 }

@@ -794,3 +794,4 @@ button.privacy-badge:disabled { cursor: default; }
   .skills-more-list .sk-desc, .sk-more-from { display: none; }
   .sk-scroll-hint { display: block; }
 }
+.sched-once-icon { display: inline-flex; width: 34px; justify-content: center; margin-top: 2px; color: var(--muted); flex-shrink: 0; }

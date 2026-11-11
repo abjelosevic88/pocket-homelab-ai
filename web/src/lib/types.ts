@@ -392,11 +392,15 @@ export interface Schedule extends AgentChoice {
   last_thread_id: string
   last_status: '' | 'running' | 'ok' | 'attention' | 'failed'
   last_summary: string
+  /** The conversation it was set from ('' = the Schedules page). */
+  from_thread_id: string
+  /** Each run's answer goes back to from_thread_id. */
+  report: boolean
   created_at: string
   updated_at: string
 }
 
-export interface SchedulePreview { ok: boolean; next: string[]; error: string }
+export interface SchedulePreview { ok: boolean; next: string[]; error: string; spec?: string; once?: boolean }
 
 // ---------- history, search, usage ----------
 
