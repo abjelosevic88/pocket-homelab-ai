@@ -20,6 +20,7 @@ export const SIDEBAR_ITEMS: SidebarItem[] = [
   { id: 'memory', label: 'Memory', icon: 'bookmark', path: '/memory' },
   { id: 'actions', label: 'Action history', icon: 'list-checks', path: '/actions' },
   { id: 'today', label: 'Today', icon: 'today', path: '/today', runner: true },
+  { id: 'notebooks', label: 'Notebooks', icon: 'book', path: '/notebooks', runner: true },
   { id: 'recipes', label: 'Recipes', icon: 'zap', path: '/recipes' },
   { id: 'schedules', label: 'Schedules', icon: 'clock', path: '/schedules' },
   { id: 'skills', label: 'Skills', icon: 'sparkles', path: '/skills', runner: true },

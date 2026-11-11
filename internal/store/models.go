@@ -126,6 +126,8 @@ type Thread struct {
 	// Sharing: who else may open it, and whose it is.
 	Shares    []ThreadShare `json:"shares,omitempty"`
 	OwnerName string        `json:"owner_name,omitempty"`
+	// Notebook: the notebook whose folder it works in (0 = none).
+	Notebook int64 `json:"notebook,omitempty"`
 }
 
 // RemoteControl is how a thread's Claude Remote Control link is doing.

@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -177,51 +179,55 @@ func firstString(row map[string]any, keys ...string) string {
 
 // handlePocketText returns the readable text of one note, document or text file.
 func (s *Server) handlePocketText(w http.ResponseWriter, r *http.Request) {
-	app, id := r.URL.Query().Get("app"), strings.TrimSpace(r.URL.Query().Get("id"))
+	text, status, err := s.pocketText(r.Context(), me(r), r.URL.Query().Get("app"), r.URL.Query().Get("id"), pocketTextMax)
+	if err != nil {
+		writeErr(w, status, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"text": text})
+}
+
+// pocketText reads one note, document or text file from the person's Pocket
+// apps (status: the HTTP status for a failure), cut at max bytes.
+func (s *Server) pocketText(ctx context.Context, uid int64, app, id string, max int) (string, int, error) {
+	id = strings.TrimSpace(id)
 	var tool string
 	var args map[string]any
 	switch app {
 	case "notes", "documents":
 		n, err := strconv.ParseInt(id, 10, 64)
 		if err != nil || n < 1 {
-			writeErr(w, 400, "Choose a note or document")
-			return
+			return "", 400, errors.New("Choose a note or document")
 		}
 		tool, args = map[string]string{"notes": "pocket_notes_get", "documents": "pocket_documents_text"}[app], map[string]any{"id": n}
 	case "files":
 		if id == "" {
-			writeErr(w, 400, "Choose a file")
-			return
+			return "", 400, errors.New("Choose a file")
 		}
 		tool, args = "pocket_files_read_text", map[string]any{"query": map[string]any{"path": id}}
 	default:
-		writeErr(w, 400, "Only notes, documents and text files can be attached")
-		return
+		return "", 400, errors.New("Only notes, documents and text files can be attached")
 	}
-	cat, err := s.catalog(r.Context(), me(r))
+	cat, err := s.catalog(ctx, uid)
 	if err != nil {
-		writeErr(w, 409, err.Error())
-		return
+		return "", 409, err
 	}
 	if t, ok := cat[tool]; !ok || !t.Annotations.ReadOnly {
-		writeErr(w, 409, fmt.Sprintf("Pocket %s is not connected for your account", app))
-		return
+		return "", 409, fmt.Errorf("Pocket %s is not connected for your account", app)
 	}
-	raw := s.readApp(r.Context(), me(r), "", tool, args)
+	raw := s.readApp(ctx, uid, "", tool, args)
 	if toolFailed(raw) {
-		writeErr(w, 502, "Could not read it from Pocket "+app+". Open the app or reconnect Ask.")
-		return
+		return "", 502, errors.New("Could not read it from Pocket " + app + ". Open the app or reconnect Ask.")
 	}
 	env, _ := toolData(raw).(map[string]any)
 	text := findText(env["result"])
 	if strings.TrimSpace(text) == "" {
-		writeErr(w, 422, "There is no readable text in it")
-		return
+		return "", 422, errors.New("There is no readable text in it")
 	}
-	if len(text) > pocketTextMax {
-		text = text[:pocketTextMax] + "\n\n[Shortened: the rest did not fit in an attachment]"
+	if len(text) > max {
+		text = text[:max] + "\n\n[Shortened: the rest did not fit]"
 	}
-	writeJSON(w, 200, map[string]any{"text": text})
+	return text, 200, nil
 }
 
 // findText takes the body out of a read result: the string itself, or its

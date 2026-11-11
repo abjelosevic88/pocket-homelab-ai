@@ -29,6 +29,7 @@ import AwayPage, { AwayBanner } from './AwayPage'
 import WorktreesPage from './WorktreesPage'
 import FilesPage from './FilesPage'
 import FileView from './FileView'
+import { NotebookPage, NotebooksPage } from './NotebooksPage'
 // xterm is big: only loaded once you have a terminal
 const TerminalArea = lazy(() => import('./TerminalArea'))
 import { BriefingPage, MemoryPage, ActionsPage, WorkflowsPage } from './AssistantPages'
@@ -147,6 +148,7 @@ function ShellInner() {
     { id: 'favorites', label: 'Favorites', icon: 'star', keywords: 'favorite starred pinned saved threads', run: () => { window.dispatchEvent(new Event(SHOW_FAVORITES)); if (drawer) setDrawerOpen(true) } },
     { id: 'archive', label: 'Archive', icon: 'archive', keywords: 'archived threads', run: () => { window.dispatchEvent(new Event(SHOW_ARCHIVE)); if (drawer) setDrawerOpen(true) } },
     { id: 'sidebar', label: 'Customize sidebar', icon: 'sidebar', keywords: 'menu reorder hide remove items', run: () => navigate('/settings/general#sidebar') },
+    { id: 'notebooks', label: 'Notebooks', icon: 'book', keywords: 'sources documents notes links pdf ask research notebooklm', run: () => navigate('/notebooks') },
     { id: 'snippets', label: 'Snippets', icon: 'bookmark', keywords: 'saved text prompts', run: () => navigate('/snippets') },
     { id: 'files', label: 'Files', icon: 'folder', keywords: 'upload download browse open file folder server machine', run: () => navigate('/files') },
     { id: 'terminal', label: 'Terminal', icon: 'terminal', keywords: 'shell ssh console bash zsh server machine', run: () => navigate('/term') },
@@ -191,6 +193,8 @@ function ShellInner() {
             <Route path="/worktrees" element={<WorktreesPage onMenu={onMenu} />} />
             <Route path="/terminal" element={<Navigate to={`/term${loc.search}`} replace />} />
             <Route path="/term/*" element={null} />
+            <Route path="/notebooks" element={<NotebooksPage onMenu={onMenu} />} />
+            <Route path="/notebooks/:id" element={<NotebookPage onMenu={onMenu} />} />
             <Route path="/files" element={<FilesPage onMenu={onMenu} />} />
             <Route path="/f/:host" element={<FileView onMenu={onMenu} />} />
             <Route path="*" element={<HomePage onMenu={onMenu} />} />

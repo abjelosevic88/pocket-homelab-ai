@@ -281,6 +281,8 @@ func (s *Server) Router() http.Handler {
 			s.uploadRoutes(r)
 			// Workspaces, folder picker, recipes: library_api.go.
 			s.libraryRoutes(r)
+			// Notebooks: sources to ask about (notebooks.go).
+			s.notebookRoutes(r)
 			// Schedules: schedules.go. CLI history: history.go.
 			s.scheduleRoutes(r)
 			s.historyRoutes(r)

@@ -233,6 +233,8 @@ export interface Thread {
   owner_id: number
   owner_name?: string
   shares?: ThreadShare[]
+  /** The notebook whose folder it works in (its sources are what it answers from). */
+  notebook?: number
 }
 
 /** Someone a thread is shared with: view reads along, chat also sends. */
@@ -604,3 +606,40 @@ export interface WorktreeRepoInfo {
 
 /** How a new thread gets its worktree. */
 export interface WorktreeSpec { mode: 'new' | 'branch' | 'pr' | 'existing'; base?: string; branch?: string; pr?: number; id?: number; name?: string }
+
+/** A set of sources (files, links, Pocket notes, pasted text) to ask questions about. */
+export interface Notebook {
+  id: number
+  name: string
+  instructions: string
+  created_at: string
+  updated_at: string
+  sources: number
+  chats: number
+}
+
+export type NotebookSourceKind = 'file' | 'link' | 'note' | 'document' | 'pocket-file' | 'text'
+
+export interface NotebookSource {
+  id: number
+  notebook_id: number
+  kind: NotebookSourceKind
+  title: string
+  /** a URL, "notes:12 https://…", or the uploaded file's name */
+  origin: string
+  /** its text, relative to the notebook folder (sources/…) */
+  file: string
+  /** the file as it came (originals/…), '' for none */
+  original: string
+  mime: string
+  size: number
+  chars: number
+  created_at: string
+  updated_at: string
+}
+
+export interface NotebookFull extends Notebook {
+  folder: string
+  source_list: NotebookSource[]
+  chat_list: Thread[]
+}

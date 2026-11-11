@@ -179,6 +179,9 @@ func (rt *engine) decorate(t *store.Thread) *store.Thread {
 	if _, ok := rt.reconnecting.Load(t.ID); ok {
 		t.Reconnecting = true
 	}
+	if t.HostID == 0 {
+		t.Notebook = notebookOfCwd(t.Cwd)
+	}
 	t.External = rt.isExternal(t.ID)
 	t.Reattached = rt.s.isReattached(t.ID)
 	t.RemoteControl = rt.rcGet(t.ID)
@@ -531,6 +534,7 @@ func (rt *engine) baseOptions(ctx context.Context, t *store.Thread) agent.Option
 	o := agent.Options{Cwd: t.Cwd, Model: t.Model, Effort: t.Effort, Mode: t.Mode, Speed: t.Speed, ResumeID: t.ProviderSessionID,
 		SystemPrompt: rt.systemPrompt(ctx, t.UserID), Env: []string{"POCKET_AI=1"}, Log: rt.s.log}
 	o.SystemPrompt += rt.s.threadContextPrompt(ctx, t) // what the app that prepared it added: link_threads.go
+	o.SystemPrompt += rt.s.notebookPrompt(ctx, t)      // a notebook's chat: answer from its sources (notebooks.go)
 	// A separate provider session isolates future messages, but its copied
 	// transcript can still contain promises to finish the parent's work. Apply
 	// the scope boundary on every start, including existing forks after restart.
