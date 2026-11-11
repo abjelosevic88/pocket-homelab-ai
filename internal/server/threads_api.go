@@ -44,7 +44,7 @@ func (s *Server) threadRoutes(r chi.Router) {
 	r.Post("/threads/{id}/read", s.handleMarkRead)
 	r.Post("/threads/{id}/fork", s.handleFork)
 	r.Post("/threads/{id}/side-question", s.handleSideQuestion) // side_question.go
-	r.Post("/threads/{id}/retitle", s.handleRetitle) // autotitle.go
+	r.Post("/threads/{id}/retitle", s.handleRetitle)            // autotitle.go
 	r.Post("/threads/{id}/folder", s.handleMoveFolder)
 	r.Post("/threads/{id}/rewind", s.handleRewind)
 	r.Get("/threads/{id}/export.md", s.handleExport)
@@ -254,7 +254,10 @@ func (s *Server) createThread(ctx context.Context, u *store.User, in newThread, 
 			in.Cwd = ws.Path
 		}
 	}
-	if host == nil {
+	if dir, ok := ctx.Value(notebookCwd{}).(string); ok && host == nil {
+		// a notebook's chat: the server made and chose its folder (notebooks.go)
+		t.Cwd = dir
+	} else if host == nil {
 		cwd := firstNonEmpty(in.Cwd, st.DefaultCwd, s.homeOf(ctx, u))
 		clean, err := s.checkDirFor(ctx, u, cwd)
 		if err != nil {
