@@ -111,7 +111,7 @@ export function HeartbeatsChip({ t, rev = 0, owner }: { t: Thread; rev?: number;
   return (
     <span ref={box} className="sub-anchor">
       <button type="button" className={`sub-chip agents-chip ${open ? 'open' : ''}`} onClick={() => setOpen(o => !o)} aria-expanded={open} aria-haspopup="dialog" title="Prompts that come back to this conversation on a schedule">
-        <Icon name="activity" size={13} />{list.length === 1 ? `Heartbeat · ${list[0].spec}` : `${list.length} heartbeats`}
+        <Icon name="activity" size={13} />{list.length === 1 ? (list[0].spec.startsWith('once ') ? `Reminder · ${when(list[0].next_at)}` : `Heartbeat · ${list[0].spec}`) : `${list.length} heartbeats`}
         <Icon name="chevron-down" size={12} />
       </button>
       {open && createPortal(
@@ -119,7 +119,7 @@ export function HeartbeatsChip({ t, rev = 0, owner }: { t: Thread; rev?: number;
           {list.map(h => (
             <div key={h.id} className="sub-row hb-row">
               <span className="sub-st"><Icon name="activity" size={13} /></span>
-              <span className="sub-what"><b className="ellipsis">{h.spec} · next {when(h.next_at)}</b>
+              <span className="sub-what"><b className="ellipsis">{h.spec.startsWith('once ') ? `once · ${when(h.next_at)}` : `${h.spec} · next ${when(h.next_at)}`}</b>
                 <span className="ellipsis">{[h.runs ? `${h.runs}${h.max_runs ? ` of ${h.max_runs}` : ''} sent` : '', h.ends_at ? `ends ${when(h.ends_at)}` : 'no end', h.prompt].filter(Boolean).join(' · ')}</span></span>
               {owner && <button type="button" className="btn ghost xs" onClick={() => void remove(h)} title="Remove this heartbeat">Remove</button>}
             </div>

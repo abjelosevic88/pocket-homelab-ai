@@ -2203,6 +2203,9 @@ func oneLine(s string, max int) string {
 }
 
 // threadURL links to a thread in the web app.
+// publicURL is an absolute link to a page of the app ("" without a base URL: the path).
+func (s *Server) publicURL(path string) string { return s.cfg.BaseURL + path }
+
 func (s *Server) threadURL(id string) string {
 	if s.cfg.BaseURL == "" {
 		return ""

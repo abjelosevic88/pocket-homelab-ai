@@ -36,6 +36,9 @@ func heartbeatSpec(spec string, loc *time.Location) (*Spec, time.Time, error) {
 	}
 	now := time.Now()
 	next := sp.Next(now, loc)
+	if next.IsZero() && sp.Once() {
+		return nil, time.Time{}, errPast
+	}
 	if next.IsZero() {
 		return nil, time.Time{}, errors.New("that schedule never runs")
 	}
@@ -73,9 +76,17 @@ func (s *Server) heartbeatTool(ctx, session context.Context, owner *store.User, 
 		return toolFailure("Give the prompt and when (spec)")
 	}
 	loc := s.loc(ctx, t.UserID)
-	_, next, err := heartbeatSpec(in.Spec, loc)
+	spec, err := NormalizeSpec(in.Spec, time.Now(), loc)
 	if err != nil {
 		return toolFailure(err.Error())
+	}
+	in.Spec = spec
+	sp, next, err := heartbeatSpec(in.Spec, loc)
+	if err != nil {
+		return toolFailure(err.Error())
+	}
+	if sp.Once() {
+		in.MaxRuns, in.Hours = 1, new(int) // it ends when it has run
 	}
 	if have, _ := s.store.ThreadHeartbeats(ctx, t.ID); len(have) >= heartbeatMax {
 		return toolFailure(fmt.Sprintf("This conversation has %d heartbeats already, the most it may; remove one first", len(have)))
@@ -140,6 +151,9 @@ func (s *Server) beat(ctx context.Context, h *store.Heartbeat, now time.Time) {
 	owner, err := s.store.GetUser(ctx, t.UserID)
 	t = s.rt.decorate(t)
 	if err != nil || !owner.MayRun() || t.Status == "running" || t.Status == "waiting" || t.Queued > 0 || s.rt.isExternal(t.ID) {
+		if sp.Once() {
+			next = store.FormatTime(now.Add(time.Minute)) // one time only: as soon as the conversation is free
+		}
 		_ = s.store.BeatHeartbeat(ctx, h.ID, next, false) // busy: the next one
 		return
 	}
@@ -148,7 +162,7 @@ func (s *Server) beat(ctx context.Context, h *store.Heartbeat, now time.Time) {
 		s.log.Warn("heartbeat not sent", "thread", t.ID, "id", h.ID, "err", err)
 	}
 	_ = s.store.BeatHeartbeat(ctx, h.ID, next, true)
-	if h.MaxRuns > 0 && h.Runs+1 >= h.MaxRuns {
+	if sp.Once() || (h.MaxRuns > 0 && h.Runs+1 >= h.MaxRuns) {
 		s.store.DeleteHeartbeat(ctx, h.ThreadID, h.ID)
 	}
 	s.rt.toThread(t.ID, sseEvent{Name: "heartbeats", Data: map[string]any{}})
@@ -179,5 +193,46 @@ func (s *Server) handleDeleteHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.rt.toThread(t.ID, sseEvent{Name: "heartbeats", Data: map[string]any{}})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// GET /heartbeats: all of the person's heartbeats (Schedules page), with
+// their conversation's title. DELETE /heartbeats/{hid} removes one.
+func (s *Server) handleMyHeartbeats(w http.ResponseWriter, r *http.Request) {
+	list, err := s.store.UserHeartbeats(r.Context(), me(r))
+	if err != nil {
+		s.fail(w, err, "heartbeats")
+		return
+	}
+	type row struct {
+		*store.Heartbeat
+		ThreadTitle string `json:"thread_title"`
+	}
+	out := make([]row, 0, len(list))
+	titles := map[string]string{}
+	for _, h := range list {
+		title, ok := titles[h.ThreadID]
+		if !ok {
+			if t, err := s.store.GetThreadAny(r.Context(), h.ThreadID); err == nil {
+				if t.Archived {
+					continue
+				}
+				title = t.Title
+			}
+			titles[h.ThreadID] = title
+		}
+		out = append(out, row{h, title})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"heartbeats": out})
+}
+
+func (s *Server) handleDeleteMyHeartbeat(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(chi.URLParam(r, "hid"), 10, 64)
+	threadID, ok := s.store.DeleteUserHeartbeat(r.Context(), me(r), id)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "no such heartbeat")
+		return
+	}
+	s.rt.toThread(threadID, sseEvent{Name: "heartbeats", Data: map[string]any{}})
 	w.WriteHeader(http.StatusNoContent)
 }

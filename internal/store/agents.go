@@ -172,6 +172,20 @@ func (s *Store) ThreadHeartbeats(ctx context.Context, threadID string) ([]*Heart
 	return s.listHeartbeats(ctx, `WHERE thread_id = ? ORDER BY next_at, id`, threadID)
 }
 
+// UserHeartbeats lists all of a person's heartbeats, next first.
+func (s *Store) UserHeartbeats(ctx context.Context, userID int64) ([]*Heartbeat, error) {
+	return s.listHeartbeats(ctx, `WHERE user_id = ? ORDER BY next_at, id`, userID)
+}
+
+// DeleteUserHeartbeat removes one of a person's heartbeats; it returns its conversation.
+func (s *Store) DeleteUserHeartbeat(ctx context.Context, userID, id int64) (string, bool) {
+	var threadID string
+	if err := s.DB.QueryRowContext(ctx, `SELECT thread_id FROM heartbeats WHERE id = ? AND user_id = ?`, id, userID).Scan(&threadID); err != nil {
+		return "", false
+	}
+	return threadID, s.DeleteHeartbeat(ctx, threadID, id)
+}
+
 // DueHeartbeats lists the heartbeats whose time has come.
 func (s *Store) DueHeartbeats(ctx context.Context, now string) ([]*Heartbeat, error) {
 	return s.listHeartbeats(ctx, `WHERE next_at <= ? ORDER BY next_at`, now)

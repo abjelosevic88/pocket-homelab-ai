@@ -34,7 +34,7 @@ const (
 	agentWaitMax     = 600 // seconds; Codex gives a tool call 660 s
 )
 
-const agentToolsInstructions = `Other agents: with pocket_agent_start you can hand work to another coding agent (Claude Code or Codex, on this or another of the person's machines, optionally in its own git worktree). It runs as its own Pocket AI conversation, which the person can open and join. Use it when the person asks (hand off, a second opinion, several agents at once) or when independent parallel work clearly pays off; do small things yourself. An agent does not see this conversation: give it a complete, self-contained task. Starting one asks the person first unless they always allow it. When it finishes, its answer comes back to you as a message (or directly, if you wait with pocket_agent_wait); continue it with pocket_agent_send. Agents that change code at the same time as you or each other need their own worktree (worktree: true). You can also message the person's other conversations (pocket_agent_list scope all; that asks the person first), and set a heartbeat (pocket_agent_heartbeat_create) to be reminded here on a schedule, e.g. to check on something long-running.`
+const agentToolsInstructions = `Other agents: with pocket_agent_start you can hand work to another coding agent (Claude Code or Codex, on this or another of the person's machines, optionally in its own git worktree). It runs as its own Pocket AI conversation, which the person can open and join. Use it when the person asks (hand off, a second opinion, several agents at once) or when independent parallel work clearly pays off; do small things yourself. An agent does not see this conversation: give it a complete, self-contained task. Starting one asks the person first unless they always allow it. When it finishes, its answer comes back to you as a message (or directly, if you wait with pocket_agent_wait); continue it with pocket_agent_send. Agents that change code at the same time as you or each other need their own worktree (worktree: true). You can also message the person's other conversations (pocket_agent_list scope all; that asks the person first), and set a heartbeat (pocket_agent_heartbeat_create) to be reminded here on a schedule or once later, e.g. to check on something long-running. To run a prompt later as its own new conversation — once ("tomorrow 09:00", "in 2h") or repeating — use pocket_agent_schedule_create; it shows on the person's Schedules page and can report back here.`
 
 // agentTools are the pocket_agent_* tool definitions.
 func agentTools() []askTool {
@@ -63,20 +63,36 @@ func agentTools() []askTool {
 		{"pocket_agent_read", "Read the latest messages of an agent this conversation started or of another of the person's conversations (what it was asked and what it answered; not its tool calls).", `{"type":"object","properties":{"agent_id":{"type":"string"},"messages":{"type":"integer","minimum":1,"maximum":30,"description":"How many of the latest messages (default 6)."}},"required":["agent_id"]}`, true},
 		{"pocket_agent_list", "List the agents this conversation started, with their state; scope all lists the person's other recent conversations too (search them with query).", `{"type":"object","properties":{"scope":{"type":"string","enum":["started","all"]},"query":{"type":"string","maxLength":100}}}`, true},
 		{"pocket_agent_stop", "Stop an agent this conversation started (it ends its current turn; nothing is reported back). Stopping another conversation's agent asks the person first.", `{"type":"object","properties":{"agent_id":{"type":"string"}},"required":["agent_id"]}`, false},
-		{"pocket_agent_heartbeat_create", "Set a heartbeat: a prompt that comes back to THIS conversation on a schedule (e.g. check on a deploy every 30 minutes, a daily report), until removed, max_runs are used or it ends. The person approves it unless they always allow it. A beat is skipped while you are still working.", `{"type":"object","properties":{
+		{"pocket_agent_heartbeat_create", "Set a heartbeat: a prompt that comes back to THIS conversation on a schedule (e.g. check on a deploy every 30 minutes, a daily report), or once at a time (a reminder), until removed, max_runs are used or it ends. The person approves it unless they always allow it. A repeating beat is skipped while you are still working; a one-time one waits until you are free.", `{"type":"object","properties":{
 "prompt":{"type":"string","maxLength":20000,"description":"What you will be told each time (write it for your future self)."},
-"spec":{"type":"string","description":"When: \"every 30m\", \"every 2h\", \"hourly\", \"daily 08:00\", \"weekdays 09:00\", \"weekly mon,thu 08:00\" or a five-field cron line, in the person's time zone. At least 5 minutes apart."},
+"spec":{"type":"string","description":"When, in the person's time zone. Once: \"in 45m\", \"in 2h\", \"today 17:00\", \"tomorrow 09:00\", \"once 2026-11-20 09:00\". Repeating: \"every 30m\", \"every 2h\", \"hourly\", \"daily 08:00\", \"weekdays 09:00\", \"weekly mon,thu 08:00\" or a five-field cron line, at least 5 minutes apart."},
 "max_runs":{"type":"integer","minimum":1,"maximum":1000,"description":"Stop after this many beats (default: no limit)."},
 "ends_after_hours":{"type":"integer","minimum":0,"maximum":2160,"description":"Stop after this many hours (default 168 = a week; 0 = never)."}
 },"required":["prompt","spec"]}`, false},
 		{"pocket_agent_heartbeats", "List this conversation's heartbeats.", `{"type":"object","properties":{}}`, true},
+		{"pocket_agent_schedule_create", "Schedule a prompt to run later as its OWN new conversation (not this one): once at a time (\"run this tomorrow at 9\") or repeating. It shows on the person's Schedules page, where they can edit, run or remove it. The person approves it unless they always allow it. By default the run uses this conversation's agent, machine, folder and permissions, and a one-time run reports its answer back here.", `{"type":"object","properties":{
+"prompt":{"type":"string","maxLength":100000,"description":"The whole task for the future run. It does not see this conversation, so make it complete and self-contained."},
+"when":{"type":"string","description":"In the person's time zone. Once: \"in 2h\", \"today 17:00\", \"tomorrow 09:00\", \"once 2026-11-20 09:00\". Repeating: \"every 6h\", \"daily 08:00\", \"weekdays 09:00\", \"weekly mon 09:00\" or a five-field cron line."},
+"name":{"type":"string","maxLength":120,"description":"A short name (shown on the Schedules page and in notifications)."},
+"report":{"type":"boolean","description":"Send each run's answer to this conversation as a message (default: true when it runs once, false when it repeats)."},
+"notify":{"type":"string","enum":["always","attention","never"],"description":"Push notification after a run: always, only when it needs attention, or never (default: always once, attention when repeating)."},
+"provider":{"type":"string","enum":["claude","codex"],"description":"Default: the same agent as this conversation."},
+"model":{"type":"string","description":"A model id from pocket_agent_options. Default: this conversation's (same agent) or the person's default."},
+"effort":{"type":"string","description":"Reasoning effort, e.g. low, medium, high."},
+"machine":{"type":"string","description":"Machine name or id from pocket_agent_options. Default: this conversation's machine."},
+"folder":{"type":"string","description":"Working folder on that machine. Default: this conversation's folder."},
+"read_only":{"type":"boolean","description":"The run may look but not change anything."},
+"mode":{"type":"string","description":"A permission mode id from pocket_agent_options; never more permissive than this conversation's."}
+},"required":["prompt","when"]}`, false},
+		{"pocket_agent_schedules", "List the person's schedules (one-time and repeating): when they run next, how the last run went, and which were set from this conversation.", `{"type":"object","properties":{}}`, true},
+		{"pocket_agent_schedule_delete", "Remove a schedule that was set from this conversation (others: the person removes them on the Schedules page).", `{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}`, false},
 		{"pocket_agent_heartbeat_delete", "Remove one of this conversation's heartbeats.", `{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}`, false},
 	}
 	out := make([]askTool, 0, len(defs))
 	for _, d := range defs {
 		t := askTool{Name: d.name, Description: d.description, InputSchema: json.RawMessage(d.schema)}
 		t.Annotations.ReadOnly = d.read
-		if d.name == "pocket_agent_start" || d.name == "pocket_agent_heartbeat_create" {
+		if d.name == "pocket_agent_start" || d.name == "pocket_agent_heartbeat_create" || d.name == "pocket_agent_schedule_create" {
 			// "Always allow… everything new in AI" covers starting agents
 			t.Meta.App, t.Meta.Kind = "ai", "add"
 		}
@@ -446,6 +462,8 @@ func (s *Server) callAgentTool(ctx, session context.Context, t *store.Thread, si
 		return toolResult(map[string]any{"agent_id": c.ID, "stopped": true}, false)
 	case "pocket_agent_heartbeat_create", "pocket_agent_heartbeats", "pocket_agent_heartbeat_delete":
 		return s.heartbeatTool(ctx, session, owner, t, sink, name, raw)
+	case "pocket_agent_schedule_create", "pocket_agent_schedules", "pocket_agent_schedule_delete":
+		return s.scheduleTool(ctx, session, owner, t, sink, name, raw)
 	}
 	return toolFailure("Unknown agent tool")
 }
@@ -803,20 +821,27 @@ func (s *Server) agentTurnDone(childID string) {
 		s.log.Info("agent report not delivered: its parent is driven elsewhere", "agent", c.ID, "parent", p.ID)
 		return
 	}
-	if _, err := s.postMessage(ctx, owner, p, agentReport(st, c.Source == "agent" && c.SourceRef == p.ID), nil); err != nil {
+	if _, err := s.postMessage(ctx, owner, p, agentReport(st, reportWho(c, p.ID)), nil); err != nil {
 		s.log.Warn("agent report not delivered", "agent", c.ID, "parent", p.ID, "err", err)
 		return
 	}
 	s.log.Info("agent reported back", "agent", c.ID, "parent", p.ID, "state", st.State)
 }
 
+// reportWho names the conversation that reports back to parentID.
+func reportWho(c *store.Thread, parentID string) string {
+	switch {
+	case c.Source == "agent" && c.SourceRef == parentID:
+		return "The agent you started"
+	case c.Source == "schedule":
+		return "The scheduled run (" + c.Title + ")"
+	}
+	return "The conversation you messaged"
+}
+
 // agentReport is the message an agent's answer comes back as (the timeline
 // folds it into one row).
-func agentReport(st agentInfo, started bool) string {
-	who := "The agent you started"
-	if !started {
-		who = "The conversation you messaged"
-	}
+func agentReport(st agentInfo, who string) string {
 	attr := func(v string) string {
 		return strings.NewReplacer(`"`, "'", "<", "‹", ">", "›", "\n", " ").Replace(v)
 	}
