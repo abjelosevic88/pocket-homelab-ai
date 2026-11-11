@@ -469,7 +469,7 @@ export default function ThreadPage({ onMenu, threadId, embedded, reading }: { on
         </div>
         <div className="thread-head-actions">
           {!!t.notebook && !embedded && <button type="button" className={`btn ghost sm nb-toggle ${nbPane ? 'on' : ''}`} aria-pressed={nbPane} title={nbPane ? 'Hide the sources' : 'Show the notebook’s sources next to the chat'} onClick={() => showNbPane(!nbPane)}><Icon name="book" size={15} /><span className="nb-toggle-label">Sources</span></button>}
-          <AskButton />
+          {!embedded && <AskButton />}
           <MenuButton items={menu} label="Thread menu" align="right"><Icon name="more" size={17} /></MenuButton>
         </div>
       </header>
