@@ -28,7 +28,7 @@ import { ThreadRefChip } from '../components/ThreadRefChip'
 import { projectsPaused, projectsRef, refKey, reloadProjectsLink, useProjectsLink } from '../lib/projects'
 import { AttachIssueDialog } from '../components/AttachIssueDialog'
 import { Timeline } from '../components/Timeline'
-import { NotebookPane, ReadingChip, withReading, type Reading } from '../components/Notebook'
+import { NotebookPane, withReading, type Reading } from '../components/Notebook'
 import { PrivacyBadge, ShareDialog } from '../components/ShareDialog'
 import { accessOf } from '../lib/share'
 import { actionFor, useShortcuts } from '../lib/shortcuts'
@@ -95,11 +95,10 @@ export default function ThreadPage({ onMenu, threadId, embedded, reading }: { on
   const [newBelow, setNewBelow] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
   const composer = useRef<ComposerHandle>(null)
-  // a notebook chat: the source open next to it is what the next message is about
+  // a notebook chat: the source open next to it is what the next message is about (silently)
   const [paneReading, setPaneReading] = useState<Reading | null>(null)
   const readingNow = embedded ? reading ?? null : paneReading
-  const [readingOff, setReadingOff] = useState('') // the file the person said "not about this" for
-  const aboutOn = !!readingNow && readingOff !== readingNow.file
+  const aboutOn = !!readingNow // nothing open: the question is about all sources
   const side = useSideQuestions(id)
   // a notebook chat: its sources beside it (open by default on wide screens)
   const mobile = useIsMobile()
@@ -521,8 +520,7 @@ export default function ThreadPage({ onMenu, threadId, embedded, reading }: { on
           {access === 'view' ? (
             <div className="callout info"><Icon name="eye" size={15} /><span>{t.owner_name || 'Someone'} shared this chat with you to read. They can let you chat in it too.</span></div>
           ) : canRun ? (
-            <>{readingNow && <ReadingChip reading={readingNow} on={aboutOn} onToggle={on => setReadingOff(on ? '' : readingNow.file)} />}
-            <Composer key={id} ref={composer} draftKey={id} autoFocus onSend={(text, up, now) => send(aboutOn ? withReading(readingNow, text) : text, up, now)} onCommand={localCommand} onSide={owner && t.source !== 'ask' ? q => { void side.ask(q) } : undefined} skills={t.source === 'ask' ? undefined : { provider: t.provider, cwd: t.cwd, account_id: t.account_id, host_id: t.host_id, host_home: t.host_home }} running={running} onStop={t.external && !t.live && !t.reattached ? undefined : interrupt} disabled={!!t.external && !t.live && !t.reattached}
+            <><Composer key={id} ref={composer} draftKey={id} autoFocus onSend={(text, up, now) => send(aboutOn ? withReading(readingNow, text) : text, up, now)} onCommand={localCommand} onSide={owner && t.source !== 'ask' ? q => { void side.ask(q) } : undefined} skills={t.source === 'ask' ? undefined : { provider: t.provider, cwd: t.cwd, account_id: t.account_id, host_id: t.host_id, host_home: t.host_home }} running={running} onStop={t.external && !t.live && !t.reattached ? undefined : interrupt} disabled={!!t.external && !t.live && !t.reattached}
               placeholder={t.external && !t.live && !t.reattached ? 'It is running in another app right now — you can reply here once it has finished' : running ? 'Add a message — it is sent when the agent is done…' : pending.length ? 'Or type an answer…' : `Reply to ${providerName(t.provider)}…`}
               footer={<>
                 {t.source === 'ask' && owner && <span className="thread-pickers"><AgentPicker compact ask showProvider={false} value={{ provider: 'claude', model: t.model, effort: t.effort, mode: t.mode, account_id: t.account_id || 0 }}
