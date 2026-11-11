@@ -6,7 +6,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, qs, upload, V1 } from '../lib/api'
 import { useProjectsLink } from '../lib/projects'
-import { ago, fmtBytes } from '../lib/format'
+import { ago, fmtBytes, threadTitle } from '../lib/format'
+import { ThreadStatus } from './bits'
 import type { NotebookFull, NotebookSource, NotebookSourceKind } from '../lib/types'
 import { Icon } from './icons'
 import { Markdown } from './Markdown'
@@ -415,24 +416,51 @@ export function SourceViewer({ nbId, source: x, onAsk, onClose, onChanged }: {
 
 // ---------- beside a notebook chat ----------
 
-/** A notebook chat's side pane: its sources, one open next to the chat;
- * "Ask about this" starts the next message about it. */
-export function NotebookPane({ id, onAsk, onClose }: { id: number; onAsk: (prefix: string) => void; onClose: () => void }) {
+/** A notebook chat's side pane: its sources (one open next to the chat;
+ * "Ask about this" starts the next message about it) and its other chats. */
+export function NotebookPane({ id, threadId, onAsk, onClose }: { id: number; threadId: string; onAsk: (prefix: string) => void; onClose: () => void }) {
   const { nb, error, reload } = useNotebook(id)
   const [open, setOpen] = useState<NotebookSource | null>(null)
+  const [tab, setTab] = useState<'sources' | 'chats'>('sources')
   const navigate = useNavigate()
   useEffect(() => { if (open && nb) setOpen(nb.source_list.find(x => x.id === open.id) || null) }, [nb]) // eslint-disable-line react-hooks/exhaustive-deps
+  // another chat of it opened (or a new one started): its list follows
+  const first = useRef(true)
+  useEffect(() => { if (first.current) { first.current = false; return } void reload() }, [threadId]) // eslint-disable-line react-hooks/exhaustive-deps
   return (
-    <aside className="nb-pane" aria-label="Notebook sources">
+    <aside className="nb-pane" aria-label="Notebook">
       <div className="nb-pane-head">
         <span className="page-ico"><Icon name="book" size={15} /></span>
         <a className="grow ellipsis nb-pane-name" href={`/notebooks/${id}`} onClick={e => { e.preventDefault(); navigate(`/notebooks/${id}`) }}>{nb?.name || 'Notebook'}</a>
-        <button type="button" className="btn ghost icon-only" aria-label="Close the sources" title="Close" onClick={onClose}><Icon name="x" size={16} /></button>
+        <button type="button" className="btn sm" title="Start another chat in this notebook" onClick={() => navigate(`/notebooks/${id}`)}><Icon name="plus" size={14} />New chat</button>
+        <button type="button" className="btn ghost icon-only" aria-label="Close the notebook pane" title="Close" onClick={onClose}><Icon name="x" size={16} /></button>
       </div>
+      {nb && !open && <div className="nb-pane-tabs">
+        <Segmented size="sm" value={tab} onChange={setTab} label="Show" options={[
+          { value: 'sources', label: <>Sources <span className="muted">{nb.source_list.length || ''}</span></> },
+          { value: 'chats', label: <>Chats <span className="muted">{nb.chat_list.length || ''}</span></> },
+        ]} />
+      </div>}
       {error ? <div className="callout error" role="alert" style={{ margin: 12 }}>{error}</div>
         : !nb ? <Loading />
         : open ? <SourceViewer nbId={id} source={open} onClose={() => setOpen(null)} onChanged={gone => { if (gone) setOpen(null); void reload() }} onAsk={x => onAsk(askPrefix(x))} />
+        : tab === 'chats' ? <div className="nb-pane-list"><NotebookChats nb={nb} current={threadId} onNew={() => navigate(`/notebooks/${id}`)} /></div>
         : <div className="nb-pane-list"><SourceList nb={nb} onSelect={setOpen} onChanged={reload} /></div>}
     </aside>
   )
+}
+
+/** A notebook's chats, newest first; each its own conversation over the same sources. */
+export function NotebookChats({ nb, current, onNew }: { nb: NotebookFull; current?: string; onNew?: () => void }) {
+  const navigate = useNavigate()
+  return <div className="nb-chats">
+    {nb.chat_list.length === 0 ? <p className="muted small">No chats yet.</p> : nb.chat_list.map(t => (
+      <button type="button" key={t.id} className={`nb-chat ${t.id === current ? 'on' : ''}`} aria-current={t.id === current ? 'page' : undefined} onClick={() => { if (t.id !== current) navigate(`/t/${t.id}`) }}>
+        <ThreadStatus t={t} />
+        <span className="grow ellipsis">{threadTitle(t)}</span>
+        <span className="muted xsmall">{ago(t.activity_at)}</span>
+      </button>
+    ))}
+    {onNew && <button type="button" className="nb-chat nb-chat-new" onClick={onNew}><Icon name="plus" size={14} /><span className="grow">New chat in this notebook</span></button>}
+  </div>
 }

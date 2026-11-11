@@ -5,13 +5,12 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
-import { ago, threadTitle } from '../lib/format'
+import { ago } from '../lib/format'
 import type { Notebook, NotebookFull, NotebookSource, ProviderId, Thread } from '../lib/types'
 import { AgentPicker, defaultsFor, type AgentValue } from '../components/AgentPicker'
-import { ThreadStatus } from '../components/bits'
 import { Composer, type ComposerHandle } from '../components/Composer'
 import { Icon } from '../components/icons'
-import { askPrefix, hasProjectsSources, importProjects, nbURL, ProjectsPicker, reportToast, SourceList, SourceViewer, useNotebook, type ImportReport, type ProjectsPick } from '../components/Notebook'
+import { askPrefix, hasProjectsSources, NotebookChats, importProjects, nbURL, ProjectsPicker, reportToast, SourceList, SourceViewer, useNotebook, type ImportReport, type ProjectsPick } from '../components/Notebook'
 import { useProjectsLink } from '../lib/projects'
 import { PageHead } from '../components/PageHead'
 import { Confirm, Empty, errMsg, Loading, MenuButton, Modal, Segmented, Spinner, useIsMobile, useToast, type MenuItem } from '../components/ui'
@@ -169,15 +168,10 @@ export function NotebookPage({ onMenu }: { onMenu?: () => void }) {
   )
 
   const chats = (
-    <div className="nb-chats">
+    <div className="nb-chats-block">
       <div className="nb-h">Chats <span className="muted">{nb.chat_list.length || ''}</span></div>
-      {nb.chat_list.length === 0 ? <p className="muted small">No chats yet. Ask something above.</p> : nb.chat_list.map(t => (
-        <button type="button" key={t.id} className="nb-chat" onClick={() => navigate(`/t/${t.id}`)}>
-          <ThreadStatus t={t} />
-          <span className="grow ellipsis">{threadTitle(t)}</span>
-          <span className="muted xsmall">{ago(t.activity_at)}</span>
-        </button>
-      ))}
+      <NotebookChats nb={nb} />
+      {nb.chat_list.length === 0 && <p className="muted small">Each question above starts its own chat here; all of them read the same sources.</p>}
     </div>
   )
 

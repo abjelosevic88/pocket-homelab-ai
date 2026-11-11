@@ -100,3 +100,10 @@ button.nb-pick { border: 0; background: none; font: inherit; color: var(--text);
 .nb-start .nb-pick-list { max-height: min(34vh, 280px); background: var(--surface); border-radius: 10px; margin: 0; padding: 4px; }
 .page-sub .nb-from { color: var(--accent-ink); text-decoration: none; font-weight: 500; }
 .page-sub .nb-from:hover { text-decoration: underline; }
+
+/* a notebook's chats */
+.nb-chats-block { display: flex; flex-direction: column; gap: 6px; }
+.nb-chat.on { background: var(--row-sel); color: var(--accent-ink); cursor: default; }
+.nb-chat-new { color: var(--accent-ink); font-weight: 500; }
+.nb-pane-tabs { padding: 8px 12px 0; }
+.nb-pane-list .nb-chats { padding: 10px 8px; }
