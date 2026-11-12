@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -170,6 +171,7 @@ func (s *Server) finishAppCall(id, status string, result json.RawMessage, elapse
 	if len(result) == 0 {
 		result = json.RawMessage(`{}`)
 	}
+	result = withoutPictures(result)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_, err := s.store.DB.ExecContext(ctx, `UPDATE app_calls SET status=?,result=?,duration_ms=?,completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, status, string(result), elapsed.Milliseconds(), id)
@@ -241,4 +243,37 @@ func (s *Server) handleAppCall(w http.ResponseWriter, r *http.Request) {
 	a.Result = json.RawMessage(res)
 	a.Before = json.RawMessage(before)
 	writeJSON(w, 200, a)
+}
+
+// withoutPictures keeps the call log small: a picture a tool returned (Core's
+// pocket_projects_attachment) is logged as its type and size, not its bytes.
+// The agent itself got the full result.
+func withoutPictures(result json.RawMessage) json.RawMessage {
+	if !bytes.Contains(result, []byte(`"image"`)) {
+		return result
+	}
+	var v map[string]any
+	if json.Unmarshal(result, &v) != nil {
+		return result
+	}
+	content, ok := v["content"].([]any)
+	if !ok {
+		return result
+	}
+	changed := false
+	for i, c := range content {
+		if m, ok := c.(map[string]any); ok && m["type"] == "image" {
+			data, _ := m["data"].(string)
+			content[i] = map[string]any{"type": "image", "mimeType": m["mimeType"], "data_omitted_bytes": len(data) * 3 / 4}
+			changed = true
+		}
+	}
+	if !changed {
+		return result
+	}
+	out, err := json.Marshal(v)
+	if err != nil {
+		return result
+	}
+	return out
 }
