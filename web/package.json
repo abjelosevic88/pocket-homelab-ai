@@ -8,6 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test:activity": "node --test tests/tool-activity.test.ts",
+    "test:filelinks": "node --test tests/filelinks.test.ts",
     "test:mobile": "node tests/mobile.mjs",
     "test:worktrees": "node tests/worktree-cleanup.mjs"
   },
