@@ -1,13 +1,13 @@
 // One file in a tab: text and code with line numbers, Markdown rendered,
 // images, PDF, audio and video in the browser's own players.
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useApp } from '../lib/app-context'
 import { fmtBytes } from '../lib/format'
 import { baseOf, dirOf, fileKind, filesPath, rawURL } from '../lib/files'
 import { useTerminals } from '../lib/terminals'
 import { Icon } from '../components/icons'
-import { Markdown } from '../components/Markdown'
+import { FileLinkContext, Markdown } from '../components/Markdown'
 import { PageHead } from '../components/PageHead'
 import { copyText, errMsg, Loading, useToast } from '../components/ui'
 
@@ -29,6 +29,8 @@ export default function FileView({ onMenu }: { onMenu?: () => void }) {
   const [n, setN] = useState(0) // reload
   const machine = host ? hosts.find(h => h.id === host)?.name || 'Server' : 'This server'
   const url = rawURL(host, path)
+  // Links in a Markdown file open the files next to it.
+  const mdPlace = useMemo(() => ({ host, cwd: dirOf(path) }), [host, path])
 
   useEffect(() => {
     setText(null); setErr(''); setBinary(false)
@@ -69,7 +71,7 @@ export default function FileView({ onMenu }: { onMenu?: () => void }) {
               <p>{err || 'This file is not text, so it cannot be shown here.'}</p>
               <a className="btn" href={rawURL(host, path, true)}><Icon name="download" size={15} /> Download</a></div>
           : text === null ? <Loading />
-          : kind === 'markdown' && !source ? <div className="page-scroll"><div className="page-inner file-md"><Markdown text={text} /></div></div>
+          : kind === 'markdown' && !source ? <div className="page-scroll"><div className="page-inner file-md"><FileLinkContext.Provider value={mdPlace}><Markdown text={text} /></FileLinkContext.Provider></div></div>
           : <div className="file-code"><pre><code>{lines.map((l, i) => <span key={i} className="file-line"><span className="file-ln">{i + 1}</span>{l || ' '}{'\n'}</span>)}</code></pre></div>}
       </div>
     </div>

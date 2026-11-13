@@ -28,6 +28,7 @@ import { ThreadRefChip } from '../components/ThreadRefChip'
 import { projectsPaused, projectsRef, refKey, reloadProjectsLink, useProjectsLink } from '../lib/projects'
 import { AttachIssueDialog } from '../components/AttachIssueDialog'
 import { Timeline } from '../components/Timeline'
+import { FileLinkContext } from '../components/Markdown'
 import { NotebookPane, withReading, type Reading } from '../components/Notebook'
 import { PrivacyBadge, ShareDialog } from '../components/ShareDialog'
 import { accessOf } from '../lib/share'
@@ -121,6 +122,8 @@ export default function ThreadPage({ onMenu, threadId, embedded, reading }: { on
   const hostName = useHostName(t?.host_id)
   // a Projects conversation whose workspace isn't the one open in Projects
   const projectsLink = useProjectsLink(useMemo(() => [projectsRef(t || undefined)].filter(Boolean), [t?.id]))
+  // Paths the agent writes open in the file viewer on the machine it runs on.
+  const filePlace = useMemo(() => t ? { host: t.host_id || 0, cwd: t.cwd || '' } : null, [t?.host_id, t?.cwd])
   const paused = projectsPaused(t || undefined)
 
   const load = useCallback(async () => {
@@ -482,11 +485,13 @@ export default function ThreadPage({ onMenu, threadId, embedded, reading }: { on
               {paused && <div className="notice warn"><Icon name="alert" size={14} /><span>{paused} You can still read and chat here; its Pocket Projects tools are off.</span></div>}
               {t.source === 'rewind' && <div className="notice info"><Icon name="undo" size={14} /><span>Continued from an earlier message. <button type="button" className="link-btn" onClick={() => navigate(`/t/${t.source_ref}`)}>Open original conversation</button>. Files and app changes already made are unchanged.</span></div>}
               {t.source === 'import' && items.length > 0 && <div className="notice info"><Icon name="history" size={14} /><span>Imported from the server’s {providerName(t.provider)} history — sending a message continues that session.</span></div>}
+              <FileLinkContext.Provider value={filePlace}>
               <Timeline key={id} threadId={t.provider === 'claude' ? id : undefined} items={visible} onResend={canSend ? resend : undefined} onDropUnsent={canSend ? dropUnsent : undefined} showThinking={!!settings?.show_thinking} streamingKey={streamingKey}
                 onFork={owner && t.source !== 'ask' && t.provider_session_id && canRun ? forkNewTab : undefined}
                 onEdit={owner && canRun ? item => setRewindTarget({ item, keepText: true }) : undefined}
                 onRewind={owner && canRun ? (item, keepText = true) => setRewindTarget({ item, keepText }) : undefined} rewindDisabled={rewindDisabled}
                 owner={sharedOwner} onMoveFolder={owner && canRun ? () => setMoving(true) : undefined} />
+              </FileLinkContext.Provider>
               <ThreadEvidence id={id} revision={visible.filter(i => i.kind === 'turn').length} />
               {t.status === 'error' && t.error && !(lastItem?.kind === 'notice' && lastItem.text === t.error) && !(lastItem?.kind === 'turn' && lastItem.turn?.error === t.error) && <div className="notice error"><Icon name="alert" size={14} /><span>{t.error}</span></div>}
             </>
