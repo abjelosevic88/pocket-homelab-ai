@@ -2,21 +2,24 @@
 // claude / codex there over ssh, and the conversation lives here as usual.
 // Each machine is its adder's: the owner's go over the server's own key
 // (admins manage them), everyone else's over a key of their own that
-// Pocket AI makes in their folder. Nobody sees anyone else's. Tapping one
-// lists its sessions (every agent there, from any app) to open here.
+// Pocket AI makes in their folder. Nobody sees anyone else's.
+// Each machine lists its Claude Code / Codex logins (the default ~/.claude
+// and extra folders like ~/.claude-max): add, sign in, sign out, remove.
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { api, V1 } from '../../lib/api'
 import { useApp } from '../../lib/app-context'
-import type { Host } from '../../lib/types'
+import { planName } from '../../lib/format'
+import type { Host, HostLogin, ProviderId } from '../../lib/types'
 import { Icon } from '../../components/icons'
+import { ProviderToggle } from '../../components/AgentPicker'
 import { Confirm, CopyField, errMsg, Field, MenuButton, Modal, Spinner, useAsync, useContextMenu, useToast, type MenuItem } from '../../components/ui'
+import { SignInDialog, type SignInTarget } from './Accounts'
 import { ago, Section, StatusDot } from './common'
 
 const provName = (p: string) => p === 'codex' ? 'Codex' : 'Claude Code'
 
 export function HostsSection() {
-  const { user, hosts, reloadHosts } = useApp()
+  const { user, hosts, reloadHosts, reloadAccounts } = useApp()
   const { toast } = useToast()
   const own = useAsync(() => api.get<{ people?: { jailed?: boolean } }>(`${V1}/settings`).then(r => !!r.people?.jailed), [])
   const jailed = !!own.data
@@ -26,8 +29,16 @@ export function HostsSection() {
   const [del, setDel] = useState<Host | null>(null)
   const [checking, setChecking] = useState<number | null>(null)
   const ctx = useContextMenu()
-  const navigate = useNavigate()
-  const sessions = (h: Host) => navigate(`/history?host=${h.id}`)
+  const [fresh, setFresh] = useState(0)
+  const logins = useAsync(() => hosts.length ? api.get<HostLogin[]>(`${V1}/hosts/logins${fresh ? '?refresh=1' : ''}`) : Promise.resolve([] as HostLogin[]), [fresh, hosts.length])
+  const [addLogin, setAddLogin] = useState<Host | null>(null)
+  const [signIn, setSignIn] = useState<SignInTarget | null>(null)
+  const [rmLogin, setRmLogin] = useState<HostLogin | null>(null)
+  const loginsDone = () => { logins.reload(); reloadAccounts().catch(() => {}) }
+  const signInTarget = (l: HostLogin): SignInTarget => ({ label: loginName(l), provider: l.provider, base: `${V1}/hosts/${l.host_id}/login/${l.provider}`, query: l.dir ? { dir: l.dir } : undefined, where: l.dir ? `${l.host} · ${loginName(l)}` : l.host })
+  const signOut = async (l: HostLogin) => {
+    try { await api.post(`${V1}/hosts/${l.host_id}/logout/${l.provider}${dirQ(l)}`); toast(`Signed out ${loginName(l)} on ${l.host}`); loginsDone() } catch (e) { toast(errMsg(e), 'err') }
+  }
 
   const check = async (h: Host) => {
     setChecking(h.id)
@@ -42,7 +53,11 @@ export function HostsSection() {
     <Section title="Servers" sub={jailed
       ? <>Run agents on a machine of yours: pick it next to the folder when you start a thread. Pocket AI connects with ssh using <b>your own key</b>, so only machines that let that key in are reachable; the machine needs Claude Code and/or Codex installed and signed in. Only you see your servers.</>
       : <>Run agents on another machine, like Paseo does: pick it next to the folder when you start a thread. Pocket AI connects with ssh as <b>this server’s</b> user; the machine needs Claude Code and/or Codex installed and signed in.</>}
-      actions={isAdmin && <button type="button" className="btn primary sm" onClick={() => setEdit('new')}><Icon name="plus" size={14} />Add server</button>}>
+      actions={<>
+        {hosts.length > 0 && <button type="button" className="btn sm ghost icon-only" aria-label="Check the logins again" title="Check the logins again" disabled={logins.loading} onClick={() => setFresh(n => n + 1)}>
+          <Icon name="refresh" size={14} className={logins.loading ? 'spin' : ''} /></button>}
+        {isAdmin && <button type="button" className="btn primary sm" onClick={() => setEdit('new')}><Icon name="plus" size={14} />Add server</button>}
+      </>}>
       {hosts.length === 0 ? (
         <p className="muted small" style={{ margin: 0 }}>Only this server so far.{isAdmin ? ' Add a machine you can reach with ssh (a tailnet name works).' : ''}</p>
       ) : (
@@ -50,7 +65,6 @@ export function HostsSection() {
           <div className="acct-group host-group">
             {hosts.map(h => {
               const more: MenuItem[] = [
-                { label: 'Sessions', icon: 'history', onSelect: () => sessions(h) },
                 { label: 'Check again', icon: 'refresh', onSelect: () => check(h) },
                 { label: 'Edit…', icon: 'edit', onSelect: () => setEdit(h) },
                 'sep',
@@ -62,8 +76,7 @@ export function HostsSection() {
                 <div key={h.id} className="acct-row" onContextMenu={isAdmin ? e => ctx.open(e, more) : undefined}>
                   <StatusDot status={h.info.ok ? (missing.length ? 'warn' : 'ok') : h.info.checked_at ? 'error' : 'off'}
                     title={(h.info.ok ? 'Reachable' : 'Not ready') + (h.info.checked_at ? ` · checked ${ago(h.info.checked_at)}` : '')} />
-                  <div className="acct-main host-open" role="button" tabIndex={0} title={`Sessions on ${h.name}`}
-                    onClick={() => sessions(h)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); sessions(h) } }}>
+                  <div className="acct-main">
                     <div className="acct-name">
                       <span className="ellipsis">{h.name}</span>
                       {versions.map(([p]) => <span key={p} className="badge ok">{provName(p)}</span>)}
@@ -78,7 +91,8 @@ export function HostsSection() {
                     {versions.length > 0 && <div className="acct-meta">{versions.map(([p, v]) => <span key={p}>{provName(p)} {v}</span>)}</div>}
                     {missing.map(([p, why]) => <div key={p} className="muted xsmall">{provName(p)}: {why}</div>)}
                     {h.info.error && <div className="danger-text xsmall" title={h.info.error}>{h.info.error}</div>}
-                    <div className="host-sessions small">Sessions<Icon name="chevron-right" size={13} /></div>
+                    <HostLogins host={h} logins={(logins.data || []).filter(l => l.host_id === h.id)} loading={!logins.data && logins.loading}
+                      onAdd={() => setAddLogin(h)} onSignIn={l => setSignIn(signInTarget(l))} onSignOut={signOut} onRemove={setRmLogin} />
                   </div>
                   <div className="acct-actions">
                     {checking === h.id ? <Spinner /> : isAdmin
@@ -95,8 +109,105 @@ export function HostsSection() {
       {del && <Confirm title={`Remove ${del.name}?`} confirmLabel="Remove"
         message={<>Agents running there are stopped. Its threads stay in your list but cannot continue until the server is added again. Nothing on the machine itself is touched.</>}
         onCancel={() => setDel(null)} onConfirm={async () => { const d = del; setDel(null); try { await api.del(`${V1}/hosts/${d.id}`); toast('Removed'); reloadHosts().catch(() => {}) } catch (e) { toast(errMsg(e), 'err') } }} />}
+      {addLogin && <AddLoginDialog host={addLogin} logins={(logins.data || []).filter(l => l.host_id === addLogin.id)} onClose={() => setAddLogin(null)}
+        onAdded={(l, made) => { setAddLogin(null); if (made) loginsDone(); setSignIn(signInTarget(l)) }} />}
+      {signIn && <SignInDialog target={signIn} onClose={() => { setSignIn(null); loginsDone() }} />}
+      {rmLogin && <Confirm title={`Remove ${loginName(rmLogin)} from ${rmLogin.host}?`} confirmLabel="Remove"
+        message={<>Conversations on {rmLogin.host} that used it go back to its default login. Nothing is deleted: the folder <code>{tilde(rmLogin.home)}</code>, with its sign-in and history, is moved to <code>~/.pocket-ai/removed-logins</code> there; move it back to bring the login back.</>}
+        onCancel={() => setRmLogin(null)} onConfirm={async () => {
+          const l = rmLogin; setRmLogin(null)
+          try { await api.del(`${V1}/hosts/${l.host_id}/logins/${l.provider}${dirQ(l)}`); toast(`Removed ${loginName(l)} from ${l.host}`); loginsDone() } catch (e) { toast(errMsg(e), 'err') }
+        }} />}
       {ctx.menu}
     </Section>
+  )
+}
+
+/** "Default" for ~/.claude, "claude-max" for ~/.claude-max. */
+const loginName = (l: HostLogin) => l.label || 'Default'
+const tilde = (p: string) => p.replace(/^\/(home|Users)\/[^/]+/, '~')
+const dirQ = (l: HostLogin) => l.dir ? `?dir=${encodeURIComponent(l.dir)}` : ''
+
+/** A machine's logins, Claude Code then Codex, each with its own menu. */
+function HostLogins({ host, logins, loading, onAdd, onSignIn, onSignOut, onRemove }: { host: Host; logins: HostLogin[]; loading: boolean; onAdd: () => void; onSignIn: (l: HostLogin) => void; onSignOut: (l: HostLogin) => void; onRemove: (l: HostLogin) => void }) {
+  const shown = logins.filter(l => !l.missing).sort((a, b) => (a.provider === b.provider ? 0 : a.provider === 'claude' ? -1 : 1) || (a.dir ? 1 : 0) - (b.dir ? 1 : 0) || loginName(a).localeCompare(loginName(b)))
+  const down = logins.length > 0 && logins.every(l => l.error && !l.missing)
+  return (
+    <div className="host-logins">
+      <div className="host-logins-h">
+        <span>Logins</span>
+        {!loading && !down && <button type="button" className="btn sm ghost" onClick={onAdd}><Icon name="plus" size={13} />Add login</button>}
+      </div>
+      {loading ? <div className="muted xsmall"><Spinner /> Asking {host.name}…</div>
+        : down ? <div className="muted xsmall">Could not ask {host.name} about its logins.</div>
+        : !shown.length ? <div className="muted xsmall">No logins found there yet.</div>
+        : shown.map(l => {
+          const more: MenuItem[] = [
+            { label: l.signed_in ? 'Sign in again…' : 'Sign in…', icon: 'key', onSelect: () => onSignIn(l) },
+            ...(l.signed_in ? [{ label: 'Sign out', icon: 'log-out', onSelect: () => onSignOut(l) }] : []),
+            ...(l.dir ? ['sep' as const, { label: 'Remove…', icon: 'trash', danger: true, onSelect: () => onRemove(l) }] : []),
+          ]
+          return (
+            <div key={l.provider + ':' + l.dir} className="host-login">
+              <StatusDot status={l.signed_in ? 'ok' : l.error ? 'error' : 'off'} title={(l.signed_in ? 'Signed in' : l.error ? 'Error' : 'Not signed in') + (l.checked_at ? ` · checked ${ago(l.checked_at)}` : '')} />
+              <span className={`host-login-ico ${l.provider}`} title={provName(l.provider)}><Icon name={l.provider} size={14} /></span>
+              <div className="host-login-main">
+                <div className="acct-name">
+                  <span className="ellipsis" title={`${provName(l.provider)} · ${tilde(l.home)}`}>{loginName(l)}</span>
+                  {l.signed_in ? (l.plan && <span className="badge ok">{planName(l.plan)}</span>) : l.error ? <span className="badge danger">Error</span> : <span className="badge">Not signed in</span>}
+                </div>
+                <div className="acct-meta">{l.email ? <span className="ellipsis">{l.email}</span> : null}<code>{tilde(l.home)}</code></div>
+                {l.error && <div className="danger-text xsmall" title={l.error}>{l.error}</div>}
+              </div>
+              <div className="host-login-actions">
+                {!l.signed_in && !l.error && <button type="button" className="btn sm" onClick={() => onSignIn(l)}><Icon name="key" size={13} />Sign in</button>}
+                <MenuButton label={`More for ${loginName(l)} on ${host.name}`} align="right" items={more}><Icon name="more" size={16} /></MenuButton>
+              </div>
+            </div>
+          )
+        })}
+    </div>
+  )
+}
+
+const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-+$/, '')
+
+/** Another login on a machine: ~/.claude-<name> (or the default, while it is not signed in), then its sign-in. */
+function AddLoginDialog({ host, logins, onClose, onAdded }: { host: Host; logins: HostLogin[]; onClose: () => void; onAdded: (l: HostLogin, made: boolean) => void }) {
+  const { toast } = useToast()
+  const installed = (['claude', 'codex'] as ProviderId[]).filter(p => logins.some(l => l.provider === p && !l.missing))
+  const [provider, setProvider] = useState<ProviderId>(installed[0] || 'claude')
+  const [name, setName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const def = logins.find(l => l.provider === provider && !l.dir && !l.missing)
+  const useDefault = !!def && !def.signed_in && !def.error
+  const missing = !installed.includes(provider)
+  const s = slug(name)
+  const taken = logins.some(l => l.provider === provider && !!l.dir && l.label === `${provider}-${s}`)
+  const ready = !busy && !missing && (useDefault || (!!s && !taken))
+  const add = async () => {
+    if (useDefault) { onAdded(def!, false); return }
+    setBusy(true)
+    try { onAdded(await api.post<HostLogin>(`${V1}/hosts/${host.id}/logins/${provider}`, { name: name.trim() }), true) }
+    catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
+  }
+  return (
+    <Modal title={`Add a login on ${host.name}`} size="sm" onClose={onClose} footer={<>
+      <button type="button" className="btn" onClick={onClose}>Cancel</button>
+      <button type="button" className="btn primary" disabled={!ready} onClick={add}>{busy ? <Spinner /> : null}{useDefault ? 'Sign in' : 'Add and sign in'}</button>
+    </>}>
+      <form className="stack" onSubmit={e => { e.preventDefault(); if (ready) void add() }}>
+        <Field label="Agent" group><ProviderToggle value={provider} onChange={v => v && setProvider(v)} /></Field>
+        {missing ? <div className="callout warn"><Icon name="alert" size={15} /><span>{provName(provider)} is not installed on <b>{host.name}</b>. Install it there, then check the server again.</span></div>
+          : useDefault ? <p className="muted small" style={{ margin: 0 }}>The default login on {host.name} (<code>{tilde(def!.home)}</code>) is not signed in yet: sign it in first, then add more.</p>
+          : <>
+            <Field label="Name" help={s ? <>Makes <code>~/.{provider}-{s}</code> on {host.name}{taken ? ' — that one is there already' : ''}.</> : 'Shown in the login picker, e.g. “max” or “work”.'}>
+              <input value={name} onChange={e => setName(e.target.value)} autoFocus maxLength={60} placeholder={provider === 'codex' ? 'second-pro' : 'max'} spellCheck={false} autoCapitalize="off" />
+            </Field>
+            <p className="muted small" style={{ margin: 0 }}>Its own {provider === 'claude' ? 'Claude' : 'ChatGPT'} sign-in, history and limits; settings, skills and plugins{provider === 'claude' ? ' and MCP servers' : ''} are shared with the default login there. Conversations on {host.name} pick it next to the model.</p>
+          </>}
+      </form>
+    </Modal>
   )
 }
 

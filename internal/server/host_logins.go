@@ -28,6 +28,7 @@ func (s *Server) hostLoginRoutes(r chi.Router) {
 	r.Delete("/hosts/{id}/login/{provider}", s.handleHostLoginCancel)
 	r.Post("/hosts/{id}/logout/{provider}", s.handleHostLogout)
 	r.Post("/hosts/{id}/logins/{provider}", s.handleHostLoginAdd)
+	r.Delete("/hosts/{id}/logins/{provider}", s.handleHostLoginRemove)
 }
 
 // hostLoginView is one login of one CLI on a machine: the default
@@ -443,4 +444,51 @@ func (s *Server) handleHostLogout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// hostRemoveLoginScript moves a login folder ($1) out of the way, to
+// ~/.pocket-ai/removed-logins/<name>-<time> where the login scan does not
+// look, and prints where it went: the sign-in, history and settings in it
+// are kept, and moving it back to ~ brings the login back.
+const hostRemoveLoginScript = `d=$1
+[ -d "$d" ] && [ ! -L "$d" ] || { echo "$d is not there" >&2; exit 3; }
+t="$HOME/.pocket-ai/removed-logins"
+mkdir -p "$t" && chmod 700 "$HOME/.pocket-ai" "$t" || exit 3
+n="${d##*/}"; n="$t/${n#.}-$(date +%Y%m%d-%H%M%S)"
+mv "$d" "$n" && printf '%s\n' "$n"
+`
+
+// handleHostLoginRemove takes an extra login (?dir=, never the default) off
+// a machine. Conversations that ran on it go back to the machine's default
+// login; one working on it right now has to be stopped first.
+func (s *Server) handleHostLoginRemove(w http.ResponseWriter, r *http.Request) {
+	h, provider, dir := s.loginHost(w, r)
+	if h == nil {
+		return
+	}
+	if dir == "" {
+		writeErr(w, http.StatusBadRequest, "the default login of "+h.Name+" cannot be removed: sign it out instead")
+		return
+	}
+	ctx := r.Context()
+	var busy int
+	_ = s.store.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM threads WHERE host_id = ? AND provider = ? AND host_home = ? AND status IN ('running', 'waiting')`, h.ID, provider, dir).Scan(&busy)
+	if busy > 0 {
+		writeErr(w, http.StatusConflict, "an agent is working on "+agent.HomeLabel(dir)+" on "+h.Name+": stop it first")
+		return
+	}
+	s.cancelLogin(hostLoginKey(h.ID, provider, dir))
+	out, errOut, err := remoteOf(h).Run(ctx, 45*time.Second, hostRemoveLoginScript, dir)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "could not remove the login on "+h.Name+": "+oneLine(stripANSI(sshError(errOut, err)), 300))
+		return
+	}
+	if _, err := s.store.DB.ExecContext(ctx, `UPDATE threads SET host_home = '' WHERE host_id = ? AND provider = ? AND host_home = ?`, h.ID, provider, dir); err != nil {
+		s.log.Warn("threads not moved off a removed login", "host", h.Name, "login", dir, "err", err)
+	}
+	moved := strings.TrimSpace(out)
+	s.log.Info("login removed on a server", "host", h.Name, "provider", provider, "login", dir, "moved_to", moved)
+	s.hostLogins(ctx, h, true)
+	s.rt.publishAccounts()
+	writeJSON(w, http.StatusOK, map[string]string{"moved_to": moved})
 }

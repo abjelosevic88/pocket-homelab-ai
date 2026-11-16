@@ -2,8 +2,7 @@
 // is the owner's; everyone else adds their own (in their own folder on the
 // server, their agents sandboxed there), signs it in from here and picks the
 // account per thread in the composer. Admins see and manage every login.
-// Other machines (Settings → Servers) run on their own login, listed and
-// signed in here too.
+// Other machines (Settings → Servers) list and manage their own logins there.
 import { useEffect, useRef, useState } from 'react'
 import { api, V1 } from '../../lib/api'
 import { useApp } from '../../lib/app-context'
@@ -30,14 +29,12 @@ export function AccountsSection() {
   const pi = info.data
   const list = useAsync(() => api.get<Account[]>(`${V1}/accounts?manage=${isAdmin ? 1 : 0}${refresh ? '&refresh=1' : ''}`), [refresh, isAdmin])
   const people = useAsync(() => isAdmin ? api.get<User[]>(`${V1}/users`) : Promise.resolve([] as User[]), [isAdmin])
-  const remote = useAsync(() => api.get<HostLogin[]>(`${V1}/hosts/logins${refresh ? '?refresh=1' : ''}`), [refresh])
   const [adding, setAdding] = useState<ProviderId | null>(null)
-  const [addOn, setAddOn] = useState(0) // adding on that machine (its row's menu)
   const [edit, setEdit] = useState<Account | null>(null)
   const [signIn, setSignIn] = useState<SignInTarget | null>(null)
   const [del, setDel] = useState<Account | null>(null)
   const ctx = useContextMenu()
-  const done = () => { list.reload(); remote.reload(); reloadAccounts().catch(() => {}) }
+  const done = () => { list.reload(); reloadAccounts().catch(() => {}) }
   const mine = (a: Account) => !a.default && a.user_id != null && a.user_id === user?.id
   const canManage = (a: Account) => !a.default && (isAdmin || mine(a))
   const who = (a: Account) => a.default || a.user_id == null ? `Only ${pi?.owner || 'the server owner'}` : mine(a) ? 'Only you' : 'Only ' + (people.data?.find(p => p.id === a.user_id)?.name || 'one person')
@@ -45,15 +42,11 @@ export function AccountsSection() {
   const signOut = async (a: Account) => {
     try { await api.post(`${V1}/accounts/${a.id}/logout`); toast('Signed out'); done() } catch (e) { toast(errMsg(e), 'err') }
   }
-  const signOutRemote = async (h: HostLogin) => {
-    try { await api.post(`${V1}/hosts/${h.host_id}/logout/${h.provider}${dirQuery(h)}`); toast(`Signed out on ${machineLabel(h)}`); done() } catch (e) { toast(errMsg(e), 'err') }
-  }
   // the server login has no account row: its own sign-in, for an admin
   const accountSignIn = (a: Account): SignInTarget => ({ label: a.label, provider: a.provider, base: a.default ? `${V1}/accounts/server/${a.provider}/login` : `${V1}/accounts/${a.id}/login` })
-  const remoteSignIn = (h: HostLogin): SignInTarget => ({ label: machineLabel(h), provider: h.provider, base: `${V1}/hosts/${h.host_id}/login/${h.provider}`, query: h.dir ? { dir: h.dir } : undefined, where: machineLabel(h) })
 
   return (
-    <Section title="Accounts" sub={<>Each Claude Code or Codex login lives in its own folder on the server. Pick the account per thread next to the model; a thread can switch accounts and carries on where it was. Your other machines run on their own login, signed in from here too.</>}
+    <Section title="Accounts" sub={<>Each Claude Code or Codex login lives in its own folder on the server. Pick the account per thread next to the model; a thread can switch accounts and carries on where it was. Logins on your other machines are under each server in Servers.</>}
       actions={<>
         <button type="button" className="btn sm ghost icon-only" aria-label="Check the accounts again" title="Check again" disabled={list.loading} onClick={() => setRefresh(n => n + 1)}>
           <Icon name="refresh" size={14} className={list.loading ? 'spin' : ''} /></button>
@@ -69,14 +62,13 @@ export function AccountsSection() {
         <div className="acct-groups">
           {(['claude', 'codex'] as ProviderId[]).map(pid => {
             const rows = list.data!.filter(a => a.provider === pid)
-            const machines = (remote.data || []).filter(h => h.provider === pid)
-            if (!rows.length && !machines.length) return null
+            if (!rows.length) return null
             return (
               <div key={pid} className={`acct-group ${pid}`}>
                 <div className="acct-group-h">
                   <span className={`acct-group-ico ${pid}`}><Icon name={pid} size={16} /></span>
                   <span className="acct-group-name">{pid === 'claude' ? 'Claude Code' : 'Codex'}</span>
-                  <span className="acct-group-n">{rows.length + machines.length} {rows.length + machines.length === 1 ? 'login' : 'logins'}</span>
+                  <span className="acct-group-n">{rows.length} {rows.length === 1 ? 'login' : 'logins'}</span>
                   {mayAdd && <button type="button" className="btn sm ghost acct-group-add" onClick={() => setAdding(pid)}><Icon name="plus" size={13} />Add</button>}
                 </div>
                 {rows.map(a => {
@@ -112,16 +104,14 @@ export function AccountsSection() {
                     </div>
                   </div>
                 )})}
-                {machines.map(h => <MachineRow key={`${h.host_id}:${h.dir}`} login={h} onSignIn={() => setSignIn(remoteSignIn(h))} onSignOut={() => signOutRemote(h)}
-                  onAdd={mayAdd ? () => { setAddOn(h.host_id); setAdding(h.provider) } : undefined} />)}
               </div>
             )
           })}
         </div>
       )}
       {list.error && <p className="danger-text small">{list.error}</p>}
-      {(adding || edit) && <AccountDialog account={edit} provider={adding || 'claude'} people={people.data || []} isAdmin={isAdmin} own={!!pi?.jailed} onClose={() => { setAdding(null); setAddOn(0); setEdit(null) }}
-        machines={remote.data || []} where={addOn} onMachine={(h, made) => { setAdding(null); setAddOn(0); if (made) done(); setSignIn(remoteSignIn(h)) }}
+      {(adding || edit) && <AccountDialog account={edit} provider={adding || 'claude'} people={people.data || []} isAdmin={isAdmin} own={!!pi?.jailed} onClose={() => { setAdding(null); setEdit(null) }}
+        machines={[]} onMachine={() => {}}
         onSaved={a => { const wasNew = !!adding; setAdding(null); setEdit(null); done(); if (wasNew && a) setSignIn(accountSignIn(a)) }} />}
       {signIn && <SignInDialog target={signIn} onClose={() => { setSignIn(null); done() }} />}
       {del && <Confirm title={`Remove ${del.label}?`} confirmLabel="Remove"
@@ -235,46 +225,10 @@ function MachineNote({ login: h, onRecheck }: { login: HostLogin; onRecheck: () 
 
 /** "AB-128box" for a machine's default login, "AB-128box · claude-max" for another login folder there. */
 export const machineLabel = (h: { host: string; label?: string }) => h.label ? `${h.host} · ${h.label}` : h.host
-const dirQuery = (h: HostLogin) => h.dir ? `?dir=${encodeURIComponent(h.dir)}` : ''
-
-/** Another machine's own login: signed in over ssh from here. */
-function MachineRow({ login: h, onSignIn, onSignOut, onAdd }: { login: HostLogin; onSignIn: () => void; onSignOut: () => void; onAdd?: () => void }) {
-  const ctx = useContextMenu()
-  const more: MenuItem[] = h.missing ? [] : [
-    { label: h.signed_in ? 'Sign in again…' : 'Sign in…', icon: 'key', onSelect: onSignIn },
-    ...(h.signed_in ? [{ label: 'Sign out', icon: 'log-out', onSelect: onSignOut }] : []),
-    ...(onAdd && !h.error ? ['sep' as const, { label: `Add another login on ${h.host}…`, icon: 'plus', onSelect: onAdd }] : []),
-  ]
-  const error = h.missing ? h.error?.replace(/^Not installed: /, '') : h.error
-  return (
-    <div className="acct-row" onContextMenu={more.length ? e => ctx.open(e, more) : undefined}>
-      <StatusDot status={h.signed_in ? 'ok' : h.error && !h.missing ? 'error' : 'off'}
-        title={(h.signed_in ? 'Signed in' : h.missing ? 'Not installed there' : h.error ? 'Error' : 'Not signed in') + (h.checked_at ? ` · checked ${ago(h.checked_at)}` : '')} />
-      <div className="acct-main">
-        <div className="acct-name">
-          <span className="ellipsis">{machineLabel(h)}</span>
-          {h.signed_in ? (h.plan && <span className="badge ok">{planName(h.plan)}</span>)
-            : h.missing ? <span className="badge">Not installed</span>
-            : h.error ? <span className="badge danger">Error</span> : <span className="badge">Not signed in</span>}
-          <span className="badge" style={{ gap: 4 }} title={`Threads on ${h.host} run on this login, on that machine.`}><Icon name="server" size={11} />Other machine</span>
-        </div>
-        {h.email && <div className="acct-email ellipsis">{h.email}</div>}
-        <div className="acct-meta"><code>{h.home.replace(/^\/(home|Users)\/[^/]+/, '~')}</code><span>on {h.target}</span></div>
-        {error && <div className={`${h.missing ? 'muted' : 'danger-text'} xsmall`} title={error}>{error}</div>}
-      </div>
-      <div className="acct-actions">
-        {!h.signed_in && !h.missing && !h.error && <button type="button" className="btn sm" onClick={onSignIn}><Icon name="key" size={13} />Sign in</button>}
-        {more.length > 0 && <MenuButton label={`More for ${machineLabel(h)}`} align="right" items={more}><Icon name="more" size={16} /></MenuButton>}
-      </div>
-      {ctx.menu}
-    </div>
-  )
-}
-
 /** What a sign-in is for: an account here, or another machine's own login. */
-interface SignInTarget { label: string; provider: ProviderId; base: string; query?: Record<string, string>; where?: string }
+export interface SignInTarget { label: string; provider: ProviderId; base: string; query?: Record<string, string>; where?: string }
 
-function SignInDialog({ target, onClose }: { target: SignInTarget; onClose: () => void }) {
+export function SignInDialog({ target, onClose }: { target: SignInTarget; onClose: () => void }) {
   const { toast } = useToast()
   const [st, setSt] = useState<LoginState | null>(null)
   const [code, setCode] = useState('')

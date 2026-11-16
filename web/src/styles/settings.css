@@ -143,7 +143,11 @@
 button.sbset-grip:hover, button.sbset-grip:focus-visible { color: var(--text-2); background: var(--hover); }
 .sbset-row.dragging .sbset-grip { cursor: grabbing; color: var(--accent); }
 .sbset-h { margin: 14px 0 4px 2px; color: var(--muted); font-size: 11.5px; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; }
-.acct-main.host-open { cursor: pointer; border-radius: 8px; }
-.acct-main.host-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
-.host-sessions { display: inline-flex; align-items: center; gap: 2px; margin-top: 6px; color: var(--accent); font-weight: 500; }
-@media (hover: hover) { .acct-main.host-open:hover .host-sessions { text-decoration: underline; } }
+/* a server's logins (Settings → Servers) */
+.host-logins { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--hairline); display: flex; flex-direction: column; gap: 2px; }
+.host-logins-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted, inherit); opacity: .85; }
+.host-login { display: grid; grid-template-columns: 8px 18px minmax(0, 1fr) auto; align-items: start; column-gap: 8px; padding: 6px 0; }
+.host-login > .set-status { margin-top: 6px; }
+.host-login-ico { display: inline-flex; margin-top: 2px; }
+.host-login-main { min-width: 0; }
+.host-login-actions { display: flex; align-items: center; gap: 4px; }
