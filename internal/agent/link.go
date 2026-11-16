@@ -28,6 +28,9 @@ type Hold struct {
 	Meta  string   // kept with a holder this start creates, returned on attach
 	Adopt bool     // only attach to a running CLI; never start one
 	Scope []string // here: start the holder under this (systemd-run …) so it leaves the service
+	// MetaFile is where Meta is when it carries the Pocket tools key
+	// (private.go); openLink sets it, callers do not.
+	MetaFile string
 	// Leave closes when Pocket AI is stopping: closing the session then
 	// only lets go of the CLI, and a dropped connection is not reattached.
 	Leave <-chan struct{}
@@ -149,6 +152,17 @@ func openLink(ctx context.Context, o Options, m marks, bin string, args []string
 	if l.log == nil {
 		l.log = slog.Default()
 	}
+	if l.h != nil && l.h.Meta != "" {
+		h := *l.h
+		f, err := privateMeta(ctx, o, h.Slot, h.Meta)
+		if err != nil {
+			return nil, fmt.Errorf("holder meta: %w", err)
+		}
+		if f != "" {
+			h.Meta, h.MetaFile = "", f
+		}
+		l.h = &h
+	}
 	from := int64(hold.FromReplay)
 	if l.h != nil && l.h.FromTurn {
 		from = hold.FromTurn
@@ -213,7 +227,9 @@ func (l *link) dial(from int64, only bool) (*exec.Cmd, io.WriteCloser, *bufio.Re
 		for _, k := range l.m.keep {
 			wrap = append(wrap, "-keep-mark", k)
 		}
-		if l.h.Meta != "" {
+		if l.h.MetaFile != "" {
+			wrap = append(wrap, "-meta-file", l.h.MetaFile)
+		} else if l.h.Meta != "" {
 			wrap = append(wrap, "-meta", l.h.Meta)
 		}
 		if len(l.h.Scope) > 0 {

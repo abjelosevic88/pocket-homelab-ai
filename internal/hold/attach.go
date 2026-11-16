@@ -177,7 +177,9 @@ func spawn(dir, slot string, o AttachOptions, argv []string) error {
 	if err != nil {
 		return err
 	}
-	args := []string{"serve", "-start-mark", o.Serve.StartMark, "-end-mark", o.Serve.EndMark, "-meta", o.Serve.Meta}
+	// the meta (it can carry the Pocket tools key) goes in the environment,
+	// which only this account can read; a command line every account can (ps)
+	args := []string{"serve", "-start-mark", o.Serve.StartMark, "-end-mark", o.Serve.EndMark}
 	for _, k := range o.Serve.KeepMarks {
 		args = append(args, "-keep-mark", k)
 	}
@@ -199,6 +201,9 @@ func spawn(dir, slot string, o AttachOptions, argv []string) error {
 	for _, a := range tries {
 		cmd := exec.Command(a[0], a[1:]...)
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if o.Serve.Meta != "" {
+			cmd.Env = append(os.Environ(), MetaEnv+"="+o.Serve.Meta)
+		}
 		if err := cmd.Start(); err != nil {
 			last = err
 			continue
@@ -272,10 +277,13 @@ func waitGone(dir string, max time.Duration) {
 	}
 }
 
+// MetaEnv carries the meta from attach to the serve it starts.
+const MetaEnv = "POCKET_HOLD_META"
+
 // Main is pocket-hold's command line:
 //
-//	pocket-hold attach [-from N] [-only] [-start-mark S] [-end-mark E] [-meta M] [-scope CMD] SLOT -- ARGV…
-//	pocket-hold serve [-start-mark S] [-end-mark E] [-meta M] SLOT -- ARGV…
+//	pocket-hold attach [-from N] [-only] [-start-mark S] [-end-mark E] [-meta M | -meta-file F] [-scope CMD] SLOT -- ARGV…
+//	pocket-hold serve [-start-mark S] [-end-mark E] [-meta M] SLOT -- ARGV…   (meta also from $POCKET_HOLD_META)
 //	pocket-hold status SLOT     the header as JSON ({"gone":true} without a holder)
 //	pocket-hold stop SLOT       end the CLI
 func Main(args []string) int {
@@ -291,6 +299,7 @@ func Main(args []string) int {
 	var keep multi
 	fs.Var(&keep, "keep-mark", "stdout lines with this are kept for readers that replay (repeatable)")
 	meta := fs.String("meta", "", "stored with the holder, returned in headers")
+	metaFile := fs.String("meta-file", "", "read -meta from this file (it stays off the command line)")
 	scope := fs.String("scope", "", "command to start the holder under (space-separated)")
 	idle := fs.Duration("idle", 0, "end the CLI after this long detached with no turn running (default 24h)")
 	maxd := fs.Duration("max", 0, "end the CLI after this long detached even mid-turn (default never)")
@@ -307,6 +316,18 @@ func Main(args []string) int {
 	if len(argv) > 0 && argv[0] == "--" {
 		argv = argv[1:]
 	}
+	if *metaFile != "" {
+		b, err := os.ReadFile(*metaFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "pocket-hold:", err)
+			return 2
+		}
+		*meta = strings.TrimSpace(string(b))
+	}
+	if *meta == "" {
+		*meta = os.Getenv(MetaEnv)
+	}
+	os.Unsetenv(MetaEnv) // not for the CLI
 	so := ServeOptions{StartMark: *startMark, EndMark: *endMark, KeepMarks: keep, Meta: *meta, IdleDetached: *idle, MaxDetached: *maxd, Linger: *linger}
 	switch args[0] {
 	case "attach":

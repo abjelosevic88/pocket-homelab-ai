@@ -36,7 +36,7 @@ func TestHeldClaudeRemote(t *testing.T) {
 	}
 	dir := fmt.Sprintf("%s/.pocket-ai/holdtest-%d", f[2], rand.IntN(1e9))
 	slot := fmt.Sprintf("holdtest-%d", rand.IntN(1e9))
-	defer r.Run(ctx, 30*time.Second, `rm -rf "$1" "$HOME/.pocket-ai/hold/$2" "$HOME/.pocket-ai/run/$2"`, dir, slot)
+	defer r.Run(ctx, 30*time.Second, `rm -rf "$1" "$HOME/.pocket-ai/hold/$2" "$HOME/.pocket-ai/run/$2" "$HOME/.pocket-ai/private/$2".*`, dir, slot)
 	if _, _, err := r.Run(ctx, 30*time.Second, `mkdir -p "$1"`, dir); err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,11 @@ func TestHeldClaudeRemote(t *testing.T) {
 		t.Fatal(err)
 	}
 	rr := &Remote{Target: target, Slot: slot}
-	o := Options{Bin: cli, Cwd: dir, Mode: "default", Remote: rr, Hold: &Hold{Bin: holdBin, Slot: slot}}
+	// the Pocket tools key (config and holder meta) must stay off command lines there
+	key := fmt.Sprintf("k%x", time.Now().UnixNano())
+	config := `{"mcpServers":{"pocket":{"type":"http","url":"http://127.0.0.1:41234/mcp","headers":{"Authorization":"Bearer ` + key + `"}}}}`
+	meta := `{"port":41234,"cap":"` + key + `"}`
+	o := Options{Bin: cli, Cwd: dir, Mode: "default", Remote: rr, MCPConfig: config, Hold: &Hold{Bin: holdBin, Slot: slot, Meta: meta}}
 	rec := &heldRec{rec: newRec()}
 	s, err := StartClaude(ctx, o, rec)
 	if err != nil {
@@ -63,6 +67,12 @@ func TestHeldClaudeRemote(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec.wait(t, func() bool { return rec.has("first 1") })
+	if ps, _, err := r.Run(ctx, 30*time.Second, `ps -eo args`); err != nil || strings.Contains(ps, key) {
+		t.Fatalf("the key is on a command line there (%v)", err)
+	}
+	if cs.l.Header.Meta != meta {
+		t.Fatalf("holder meta: %q", cs.l.Header.Meta)
+	}
 	// the network drops: the ssh client dies
 	cs.l.wmu.Lock()
 	pid := cs.l.cmd.Process.Pid
