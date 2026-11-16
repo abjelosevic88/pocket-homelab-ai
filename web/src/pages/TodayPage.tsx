@@ -194,7 +194,7 @@ function RunCard({ r, login, now, onOpen }: { r: Run; login: string; now: number
           <span className="run-at-m tnum">{hhmm(r.started_at)}</span>
           <span className={`run-st ${r.status}`}>{r.status === 'running' ? <span className="spinner" /> : <Icon name={st.icon} size={12} />}{st.label}</span>
           <span className={`srv-ico sm ${r.provider}`}><Icon name={r.provider} size={12} /></span>
-          {r.host ? <span className="badge" style={{ gap: 4 }} title={`Ran on ${r.host} (Settings → Servers)`}><Icon name="server" size={11} />{login}</span> : <span className="badge" title={`Ran on the ${login} login`}>{login}</span>}
+          {r.host ? <span className="badge" style={{ gap: 4 }} title={`Ran on ${r.host} (Settings → Machines)`}><Icon name="server" size={11} />{login}</span> : <span className="badge" title={`Ran on the ${login} login`}>{login}</span>}
           <span className={`origin-chip o-${r.origin}`}>{originLabel(r.origin)}</span>
           <PrivacyChip sharedWith={r.shared_with} />
           <span className="grow" />

@@ -189,7 +189,7 @@ export function useMachineItems(onOpen: (host_id: number) => void): MenuItem[] {
     { heading: 'New terminal on' },
     { label: 'This server', icon: 'terminal', onSelect: () => onOpen(0) },
     ...hosts.map(h => ({ label: h.name, icon: 'terminal', hint: h.info?.ok === false ? 'not reachable' : undefined, onSelect: () => onOpen(h.id) })),
-    ...(hosts.length ? [] : ['sep' as const, { label: 'Add a server…', icon: 'plus', onSelect: () => navigate('/settings/agents') }]),
+    ...(hosts.length ? [] : ['sep' as const, { label: 'Add a server…', icon: 'plus', onSelect: () => navigate('/settings/machines') }]),
   ]
 }
 

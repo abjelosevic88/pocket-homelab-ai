@@ -16,7 +16,7 @@ interface AppState {
   /** Logins agents can run on (the server's own first, per provider). */
   accounts: Account[]
   reloadAccounts: () => Promise<void>
-  /** Other machines agents can run on over ssh (Settings → Agents → Servers). */
+  /** Other machines agents can run on over ssh (Settings → Machines). */
   hosts: Host[]
   reloadHosts: () => Promise<void>
   /** The person's git worktrees (without their live git state). */

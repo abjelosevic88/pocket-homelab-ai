@@ -28,7 +28,7 @@ export function defaultsFor(p: Provider | undefined, s: Settings | null): Omit<A
 /** One line about a login for pickers: plan, email, and whether another
  * login is the same account (they share limits). */
 export function accountNote(a: Account) {
-  if (!a.signed_in) return a.error || 'Not signed in — Settings → Agents'
+  if (!a.signed_in) return a.error || 'Not signed in — Settings → Machines'
   return [a.plan && planName(a.plan), a.email, a.same_as && `same account as ${a.same_as}`].filter(Boolean).join(' · ')
 }
 
@@ -182,7 +182,7 @@ export function AgentPicker({ value, onChange, allowDefault = false, compact = f
   value: AgentValue; onChange: (patch: Partial<AgentValue>) => void; allowDefault?: boolean; compact?: boolean; showProvider?: boolean
   /** no account to pick */
   noAccount?: boolean
-  /** runs on this machine (Settings → Servers): pick one of its logins instead of an account here */
+  /** runs on this machine (Settings → Machines): pick one of its logins instead of an account here */
   host?: number
   /** an Ask my apps chat: account, model and effort only */
   ask?: boolean

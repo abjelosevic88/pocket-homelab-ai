@@ -69,7 +69,7 @@ export interface Account {
 }
 
 /** A sign-in started from Settings (Claude: paste the code; Codex: type the code on the page). */
-/** Another machine's own login of one CLI (Settings → Servers; server host_logins.go). */
+/** Another machine's own login of one CLI (Settings → Machines; server host_logins.go). */
 export interface HostLogin {
   host_id: number
   host: string
@@ -371,7 +371,7 @@ export interface Recipe extends AgentChoice {
   name: string
   prompt: string
   icon: string
-  /** 0 = this server, else the machine it runs on (Settings → Servers) */
+  /** 0 = this server, else the machine it runs on (Settings → Machines) */
   host_id: number
   pinned: boolean
   sort_order: number
@@ -426,7 +426,7 @@ export interface ServerSession {
   thread_id: string
   /** Its Pocket AI thread is shared with these people (absent = private). */
   shared_with?: string[]
-  /** On another machine (Settings → Servers); absent = this server. */
+  /** On another machine (Settings → Machines); absent = this server. */
   host_id?: number
   host?: string
   /** Its login folder there (absent = the machine's default login). */
@@ -456,7 +456,7 @@ export interface Run {
   account_id: number
   /** Its Pocket AI thread is shared with these people (absent = private). */
   shared_with?: string[]
-  /** Ran on another machine (Settings → Servers); absent = this server. */
+  /** Ran on another machine (Settings → Machines); absent = this server. */
   host_id?: number
   host?: string
   /** Its login folder there (absent = the machine's default login). */

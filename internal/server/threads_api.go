@@ -147,7 +147,7 @@ func (s *Server) handleListThreads(w http.ResponseWriter, r *http.Request) {
 type newThread struct {
 	Provider  string `json:"provider"`
 	AccountID *int64 `json:"account_id"` // nil = the person's default for the provider
-	HostID    int64  `json:"host_id"`    // 0 = this server, else a machine from Settings → Servers
+	HostID    int64  `json:"host_id"`    // 0 = this server, else a machine from Settings → Machines
 	HostHome  string `json:"host_home"`  // on a machine: its login folder ("" = the default)
 	// Worktree: work in an isolated git worktree (a new one, or one of the person's).
 	Worktree    *newWorktree `json:"worktree"`

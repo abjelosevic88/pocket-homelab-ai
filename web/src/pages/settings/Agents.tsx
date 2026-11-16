@@ -1,19 +1,16 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useApp } from '../../lib/app-context'
 import type { ProviderId } from '../../lib/types'
 import { AgentPicker, ProviderToggle } from '../../components/AgentPicker'
 import { FolderButton } from '../../components/FolderPicker'
-import { Icon } from '../../components/icons'
-import { Field, Loading, SettingRow, Spinner, noGrammarly } from '../../components/ui'
-import { Section, StatusDot, useSaveSettings } from './common'
-import { AccountsSection } from './Accounts'
-import { HostsSection } from './Hosts'
+import { Field, Loading, SettingRow, noGrammarly } from '../../components/ui'
+import { Section, useSaveSettings } from './common'
 
 export function AgentsTab() {
-  const { settings, providers, reloadProviders } = useApp()
+  const { settings, providers } = useApp()
   const save = useSaveSettings()
   const [prompt, setPrompt] = useState(settings?.system_prompt || '')
-  const [checking, setChecking] = useState(false)
   useEffect(() => { setPrompt(settings?.system_prompt || '') }, [settings?.system_prompt])
   if (!settings) return <Loading />
   const s = settings
@@ -34,18 +31,13 @@ export function AgentsTab() {
         const cur = s[pid]
         return (
           <Section key={pid} title={<span className="row"><span className={`prov-dot prov-${pid}`} />{pid === 'claude' ? 'Claude Code' : 'Codex'}</span>}
-            sub={p ? (p.available ? <>Version {p.version}{p.account ? <> · {p.account}</> : null}</> : <span className="danger-text">{p.error || 'Not installed on the server'}</span>) : 'Checking…'}
-            actions={<StatusDot status={!p ? 'off' : p.available ? 'ok' : 'error'} />}>
+            sub={p && !p.available ? <span className="danger-text">{p.error || 'Not installed on this server'}</span> : 'Model, effort, permissions and speed new threads start with.'}>
             {p?.available ? (
               <AgentPicker showProvider={false} value={{ provider: pid, ...cur }} onChange={patch => save({ [pid]: { ...cur, ...patch } }, 'Saved')} />
-            ) : <p className="muted small" style={{ margin: 0 }}>Install and sign in to the CLI on the server as the user Pocket AI runs as, then check again.</p>}
+            ) : <p className="muted small" style={{ margin: 0 }}>{p ? <>Install the CLI on this server as the user Pocket AI runs as, then check it again under <Link to="/settings/machines">Machines</Link>.</> : 'Checking…'}</p>}
           </Section>
         )
       })}
-      <AccountsSection />
-      <HostsSection />
-
-      <div className="row"><button type="button" className="btn" disabled={checking} onClick={async () => { setChecking(true); await reloadProviders().finally(() => setChecking(false)) }}>{checking ? <Spinner /> : <Icon name="refresh" size={14} />}Check the CLIs again</button></div>
 
       <Section title="Extra instructions" sub="Added to the system prompt of every agent you start (both CLIs). Good for things like “Answer briefly. This is my home server; ask before restarting containers.”">
         <Field label="Instructions">

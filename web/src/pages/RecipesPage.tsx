@@ -120,7 +120,7 @@ function RecipeDialog({ draft, onClose, onSaved }: { draft: Draft; onClose: () =
         <Field label="Prompt" help={<>Use <code>{'{{name}}'}</code> for something you fill in each time, e.g. “Why is <code>{'{{app}}'}</code> down?”.{vars.length > 0 && <> Asks for: <b>{vars.join(', ')}</b>.</>}</>}>
           <textarea {...noGrammarly} value={f.prompt} onChange={e => setF({ ...f, prompt: e.target.value })} rows={6} placeholder="Check disk space, memory, failed systemd units and unhealthy Docker containers. Summarise what needs attention." />
         </Field>
-        {hosts.length > 0 && <Field label="Runs on" group help="This server, or a machine from Settings → Servers (it uses that machine’s own login). Every run starts a new thread there.">
+        {hosts.length > 0 && <Field label="Runs on" group help="This server, or a machine from Settings → Machines (it uses that machine’s own login). Every run starts a new thread there.">
           <HostPicker value={f.host_id} onChange={host_id => setF({ ...f, host_id, cwd: '' })} className="btn" />
         </Field>}
         <Field label="Agent" group help="“My default” uses whatever is set in Settings → Agents when the recipe runs.">
