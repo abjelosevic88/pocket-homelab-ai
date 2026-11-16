@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -331,6 +332,37 @@ func (r *Remote) Put(ctx context.Context, timeout time.Duration, path string, da
 		return err
 	}
 	return nil
+}
+
+// PutPrivate writes data to rel under the remote home in a folder and file
+// only that account can read, and returns the file's full path there.
+func (r *Remote) PutPrivate(ctx context.Context, timeout time.Duration, rel string, data []byte) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	script := `set -e; umask 077; f="$HOME/$1"; mkdir -p -- "${f%/*}"; t="$f.part.$$"; cat > "$t"; mv -f -- "$t" "$f"; printf '%s\n' "$f"`
+	argv := append(r.mux(), r.sshArgs()...)
+	argv = append(argv, remoteCommand("set -- "+shq(rel)+"\n"+script))
+	cmd, err := r.ssh(ctx, argv)
+	if err != nil {
+		return "", err
+	}
+	cmd.Stdin = bytes.NewReader(data)
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	if err := cmd.Run(); err != nil {
+		if msg := strings.TrimSpace(errb.String()); msg != "" {
+			return "", errors.New(msg)
+		}
+		return "", err
+	}
+	path := strings.TrimSpace(out.String())
+	if i := strings.LastIndexByte(path, '\n'); i >= 0 {
+		path = strings.TrimSpace(path[i+1:]) // after anything a login script printed
+	}
+	if !strings.HasPrefix(path, "/") {
+		return "", fmt.Errorf("no path back from %s (%q)", r.Target, path)
+	}
+	return path, nil
 }
 
 func muxArgs() []string {

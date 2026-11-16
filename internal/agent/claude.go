@@ -85,6 +85,9 @@ func StartClaude(ctx context.Context, o Options, sink Sink) (Session, error) {
 	if bin == "" {
 		bin = "claude"
 	}
+	if err := privateMCPConfig(ctx, &o); err != nil {
+		return nil, err
+	}
 	args := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
 		"--include-partial-messages", "--permission-prompt-tool", "stdio"}
 	if o.Ephemeral {

@@ -260,3 +260,35 @@ func TestHoldStartAfterStop(t *testing.T) {
 	b.expect(`{"new":1}`)
 	a.expect(`{"old":"bye"}`, `{"type":"pocket_hold_exit","code":0}`) // the one stopping still got its exit
 }
+
+// A meta with the Pocket tools key comes from a file and reaches the holder
+// through its environment: it is on no command line, and the CLI does not
+// get it either.
+func TestHoldMetaOffCommandLine(t *testing.T) {
+	home, err := os.MkdirTemp("/tmp", "ph")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(home)
+	t.Setenv("HOME", home)
+	key := fmt.Sprintf("k%x", time.Now().UnixNano()) // made here: not in any command line that ran this test
+	meta := `{"port":41234,"cap":"` + key + `"}`
+	f := home + "/meta.json"
+	if err := os.WriteFile(f, []byte(meta+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := attach(t, home, "-meta-file", f, "thread-5", "--", "sh", "-c", `echo "{\"env\":\"${POCKET_HOLD_META:-none}\"}"; read x`)
+	if !a.hd.Started || a.hd.Meta != meta {
+		t.Fatalf("header: %+v", a.hd)
+	}
+	a.expect(`{"env":"none"}`)
+	procs, _ := os.ReadDir("/proc")
+	for _, p := range procs {
+		if b, err := os.ReadFile("/proc/" + p.Name() + "/cmdline"); err == nil && strings.Contains(string(b), key) {
+			t.Fatalf("the key is on a command line: %q", strings.ReplaceAll(string(b), "\x00", " "))
+		}
+	}
+	if b := attach(t, home, "-only", "thread-5"); b.hd.Meta != meta {
+		t.Fatalf("a later attach: %+v", b.hd)
+	}
+}
