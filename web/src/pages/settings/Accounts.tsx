@@ -15,7 +15,7 @@ import { ProviderToggle } from '../../components/AgentPicker'
 import { planName } from '../../lib/format'
 import { Select } from '../../components/Select'
 import { Icon } from '../../components/icons'
-import { Confirm, CopyField, errMsg, Field, MenuButton, Modal, Spinner, useAsync, useToast, type MenuItem, useContextMenu } from '../../components/ui'
+import { Confirm, CopyField, copyText, errMsg, Field, MenuButton, Modal, Spinner, useAsync, useToast, type MenuItem, useContextMenu } from '../../components/ui'
 import { ago, StatusDot } from './common'
 import { LoginList, MachineCard, osIcon } from './MachineParts'
 
@@ -262,7 +262,11 @@ export function SignInDialog({ target, onClose }: { target: SignInTarget; onClos
           <div className="stack">
             <ol className="signin-steps">
               <li>Open the sign-in page and sign in with the {isClaude ? 'Claude' : 'ChatGPT'} account this login should use.
-                <div className="mt-s"><a className="btn sm" href={st.url} target="_blank" rel="noopener noreferrer"><Icon name="external" size={13} />Open the sign-in page</a></div></li>
+                <div className="mt-s row" style={{ flexWrap: 'wrap', gap: 8 }}>
+                  <a className="btn sm" href={st.url} target="_blank" rel="noopener noreferrer"><Icon name="external" size={13} />Open the sign-in page</a>
+                  <button type="button" className="btn sm" title="Copy the sign-in link, to open it in another browser or on another device"
+                    onClick={async () => { const ok = await copyText(st.url || ''); toast(ok ? 'Sign-in link copied' : 'Could not copy the link', ok ? 'ok' : 'err') }}><Icon name="copy" size={13} />Copy link</button>
+                </div></li>
               {isClaude
                 ? <li>When the page shows a code, copy it and paste it here.
                   <Field label="Code"><input value={code} onChange={e => setCode(e.target.value)} placeholder="Paste the code" autoComplete="off" spellCheck={false}
