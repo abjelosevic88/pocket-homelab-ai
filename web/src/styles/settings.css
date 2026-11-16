@@ -215,11 +215,10 @@ button.sbset-grip:hover, button.sbset-grip:focus-visible { color: var(--text-2);
 }
 
 /* Settings → Machines: the machine picker */
-.mpick { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding: 2px; margin: -2px; scroll-snap-type: x proximity; }
-.mpick::-webkit-scrollbar { display: none; }
-.mpick-t { --hc: var(--faint); display: flex; align-items: center; gap: 10px; flex: 0 0 auto; min-width: 150px; max-width: 220px; padding: 10px 14px 10px 10px;
+.mpick { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+.mpick-t { --hc: var(--faint); display: flex; align-items: center; gap: 10px; min-width: 0; padding: 10px 14px 10px 10px;
   border-radius: 13px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; text-align: left; font: inherit;
-  scroll-snap-align: start; transition: border-color .15s, background .15s, box-shadow .15s; }
+  transition: border-color .15s, background .15s, box-shadow .15s; }
 .mpick-t.h-ok { --hc: var(--success); } .mpick-t.h-warn { --hc: var(--warning); } .mpick-t.h-error { --hc: var(--danger); }
 .mpick-t:hover { border-color: var(--border-strong, var(--border)); background: var(--surface-2); }
 .mpick-t.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); box-shadow: 0 0 0 3px var(--accent-soft); }
@@ -227,11 +226,10 @@ button.sbset-grip:hover, button.sbset-grip:focus-visible { color: var(--text-2);
 .mpick-ico { position: relative; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0; background: var(--surface-3); color: var(--text); }
 .mpick-t.on .mpick-ico { background: var(--accent-soft); color: var(--accent-ink); }
 .mpick-dot { position: absolute; right: -2px; bottom: -2px; width: 10px; height: 10px; border-radius: 50%; background: var(--hc); border: 2px solid var(--surface); }
-.mpick-main { display: flex; flex-direction: column; min-width: 0; }
+.mpick-main { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .mpick-name { font-weight: 650; font-size: 13.5px; }
-.mpick-sub { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.mpick-sub { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mpick-t.h-error .mpick-sub { color: var(--danger); }
 .mpick-add { border-style: dashed; background: transparent; }
 .mpick-add .mpick-ico { background: var(--accent-soft); color: var(--accent); }
-@media (min-width: 900px) { .mpick { flex-wrap: wrap; overflow: visible; } }
-@media (max-width: 640px) { .mpick-t { min-width: 138px; padding: 8px 12px 8px 8px; } .mpick-ico { width: 30px; height: 30px; } }
+@media (max-width: 640px) { .mpick { grid-template-columns: 1fr 1fr; } .mpick-t { padding: 8px 10px 8px 8px; gap: 8px; } .mpick-ico { width: 30px; height: 30px; } }
