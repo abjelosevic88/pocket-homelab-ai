@@ -5,7 +5,7 @@
 // Pocket AI makes in their folder. Nobody sees anyone else's.
 // Each machine lists its Claude Code / Codex logins (the default ~/.claude
 // and extra folders like ~/.claude-max): add, sign in, sign out, remove.
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api, V1 } from '../../lib/api'
 import { useApp } from '../../lib/app-context'
 import { planName } from '../../lib/format'
@@ -30,11 +30,12 @@ export function HostsSection() {
   const [checking, setChecking] = useState<number | null>(null)
   const ctx = useContextMenu()
   const [fresh, setFresh] = useState(0)
-  const logins = useAsync(() => hosts.length ? api.get<HostLogin[]>(`${V1}/hosts/logins${fresh ? '?refresh=1' : ''}`) : Promise.resolve([] as HostLogin[]), [fresh, hosts.length])
+  const logins = useHostLogins(hosts, fresh)
   const [addLogin, setAddLogin] = useState<Host | null>(null)
   const [signIn, setSignIn] = useState<SignInTarget | null>(null)
   const [rmLogin, setRmLogin] = useState<HostLogin | null>(null)
   const loginsDone = () => { logins.reload(); reloadAccounts().catch(() => {}) }
+  const loginsOf = (id: number) => logins.byHost[id]
   const signInTarget = (l: HostLogin): SignInTarget => ({ label: loginName(l), provider: l.provider, base: `${V1}/hosts/${l.host_id}/login/${l.provider}`, query: l.dir ? { dir: l.dir } : undefined, where: l.dir ? `${l.host} · ${loginName(l)}` : l.host })
   const signOut = async (l: HostLogin) => {
     try { await api.post(`${V1}/hosts/${l.host_id}/logout/${l.provider}${dirQ(l)}`); toast(`Signed out ${loginName(l)} on ${l.host}`); loginsDone() } catch (e) { toast(errMsg(e), 'err') }
@@ -91,7 +92,7 @@ export function HostsSection() {
                     {versions.length > 0 && <div className="acct-meta">{versions.map(([p, v]) => <span key={p}>{provName(p)} {v}</span>)}</div>}
                     {missing.map(([p, why]) => <div key={p} className="muted xsmall">{provName(p)}: {why}</div>)}
                     {h.info.error && <div className="danger-text xsmall" title={h.info.error}>{h.info.error}</div>}
-                    <HostLogins host={h} logins={(logins.data || []).filter(l => l.host_id === h.id)} loading={!logins.data && logins.loading}
+                    <HostLogins host={h} logins={loginsOf(h.id) || []} loading={!loginsOf(h.id)}
                       onAdd={() => setAddLogin(h)} onSignIn={l => setSignIn(signInTarget(l))} onSignOut={signOut} onRemove={setRmLogin} />
                   </div>
                   <div className="acct-actions">
@@ -109,7 +110,7 @@ export function HostsSection() {
       {del && <Confirm title={`Remove ${del.name}?`} confirmLabel="Remove"
         message={<>Agents running there are stopped. Its threads stay in your list but cannot continue until the server is added again. Nothing on the machine itself is touched.</>}
         onCancel={() => setDel(null)} onConfirm={async () => { const d = del; setDel(null); try { await api.del(`${V1}/hosts/${d.id}`); toast('Removed'); reloadHosts().catch(() => {}) } catch (e) { toast(errMsg(e), 'err') } }} />}
-      {addLogin && <AddLoginDialog host={addLogin} logins={(logins.data || []).filter(l => l.host_id === addLogin.id)} onClose={() => setAddLogin(null)}
+      {addLogin && <AddLoginDialog host={addLogin} logins={loginsOf(addLogin.id) || []} onClose={() => setAddLogin(null)}
         onAdded={(l, made) => { setAddLogin(null); if (made) loginsDone(); setSignIn(signInTarget(l)) }} />}
       {signIn && <SignInDialog target={signIn} onClose={() => { setSignIn(null); loginsDone() }} />}
       {rmLogin && <Confirm title={`Remove ${loginName(rmLogin)} from ${rmLogin.host}?`} confirmLabel="Remove"
@@ -121,6 +122,28 @@ export function HostsSection() {
       {ctx.menu}
     </Section>
   )
+}
+
+/** Each machine's logins, asked one machine at a time so a machine that is
+ *  off (ssh waits 15s for it) does not hold up the others. */
+function useHostLogins(hosts: Host[], fresh: number) {
+  const [byHost, setByHost] = useState<Record<number, HostLogin[]>>({})
+  const [pending, setPending] = useState(0)
+  const [again, setAgain] = useState(0)
+  const ids = hosts.map(h => h.id).join(',')
+  useEffect(() => {
+    let live = true
+    const list = ids ? ids.split(',').map(Number) : []
+    if (fresh) setByHost({}) // "Check again": every machine shows it is being asked
+    setPending(list.length)
+    for (const id of list) {
+      api.get<HostLogin[]>(`${V1}/hosts/logins?host=${id}${fresh ? '&refresh=1' : ''}`)
+        .catch(() => [] as HostLogin[])
+        .then(l => { if (live) { setByHost(m => ({ ...m, [id]: l })); setPending(n => n - 1) } })
+    }
+    return () => { live = false }
+  }, [ids, fresh, again])
+  return { byHost, loading: pending > 0, reload: () => setAgain(n => n + 1) }
 }
 
 /** "Default" for ~/.claude, "claude-max" for ~/.claude-max. */
