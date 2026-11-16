@@ -176,23 +176,24 @@ func (s *Server) briefing(ctx context.Context, uid int64, tid string, cat map[st
 			unavailable = append(unavailable, r.Name)
 		}
 	}
-	// the Weather, Fitness and Nutrition cards come from Pocket Weather, Pocket
-	// Fitness and Pocket Nutrition over their Core links, alongside the rest,
-	// first in the briefing
+	// the Weather, Fitness, Nutrition and Booking cards come from Pocket
+	// Weather, Pocket Fitness, Pocket Nutrition and Pocket Booking over their
+	// Core links, alongside the rest, first in the briefing
 	type linkRead struct {
 		sec appSection
 		ok  bool
 	}
-	wch, fch, nch := make(chan linkRead, 1), make(chan linkRead, 1), make(chan linkRead, 1)
+	wch, fch, nch, bch := make(chan linkRead, 1), make(chan linkRead, 1), make(chan linkRead, 1), make(chan linkRead, 1)
 	go func() { sec, ok := s.weatherSection(ctx, uid, tid); wch <- linkRead{sec, ok} }()
 	go func() { sec, ok := s.fitnessSection(ctx, uid, tid); fch <- linkRead{sec, ok} }()
 	go func() { sec, ok := s.nutritionSection(ctx, uid, tid); nch <- linkRead{sec, ok} }()
+	go func() { sec, ok := s.bookingSection(ctx, uid, tid); bch <- linkRead{sec, ok} }()
 	sections := s.parallelReads(ctx, uid, tid, reads)
 	linked := []appSection{}
 	for _, l := range []struct {
 		ch   chan linkRead
 		tool string
-	}{{wch, weatherTool}, {fch, fitnessTool}, {nch, nutritionTool}} {
+	}{{wch, weatherTool}, {fch, fitnessTool}, {nch, nutritionTool}, {bch, bookingTool}} {
 		if r := <-l.ch; r.ok {
 			linked = append(linked, r.sec)
 		} else {
@@ -200,7 +201,7 @@ func (s *Server) briefing(ctx context.Context, uid int64, tid string, cat map[st
 		}
 	}
 	sections = append(linked, sections...)
-	return map[string]any{"date": day, "timezone": now.Location().String(), "coverage": "The weather at home now, today and tomorrow, with any warnings; training: today's planned workout (or the one going on now), workouts this week against the weekly goal, the last workout and new personal records; food: today's calories against the budget and what's left, protein and water against their goals, this week's days logged and on goal with the average, and the days in a row logged; calendar for today; task/review dashboards; recurring bills, car maintenance reminders and home upkeep due in the next two weeks; passports, insurance, warranties, domains and subscriptions that run out in the next 30 days or have run out; parcels arriving today, waiting for pick-up or with a problem, and return deadlines in the next week; documents waiting for your signature and how many of yours wait for others to sign; visits to your places waiting for a rating and your next planned visits; voice memos waiting in your inbox and how many are still being written out; today's tickets and flights from your wallet, the next pass, and IDs, memberships and gift cards that run out soon; unread chat messages, the conversations they wait in and who mentioned you; new answers to your forms waiting for you (the latest few with who answered and which form) and the forms taking answers; next steps on your deals that are overdue or due today, with the open deals, what they are worth and the deals won this month; rent late and due today on the homes you rent out, leases ending soon and urgent repairs; the hike, walk, run or ride going on now or the next one planned (when, the route's distance in metres and climb, the day's weather and advice on daylight, rain, storms and wind, things not packed yet) and finished outings waiting for a rating; your next game (when, where, how many are in of the players needed and your answer), how many more games are coming and unread messages in your groups; blog drafts to finish, the next scheduled post, comments waiting for you and readers in the last 7 days; books being read with today's pages and finish estimates. Collections are limited to 20 entries, and bill dates may be estimates.", "unavailable": unavailable, "sections": sections}
+	return map[string]any{"date": day, "timezone": now.Location().String(), "coverage": "The weather at home now, today and tomorrow, with any warnings; training: today's planned workout (or the one going on now), workouts this week against the weekly goal, the last workout and new personal records; food: today's calories against the budget and what's left, protein and water against their goals, this week's days logged and on goal with the average, and the days in a row logged; calendar for today; bookings people made with you on your booking pages for today (when, who, which page) and the ones waiting for you to confirm; task/review dashboards; recurring bills, car maintenance reminders and home upkeep due in the next two weeks; passports, insurance, warranties, domains and subscriptions that run out in the next 30 days or have run out; parcels arriving today, waiting for pick-up or with a problem, and return deadlines in the next week; documents waiting for your signature and how many of yours wait for others to sign; visits to your places waiting for a rating and your next planned visits; voice memos waiting in your inbox and how many are still being written out; today's tickets and flights from your wallet, the next pass, and IDs, memberships and gift cards that run out soon; unread chat messages, the conversations they wait in and who mentioned you; new answers to your forms waiting for you (the latest few with who answered and which form) and the forms taking answers; next steps on your deals that are overdue or due today, with the open deals, what they are worth and the deals won this month; rent late and due today on the homes you rent out, leases ending soon and urgent repairs; the hike, walk, run or ride going on now or the next one planned (when, the route's distance in metres and climb, the day's weather and advice on daylight, rain, storms and wind, things not packed yet) and finished outings waiting for a rating; your next game (when, where, how many are in of the players needed and your answer), how many more games are coming and unread messages in your groups; blog drafts to finish, the next scheduled post, comments waiting for you and readers in the last 7 days; books being read with today's pages and finish estimates. Collections are limited to 20 entries, and bill dates may be estimates.", "unavailable": unavailable, "sections": sections}
 }
 func (s *Server) handleBriefing(w http.ResponseWriter, r *http.Request) {
 	cat, err := s.catalog(r.Context(), me(r))
