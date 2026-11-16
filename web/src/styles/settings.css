@@ -162,16 +162,7 @@ button.sbset-grip:hover, button.sbset-grip:focus-visible { color: var(--text-2);
 
 /* ── Settings → Machines ─────────────────────────────────────────── */
 .machines { display: flex; flex-direction: column; gap: 18px; }
-.mstats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.mstat { --tc: var(--accent); display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 14px; border: 1px solid var(--border);
   background: linear-gradient(135deg, color-mix(in srgb, var(--tc) 10%, var(--surface)) 0%, var(--surface) 70%); min-width: 0; }
-.mstat.ok { --tc: var(--success); } .mstat.warn { --tc: var(--warning); } .mstat.error { --tc: var(--danger); }
-.mstat-ico { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0; color: var(--tc); background: color-mix(in srgb, var(--tc) 16%, transparent); }
-.mstat-main { min-width: 0; }
-.mstat-v { font-size: 22px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
-.mstat-v small { font-size: 13px; font-weight: 550; color: var(--muted); margin-left: 3px; }
-.mstat-l { font-size: 12px; color: var(--muted); font-weight: 550; margin-top: 2px; }
-.mstat-s { font-size: 11.5px; color: var(--faint); margin-top: 1px; }
 
 .mc { --hc: var(--faint); position: relative; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); overflow: hidden; }
 .mc.h-ok { --hc: var(--success); } .mc.h-warn { --hc: var(--warning); } .mc.h-error { --hc: var(--danger); }
@@ -245,10 +236,6 @@ button.sbset-grip:hover, button.sbset-grip:focus-visible { color: var(--text-2);
 .mc-new-main p { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
 
 @media (max-width: 640px) {
-  .mstats { grid-template-columns: 1fr 1fr; }
-  .mstats .mstat:last-child { grid-column: 1 / -1; }
-  .mstat { padding: 12px; gap: 10px; }
-  .mstat-v { font-size: 19px; }
   .mc-head { padding: 14px 14px 10px; gap: 12px; }
   .mc-ico { width: 40px; height: 40px; border-radius: 11px; }
   .mc-clis { padding: 0 14px 10px; }
@@ -257,3 +244,25 @@ button.sbset-grip:hover, button.sbset-grip:focus-visible { color: var(--text-2);
   .mc-new { flex-wrap: wrap; padding: 14px; }
   .mc-new .btn { width: 100%; justify-content: center; }
 }
+
+/* Settings → Machines: the machine picker */
+.mpick { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding: 2px; margin: -2px; scroll-snap-type: x proximity; }
+.mpick::-webkit-scrollbar { display: none; }
+.mpick-t { --hc: var(--faint); display: flex; align-items: center; gap: 10px; flex: 0 0 auto; min-width: 150px; max-width: 220px; padding: 10px 14px 10px 10px;
+  border-radius: 13px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; text-align: left; font: inherit;
+  scroll-snap-align: start; transition: border-color .15s, background .15s, box-shadow .15s; }
+.mpick-t.h-ok { --hc: var(--success); } .mpick-t.h-warn { --hc: var(--warning); } .mpick-t.h-error { --hc: var(--danger); }
+.mpick-t:hover { border-color: var(--border-strong, var(--border)); background: var(--surface-2); }
+.mpick-t.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); box-shadow: 0 0 0 3px var(--accent-soft); }
+.mpick-t:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mpick-ico { position: relative; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0; background: var(--surface-3); color: var(--text); }
+.mpick-t.on .mpick-ico { background: var(--accent-soft); color: var(--accent-ink); }
+.mpick-dot { position: absolute; right: -2px; bottom: -2px; width: 10px; height: 10px; border-radius: 50%; background: var(--hc); border: 2px solid var(--surface); }
+.mpick-main { display: flex; flex-direction: column; min-width: 0; }
+.mpick-name { font-weight: 650; font-size: 13.5px; }
+.mpick-sub { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.mpick-t.h-error .mpick-sub { color: var(--danger); }
+.mpick-add { border-style: dashed; background: transparent; }
+.mpick-add .mpick-ico { background: var(--accent-soft); color: var(--accent); }
+@media (min-width: 900px) { .mpick { flex-wrap: wrap; overflow: visible; } }
+@media (max-width: 640px) { .mpick-t { min-width: 138px; padding: 8px 12px 8px 8px; } .mpick-ico { width: 30px; height: 30px; } }

@@ -1,34 +1,56 @@
-// Settings → Machines: where agents run and as whom. A summary strip, then
-// This server (its CLIs and logins), a card per other machine laid out the
-// same way, and a last card to add a machine.
+// Settings → Machines: where agents run and as whom, one machine at a time.
+// A row of machines on top (status and signed-in logins at a glance) picks
+// which one is shown below: This server (its CLIs and logins) or another
+// machine, laid out the same way; the last one adds a machine. ?m= keeps the
+// choice (0 = this server, a machine's id, new).
+import { useSearchParams } from 'react-router-dom'
 import { useApp } from '../../lib/app-context'
+import { Icon } from '../../components/icons'
 import { AccountsSection } from './Accounts'
 import { HostsSection, useHostLogins } from './Hosts'
-import { Stat } from './MachineParts'
+import { osIcon, type Health } from './MachineParts'
 
 export function MachinesTab() {
-  const { hosts, accounts, providers } = useApp()
+  const { user, hosts, accounts, providers } = useApp()
   const logins = useHostLogins(hosts)
-  const hereOk = providers.some(p => p.available)
-  const online = (hereOk ? 1 : 0) + hosts.filter(h => h.info.ok).length
-  const total = 1 + hosts.length
-  const remote = hosts.flatMap(h => (logins.byHost[h.id] || []).filter(l => !l.missing && !(l.error && !h.info.ok)))
-  const all = [...accounts.map(a => ({ signed: a.signed_in, name: a.label, where: 'this server' })), ...remote.map(l => ({ signed: l.signed_in, name: l.label || 'default login', where: l.host }))]
-  const signed = all.filter(x => x.signed).length
-  const asked = hosts.every(h => logins.byHost[h.id])
-  const down = hosts.filter(h => h.info.checked_at && !h.info.ok)
-  const out = all.filter(x => !x.signed)
-  const attention = down.length + out.length
-  const why = [...down.map(h => `${h.name} unreachable`), ...out.map(x => `${x.name} on ${x.where} not signed in`)]
+  const [params, setParams] = useSearchParams()
+  const raw = params.get('m')
+  const sel: number | 'new' = raw === 'new' ? 'new' : raw && hosts.some(h => String(h.id) === raw) ? Number(raw) : 0
+  const pick = (m: number | 'new') => setParams(p => { const n = new URLSearchParams(p); if (m === 0) n.delete('m'); else n.set('m', String(m)); return n }, { replace: true })
+  const mayAdd = user?.role === 'admin' || !!user?.can_run
+
+  const hereHealth: Health = !providers.length ? 'off' : providers.every(p => p.available) ? 'ok' : providers.some(p => p.available) ? 'warn' : 'error'
+  const tabs: { id: number; name: string; icon: string; health: Health; sub: string }[] = [
+    { id: 0, name: 'This server', icon: osIcon('', true), health: hereHealth, sub: count(accounts.filter(a => a.signed_in).length, accounts.length) },
+    ...hosts.map(h => {
+      const list = (logins.byHost[h.id] || []).filter(l => !l.missing)
+      const health: Health = h.info.ok ? (Object.keys(h.info.missing || {}).length ? 'warn' : 'ok') : h.info.checked_at ? 'error' : 'off'
+      return { id: h.id, name: h.name, icon: osIcon(h.info.os), health,
+        sub: health === 'error' ? 'Unreachable' : !logins.byHost[h.id] ? 'Asking…' : count(list.filter(l => l.signed_in).length, list.length) }
+    }),
+  ]
+
   return (
     <div className="machines">
-      <div className="mstats">
-        <Stat icon="server" value={<>{online}<small>/ {total}</small></>} label="Machines online" tone={online === total ? 'ok' : 'warn'} sub={total === 1 ? 'only this server' : `${hosts.length} besides this server`} />
-        <Stat icon="key" value={<>{signed}<small>/ {all.length}{asked ? '' : '…'}</small></>} label="Logins signed in" sub={`${all.filter(x => x.where === 'this server').length} here · ${remote.length} elsewhere`} />
-        <Stat icon={attention ? 'alert' : 'check-circle'} value={attention || 'All good'} label={attention ? 'Need a look' : 'Nothing to fix'} tone={attention ? 'error' : 'ok'} sub={why[0] ? why.slice(0, 2).join(' · ') + (why.length > 2 ? ` · +${why.length - 2}` : '') : undefined} />
+      <div className="mpick" role="tablist" aria-label="Machines">
+        {tabs.map(t => (
+          <button key={t.id} type="button" role="tab" aria-selected={sel === t.id} className={`mpick-t h-${t.health} ${sel === t.id ? 'on' : ''}`} onClick={() => pick(t.id)}>
+            <span className="mpick-ico"><Icon name={t.icon} size={17} /><span className="mpick-dot" /></span>
+            <span className="mpick-main"><span className="mpick-name ellipsis">{t.name}</span><span className="mpick-sub">{t.sub}</span></span>
+          </button>
+        ))}
+        {mayAdd && <button type="button" role="tab" aria-selected={sel === 'new'} className={`mpick-t mpick-add ${sel === 'new' ? 'on' : ''}`} onClick={() => pick('new')}>
+          <span className="mpick-ico"><Icon name="plus" size={17} /></span>
+          <span className="mpick-main"><span className="mpick-name">Add machine</span><span className="mpick-sub">over ssh</span></span>
+        </button>}
       </div>
-      <AccountsSection />
-      <HostsSection logins={logins} />
+      {sel === 0 ? <AccountsSection /> : <HostsSection logins={logins} only={sel} onAdded={pick} onRemoved={() => pick(0)} />}
     </div>
   )
+}
+
+/** "2 of 3 signed in", "1 signed in", "No logins" */
+function count(signed: number, total: number) {
+  if (!total) return 'No logins'
+  return signed === total ? `${total} signed in` : `${signed} of ${total} signed in`
 }
