@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -26,8 +25,7 @@ func (s *Server) historyRoutes(r chi.Router) {
 // person's other machines (read from their session files: origin, runs, time
 // worked, running now), newest first.
 // ?provider=claude|codex, ?origin=paseo|terminal|pocket-ai|schedule|app,
-// ?q= (title, folder, last prompt), ?limit= (default 300),
-// ?host= (0 = this server only, a machine's id = that machine only).
+// ?q= (title, folder, last prompt), ?limit= (default 300).
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	if !s.requireRun(w, r) {
 		return
@@ -35,15 +33,6 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
 	provider, origin := r.URL.Query().Get("provider"), r.URL.Query().Get("origin")
-	host := int64(-1) // every machine
-	if v := r.URL.Query().Get("host"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n < 0 {
-			writeErr(w, http.StatusBadRequest, "bad host")
-			return
-		}
-		host = n
-	}
 	limit := queryInt(r, "limit")
 	if limit <= 0 || limit > 1000 {
 		limit = 300
@@ -52,22 +41,14 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	out := []agent.ServerSession{}
 	total := 0
 	sessions := []agent.ServerSession{}
-	if host <= 0 {
-		visible := s.sessionFilter(ctx, userFrom(ctx))
-		for _, x := range agent.Sessions(s.homesFor(ctx, userFrom(ctx)), s.cfg.PaseoHome) {
-			if visible(x.Provider, x.SessionID, x.Account) {
-				sessions = append(sessions, x)
-			}
-		}
-		sessions = append(sessions, agent.Sessions(s.askHomes(me(r)), "")...)
-	}
-	if host != 0 {
-		for _, x := range s.remoteSessions(ctx, userFrom(ctx)) {
-			if host < 0 || x.HostID == host {
-				sessions = append(sessions, x)
-			}
+	visible := s.sessionFilter(ctx, userFrom(ctx))
+	for _, x := range agent.Sessions(s.homesFor(ctx, userFrom(ctx)), s.cfg.PaseoHome) {
+		if visible(x.Provider, x.SessionID, x.Account) {
+			sessions = append(sessions, x)
 		}
 	}
+	sessions = append(sessions, agent.Sessions(s.askHomes(me(r)), "")...)
+	sessions = append(sessions, s.remoteSessions(ctx, userFrom(ctx))...)
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].UpdatedAt > sessions[j].UpdatedAt })
 	for _, x := range sessions {
 		if th, ok := known[x.Provider+":"+x.SessionID]; ok {
