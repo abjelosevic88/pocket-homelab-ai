@@ -21,7 +21,9 @@ import { AddLoginTile, LoginGrid, LoginTile, MachineCard, osIcon, provName, tild
 
 /** Settings → Machines after "This server": a card per machine (status,
  *  versions, its logins by CLI) and a last card to add one. */
-export function HostsSection({ logins }: { logins: HostLoginsState }) {
+/** only: the one machine to show (Settings → Machines picks it); 'new' shows
+ *  the card to add one. onAdded opens the machine just added. */
+export function HostsSection({ logins, only, onAdded, onRemoved }: { logins: HostLoginsState; only?: number | 'new'; onAdded?: (id: number) => void; onRemoved?: () => void }) {
   const { user, hosts, reloadHosts, reloadAccounts } = useApp()
   const { toast } = useToast()
   const own = useAsync(() => api.get<{ people?: { jailed?: boolean } }>(`${V1}/settings`).then(r => !!r.people?.jailed), [])
@@ -53,7 +55,7 @@ export function HostsSection({ logins }: { logins: HostLoginsState }) {
 
   return (
     <>
-      {hosts.map(h => {
+      {hosts.filter(h => only === undefined || h.id === only).map(h => {
         const more: MenuItem[] = [
           { label: 'Edit…', icon: 'edit', onSelect: () => setEdit(h) },
           'sep',
@@ -81,7 +83,7 @@ export function HostsSection({ logins }: { logins: HostLoginsState }) {
           </MachineCard>
         )
       })}
-      {isAdmin && (
+      {isAdmin && (only === undefined || only === 'new') && (
         <div className="mc-new">
           <span className="mc-ico" aria-hidden><Icon name="server" size={22} /></span>
           <div className="mc-new-main">
@@ -93,10 +95,10 @@ export function HostsSection({ logins }: { logins: HostLoginsState }) {
           <button type="button" className="btn primary" onClick={() => setEdit('new')}><Icon name="plus" size={14} />Add machine</button>
         </div>
       )}
-      {edit && <HostDialog own={jailed} host={edit === 'new' ? null : edit} onClose={() => setEdit(null)} onSaved={h => { setEdit(null); reloadHosts().catch(() => {}); logins.refresh(h.id); toast(h.info.ok ? `${h.name} is ready` : `Saved — ${h.info.error || 'not ready yet'}`, h.info.ok ? undefined : 'err') }} />}
+      {edit && <HostDialog own={jailed} host={edit === 'new' ? null : edit} onClose={() => setEdit(null)} onSaved={h => { const added = edit === 'new'; setEdit(null); reloadHosts().catch(() => {}); logins.refresh(h.id); if (added) onAdded?.(h.id); toast(h.info.ok ? `${h.name} is ready` : `Saved — ${h.info.error || 'not ready yet'}`, h.info.ok ? undefined : 'err') }} />}
       {del && <Confirm title={`Remove ${del.name}?`} confirmLabel="Remove"
         message={<>Agents running there are stopped. Its threads stay in your list but cannot continue until the machine is added again. Nothing on the machine itself is touched.</>}
-        onCancel={() => setDel(null)} onConfirm={async () => { const d = del; setDel(null); try { await api.del(`${V1}/hosts/${d.id}`); toast('Removed'); reloadHosts().catch(() => {}) } catch (e) { toast(errMsg(e), 'err') } }} />}
+        onCancel={() => setDel(null)} onConfirm={async () => { const d = del; setDel(null); try { await api.del(`${V1}/hosts/${d.id}`); toast('Removed'); onRemoved?.(); reloadHosts().catch(() => {}) } catch (e) { toast(errMsg(e), 'err') } }} />}
       {addLogin && <AddLoginDialog host={addLogin.host} provider={addLogin.provider} logins={logins.byHost[addLogin.host.id] || []} onClose={() => setAddLogin(null)}
         onAdded={(l, made) => { setAddLogin(null); if (made) loginsDone(l.host_id); setSignIn(signInTarget(l)) }} />}
       {signIn && <SignInDialog target={signIn} onClose={() => { const t = signIn; setSignIn(null); const id = Number(/\/hosts\/(\d+)\//.exec(t.base)?.[1]); if (id) loginsDone(id) }} />}

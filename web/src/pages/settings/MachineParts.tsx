@@ -1,6 +1,6 @@
 // Settings → Machines building blocks: a machine card (OS tile, status pill,
-// CLI chips), login tiles in a grid, the dashed "add" tiles and the summary
-// strip on top. This server and the other machines use the same ones.
+// CLI chips), login tiles in a grid, the dashed "add" tiles; the machine
+// picker on top uses osIcon and Health. This server and the other machines use the same ones.
 import type React from 'react'
 import { planName } from '../../lib/format'
 import type { ProviderId } from '../../lib/types'
@@ -93,19 +93,6 @@ export function AddLoginTile({ onAdd, providers = ['claude', 'codex'] }: { onAdd
       <p>Another account, in a folder of its own.</p>
       <div className="lt-add-btns">
         {providers.map(p => <button key={p} type="button" className={`btn sm lt-add-btn ${p}`} onClick={() => onAdd(p)}><Icon name={p} size={13} />{provName(p)}</button>)}
-      </div>
-    </div>
-  )
-}
-
-export function Stat({ icon, value, label, sub, tone = '' }: { icon: string; value: React.ReactNode; label: string; sub?: React.ReactNode; tone?: '' | 'ok' | 'warn' | 'error' }) {
-  return (
-    <div className={`mstat ${tone}`}>
-      <span className="mstat-ico"><Icon name={icon} size={16} /></span>
-      <div className="mstat-main">
-        <div className="mstat-v">{value}</div>
-        <div className="mstat-l">{label}</div>
-        {sub && <div className="mstat-s ellipsis">{sub}</div>}
       </div>
     </div>
   )
