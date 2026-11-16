@@ -607,7 +607,7 @@ The original conversation may still be running. A shared working directory does 
 // on this server's loopback), and the session file lives over there.
 func (rt *engine) startRemote(t *store.Thread, h *store.Host) (*run, error) {
 	if why := hostMissing(h, t.Provider, t.HostHome); why != "" && h.Info.OK {
-		return nil, badRequest(h.Name + ": " + why + " — install it there and press Check in Settings → Agents → Servers")
+		return nil, badRequest(h.Name + ": " + why + " — install it there and check it again in Settings → Machines")
 	}
 	// The folder may be gone there (moved, cleaned up): say so plainly
 	// instead of letting the CLI fail on "cd" every time.

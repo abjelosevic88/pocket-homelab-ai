@@ -1,5 +1,5 @@
 // Where an agent runs: this server or another machine reached over ssh
-// (Settings → Agents → Servers). Hidden until a server is added.
+// (Settings → Machines). Hidden until a server is added.
 import { useApp } from '../lib/app-context'
 import { Select } from './Select'
 import { Icon } from './icons'

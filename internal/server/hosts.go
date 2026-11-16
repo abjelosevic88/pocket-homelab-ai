@@ -414,7 +414,7 @@ func sshError(stderr string, err error) string {
 	msg := oneLine(firstNonEmpty(stderr, err.Error()), 300)
 	switch {
 	case strings.Contains(stderr, "Permission denied"):
-		return "ssh was refused (" + msg + "). Add the key shown under Servers (Key) to ~/.ssh/authorized_keys there."
+		return "ssh was refused (" + msg + "). Add the key shown in Settings → Machines (Edit) to ~/.ssh/authorized_keys there."
 	case strings.Contains(stderr, "Host key verification failed"), strings.Contains(stderr, "REMOTE HOST IDENTIFICATION HAS CHANGED"):
 		return "the machine's host key changed (" + msg + "). If that is expected, remove the old line from known_hosts (~/.ssh on this server, or .ssh in your own folder)."
 	case strings.Contains(stderr, "Could not resolve"), strings.Contains(stderr, "timed out"), strings.Contains(stderr, "No route"), strings.Contains(stderr, "Connection refused"):

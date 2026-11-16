@@ -15,14 +15,16 @@ import { ProfileTab } from './settings/Profile'
 import { TokensTab } from './settings/Tokens'
 import { PeopleTab } from './settings/People'
 import { AboutTab } from './settings/About'
+import { MachinesTab } from './settings/Machines'
 
-type TabId = 'general' | 'app-defaults' | 'app-changes' | 'agents' | 'notifications' | 'workspaces' | 'profile' | 'tokens' | 'users' | 'about'
+type TabId = 'general' | 'app-defaults' | 'app-changes' | 'agents' | 'machines' | 'notifications' | 'workspaces' | 'profile' | 'tokens' | 'users' | 'about'
 
 const TABS: { id: TabId; label: string; icon: string; sub: string; admin?: boolean }[] = [
   { id: 'general', label: 'General', icon: 'settings', sub: 'How the app looks and how the composer behaves.' },
   { id: 'app-defaults', label: 'App defaults', icon: 'sparkles', sub: 'Your default model for text generation across connected Pocket apps.' },
   { id: 'app-changes', label: 'App changes', icon: 'shield', sub: 'Which connectors Ask may read, and which changes to your Pocket apps run without waiting for your Allow.' },
-  { id: 'agents', label: 'Agents', icon: 'bot', sub: 'Which agent, model, effort and permissions new threads start with — and what the server has installed.' },
+  { id: 'agents', label: 'Agents', icon: 'bot', sub: 'What new threads start with: the agent, folder, model, effort and permissions, and your extra instructions.' },
+  { id: 'machines', label: 'Machines', icon: 'server', sub: 'Where agents run — this server and your other machines — and the Claude Code and Codex logins on each.' },
   { id: 'notifications', label: 'Notifications', icon: 'bell', sub: 'A push when an agent finishes, gets stuck or needs your answer.' },
   { id: 'workspaces', label: 'Folders', icon: 'folder', sub: 'Folders on the server agents start in, one tap away.' },
   { id: 'profile', label: 'Profile', icon: 'user', sub: 'Your name, email and password.' },
@@ -74,6 +76,7 @@ export default function Settings() {
             <ErrorBoundary where={`settings-${tab}`} key={tab}>
               {tab === 'general' && <GeneralTab />}
               {tab === 'agents' && <AgentsTab />}
+              {tab === 'machines' && <MachinesTab />}
               {tab === 'app-defaults' && <AppDefaultsTab />}
               {tab === 'app-changes' && <AppChangesTab />}
               {tab === 'notifications' && <NotificationsTab />}

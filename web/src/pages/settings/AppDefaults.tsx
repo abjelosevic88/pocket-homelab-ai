@@ -105,7 +105,7 @@ export function AppDefaultsTab() {
           {missing && <p className="muted small" role="status">Your saved model is no longer offered by this account. Choose another model or follow the Claude default.</p>}
           {error && <div className="row wrap"><span className="muted small" role="status">{error}</span><button type="button" className="btn sm" onClick={() => setRevision(v => v + 1)}>Retry models</button></div>}
           {!loading && !error && current && <p className="muted small" role="status">Current app default: <strong>{current}</strong>.</p>}
-          <p className="muted small">Accounts are added under <Link to="/settings/agents">Agents</Link>. “Follow Claude default” follows the model there; when no specific model is selected, connected apps use Sonnet.</p>
+          <p className="muted small">Logins are added under <Link to="/settings/machines">Machines</Link>. “Follow Claude default” follows the model there; when no specific model is selected, connected apps use Sonnet.</p>
         </div>
       </Section>
       <Section title="Your model preferences" sub="These settings belong to your account.">

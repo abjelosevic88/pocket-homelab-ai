@@ -1,8 +1,9 @@
+// Settings → Machines, the "This server" card: its CLIs and logins.
 // More than one Claude Code / Codex login on the server. The server login
 // is the owner's; everyone else adds their own (in their own folder on the
 // server, their agents sandboxed there), signs it in from here and picks the
 // account per thread in the composer. Admins see and manage every login.
-// Other machines (Settings → Servers) list and manage their own logins there.
+// Other machines (Settings → Machines) list and manage their own logins there.
 import { useEffect, useRef, useState } from 'react'
 import { api, V1 } from '../../lib/api'
 import { useApp } from '../../lib/app-context'
@@ -20,9 +21,10 @@ import { ago, Section, StatusDot } from './common'
 /** "max" → "Max", "PRO" → "Pro". */
 
 export function AccountsSection() {
-  const { user, reloadAccounts } = useApp()
+  const { user, reloadAccounts, providers, reloadProviders } = useApp()
   const { toast } = useToast()
   const isAdmin = user?.role === 'admin'
+  const [cliCheck, setCliCheck] = useState(false)
   const mayAdd = isAdmin || !!user?.can_run
   const [refresh, setRefresh] = useState(0)
   const info = useAsync(() => api.get<{ people?: PeopleInfo }>(`${V1}/settings`).then(r => r.people || null), [])
@@ -46,11 +48,22 @@ export function AccountsSection() {
   const accountSignIn = (a: Account): SignInTarget => ({ label: a.label, provider: a.provider, base: a.default ? `${V1}/accounts/server/${a.provider}/login` : `${V1}/accounts/${a.id}/login` })
 
   return (
-    <Section title="Accounts" sub={<>Each Claude Code or Codex login lives in its own folder on the server. Pick the account per thread next to the model; a thread can switch accounts and carries on where it was. Logins on your other machines are under each server in Servers.</>}
+    <Section
+      title={<span className="machine-title">
+        <StatusDot status={!providers.length ? 'off' : providers.every(p => p.available) ? 'ok' : providers.some(p => p.available) ? 'warn' : 'error'} title="Pocket AI runs here" />
+        <span className="ellipsis">This server</span>
+      </span>}
+      sub={<span className="machine-meta">
+        <span>Where Pocket AI runs</span>
+        {providers.map(p => p.available
+          ? <span key={p.id}>{p.id === 'claude' ? 'Claude Code' : 'Codex'} {p.version.replace(/\s*\((Claude Code|Codex)\)$/, '').replace(/^codex-cli /, '')}</span>
+          : <span key={p.id} className="danger-text">{p.id === 'claude' ? 'Claude Code' : 'Codex'}: {p.error || 'not installed'}</span>)}
+      </span>}
       actions={<>
-        <button type="button" className="btn sm ghost icon-only" aria-label="Check the accounts again" title="Check again" disabled={list.loading} onClick={() => setRefresh(n => n + 1)}>
-          <Icon name="refresh" size={14} className={list.loading ? 'spin' : ''} /></button>
-        {mayAdd && <button type="button" className="btn primary sm" onClick={() => setAdding('claude')}><Icon name="plus" size={14} />Add account</button>}
+        <button type="button" className="btn sm ghost icon-only" aria-label="Check this server again" title="Check again" disabled={list.loading || cliCheck}
+          onClick={() => { setRefresh(n => n + 1); setCliCheck(true); reloadProviders().catch(() => {}).finally(() => setCliCheck(false)) }}>
+          <Icon name="refresh" size={14} className={list.loading || cliCheck ? 'spin' : ''} /></button>
+        {mayAdd && <button type="button" className="btn sm" onClick={() => setAdding('claude')}><Icon name="plus" size={14} />Add login</button>}
       </>}>
       {pi && <PeopleNotice info={pi} isAdmin={isAdmin} />}
       {list.data && !list.data.length && mayAdd && (
@@ -132,7 +145,7 @@ function AccountDialog({ account, provider: initial, people, isAdmin, own, machi
   const [label, setLabel] = useState(account?.label || '')
   const [owner, setOwner] = useState<number>(account?.user_id ?? 0)
   const [busy, setBusy] = useState(false)
-  // Where the login lives: 0 = this server, else one of the machines (Settings → Servers).
+  // Where the login lives: 0 = this server, else one of the machines (Settings → Machines).
   const [where, setWhere] = useState(initialWhere)
   const hosts = account ? [] : [...new Map(machines.map(h => [h.host_id, h.host])).entries()]
   // Ask the picked machine afresh: the list may be minutes old (a CLI just installed there).
@@ -173,7 +186,7 @@ function AccountDialog({ account, provider: initial, people, isAdmin, own, machi
     </>}>
       <div className="stack">
         {!account && <Field label="Agent" group><ProviderToggle value={provider} onChange={v => v && setProvider(v)} /></Field>}
-        {hosts.length > 0 && <Field label="Where" help="This server, or one of your machines from Servers. Threads on a machine run on its login there.">
+        {hosts.length > 0 && <Field label="Where" help="This server, or one of your other machines. Threads on a machine run on its login there.">
           <Select label="Where" value={where} onChange={v => { setWhere(v); setPick(null) }}
             options={[{ value: 0, label: 'This server' }, ...hosts.map(([id, name]) => ({ value: id, label: name, description: machines.find(h => h.host_id === id)?.target }))]} />
         </Field>}

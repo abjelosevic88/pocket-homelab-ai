@@ -129,7 +129,7 @@ func (s *Server) handleLinkAgentOptions(w http.ResponseWriter, r *http.Request) 
 		Providers       []linkProvider  `json:"providers"`
 		Accounts        []linkAccount   `json:"accounts"`
 		Workspaces      []linkWorkspace `json:"workspaces"`
-		Hosts           []linkHost      `json:"hosts"` // other machines (Settings → Servers); this server is id 0
+		Hosts           []linkHost      `json:"hosts"` // other machines (Settings → Machines); this server is id 0
 		DefaultProvider string          `json:"default_provider"`
 		Home            string          `json:"home"`
 		Roots           []string        `json:"roots"`

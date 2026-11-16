@@ -110,7 +110,7 @@ function SessionRow({ s, busy, onOpen }: { s: ServerSession; busy: boolean; onOp
         {showLast && <span className="srv-last"><Icon name="message" size={11} />{s.last_prompt}</span>}
         <span className="srv-meta">
           <span className={`origin-chip o-${s.origin}`}>{originLabel(s.origin)}</span>
-          {s.host && <span className="badge" style={{ gap: 4 }} title={`On ${s.host} (Settings → Servers)${s.host_home ? `, login ${s.host_home}` : ''}`}><Icon name="server" size={11} />{s.host}{s.host_home && ` · ${loginLabel(s.host_home)}`}</span>}
+          {s.host && <span className="badge" style={{ gap: 4 }} title={`On ${s.host} (Settings → Machines)${s.host_home ? `, login ${s.host_home}` : ''}`}><Icon name="server" size={11} />{s.host}{s.host_home && ` · ${loginLabel(s.host_home)}`}</span>}
           <PrivacyChip sharedWith={s.shared_with} />
           <span className="mono ellipsis">{shortPath(s.cwd)}</span>
           <span>{s.runs} {s.runs === 1 ? 'run' : 'runs'}</span>

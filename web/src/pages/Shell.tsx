@@ -162,6 +162,7 @@ function ShellInner() {
     { id: 'usage', label: 'Usage & limits', icon: 'chart', keywords: 'cost tokens rate limit', run: () => navigate('/usage') },
     { id: 'settings', label: 'Settings', icon: 'settings', run: () => navigate('/settings') },
     { id: 'agents', label: 'Agent defaults', icon: 'bot', keywords: 'model effort settings', run: () => navigate('/settings/agents') },
+    { id: 'machines', label: 'Machines and logins', icon: 'server', keywords: 'servers hosts accounts logins sign in claude codex ssh', run: () => navigate('/settings/machines') },
     { id: 'theme', label: theme === 'dark' ? 'Light theme' : 'Dark theme', icon: theme === 'dark' ? 'sun' : 'moon', run: () => setThemeMode(theme === 'dark' ? 'light' : 'dark') },
     { id: 'recent', label: 'Recent conversations', icon: 'history', hint: keyCaps(keys.recent).join(''), keywords: 'switch threads chats', run: () => setPalette('recent') },
     { id: 'keys', label: 'Keyboard shortcuts', icon: 'keyboard', hint: '?', run: () => setShortcuts(true) },

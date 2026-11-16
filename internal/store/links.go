@@ -33,7 +33,7 @@ type LinkDraft struct {
 	UploadIDs []string `json:"upload_ids"`
 	// Worktree: the app asks for a git worktree of its own (nil = the folder itself).
 	Worktree *DraftWorktree `json:"worktree"`
-	// HostID: the machine it runs on (Settings → Servers), 0 = this server.
+	// HostID: the machine it runs on (Settings → Machines), 0 = this server.
 	HostID int64 `json:"host_id"`
 }
 

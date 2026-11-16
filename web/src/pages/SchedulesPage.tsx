@@ -240,7 +240,7 @@ export function ScheduleDialog({ draft, onClose, onSaved }: { draft: Draft; onCl
             { value: 'attention', label: 'Only when something’s wrong' }, { value: 'always', label: 'Every run' }, { value: 'never', label: 'Never' },
           ]} label="Notify" />
         </Field>
-        {hosts.length > 0 && <Field label="Runs on" group help="This server, or a machine from Settings → Servers (it uses that machine’s own login).">
+        {hosts.length > 0 && <Field label="Runs on" group help="This server, or a machine from Settings → Machines (it uses that machine’s own login).">
           <HostPicker value={f.host_id} onChange={host_id => setF({ ...f, host_id, cwd: '' })} className="btn" />
         </Field>}
         <Field label="Agent" group><AgentPicker allowDefault noAccount={!!f.host_id} value={f} onChange={p => setF(x => ({ ...x, ...p }))} /></Field>

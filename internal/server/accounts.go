@@ -176,7 +176,7 @@ func signInFirst(provider string) string {
 	if provider == "codex" {
 		name = "Codex"
 	}
-	return "Sign in to " + name + " with your own account first: Settings → Agents → Accounts → Add " + name + " login."
+	return "Sign in to " + name + " with your own account first: Settings → Machines → This server → Add login."
 }
 
 // usableAccount is the account a person runs on when theirs is not given or

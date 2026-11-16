@@ -32,7 +32,7 @@ interface LinkDraft {
   uploads?: DraftFile[]
   /** the app asks for a git worktree of its own on this branch (a ticket's) */
   worktree?: { name: string; base?: string } | null
-  /** the machine it runs on (Settings → Servers), 0 = this server */
+  /** the machine it runs on (Settings → Machines), 0 = this server */
   host_id?: number
 }
 interface DraftFile { id: string; name: string; mime: string; size: number; url: string }
