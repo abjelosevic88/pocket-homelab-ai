@@ -16,7 +16,7 @@ import { ProviderToggle } from '../../components/AgentPicker'
 import { Confirm, CopyField, errMsg, Field, MenuButton, Modal, Spinner, useAsync, useToast, type MenuItem } from '../../components/ui'
 import { SignInDialog, type SignInTarget } from './Accounts'
 import { ago } from './common'
-import { AddLoginTile, LoginGrid, LoginTile, MachineCard, osIcon, provName, tilde, type CliChip } from './MachineParts'
+import { LoginList, MachineCard, osIcon, provName, tilde, type CliChip } from './MachineParts'
 
 
 /** Settings → Machines after "This server": a card per machine (status,
@@ -138,7 +138,7 @@ export function useHostLogins(hosts: Host[]) {
 const loginName = (l: HostLogin) => l.label || 'Default login'
 const dirQ = (l: HostLogin) => l.dir ? `?dir=${encodeURIComponent(l.dir)}` : ''
 
-/** A machine's logins as tiles, like this server's, and a tile to add one. */
+/** A machine's logins grouped by CLI, like this server's. */
 function HostLogins({ host, logins, onAdd, onSignIn, onSignOut, onRemove }: { host: Host; logins?: HostLogin[]; onAdd: (p: ProviderId) => void; onSignIn: (l: HostLogin) => void; onSignOut: (l: HostLogin) => void; onRemove: (l: HostLogin) => void }) {
   if (!logins) return <div className="loading"><Spinner /> Asking {host.name} about its logins…</div>
   const down = logins.length > 0 && logins.every(l => l.error && !l.missing)
@@ -148,19 +148,15 @@ function HostLogins({ host, logins, onAdd, onSignIn, onSignOut, onRemove }: { ho
   const installed = (['claude', 'codex'] as ProviderId[]).filter(p => rows.some(l => l.provider === p))
   if (!installed.length) return <p className="mc-note">Neither Claude Code nor Codex is installed on {host.name}.</p>
   return (
-    <LoginGrid>
-      {rows.map(l => {
-        const more: MenuItem[] = [
-          { label: l.signed_in ? 'Sign in again…' : 'Sign in…', icon: 'key', onSelect: () => onSignIn(l) },
-          ...(l.signed_in ? [{ label: 'Sign out', icon: 'log-out', onSelect: () => onSignOut(l) }] : []),
-          ...(l.dir ? ['sep' as const, { label: 'Remove…', icon: 'trash', danger: true, onSelect: () => onRemove(l) }] : []),
-        ]
-        return <LoginTile key={l.provider + ':' + (l.dir || 'default')} provider={l.provider} name={loginName(l)} signedIn={l.signed_in} plan={l.plan} email={l.email} error={l.error} folder={l.home}
-          menu={more} menuLabel={`More for ${loginName(l)} on ${host.name}`} onSignIn={() => onSignIn(l)}
-          tags={!l.dir ? <span className="lt-tag accent">Default</span> : undefined} />
-      })}
-      <AddLoginTile onAdd={onAdd} providers={installed} />
-    </LoginGrid>
+    <LoginList onAdd={onAdd} providers={installed} items={rows.map(l => ({
+      key: l.provider + ':' + (l.dir || 'default'), provider: l.provider, name: loginName(l), signedIn: l.signed_in, plan: l.plan, email: l.email, error: l.error, folder: l.home,
+      menuLabel: `More for ${loginName(l)} on ${host.name}`, onSignIn: () => onSignIn(l),
+      menu: [
+        { label: l.signed_in ? 'Sign in again…' : 'Sign in…', icon: 'key', onSelect: () => onSignIn(l) },
+        ...(l.signed_in ? [{ label: 'Sign out', icon: 'log-out', onSelect: () => onSignOut(l) }] : []),
+        ...(l.dir ? ['sep' as const, { label: 'Remove…', icon: 'trash', danger: true, onSelect: () => onRemove(l) }] : []),
+      ] as MenuItem[],
+    }))} />
   )
 }
 

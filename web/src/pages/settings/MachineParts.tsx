@@ -1,11 +1,12 @@
 // Settings → Machines building blocks: a machine card (OS tile, status pill,
-// CLI chips), login tiles in a grid, the dashed "add" tiles; the machine
-// picker on top uses osIcon and Health. This server and the other machines use the same ones.
+// CLI chips) and its logins grouped by CLI; the machine picker on top uses
+// osIcon and Health. This server and the other machines use the same ones.
 import type React from 'react'
 import { planName } from '../../lib/format'
 import type { ProviderId } from '../../lib/types'
 import { Icon } from '../../components/icons'
 import { MenuButton, type MenuItem } from '../../components/ui'
+import { StatusDot } from './common'
 
 export type Health = 'ok' | 'warn' | 'error' | 'off'
 export const provName = (p: string) => p === 'codex' ? 'Codex' : 'Claude Code'
@@ -54,46 +55,54 @@ export function MachineCard({ icon, name, health, healthLabel, meta, clis, actio
   )
 }
 
-export function LoginGrid({ children }: { children: React.ReactNode }) {
-  return <div className="lt-grid">{children}</div>
+/** One login of a machine, for LoginList. */
+export interface LoginItem {
+  key: string; provider: ProviderId; name: string; signedIn: boolean; plan?: string; email?: string; error?: string; folder: string
+  /** badges after the name (Default, Same account as …) */
+  tags?: React.ReactNode
+  /** after the folder (whose login it is) */
+  meta?: React.ReactNode
+  menu?: MenuItem[]; menuLabel?: string; onSignIn?: () => void; onContextMenu?: (e: React.MouseEvent) => void
 }
 
-/** One login: which CLI, its name and plan, whose account, its folder. */
-export function LoginTile({ provider, name, signedIn, plan, email, error, folder, tags, menu, menuLabel, onSignIn, onContextMenu }: {
-  provider: ProviderId; name: string; signedIn: boolean; plan?: string; email?: string; error?: string; folder: string
-  tags?: React.ReactNode; menu?: MenuItem[]; menuLabel?: string; onSignIn?: () => void; onContextMenu?: (e: React.MouseEvent) => void
-}) {
-  const state = signedIn ? 'in' : error ? 'err' : 'out'
+/** A machine's logins, grouped by CLI: a header with how many and Add, then a row each. */
+export function LoginList({ items, providers, onAdd }: { items: LoginItem[]; providers?: ProviderId[]; onAdd?: (p: ProviderId) => void }) {
+  const pids = (['claude', 'codex'] as ProviderId[]).filter(p => items.some(i => i.provider === p) || providers?.includes(p))
   return (
-    <div className={`lt ${provider} s-${state}`} onContextMenu={onContextMenu}>
-      <div className="lt-top">
-        <span className="lt-ico" title={provName(provider)}><Icon name={provider} size={16} /></span>
-        <div className="lt-title">
-          <span className="lt-name ellipsis" title={name}>{name}</span>
-          <span className="lt-state">{signedIn ? <>Signed in{plan ? <> · <b>{planName(plan)}</b></> : null}</> : error ? 'Error' : 'Not signed in'}</span>
-        </div>
-        {menu && menu.length > 0 && <MenuButton label={menuLabel || `More for ${name}`} align="right" items={menu}><Icon name="more" size={16} /></MenuButton>}
-      </div>
-      <div className="lt-body">
-        {email ? <div className="lt-email ellipsis" title={email}>{email}</div> : !signedIn && <div className="lt-email faint">No account yet</div>}
-        <code className="lt-folder ellipsis" title={folder}>{tilde(folder)}</code>
-        {tags && <div className="lt-tags">{tags}</div>}
-        {error && <div className="lt-err" title={error}>{error}</div>}
-      </div>
-      {!signedIn && !error && onSignIn && <button type="button" className="btn sm lt-signin" onClick={onSignIn}><Icon name="key" size={13} />Sign in</button>}
-    </div>
-  )
-}
-
-/** The dashed last tile of a machine's logins. */
-export function AddLoginTile({ onAdd, providers = ['claude', 'codex'] }: { onAdd: (p: ProviderId) => void; providers?: ProviderId[] }) {
-  return (
-    <div className="lt lt-add">
-      <div className="lt-add-h"><span className="lt-add-ico"><Icon name="plus" size={16} /></span>Add a login</div>
-      <p>Another account, in a folder of its own.</p>
-      <div className="lt-add-btns">
-        {providers.map(p => <button key={p} type="button" className={`btn sm lt-add-btn ${p}`} onClick={() => onAdd(p)}><Icon name={p} size={13} />{provName(p)}</button>)}
-      </div>
+    <div className="acct-groups">
+      {pids.map(pid => {
+        const rows = items.filter(i => i.provider === pid)
+        return (
+          <div key={pid} className={`acct-group ${pid}`}>
+            <div className="acct-group-h">
+              <span className={`acct-group-ico ${pid}`}><Icon name={pid} size={16} /></span>
+              <span className="acct-group-name">{provName(pid)}</span>
+              <span className="acct-group-n">{rows.length} {rows.length === 1 ? 'login' : 'logins'}</span>
+              {onAdd && <button type="button" className="btn sm ghost acct-group-add" onClick={() => onAdd(pid)}><Icon name="plus" size={13} />Add</button>}
+            </div>
+            {rows.map(l => (
+              <div key={l.key} className="acct-row" onContextMenu={l.onContextMenu}>
+                <StatusDot status={l.signedIn ? 'ok' : l.error ? 'error' : 'off'} title={l.signedIn ? 'Signed in' : l.error ? 'Error' : 'Not signed in'} />
+                <div className="acct-main">
+                  <div className="acct-name">
+                    <span className="ellipsis">{l.name}</span>
+                    {l.signedIn ? (l.plan && <span className="badge ok">{planName(l.plan)}</span>) : l.error ? <span className="badge danger">Error</span> : <span className="badge">Not signed in</span>}
+                    {l.tags}
+                  </div>
+                  {l.email && <div className="acct-email ellipsis">{l.email}</div>}
+                  <div className="acct-meta"><code>{tilde(l.folder)}</code>{l.meta}</div>
+                  {l.error && <div className="danger-text xsmall" title={l.error}>{l.error}</div>}
+                </div>
+                <div className="acct-actions">
+                  {!l.signedIn && !l.error && l.onSignIn && <button type="button" className="btn sm" onClick={l.onSignIn}><Icon name="key" size={13} />Sign in</button>}
+                  {l.menu && l.menu.length > 0 && <MenuButton label={l.menuLabel || `More for ${l.name}`} align="right" items={l.menu}><Icon name="more" size={16} /></MenuButton>}
+                </div>
+              </div>
+            ))}
+            {!rows.length && <div className="acct-row"><span /><div className="muted small">No {provName(pid)} login yet.</div><span /></div>}
+          </div>
+        )
+      })}
     </div>
   )
 }
