@@ -2,8 +2,10 @@
 // claude / codex there over ssh, and the conversation lives here as usual.
 // Each machine is its adder's: the owner's go over the server's own key
 // (admins manage them), everyone else's over a key of their own that
-// Pocket AI makes in their folder. Nobody sees anyone else's.
+// Pocket AI makes in their folder. Nobody sees anyone else's. Tapping one
+// lists its sessions (every agent there, from any app) to open here.
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { api, V1 } from '../../lib/api'
 import { useApp } from '../../lib/app-context'
 import type { Host } from '../../lib/types'
@@ -24,6 +26,8 @@ export function HostsSection() {
   const [del, setDel] = useState<Host | null>(null)
   const [checking, setChecking] = useState<number | null>(null)
   const ctx = useContextMenu()
+  const navigate = useNavigate()
+  const sessions = (h: Host) => navigate(`/history?host=${h.id}`)
 
   const check = async (h: Host) => {
     setChecking(h.id)
@@ -46,6 +50,7 @@ export function HostsSection() {
           <div className="acct-group host-group">
             {hosts.map(h => {
               const more: MenuItem[] = [
+                { label: 'Sessions', icon: 'history', onSelect: () => sessions(h) },
                 { label: 'Check again', icon: 'refresh', onSelect: () => check(h) },
                 { label: 'Edit…', icon: 'edit', onSelect: () => setEdit(h) },
                 'sep',
@@ -57,7 +62,8 @@ export function HostsSection() {
                 <div key={h.id} className="acct-row" onContextMenu={isAdmin ? e => ctx.open(e, more) : undefined}>
                   <StatusDot status={h.info.ok ? (missing.length ? 'warn' : 'ok') : h.info.checked_at ? 'error' : 'off'}
                     title={(h.info.ok ? 'Reachable' : 'Not ready') + (h.info.checked_at ? ` · checked ${ago(h.info.checked_at)}` : '')} />
-                  <div className="acct-main">
+                  <div className="acct-main host-open" role="button" tabIndex={0} title={`Sessions on ${h.name}`}
+                    onClick={() => sessions(h)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); sessions(h) } }}>
                     <div className="acct-name">
                       <span className="ellipsis">{h.name}</span>
                       {versions.map(([p]) => <span key={p} className="badge ok">{provName(p)}</span>)}
@@ -72,6 +78,7 @@ export function HostsSection() {
                     {versions.length > 0 && <div className="acct-meta">{versions.map(([p, v]) => <span key={p}>{provName(p)} {v}</span>)}</div>}
                     {missing.map(([p, why]) => <div key={p} className="muted xsmall">{provName(p)}: {why}</div>)}
                     {h.info.error && <div className="danger-text xsmall" title={h.info.error}>{h.info.error}</div>}
+                    <div className="host-sessions small">Sessions<Icon name="chevron-right" size={13} /></div>
                   </div>
                   <div className="acct-actions">
                     {checking === h.id ? <Spinner /> : isAdmin
