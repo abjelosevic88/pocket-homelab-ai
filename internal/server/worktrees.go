@@ -27,6 +27,7 @@ import (
 
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/agent"
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/worktreefiles"
 )
 
 // Worktrees: a thread can work in its own git worktree — an isolated
@@ -655,9 +656,10 @@ type wtThread struct {
 
 type worktreeView struct {
 	*store.Worktree
-	HostName string        `json:"host_name,omitempty"`
-	Threads  []wtThread    `json:"threads"`
-	State    *wtStatusInfo `json:"state,omitempty"`
+	HostName       string        `json:"host_name,omitempty"`
+	RestoreWarning string        `json:"restore_warning,omitempty"`
+	Threads        []wtThread    `json:"threads"`
+	State          *wtStatusInfo `json:"state,omitempty"`
 }
 
 func (s *Server) worktreeView(ctx context.Context, w *store.Worktree, withState bool) worktreeView {
@@ -1093,7 +1095,8 @@ func (s *Server) archiveWorktree(ctx context.Context, h *store.Host, wt *store.W
 		del = "1"
 	}
 	ref := "refs/pocket-ai/archive/" + strconv.FormatInt(wt.ID, 10)
-	out, errOut, err := shOn(ctx, h, 3*time.Minute, wtArchive, wt.Path, wt.Repo, ref, wt.Branch, del)
+	helper, _ := s.worktreeFilesHelper(ctx, h, wt.Path)
+	out, errOut, err := shOn(ctx, h, 3*time.Minute, wtArchive, wt.Path, wt.Repo, ref, wt.Branch, del, helper)
 	if err != nil {
 		return scriptErr(errOut, err)
 	}
@@ -1149,17 +1152,38 @@ func (s *Server) handleWorktreeRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ref := firstNonEmpty(wt.ArchiveRef, "refs/pocket-ai/archive/"+strconv.FormatInt(wt.ID, 10))
-	if _, errOut, err := shOn(r.Context(), h, 3*time.Minute, wtRestore, wt.Repo, wt.Path, wt.Branch, ref); err != nil {
+	helper, _ := s.worktreeFilesHelper(r.Context(), h, wt.Repo)
+	out, errOut, err := shOn(r.Context(), h, 3*time.Minute, wtRestore, wt.Repo, wt.Path, wt.Branch, ref, helper)
+	if err != nil {
 		s.fail(w, scriptErr(errOut, err), "restore")
 		return
 	}
+	warning := kv(out)["local_files_error"]
+	var files worktreefiles.Summary
+	if raw := kv(out)["local_files"]; raw != "" {
+		if err := json.Unmarshal([]byte(raw), &files); err != nil {
+			warning = "Could not read the local-file restore result; setup was not started"
+		} else if len(files.Warnings) > 0 {
+			warning = strings.Join(files.Warnings, "; ")
+		}
+	}
 	wt.Status, wt.ArchivedAt, wt.Setup = "active", "", "running"
-	_ = s.store.UpdateWorktree(r.Context(), wt)
-	// dependencies were not archived (ignored files): set it up again
-	setupWT := *wt
-	go s.runSetup(&setupWT, "", true)
+	if warning != "" {
+		wt.Setup = "failed"
+	}
+	if err := s.store.UpdateWorktree(r.Context(), wt); err != nil {
+		s.fail(w, err, "record restored worktree")
+		return
+	}
+	// Restore local configuration first; setup's file-copy step leaves it intact.
+	if warning == "" {
+		setupWT := *wt
+		go s.runSetup(&setupWT, "", true)
+	}
 	s.publishWorktrees(wt.UserID)
-	writeJSON(w, http.StatusOK, s.worktreeView(r.Context(), wt, true))
+	view := s.worktreeView(r.Context(), wt, true)
+	view.RestoreWarning = warning
+	writeJSON(w, http.StatusOK, view)
 }
 
 func (s *Server) handleForgetWorktree(w http.ResponseWriter, r *http.Request) {
@@ -1178,7 +1202,8 @@ func (s *Server) handleForgetWorktree(w http.ResponseWriter, r *http.Request) {
 		del = "1"
 	}
 	ref := firstNonEmpty(wt.ArchiveRef, "refs/pocket-ai/archive/"+strconv.FormatInt(wt.ID, 10))
-	if _, errOut, err := shOn(r.Context(), h, time.Minute, wtForget, wt.Repo, ref, wt.Branch, del); err != nil {
+	helper, _ := s.worktreeFilesHelper(r.Context(), h, wt.Repo)
+	if _, errOut, err := shOn(r.Context(), h, time.Minute, wtForget, wt.Repo, ref, wt.Branch, del, helper); err != nil {
 		s.fail(w, scriptErr(errOut, err), "delete worktree")
 		return
 	}

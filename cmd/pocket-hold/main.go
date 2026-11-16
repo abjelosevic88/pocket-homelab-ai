@@ -6,6 +6,12 @@ import (
 	"os"
 
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/hold"
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/worktreefiles"
 )
 
-func main() { os.Exit(hold.Main(os.Args[1:])) }
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "worktree-files" {
+		os.Exit(worktreefiles.Main(os.Args[2:]))
+	}
+	os.Exit(hold.Main(os.Args[1:]))
+}

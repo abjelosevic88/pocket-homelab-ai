@@ -218,7 +218,7 @@ for p in "$@"; do pat=":(glob)$p"; list --ignored; list; done | sort -u | head -
   case "$f" in ""|*/) continue;; esac
   [ -f "$f" ] && [ ! -L "$f" ] || continue
   [ "$(wc -c < "$f")" -le 5242880 ] || { echo "skipped=$f"; continue; }
-  [ -e "$dst/$f" ] && continue
+  { [ -e "$dst/$f" ] || [ -L "$dst/$f" ]; } && continue
   mkdir -p -- "$dst/$(dirname -- "$f")" && cp -p -- "$f" "$dst/$f" && echo "copied=$f"
 done
 `
@@ -472,6 +472,15 @@ func compareURL(remote, base, branch string) string {
 // folder. $1 worktree, $2 main checkout, $3 ref, $4 branch, $5 delete the
 // branch too (1 only when it was merged).
 const wtArchive = gitEnv + `if cd -- "$1" 2>/dev/null; then
+  if [ -n "${6:-}" ]; then
+    "$6" worktree-files snapshot "$1" "$3" >/dev/null || exit 4
+  else
+    case "$3" in refs/pocket-ai/archive/*)
+      if [ -d "$(git rev-parse --git-common-dir)/pocket-ai/local-files" ]; then
+        echo "Local-file backup helper is unavailable; nothing was removed" >&2; exit 4
+      fi;;
+    esac
+  fi
   tmp=$(mktemp) || exit 3
   cp -- "$(git rev-parse --git-path index)" "$tmp" 2>/dev/null
   GIT_INDEX_FILE=$tmp git add -A >&2 && tree=$(GIT_INDEX_FILE=$tmp git write-tree) || { rm -f "$tmp"; echo "could not save the uncommitted work; nothing was removed" >&2; exit 4; }
@@ -491,6 +500,10 @@ exit 0
 // wtRestore puts an archived worktree back where it was: $1 main, $2 folder,
 // $3 branch, $4 archive ref. The uncommitted work comes back uncommitted.
 const wtRestore = gitEnv + `cd -- "$1" || exit 3
+common=$(git rev-parse --git-common-dir) || exit 3
+if [ -z "${5:-}" ] && [ -d "$common/pocket-ai/local-files" ]; then
+ echo "Local-file restore helper is unavailable; restore stopped before creating the worktree" >&2; exit 3
+fi
 [ -e "$2" ] && { echo "$2 already exists" >&2; exit 4; }
 mkdir -p -- "$(dirname -- "$2")" || exit 5
 saved=$(git rev-parse --verify -q "$4^{commit}")
@@ -502,11 +515,19 @@ else echo "the branch $3 and its archive are both gone" >&2; exit 7; fi
 if [ -n "$saved" ] && [ "$(git -C "$2" rev-parse HEAD)" != "$saved" ]; then
   git -C "$2" checkout -q "$saved" -- . >&2 && git -C "$2" reset -q >&2
 fi
+if [ -n "${5:-}" ]; then
+ local_files=$("$5" worktree-files restore "$2" "$4") && printf 'local_files=%s\n' "$local_files" || echo "local_files_error=Local-file restore failed; the private backup is still available and setup was not started"
+fi
 echo "path=$(cd -- "$2" && pwd -P)"
 `
 
 // wtForget deletes an archived worktree for good: $1 main, $2 ref, $3 branch, $4 delete branch.
 const wtForget = gitEnv + `cd -- "$1" || exit 3
+if [ -n "${5:-}" ]; then
+ "$5" worktree-files forget "$1" "$2" >/dev/null || exit 4
+elif [ -d "$(git rev-parse --git-common-dir)/pocket-ai/local-files" ]; then
+ echo "Local-file backup helper is unavailable; the archive was kept" >&2; exit 4
+fi
 git update-ref -d "$2" 2>/dev/null
 if [ "$4" = 1 ]; then git branch -D -- "$3" >&2 2>/dev/null; fi
 git worktree prune

@@ -22,9 +22,8 @@ for marker in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply 
 done
 flags=$(git ls-files -v) || fail "Could not inspect index flags"
 if printf '%s\n' "$flags" | grep -q '^[a-zS]'; then fail "Index flags can hide local changes; review this worktree manually"; fi
-status=$(git status --porcelain --untracked-files=all --ignored=matching) || fail "Could not inspect local files"
-if printf '%s\n' "$status" | grep -q '^!!'; then fail "Ignored local files need review; use Archive manually after saving anything needed"; fi
-[ -z "$status" ] || fail "Uncommitted or untracked files"
+status=$(git status --porcelain --untracked-files=all) || fail "Could not inspect local files"
+[ -z "$status" ] || fail "Uncommitted or untracked files: $(printf '%s\n' "$status" | head -n 3 | tr '\n' ';')"
 head=$(git rev-parse --verify HEAD) || fail "Could not inspect the current commit"
 `
 
@@ -63,6 +62,18 @@ exit 0
 // removal; compare-and-delete the branch so a concurrent commit survives.
 const wtCleanupRemove = gitEnv + `fail() { printf '%s\n' "$1" >&2; exit 1; }
 ` + wtCleanupGuard + `[ "$head" = "$4" ] || fail "New commits appeared after the merge check"
+helper=${7:-}
+if [ -n "$helper" ]; then
+ local_files=$("$helper" worktree-files snapshot "$1" "$5") || fail "Could not preserve ignored local files; nothing was removed"
+ printf 'local_files=%s\n' "$local_files"
+else
+ ignored=$(git ls-files --others --ignored --exclude-standard --directory) || fail "Could not inspect ignored files"
+ [ -z "$ignored" ] && [ ! -d "$common/pocket-ai/local-files" ] || fail "Local-file backup helper is unavailable; nothing was removed"
+fi
+# A file may have changed while the backup was being made.
+status=$(git status --porcelain --untracked-files=all) || fail "Could not recheck local files"
+[ -z "$status" ] || fail "Local changes appeared during cleanup"
+[ "$(git rev-parse HEAD)" = "$4" ] || fail "New commits appeared during cleanup"
 git update-ref "$5" "$head" || fail "Could not save the recovery reference"
 cd -- "$2" || fail "Main repository is missing"
 git worktree remove -- "$1" >&2 || fail "Git refused to remove the worktree"

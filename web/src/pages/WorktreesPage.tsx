@@ -13,7 +13,7 @@ import { PageHead } from '../components/PageHead'
 import { WorktreePanel } from '../components/Worktree'
 import { type Anchor, Confirm, Empty, errMsg, Loading, Menu, type MenuItem, MenuButton, Spinner, useToast } from '../components/ui'
 
-interface CleanupResult { archived: string[]; skipped: string[]; checked_at: string; items: { id: number; branch: string; status: 'ready' | 'archived' | 'skipped'; reason: string }[] }
+interface CleanupResult { archived: string[]; skipped: string[]; checked_at: string; items: { id: number; branch: string; status: 'ready' | 'archived' | 'skipped'; reason: string; local_files?: string[]; generated?: string[] }[] }
 
 interface Group { id: number; parent_id: number | null; name: string; position: number; collapsed: boolean; items: number[] }
 // what is being dragged: a worktree card or a group's heading
@@ -278,14 +278,17 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
           <section className="wt-cleanup" aria-label="Worktree cleanup">
             <div className="wt-cleanup-actions">{activeCount > 0 && <button type="button" className="btn sm" disabled={!!busy} onClick={() => cleanup(true)} title="Check current merge status and review what can be removed">{busy === 'cleanup' ? <Spinner /> : <Icon name="archive" size={13} />}Clean up merged…</button>}</div>
             <label className="row"><input type="checkbox" checked={!!settings?.worktree_auto_cleanup} disabled={!settings || !!busy} onChange={e => toggleAutoCleanup(e.target.checked)} /> Automatically clean up merged worktrees</label>
-            <p className="muted xsmall">Checks hourly, even when this page is closed. Only verified, clean, idle worktrees are removed. Conversations stay available, and archived worktrees can be restored.</p>
+            <p className="muted xsmall">Checks hourly, even when this page is closed. Only verified, clean, idle worktrees are removed. Local configuration is backed up; dependency and cache folders can be regenerated. Conversations stay available, and archived worktrees can be restored.</p>
             {cleanupResult && <details open>
               <summary className="xsmall">{cleanupResult.items.filter(i => i.status === 'ready').length ? `${ready.length} ready to clean up` : `${cleanupResult.archived.length} cleaned up`} · {cleanupResult.skipped.length} kept · checked {ago(cleanupResult.checked_at)}</summary>
               <div className="wt-cleanup-results" aria-live="polite">
                 {cleanupResult.items.map(i => <div key={i.id} className="wt-cleanup-result">
                   <button type="button" className="link-btn ellipsis" onClick={() => setOpen(i.id)} title={i.branch}>{i.branch}</button>
                   <span className={`badge ${i.status === 'skipped' ? '' : 'ok'}`}>{i.status === 'ready' ? 'Ready' : i.status === 'archived' ? 'Cleaned up' : 'Kept'}</span>
-                  <span className="muted xsmall">{i.reason}</span>
+                  <span className="muted xsmall">{i.reason}
+                    {!!i.local_files?.length && <span style={{ display: 'block' }}>{i.status === 'archived' ? 'Saved for Restore' : 'Back up for Restore'}: {i.local_files.slice(0, 6).join(', ')}{i.local_files.length > 6 ? ` and ${i.local_files.length - 6} more` : ''}</span>}
+                    {!!i.generated?.length && <span style={{ display: 'block' }}>Regenerable: {i.generated.slice(0, 6).join(', ')}{i.generated.length > 6 ? ` and ${i.generated.length - 6} more` : ''}</span>}
+                  </span>
                 </div>)}
               </div>
               {ready.length > 0 && <button type="button" className="btn sm" disabled={!!busy} onClick={() => setConfirmCleanup(true)}>Clean up {ready.length} merged</button>}

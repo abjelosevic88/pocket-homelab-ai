@@ -351,7 +351,7 @@ export function WorktreePanel({ id, threadId, onAsk, onClose }: { id: number; th
       </> : <>
         <button type="button" className="btn ghost danger-text" disabled={!!busy} onClick={() => setDialog('forget')}><Icon name="trash" size={14} />Delete for good</button>
         <span className="grow" />
-        <button type="button" className="btn primary" disabled={!!busy} onClick={() => act('restore', () => api.post(`${V1}/worktrees/${w.id}/restore`), () => 'Restored — its setup runs again')}>{busy === 'restore' ? <Spinner /> : <Icon name="undo" size={14} />}Restore</button>
+        <button type="button" className="btn primary" disabled={!!busy} onClick={() => act('restore', () => api.post<{ restore_warning?: string }>(`${V1}/worktrees/${w.id}/restore`), r => r.restore_warning ? `Restored; setup paused: ${r.restore_warning}` : 'Restored with saved local files — its setup runs again')}>{busy === 'restore' ? <Spinner /> : <Icon name="undo" size={14} />}Restore</button>
       </>}
     </>}>
       <div className="stack">

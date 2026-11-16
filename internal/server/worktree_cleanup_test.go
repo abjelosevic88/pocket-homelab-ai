@@ -61,11 +61,6 @@ func TestCleanupGitGuards(t *testing.T) {
 		{"dirty", "Uncommitted", func(t *testing.T, w *store.Worktree) {
 			_ = os.WriteFile(filepath.Join(w.Path, "file"), []byte("keep"), 0644)
 		}},
-		{"ignored", "Ignored local", func(t *testing.T, w *store.Worktree) {
-			gitT(t, w.Path, "config", "core.excludesFile", filepath.Join(w.Repo, ".git", "test-ignore"))
-			_ = os.WriteFile(filepath.Join(w.Repo, ".git", "test-ignore"), []byte(".env\n"), 0644)
-			_ = os.WriteFile(filepath.Join(w.Path, ".env"), []byte("keep"), 0644)
-		}},
 		{"locked", "locked", func(t *testing.T, w *store.Worktree) { gitT(t, w.Repo, "worktree", "lock", w.Path) }},
 		{"switched", "branch changed", func(t *testing.T, w *store.Worktree) { gitT(t, w.Path, "checkout", "-qb", "other") }},
 		{"detached", "branch changed", func(t *testing.T, w *store.Worktree) { gitT(t, w.Path, "checkout", "--detach") }},
@@ -324,4 +319,102 @@ func TestCleanupKeepsActiveWork(t *testing.T) {
 	if result.Status != "skipped" || !strings.Contains(result.Reason, "in use") {
 		t.Fatalf("use gate: %+v", result)
 	}
+}
+
+func TestCleanupIgnoredFilesLifecycle(t *testing.T) {
+	s, h, _ := testServer(t)
+	s.cfg.PeopleDir = ""
+	alex, u := person(t, s, h, "ignored-cleanup@example.test", "member", true)
+	ctx := context.Background()
+	w, _ := cleanupRepo(t)
+	if err := os.WriteFile(filepath.Join(w.Path, ".gitignore"), []byte(".env\nnode_modules/\ndist/\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitT(t, w.Path, "add", ".gitignore")
+	gitT(t, w.Path, "commit", "-qm", "ignore local files")
+	gitT(t, w.Repo, "merge", "--ff-only", w.Branch)
+	for p, value := range map[string]string{".env": "private worktree configuration", "dist/manual": "keep this output", "node_modules/pkg/index.js": "reinstall me"} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(w.Path, p)), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(w.Path, p), []byte(value), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Setup must not replace recovered configuration with the main checkout's copy.
+	if err := os.WriteFile(filepath.Join(w.Repo, ".env"), []byte("main configuration"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	w.UserID = u.ID
+	if err := s.store.CreateWorktree(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.worktreeFilesHelper(ctx, nil, w.Path); err != nil {
+		t.Skip("helper not built; run go generate ./internal/hold:", err)
+	}
+	preview := s.cleanupOne(ctx, u.ID, w.ID, cleanupInput{Preview: true})
+	if preview.Status != "ready" || len(preview.LocalFiles) != 2 || len(preview.Generated) != 1 {
+		t.Fatalf("ignored files block cleanup: %+v", preview)
+	}
+	if _, err := os.Stat(w.Path); err != nil {
+		t.Fatal("preview removed worktree", err)
+	}
+	var result cleanupResult
+	alex.want("POST", "/api/v1/worktrees/cleanup", cleanupInput{IDs: []int64{w.ID}, DeleteBranches: true}, 200, &result)
+	if len(result.Archived) != 1 {
+		t.Fatalf("cleanup: %+v", result)
+	}
+	if _, err := os.Stat(w.Path); !os.IsNotExist(err) {
+		t.Fatal("worktree not removed", err)
+	}
+	var restored worktreeView
+	alex.want("POST", fmt.Sprintf("/api/v1/worktrees/%d/restore", w.ID), map[string]any{}, 200, &restored)
+	if restored.RestoreWarning != "" {
+		t.Fatal(restored.RestoreWarning)
+	}
+	for n := 0; n < 100; n++ {
+		got, _ := s.store.GetWorktree(ctx, u.ID, w.ID)
+		if got.Setup != "running" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	data, err := os.ReadFile(filepath.Join(w.Path, ".env"))
+	if err != nil || string(data) != "private worktree configuration" {
+		t.Fatalf("configuration was not recovered: %q %v", data, err)
+	}
+	data, err = os.ReadFile(filepath.Join(w.Path, "dist/manual"))
+	if err != nil || string(data) != "keep this output" {
+		t.Fatalf("unknown ignored output lost: %q %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(w.Path, "node_modules")); !os.IsNotExist(err) {
+		t.Fatal("dependencies were backed up")
+	}
+	// Manual archive after restore must refresh the local-file backup too.
+	if err := os.WriteFile(filepath.Join(w.Path, ".env"), []byte("edited after restore"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	alex.want("POST", fmt.Sprintf("/api/v1/worktrees/%d/archive", w.ID), map[string]any{}, 200, nil)
+	alex.want("POST", fmt.Sprintf("/api/v1/worktrees/%d/restore", w.ID), map[string]any{}, 200, &restored)
+	if restored.RestoreWarning != "" {
+		t.Fatal(restored.RestoreWarning)
+	}
+	for n := 0; n < 100; n++ {
+		got, _ := s.store.GetWorktree(ctx, u.ID, w.ID)
+		if got.Setup != "running" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	data, err = os.ReadFile(filepath.Join(w.Path, ".env"))
+	if err != nil || string(data) != "edited after restore" {
+		t.Fatalf("stale local backup restored: %q %v", data, err)
+	}
+	alex.want("POST", fmt.Sprintf("/api/v1/worktrees/%d/archive", w.ID), map[string]any{}, 200, nil)
+	alex.want("DELETE", fmt.Sprintf("/api/v1/worktrees/%d", w.ID), nil, 204, nil)
+	entries, err := os.ReadDir(filepath.Join(w.Repo, ".git", "pocket-ai", "local-files"))
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("local backup was not deleted: %v %v", entries, err)
+	}
+
 }

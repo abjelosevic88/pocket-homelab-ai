@@ -61,7 +61,10 @@ Personal app assistance: [Briefing, workflows, memory, sources and document uplo
   them; every skipped worktree has a reason. Optional **Automatically clean up merged worktrees** runs hourly
   on the server for that person, including remote machines. Both paths preserve conversations and a recovery
   ref for Restore, never force removal, and keep worktrees with active agents/terminals, local changes,
-  ignored files, Git operations, locks or custom teardown for manual review. Automatic cleanup starts off.
+  Git operations, locks or custom teardown for manual review. Ignored dependency/tool-cache directories
+  (such as `node_modules` and `.next`) no longer block cleanup. Other ignored files, including `.env`, are
+  backed up privately outside Git objects and restored before setup runs. Unknown `dist/`, `build/` and data
+  folders are preserved too. The preview names the files to save and folders to regenerate. Automatic cleanup starts off.
 - **Agents that start agents**: an agent can start other agents (Claude Code or Codex, on any of your
   machines, in a folder or its own worktree), message them, wait for them and read what they wrote; each is a
   conversation of its own, nested under the one that started it, and its answer comes back by itself. Starting

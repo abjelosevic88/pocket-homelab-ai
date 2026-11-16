@@ -17,7 +17,7 @@ try {
     if (input.preview) {
      previewed = true
      return json({ archived: [], skipped: ['unfinished-work'], checked_at: now, items: [
-      { id: 1, branch: 'merged-work', status: 'ready', reason: 'Merged and safe to clean up' },
+      { id: 1, branch: 'merged-work', status: 'ready', reason: 'Merged and safe to clean up', local_files: ['.env', 'dist/output'], generated: ['node_modules/'] },
       { id: 2, branch: 'unfinished-work', status: 'skipped', reason: 'Uncommitted or untracked files' },
      ] })
     }
@@ -40,6 +40,8 @@ try {
   await page.goto(`${base}/worktrees`)
   await page.getByRole('button', { name: 'Clean up merged…', exact: true }).click()
   await page.getByText('Uncommitted or untracked files', { exact: true }).waitFor()
+  await page.getByText('Back up for Restore: .env, dist/output', { exact: true }).waitFor()
+  await page.getByText('Regenerable: node_modules/', { exact: true }).waitFor()
   assert.equal(previewed, true)
   assert.equal(cleaned, false)
   await page.getByRole('button', { name: 'Clean up 1 merged', exact: true }).click()

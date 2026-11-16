@@ -412,8 +412,16 @@ Same access rule as terminals (this server: owner/admins; people with a folder o
   users after startup and hourly thereafter. Disabling it prevents subsequent passes.
 
 Cleanups save the commit under `refs/pocket-ai/archive/<id>` and archive the worktree record; conversation
-history stays linked and Restore recreates the checkout. Ignored local files and custom teardown are kept
-for explicit manual review rather than silently discarded or executed by background cleanup. A merged
+history stays linked and Restore recreates the checkout. Known ignored dependency/cache directories
+(`node_modules`, `.next`, `.nuxt`, `.turbo`, `.parcel-cache`, `__pycache__`, `.pytest_cache`, `.mypy_cache`,
+`.ruff_cache`) are regenerable. All other ignored files and symlinks are backed up under the Git common
+folder's `pocket-ai/local-files/`, outside Git objects/refs, in private directories with owner-only files.
+Results include `local_files` and `generated` path lists; file contents are never returned. Backups are
+verified before removal and Restore recovers them before running setup, without overwriting existing
+files or following parent symlinks. Restore conflicts return `restore_warning` and pause setup; the backup
+stays available. Delete for good deletes the private backups too. A failed backup, special file or backup
+larger than 512 MB / 10,000 files keeps the worktree and names the blocker. Custom teardown still requires
+manual review. A merged
 GitHub PR only qualifies when its exact head, branch and base match and it is not from a fork; other forges
 can qualify via Git ancestry against the refreshed remote base. Missing PR credentials never authorize
 removal. Branch deletion uses an expected-commit check and never removes a remote branch.

@@ -2,16 +2,23 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/agent"
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/hold"
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/worktreefiles"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -57,10 +64,12 @@ func (s *Server) lockWorktreeRequest(r *http.Request) func() {
 }
 
 type cleanupItem struct {
-	ID     int64  `json:"id"`
-	Branch string `json:"branch"`
-	Status string `json:"status"` // ready | archived | skipped
-	Reason string `json:"reason"`
+	ID         int64    `json:"id"`
+	Branch     string   `json:"branch"`
+	Status     string   `json:"status"` // ready | archived | skipped
+	Reason     string   `json:"reason"`
+	LocalFiles []string `json:"local_files,omitempty"`
+	Generated  []string `json:"generated,omitempty"`
 }
 type cleanupResult struct {
 	Archived  []string      `json:"archived"`
@@ -267,7 +276,36 @@ func (s *Server) cleanupOne(ctx context.Context, uid, id int64, in cleanupInput)
 		}
 		return item
 	}
+	helper, helperErr := s.worktreeFilesHelper(ctx, h, wt.Path)
+	var files worktreefiles.Summary
+	if helperErr == nil {
+		raw, stderr, err := shOn(ctx, h, time.Minute, `"$1" worktree-files plan "$2"`, helper, wt.Path)
+		if err != nil {
+			item.Reason = "Could not preserve local files: " + scriptErr(stderr, err).Error()
+			return item
+		}
+		if err = json.Unmarshal([]byte(raw), &files); err != nil {
+			item.Reason = "Could not read the local-file backup plan"
+			return item
+		}
+	} else {
+		raw, _, err := shOn(ctx, h, 20*time.Second, `git -C "$1" ls-files --others --ignored --exclude-standard --directory -z`, wt.Path)
+		if err != nil || raw != "" {
+			item.Reason = "Local-file backup helper unavailable: " + helperErr.Error()
+			return item
+		}
+	}
+	for _, f := range files.Files {
+		item.LocalFiles = append(item.LocalFiles, f.Path)
+	}
+	item.Generated = files.Generated
 	item.Status, item.Reason = "ready", "Merged and safe to clean up"
+	if len(files.Files) > 0 {
+		item.Reason += fmt.Sprintf("; %d local files will be backed up for Restore", len(files.Files))
+	}
+	if len(files.Generated) > 0 {
+		item.Reason += fmt.Sprintf("; %d dependency/cache folders can be regenerated", len(files.Generated))
+	}
 	if in.Preview {
 		return item
 	}
@@ -280,7 +318,7 @@ func (s *Server) cleanupOne(ctx context.Context, uid, id int64, in cleanupInput)
 		del = "1"
 	}
 	// Rechecks HEAD, branch, registration and files immediately before removal.
-	out, stderr, err = shOn(ctx, h, time.Minute, wtCleanupRemove, wt.Path, wt.Repo, wt.Branch, head, ref, del)
+	out, stderr, err = shOn(ctx, h, 3*time.Minute, wtCleanupRemove, wt.Path, wt.Repo, wt.Branch, head, ref, del, helper)
 	if err != nil {
 		item.Status, item.Reason = "skipped", "Cleanup stopped: "+scriptErr(stderr, err).Error()
 		return item
@@ -297,6 +335,15 @@ func (s *Server) cleanupOne(ctx context.Context, uid, id int64, in cleanupInput)
 		return item
 	}
 	item.Status, item.Reason = "archived", "Cleaned up; conversation and recovery reference kept"
+	var saved worktreefiles.Summary
+	if json.Unmarshal([]byte(kv(out)["local_files"]), &saved) == nil && len(saved.Files) > 0 {
+		item.LocalFiles = nil
+		for _, f := range saved.Files {
+			item.LocalFiles = append(item.LocalFiles, f.Path)
+		}
+		item.Generated = saved.Generated
+		item.Reason += fmt.Sprintf("; %d local files saved for Restore", len(saved.Files))
+	}
 	if in.DeleteBranches && kv(out)["branch_deleted"] != "1" {
 		item.Reason += "; local branch retained because it changed or is in use"
 	}
@@ -344,4 +391,49 @@ func (s *Server) autoCleanupWorktrees(ctx context.Context) {
 			s.log.Warn("automatic worktree cleanup", "user", u.ID, "error", fmt.Sprint(err))
 		}
 	}
+}
+
+// The existing content-addressed helper also carries filesystem utilities.
+// For local personal sandboxes, install it inside their own home so the
+// same jailed shell can run it; never widen the sandbox's filesystem access.
+func (s *Server) worktreeFilesHelper(ctx context.Context, h *store.Host, dir string) (string, error) {
+	home := agent.PersonHome(dir)
+	if h != nil || home == "" {
+		return installHolder(ctx, h)
+	}
+	data, name, ok := hold.Binary(runtime.GOOS, runtime.GOARCH)
+	if !ok {
+		return "", errors.New("filesystem helper is not included in this build")
+	}
+	if !agent.Confined(home) {
+		return "", errors.New("personal home is outside its sandbox")
+	}
+	root, err := os.OpenRoot(home)
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	rel := filepath.Join(".pocket-ai", "bin")
+	if err = root.MkdirAll(rel, 0700); err != nil {
+		return "", err
+	}
+	target := filepath.Join(rel, name)
+	if existing, err := root.ReadFile(target); err == nil && string(existing) == string(data) {
+		return filepath.Join(home, target), nil
+	}
+	temp := target + ".install-" + rand.Text()
+	f, err := root.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0700)
+	if err != nil {
+		return "", err
+	}
+	defer root.Remove(temp)
+	_, err = f.Write(data)
+	err = errors.Join(err, f.Sync(), f.Close())
+	if err != nil {
+		return "", err
+	}
+	if err = root.Rename(temp, target); err != nil {
+		return "", err
+	}
+	return filepath.Join(home, target), nil
 }
