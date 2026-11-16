@@ -36,7 +36,7 @@ export function MachinesTab() {
         {tabs.map(t => (
           <button key={t.id} type="button" role="tab" aria-selected={sel === t.id} className={`mpick-t h-${t.health} ${sel === t.id ? 'on' : ''}`} onClick={() => pick(t.id)}>
             <span className="mpick-ico"><Icon name={t.icon} size={17} /><span className="mpick-dot" /></span>
-            <span className="mpick-main"><span className="mpick-name ellipsis">{t.name}</span><span className="mpick-sub">{t.sub}</span></span>
+            <span className="mpick-main"><span className="mpick-name ellipsis" title={t.name}>{t.name}</span><span className="mpick-sub">{t.sub}</span></span>
           </button>
         ))}
         {mayAdd && <button type="button" role="tab" aria-selected={sel === 'new'} className={`mpick-t mpick-add ${sel === 'new' ? 'on' : ''}`} onClick={() => pick('new')}>
