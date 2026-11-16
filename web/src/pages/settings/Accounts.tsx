@@ -17,7 +17,7 @@ import { Select } from '../../components/Select'
 import { Icon } from '../../components/icons'
 import { Confirm, CopyField, errMsg, Field, MenuButton, Modal, Spinner, useAsync, useToast, type MenuItem, useContextMenu } from '../../components/ui'
 import { ago, StatusDot } from './common'
-import { AddLoginTile, LoginGrid, LoginTile, MachineCard, osIcon } from './MachineParts'
+import { LoginList, MachineCard, osIcon } from './MachineParts'
 
 /** "max" → "Max", "PRO" → "Pro". */
 
@@ -59,8 +59,8 @@ export function AccountsSection() {
         <Icon name="refresh" size={15} className={list.loading || cliCheck ? 'spin' : ''} /></button>}>
       {pi && <PeopleNotice info={pi} isAdmin={isAdmin} />}
       {!list.data ? <div className="loading"><Spinner /> Checking the logins…</div> : (
-        <LoginGrid>
-          {[...list.data].sort((x, y) => (x.provider === y.provider ? 0 : x.provider === 'claude' ? -1 : 1) || (x.default ? -1 : y.default ? 1 : 0)).map(a => {
+        <LoginList onAdd={mayAdd ? setAdding : undefined} providers={providers.filter(p => p.available).map(p => p.id)}
+          items={[...list.data].sort((x, y) => (x.default ? -1 : y.default ? 1 : 0)).map(a => {
             const more: MenuItem[] = a.default ? [
               { label: a.signed_in ? 'Sign in again…' : 'Sign in…', icon: 'key', onSelect: () => setSignIn(accountSignIn(a)) },
             ] : [
@@ -71,19 +71,17 @@ export function AccountsSection() {
               { label: 'Remove…', icon: 'trash', danger: true, onSelect: () => setDel(a) },
             ]
             const manage = canManage(a) || (a.default && isAdmin)
-            return (
-              <LoginTile key={a.default ? `server-${a.provider}` : a.id} provider={a.provider} name={a.label} signedIn={a.signed_in} plan={a.plan} email={a.email} error={a.error} folder={a.home}
-                menu={manage ? more : undefined} onContextMenu={manage ? e => ctx.open(e, more) : undefined}
-                onSignIn={a.default ? (isAdmin ? () => setSignIn(accountSignIn(a)) : undefined) : manage ? () => setSignIn(accountSignIn(a)) : undefined}
-                tags={<>
-                  {a.default && <span className="lt-tag accent">Default</span>}
-                  <span className="lt-tag">{who(a)}</span>
-                  {a.same_as && <span className="lt-tag" title={`${a.label} and ${a.same_as} are signed in to the same account, so they share one set of plan limits.`}>Same account as {a.same_as}</span>}
-                </>} />
-            )
-          })}
-          {mayAdd && <AddLoginTile onAdd={setAdding} />}
-        </LoginGrid>
+            return {
+              key: a.default ? `server-${a.provider}` : String(a.id), provider: a.provider, name: a.label, signedIn: a.signed_in, plan: a.plan, email: a.email, error: a.error, folder: a.home,
+              menu: manage ? more : undefined, onContextMenu: manage ? (e: React.MouseEvent) => ctx.open(e, more) : undefined,
+              onSignIn: a.default ? (isAdmin ? () => setSignIn(accountSignIn(a)) : undefined) : manage ? () => setSignIn(accountSignIn(a)) : undefined,
+              tags: <>
+                {a.default && <span className="badge">Default</span>}
+                {a.same_as && <span className="badge" title={`${a.label} and ${a.same_as} are signed in to the same account, so they share one set of plan limits.`}>Same account as {a.same_as}</span>}
+              </>,
+              meta: <span>{who(a)}</span>,
+            }
+          })} />
       )}
       {list.error && <p className="danger-text small">{list.error}</p>}
       {(adding || edit) && <AccountDialog account={edit} provider={adding || 'claude'} people={people.data || []} isAdmin={isAdmin} own={!!pi?.jailed} onClose={() => { setAdding(null); setEdit(null) }}
