@@ -16,7 +16,8 @@ import { planName } from '../../lib/format'
 import { Select } from '../../components/Select'
 import { Icon } from '../../components/icons'
 import { Confirm, CopyField, errMsg, Field, MenuButton, Modal, Spinner, useAsync, useToast, type MenuItem, useContextMenu } from '../../components/ui'
-import { ago, Section, StatusDot } from './common'
+import { ago, StatusDot } from './common'
+import { AddLoginTile, LoginGrid, LoginTile, MachineCard, osIcon } from './MachineParts'
 
 /** "max" → "Max", "PRO" → "Pro". */
 
@@ -48,79 +49,41 @@ export function AccountsSection() {
   const accountSignIn = (a: Account): SignInTarget => ({ label: a.label, provider: a.provider, base: a.default ? `${V1}/accounts/server/${a.provider}/login` : `${V1}/accounts/${a.id}/login` })
 
   return (
-    <Section
-      title={<span className="machine-title">
-        <StatusDot status={!providers.length ? 'off' : providers.every(p => p.available) ? 'ok' : providers.some(p => p.available) ? 'warn' : 'error'} title="Pocket AI runs here" />
-        <span className="ellipsis">This server</span>
-      </span>}
-      sub={<span className="machine-meta">
-        <span>Where Pocket AI runs</span>
-        {providers.map(p => p.available
-          ? <span key={p.id}>{p.id === 'claude' ? 'Claude Code' : 'Codex'} {p.version.replace(/\s*\((Claude Code|Codex)\)$/, '').replace(/^codex-cli /, '')}</span>
-          : <span key={p.id} className="danger-text">{p.id === 'claude' ? 'Claude Code' : 'Codex'}: {p.error || 'not installed'}</span>)}
-      </span>}
-      actions={<>
-        <button type="button" className="btn sm ghost icon-only" aria-label="Check this server again" title="Check again" disabled={list.loading || cliCheck}
-          onClick={() => { setRefresh(n => n + 1); setCliCheck(true); reloadProviders().catch(() => {}).finally(() => setCliCheck(false)) }}>
-          <Icon name="refresh" size={14} className={list.loading || cliCheck ? 'spin' : ''} /></button>
-        {mayAdd && <button type="button" className="btn sm" onClick={() => setAdding('claude')}><Icon name="plus" size={14} />Add login</button>}
-      </>}>
+    <MachineCard icon={osIcon('', true)} name="This server"
+      health={!providers.length ? 'off' : providers.every(p => p.available) ? 'ok' : providers.some(p => p.available) ? 'warn' : 'error'}
+      healthLabel={providers.length && providers.every(p => p.available) ? 'Pocket AI runs here' : undefined}
+      meta={[pi?.owner ? <>owned by {pi.owner}</> : 'where Pocket AI runs', ...(list.data ? [`${list.data.length} ${list.data.length === 1 ? 'login' : 'logins'}`] : [])]}
+      clis={providers.map(p => ({ provider: p.id, version: p.available ? p.version : undefined, error: p.available ? undefined : p.error || 'not installed' }))}
+      actions={<button type="button" className="btn sm ghost icon-only" aria-label="Check this server again" title="Check again" disabled={list.loading || cliCheck}
+        onClick={() => { setRefresh(n => n + 1); setCliCheck(true); reloadProviders().catch(() => {}).finally(() => setCliCheck(false)) }}>
+        <Icon name="refresh" size={15} className={list.loading || cliCheck ? 'spin' : ''} /></button>}>
       {pi && <PeopleNotice info={pi} isAdmin={isAdmin} />}
-      {list.data && !list.data.length && mayAdd && (
-        <div className="callout info"><Icon name="key" size={15} /><span>Agents here run on <b>your own</b> Claude Code or Codex subscription. Add a login and sign in with it:{' '}
-          <button type="button" className="btn sm" onClick={() => setAdding('claude')}><Icon name="claude" size={13} />Claude Code</button>{' '}
-          <button type="button" className="btn sm" onClick={() => setAdding('codex')}><Icon name="codex" size={13} />Codex</button></span></div>
-      )}
       {!list.data ? <div className="loading"><Spinner /> Checking the logins…</div> : (
-        <div className="acct-groups">
-          {(['claude', 'codex'] as ProviderId[]).map(pid => {
-            const rows = list.data!.filter(a => a.provider === pid)
-            if (!rows.length) return null
+        <LoginGrid>
+          {[...list.data].sort((x, y) => (x.provider === y.provider ? 0 : x.provider === 'claude' ? -1 : 1) || (x.default ? -1 : y.default ? 1 : 0)).map(a => {
+            const more: MenuItem[] = a.default ? [
+              { label: a.signed_in ? 'Sign in again…' : 'Sign in…', icon: 'key', onSelect: () => setSignIn(accountSignIn(a)) },
+            ] : [
+              { label: a.signed_in ? 'Sign in again…' : 'Sign in…', icon: 'key', onSelect: () => setSignIn(accountSignIn(a)) },
+              { label: 'Edit…', icon: 'edit', onSelect: () => setEdit(a) },
+              ...(a.signed_in ? [{ label: 'Sign out', icon: 'log-out', onSelect: () => signOut(a) }] : []),
+              'sep',
+              { label: 'Remove…', icon: 'trash', danger: true, onSelect: () => setDel(a) },
+            ]
+            const manage = canManage(a) || (a.default && isAdmin)
             return (
-              <div key={pid} className={`acct-group ${pid}`}>
-                <div className="acct-group-h">
-                  <span className={`acct-group-ico ${pid}`}><Icon name={pid} size={16} /></span>
-                  <span className="acct-group-name">{pid === 'claude' ? 'Claude Code' : 'Codex'}</span>
-                  <span className="acct-group-n">{rows.length} {rows.length === 1 ? 'login' : 'logins'}</span>
-                  {mayAdd && <button type="button" className="btn sm ghost acct-group-add" onClick={() => setAdding(pid)}><Icon name="plus" size={13} />Add</button>}
-                </div>
-                {rows.map(a => {
-                  const more: MenuItem[] = a.default ? [
-                    { label: a.signed_in ? 'Sign in again…' : 'Sign in…', icon: 'key', onSelect: () => setSignIn(accountSignIn(a)) },
-                  ] : [
-                    { label: a.signed_in ? 'Sign in again…' : 'Sign in…', icon: 'key', onSelect: () => setSignIn(accountSignIn(a)) },
-                    { label: 'Edit…', icon: 'edit', onSelect: () => setEdit(a) },
-                    ...(a.signed_in ? [{ label: 'Sign out', icon: 'log-out', onSelect: () => signOut(a) }] : []),
-                    'sep',
-                    { label: 'Remove…', icon: 'trash', danger: true, onSelect: () => setDel(a) },
-                  ]
-                  return (
-                  <div key={a.default ? `server-${a.provider}` : a.id} className="acct-row" onContextMenu={canManage(a) || (a.default && isAdmin) ? e => ctx.open(e, more) : undefined}>
-                    <StatusDot status={a.signed_in ? 'ok' : a.error ? 'error' : 'off'}
-                      title={(a.signed_in ? 'Signed in' : a.error ? 'Error' : 'Not signed in') + (a.checked_at ? ` · checked ${ago(a.checked_at)}` : '')} />
-                    <div className="acct-main">
-                      <div className="acct-name">
-                        <span className="ellipsis">{a.label}</span>
-                        {a.signed_in ? (a.plan && <span className="badge ok">{planName(a.plan)}</span>) : a.error ? <span className="badge danger">Error</span> : <span className="badge">Not signed in</span>}
-                        {a.default && <span className="badge">Default</span>}
-                        {a.same_as && <span className="badge" title={`${a.label} and ${a.same_as} are signed in to the same account, so they share one set of plan limits.`}>Same account as {a.same_as}</span>}
-                      </div>
-                      {a.email && <div className="acct-email ellipsis">{a.email}</div>}
-                      <div className="acct-meta"><code>{a.home.replace(/^\/home\/[^/]+/, '~')}</code><span>{who(a)}</span></div>
-                      {a.error && <div className="danger-text xsmall" title={a.error}>{a.error}</div>}
-                    </div>
-                    <div className="acct-actions">
-                      {a.default && isAdmin && !a.signed_in && <button type="button" className="btn sm" onClick={() => setSignIn(accountSignIn(a))}><Icon name="key" size={13} />Sign in</button>}
-                      {(canManage(a) || (a.default && isAdmin)) && (
-                        <MenuButton label={`More for ${a.label}`} align="right" items={more}><Icon name="more" size={16} /></MenuButton>
-                      )}
-                    </div>
-                  </div>
-                )})}
-              </div>
+              <LoginTile key={a.default ? `server-${a.provider}` : a.id} provider={a.provider} name={a.label} signedIn={a.signed_in} plan={a.plan} email={a.email} error={a.error} folder={a.home}
+                menu={manage ? more : undefined} onContextMenu={manage ? e => ctx.open(e, more) : undefined}
+                onSignIn={a.default ? (isAdmin ? () => setSignIn(accountSignIn(a)) : undefined) : manage ? () => setSignIn(accountSignIn(a)) : undefined}
+                tags={<>
+                  {a.default && <span className="lt-tag accent">Default</span>}
+                  <span className="lt-tag">{who(a)}</span>
+                  {a.same_as && <span className="lt-tag" title={`${a.label} and ${a.same_as} are signed in to the same account, so they share one set of plan limits.`}>Same account as {a.same_as}</span>}
+                </>} />
             )
           })}
-        </div>
+          {mayAdd && <AddLoginTile onAdd={setAdding} />}
+        </LoginGrid>
       )}
       {list.error && <p className="danger-text small">{list.error}</p>}
       {(adding || edit) && <AccountDialog account={edit} provider={adding || 'claude'} people={people.data || []} isAdmin={isAdmin} own={!!pi?.jailed} onClose={() => { setAdding(null); setEdit(null) }}
@@ -131,7 +94,7 @@ export function AccountsSection() {
         message={<>Its threads continue on {pi?.jailed ? 'your other login' : 'the server login'} (the conversation is copied over on their next message). The folder <code>{del.home}</code> with the login and session files stays on the server.</>}
         onCancel={() => setDel(null)} onConfirm={async () => { const d = del; setDel(null); try { await api.del(`${V1}/accounts/${d.id}`); toast('Removed'); done() } catch (e) { toast(errMsg(e), 'err') } }} />}
       {ctx.menu}
-    </Section>
+    </MachineCard>
   )
 }
 

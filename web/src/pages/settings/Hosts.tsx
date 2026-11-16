@@ -15,13 +15,13 @@ import { Icon } from '../../components/icons'
 import { ProviderToggle } from '../../components/AgentPicker'
 import { Confirm, CopyField, errMsg, Field, MenuButton, Modal, Spinner, useAsync, useToast, type MenuItem } from '../../components/ui'
 import { SignInDialog, type SignInTarget } from './Accounts'
-import { ago, Section, StatusDot } from './common'
+import { ago } from './common'
+import { AddLoginTile, LoginGrid, LoginTile, MachineCard, osIcon, provName, tilde, type CliChip } from './MachineParts'
 
-const provName = (p: string) => p === 'codex' ? 'Codex' : 'Claude Code'
 
 /** Settings → Machines after "This server": a card per machine (status,
  *  versions, its logins by CLI) and a last card to add one. */
-export function HostsSection() {
+export function HostsSection({ logins }: { logins: HostLoginsState }) {
   const { user, hosts, reloadHosts, reloadAccounts } = useApp()
   const { toast } = useToast()
   const own = useAsync(() => api.get<{ people?: { jailed?: boolean } }>(`${V1}/settings`).then(r => !!r.people?.jailed), [])
@@ -31,7 +31,6 @@ export function HostsSection() {
   const [edit, setEdit] = useState<Host | 'new' | null>(null)
   const [del, setDel] = useState<Host | null>(null)
   const [checking, setChecking] = useState<number | null>(null)
-  const logins = useHostLogins(hosts)
   const [addLogin, setAddLogin] = useState<{ host: Host; provider: ProviderId } | null>(null)
   const [signIn, setSignIn] = useState<SignInTarget | null>(null)
   const [rmLogin, setRmLogin] = useState<HostLogin | null>(null)
@@ -60,41 +59,40 @@ export function HostsSection() {
           'sep',
           { label: 'Remove…', icon: 'trash', danger: true, onSelect: () => setDel(h) },
         ]
-        const versions = Object.entries(h.info.versions || {})
         const missing = Object.entries(h.info.missing || {})
         const busy = checking === h.id || logins.asking(h.id)
+        const clis: CliChip[] = (['claude', 'codex'] as ProviderId[]).flatMap((p): CliChip[] => h.info.versions?.[p] ? [{ provider: p, version: h.info.versions[p] }] : h.info.missing?.[p] ? [{ provider: p, error: h.info.missing[p] }] : [])
+        const list = logins.byHost[h.id]
+        const signed = list?.filter(l => !l.missing && l.signed_in).length
         return (
-          <Section key={h.id}
-            title={<span className="machine-title">
-              <StatusDot status={h.info.ok ? (missing.length ? 'warn' : 'ok') : h.info.checked_at ? 'error' : 'off'}
-                title={(h.info.ok ? 'Reachable' : 'Not ready') + (h.info.checked_at ? ` · checked ${ago(h.info.checked_at)}` : '')} />
-              <span className="ellipsis">{h.name}</span>
-              {!h.info.ok && <span className="badge danger">Not ready</span>}
-            </span>}
-            sub={<span className="machine-meta">
-              <code>ssh {h.port ? `-p ${h.port} ` : ''}{h.target}</code>
-              {h.info.os && <span>{h.info.os}</span>}
-              {versions.map(([p, v]) => <span key={p}>{provName(p)} {v.replace(/\s*\((Claude Code|Codex)\)$/, '').replace(/^codex-cli /, '')}</span>)}
-              {h.info.checked_at && <span>checked {ago(h.info.checked_at)}</span>}
-            </span>}
+          <MachineCard key={h.id} icon={osIcon(h.info.os)} name={h.name}
+            health={h.info.ok ? (missing.length ? 'warn' : 'ok') : h.info.checked_at ? 'error' : 'off'}
+            meta={[<code key="ssh">ssh {h.port ? `-p ${h.port} ` : ''}{h.target}</code>, ...(h.info.os ? [h.info.os] : []),
+              ...(list && signed !== undefined && !(h.info.error) ? [`${signed} signed in`] : []), ...(h.info.checked_at ? [`checked ${ago(h.info.checked_at)}`] : [])]}
+            clis={clis}
             actions={<>
               <button type="button" className="btn sm ghost icon-only" aria-label={`Check ${h.name} again`} title="Check again" disabled={busy} onClick={() => check(h)}>
-                <Icon name="refresh" size={14} className={busy ? 'spin' : ''} /></button>
+                <Icon name="refresh" size={15} className={busy ? 'spin' : ''} /></button>
               {isAdmin && <MenuButton label={`More for ${h.name}`} align="right" items={more}><Icon name="more" size={16} /></MenuButton>}
             </>}>
-            {missing.map(([p, why]) => <div key={p} className="muted xsmall">{provName(p)}: {why}</div>)}
-            {h.info.error && <div className="danger-text xsmall" title={h.info.error}>{h.info.error}</div>}
-            <HostLogins host={h} logins={logins.byHost[h.id]}
+            {h.info.error && <p className="mc-note bad" title={h.info.error}><Icon name="wifi-off" size={14} /><span>{h.info.error}</span></p>}
+            <HostLogins host={h} logins={list}
               onAdd={p => setAddLogin({ host: h, provider: p })} onSignIn={l => setSignIn(signInTarget(l))} onSignOut={signOut} onRemove={setRmLogin} />
-          </Section>
+          </MachineCard>
         )
       })}
-      <Section title={hosts.length ? 'Another machine' : 'Other machines'} sub={jailed
-        ? <>Run agents on a machine of yours: pick it next to the folder when you start a thread. Pocket AI connects with ssh using <b>your own key</b>, so only machines that let that key in are reachable; the machine needs Claude Code and/or Codex installed. Only you see your machines.</>
-        : <>Run agents on another machine, like Paseo does: pick it next to the folder when you start a thread. Pocket AI connects with ssh as <b>this server’s</b> user; the machine needs Claude Code and/or Codex installed. A tailnet name works.</>}
-        actions={isAdmin && <button type="button" className="btn primary sm" onClick={() => setEdit('new')}><Icon name="plus" size={14} />Add machine</button>}>
-        {!hosts.length && <p className="muted small" style={{ margin: 0 }}>Only this server so far.</p>}
-      </Section>
+      {isAdmin && (
+        <div className="mc-new">
+          <span className="mc-ico" aria-hidden><Icon name="server" size={22} /></span>
+          <div className="mc-new-main">
+            <h3>{hosts.length ? 'Add another machine' : 'Add a machine'}</h3>
+            <p>{jailed
+              ? <>A machine of yours that lets <b>your own key</b> in over ssh, with Claude Code or Codex installed. Pick it next to the folder when you start a thread; only you see it.</>
+              : <>Anything this server reaches over ssh — a Mac, a VM, a tailnet name — with Claude Code or Codex installed. Pick it next to the folder when you start a thread.</>}</p>
+          </div>
+          <button type="button" className="btn primary" onClick={() => setEdit('new')}><Icon name="plus" size={14} />Add machine</button>
+        </div>
+      )}
       {edit && <HostDialog own={jailed} host={edit === 'new' ? null : edit} onClose={() => setEdit(null)} onSaved={h => { setEdit(null); reloadHosts().catch(() => {}); logins.refresh(h.id); toast(h.info.ok ? `${h.name} is ready` : `Saved — ${h.info.error || 'not ready yet'}`, h.info.ok ? undefined : 'err') }} />}
       {del && <Confirm title={`Remove ${del.name}?`} confirmLabel="Remove"
         message={<>Agents running there are stopped. Its threads stay in your list but cannot continue until the machine is added again. Nothing on the machine itself is touched.</>}
@@ -114,7 +112,9 @@ export function HostsSection() {
 
 /** Each machine's logins, asked one machine at a time so a machine that is
  *  off (ssh waits 15s for it) does not hold up the others. */
-function useHostLogins(hosts: Host[]) {
+export type HostLoginsState = ReturnType<typeof useHostLogins>
+
+export function useHostLogins(hosts: Host[]) {
   const [byHost, setByHost] = useState<Record<number, HostLogin[]>>({})
   const [busy, setBusy] = useState<Record<number, boolean>>({})
   const ask = (id: number, fresh: boolean, live = () => true) => {
@@ -134,55 +134,31 @@ function useHostLogins(hosts: Host[]) {
 
 /** "Default login" for ~/.claude, "claude-max" for ~/.claude-max. */
 const loginName = (l: HostLogin) => l.label || 'Default login'
-const tilde = (p: string) => p.replace(/^\/(home|Users)\/[^/]+/, '~')
 const dirQ = (l: HostLogin) => l.dir ? `?dir=${encodeURIComponent(l.dir)}` : ''
 
-/** A machine's logins, grouped by CLI like this server's accounts. */
+/** A machine's logins as tiles, like this server's, and a tile to add one. */
 function HostLogins({ host, logins, onAdd, onSignIn, onSignOut, onRemove }: { host: Host; logins?: HostLogin[]; onAdd: (p: ProviderId) => void; onSignIn: (l: HostLogin) => void; onSignOut: (l: HostLogin) => void; onRemove: (l: HostLogin) => void }) {
   if (!logins) return <div className="loading"><Spinner /> Asking {host.name} about its logins…</div>
   const down = logins.length > 0 && logins.every(l => l.error && !l.missing)
   // the card already says why the machine cannot be reached
-  if (down) return host.info.error ? null : <p className="muted small" style={{ margin: 0 }}>Could not ask {host.name} about its logins{logins[0].error ? `: ${logins[0].error}` : ''}.</p>
-  const groups = (['claude', 'codex'] as ProviderId[]).map(pid => ({ pid, rows: logins.filter(l => l.provider === pid && !l.missing).sort((a, b) => (a.dir ? 1 : 0) - (b.dir ? 1 : 0) || loginName(a).localeCompare(loginName(b))) })).filter(g => g.rows.length)
-  if (!groups.length) return <p className="muted small" style={{ margin: 0 }}>Neither Claude Code nor Codex is installed on {host.name}.</p>
+  if (down) return host.info.error ? null : <p className="mc-note">Could not ask {host.name} about its logins{logins[0].error ? `: ${logins[0].error}` : ''}.</p>
+  const rows = logins.filter(l => !l.missing).sort((a, b) => (a.provider === b.provider ? 0 : a.provider === 'claude' ? -1 : 1) || (a.dir ? 1 : 0) - (b.dir ? 1 : 0) || loginName(a).localeCompare(loginName(b)))
+  const installed = (['claude', 'codex'] as ProviderId[]).filter(p => rows.some(l => l.provider === p))
+  if (!installed.length) return <p className="mc-note">Neither Claude Code nor Codex is installed on {host.name}.</p>
   return (
-    <div className="acct-groups">
-      {groups.map(({ pid, rows }) => (
-        <div key={pid} className={`acct-group ${pid}`}>
-          <div className="acct-group-h">
-            <span className={`acct-group-ico ${pid}`}><Icon name={pid} size={16} /></span>
-            <span className="acct-group-name">{provName(pid)}</span>
-            <span className="acct-group-n">{rows.length} {rows.length === 1 ? 'login' : 'logins'}</span>
-            <button type="button" className="btn sm ghost acct-group-add" onClick={() => onAdd(pid)}><Icon name="plus" size={13} />Add</button>
-          </div>
-          {rows.map(l => {
-            const more: MenuItem[] = [
-              { label: l.signed_in ? 'Sign in again…' : 'Sign in…', icon: 'key', onSelect: () => onSignIn(l) },
-              ...(l.signed_in ? [{ label: 'Sign out', icon: 'log-out', onSelect: () => onSignOut(l) }] : []),
-              ...(l.dir ? ['sep' as const, { label: 'Remove…', icon: 'trash', danger: true, onSelect: () => onRemove(l) }] : []),
-            ]
-            return (
-              <div key={l.dir || 'default'} className="acct-row">
-                <StatusDot status={l.signed_in ? 'ok' : l.error ? 'error' : 'off'} title={(l.signed_in ? 'Signed in' : l.error ? 'Error' : 'Not signed in') + (l.checked_at ? ` · checked ${ago(l.checked_at)}` : '')} />
-                <div className="acct-main">
-                  <div className="acct-name">
-                    <span className="ellipsis">{loginName(l)}</span>
-                    {l.signed_in ? (l.plan && <span className="badge ok">{planName(l.plan)}</span>) : l.error ? <span className="badge danger">Error</span> : <span className="badge">Not signed in</span>}
-                  </div>
-                  {l.email && <div className="acct-email ellipsis">{l.email}</div>}
-                  <div className="acct-meta"><code>{tilde(l.home)}</code></div>
-                  {l.error && <div className="danger-text xsmall" title={l.error}>{l.error}</div>}
-                </div>
-                <div className="acct-actions">
-                  {!l.signed_in && !l.error && <button type="button" className="btn sm" onClick={() => onSignIn(l)}><Icon name="key" size={13} />Sign in</button>}
-                  <MenuButton label={`More for ${loginName(l)} on ${host.name}`} align="right" items={more}><Icon name="more" size={16} /></MenuButton>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      ))}
-    </div>
+    <LoginGrid>
+      {rows.map(l => {
+        const more: MenuItem[] = [
+          { label: l.signed_in ? 'Sign in again…' : 'Sign in…', icon: 'key', onSelect: () => onSignIn(l) },
+          ...(l.signed_in ? [{ label: 'Sign out', icon: 'log-out', onSelect: () => onSignOut(l) }] : []),
+          ...(l.dir ? ['sep' as const, { label: 'Remove…', icon: 'trash', danger: true, onSelect: () => onRemove(l) }] : []),
+        ]
+        return <LoginTile key={l.provider + ':' + (l.dir || 'default')} provider={l.provider} name={loginName(l)} signedIn={l.signed_in} plan={l.plan} email={l.email} error={l.error} folder={l.home}
+          menu={more} menuLabel={`More for ${loginName(l)} on ${host.name}`} onSignIn={() => onSignIn(l)}
+          tags={!l.dir ? <span className="lt-tag accent">Default</span> : undefined} />
+      })}
+      <AddLoginTile onAdd={onAdd} providers={installed} />
+    </LoginGrid>
   )
 }
 
