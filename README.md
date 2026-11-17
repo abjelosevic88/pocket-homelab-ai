@@ -200,6 +200,12 @@ To update, use `deploy/update.sh <new binary>` rather than `systemctl --user res
 binary as a backup and, while agents work, lets Pocket AI restart itself once none is. A plain restart cuts every
 running turn off.
 
+Linked to Pocket Core (0.41.0 or newer), Pocket AI shows up on Core's Apps page and updates from there: press
+**Update**, or turn on Core's nightly automatic updates. Pocket AI asks Core about once a minute, downloads the
+release for its OS and CPU, checks its SHA-256 from Core's signed app catalog, keeps the old program as
+`pocket-ai.bak-<version>` and restarts once no agent is working, like `update.sh`. It needs to run under systemd or
+launchd and to be allowed to write the folder its program is in; otherwise Core says why and you update by hand.
+
 Put it behind your reverse proxy with TLS (it streams Server-Sent Events; Caddy and nginx with
 `proxy_buffering off` work) and keep it on a private network. It listens on `127.0.0.1:8195` by default; `HOST`
 takes several addresses (`127.0.0.1,172.17.0.1` lets a proxy in Docker reach it). `AUTH_MODE=none` is refused on
