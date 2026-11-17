@@ -60,6 +60,22 @@ function upsert(list: Item[], it: Item): Item[] {
   return next
 }
 
+// Where each conversation was left scrolled up to (the message at the top of
+// the view, how far it sat from the top, the oldest message loaded then), so
+// going back to its tab lands there instead of at the bottom. Scrolled to the
+// bottom: nothing kept, it opens at the bottom and follows new messages.
+type Spot = { key: string; off: number; first: number }
+const spots = new Map<string, Spot>()
+function itemEl(box: HTMLElement, key: string) { return box.querySelector<HTMLElement>(`#${CSS.escape('item-' + key)}`) }
+function spotIn(box: HTMLElement): Omit<Spot, 'first'> | null {
+  const top = box.getBoundingClientRect().top
+  for (const n of box.querySelectorAll<HTMLElement>('[id^="item-"]')) {
+    const r = n.getBoundingClientRect()
+    if (r.bottom > top + 1) return { key: n.id.slice(5), off: r.top - top }
+  }
+  return null
+}
+
 /** Also shown inside a notebook's chat column (threadId + embedded): no
  * notebook pane of its own there. */
 export default function ThreadPage({ onMenu, threadId, embedded, reading }: { onMenu?: () => void; threadId?: string; embedded?: boolean; reading?: Reading | null }) {
@@ -131,12 +147,22 @@ export default function ThreadPage({ onMenu, threadId, embedded, reading }: { on
       // a link to one message (#item-…) may point before the last turns: all of it then
       const all = window.location.hash.startsWith('#item-')
       const d = await api.get<ThreadDetail>(`${V1}/threads/${id}${all ? '' : '?tail=1'}`)
+      let got = d.items || [], more = d.earlier || 0
+      // back to where it was left: the older pages that were open then come along
+      const spot = !all && !loadedRef.current ? spots.get(id) : undefined
+      for (let n = 0; spot && more > 0 && n < 50; n++) {
+        const first = got.find(i => i.id > 0)?.id
+        if (!first || first <= spot.first) break
+        const p = await api.get<{ items: Item[]; earlier: number }>(`${V1}/threads/${id}/items?before=${first}`)
+        if (!p.items.length) break
+        got = [...p.items, ...got]; more = p.earlier
+      }
       setThread(d.thread)
       // reloaded (live updates came back): keep the older pages already shown
-      const first = (d.items || []).find(i => i.id > 0)?.id
+      const first = got.find(i => i.id > 0)?.id
       const kept = first ? (loadedRef.current || []).filter(i => i.id > 0 && i.id < first) : []
-      if (!kept.length) setEarlier(d.earlier || 0)
-      setItems(prev => [...kept, ...keepStreamed(prev, d.items || [])])
+      if (!kept.length) setEarlier(more)
+      setItems(prev => [...kept, ...keepStreamed(prev, got)])
       setMissing(false)
       upsertThread(d.thread)
     } catch (e) {
@@ -147,6 +173,7 @@ export default function ThreadPage({ onMenu, threadId, embedded, reading }: { on
 
   useEffect(() => {
     setThread(null); setItems(null); setEarlier(0); setMissing(false); setEditingTitle(false); atBottomRef.current = true; setAtBottom(true); setNewBelow(false)
+    loadedRef.current = null // the last conversation's messages aren't this one's
     load()
     setViewing(id)
     return () => setViewing(null)
@@ -210,7 +237,19 @@ export default function ThreadPage({ onMenu, threadId, embedded, reading }: { on
     if (el.scrollTop < lastTop.current - 1 && dist > 2) setStick(false)
     else if (dist < 24 && !touching.current) setStick(true)
     lastTop.current = el.scrollTop
+    if (!keepRaf.current) keepRaf.current = requestAnimationFrame(keepSpot)
   }
+  // remember the spot (once a frame at most) for coming back to this conversation
+  const keepRaf = useRef(0)
+  const keepSpot = () => {
+    keepRaf.current = 0
+    const el = scroller.current, list = loadedRef.current
+    if (!el || !list?.length) return // still loading (or just switched): nothing to say yet
+    if (atBottomRef.current) { spots.delete(id); return }
+    const s = spotIn(el)
+    if (s) spots.set(id, { ...s, first: list.find(i => i.id > 0)?.id ?? 0 })
+  }
+  useEffect(() => () => cancelAnimationFrame(keepRaf.current), [])
   // wheel, touch and keys arrive before the scroll does: let go before the next word lands
   const letGo = () => { if (atBottomRef.current) setStick(false) }
   const touchY = useRef(0)
@@ -235,6 +274,15 @@ export default function ThreadPage({ onMenu, threadId, embedded, reading }: { on
       firstPaint.current = false
       const target = hash ? document.getElementById(hash) : null
       if (target) { target.scrollIntoView({ block: 'center' }); target.classList.add('flash'); return }
+      // left scrolled up earlier: back to that message
+      const spot = hash ? undefined : spots.get(id)
+      const el = scroller.current
+      const at = spot && el ? itemEl(el, spot.key) : null
+      if (spot && el && at) {
+        el.scrollTop += at.getBoundingClientRect().top - el.getBoundingClientRect().top - spot.off
+        lastTop.current = el.scrollTop
+        if (el.scrollHeight - el.scrollTop - el.clientHeight > 2) { setStick(false); return }
+      }
       toBottom()
       return
     }
