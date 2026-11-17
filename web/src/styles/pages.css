@@ -635,3 +635,6 @@
 .wt-cleanup-result > .muted { grid-column: 1 / -1; overflow-wrap: anywhere; }
 
 .wt-cleanup-actions:not(:empty) { margin-bottom: 12px; }
+
+.wt-idle { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.wt-idle .select-trigger { width: auto; flex: 0 0 auto; min-width: 120px; }

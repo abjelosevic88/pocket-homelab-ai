@@ -115,6 +115,8 @@ export interface Settings {
   usage_widget: boolean
   thread_tabs: boolean
   worktree_auto_cleanup?: boolean
+  /** Archive worktrees with no prompts, commits or file changes for this many days (branch and work kept); 0 = never. */
+  worktree_idle_days?: number
   /** The sidebar menu in the person's order, "-id" = removed; [] = default (lib/sidebar.ts). */
   sidebar?: string[]
   /** Keyboard shortcuts changed from their defaults (lib/shortcuts.ts); "" = off. */

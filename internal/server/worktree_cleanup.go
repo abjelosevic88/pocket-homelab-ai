@@ -72,6 +72,11 @@ type cleanupInput struct {
 	DeleteBranches bool    `json:"delete_branches"`
 	Preview        bool    `json:"preview"`
 	IDs            []int64 `json:"ids"` // nil = all; [] = none
+	// IdleDays > 0 also archives worktrees nothing happened in for that
+	// long (no prompts, commits or file changes), merged or not, keeping
+	// their branch and uncommitted work. IdleOnly skips the merge check.
+	IdleDays int  `json:"idle_days"`
+	IdleOnly bool `json:"idle_only"`
 }
 
 // A separate path from manual Archive: never force removal, run arbitrary
@@ -225,21 +230,35 @@ func (s *Server) cleanupOne(ctx context.Context, uid, id int64, in cleanupInput)
 		item.Reason = "Custom teardown configured; use Archive from the worktree panel"
 		return item
 	}
+	if in.IdleOnly && in.IdleDays > 0 {
+		return s.cleanupIdle(ctx, h, wt, threads, in, "")
+	}
+	merged, attempted := s.cleanupMerged(ctx, h, wt, threads, in)
+	if merged.Status != "skipped" || attempted || in.IdleDays <= 0 {
+		return merged
+	}
+	return s.cleanupIdle(ctx, h, wt, threads, in, merged.Reason)
+}
+
+// cleanupMerged removes a worktree whose current commits are merged, and its
+// branch. attempted: removal began, so the folder may already be gone.
+func (s *Server) cleanupMerged(ctx context.Context, h *store.Host, wt *store.Worktree, threads []*store.Thread, in cleanupInput) (item cleanupItem, attempted bool) {
+	item = cleanupItem{ID: wt.ID, Branch: wt.Branch, Status: "skipped"}
 	// Agents often switch to a branch of their own; judge the one checked out.
 	out, stderr, err := shOn(ctx, h, 90*time.Second, wtCleanupInspect, wt.Path, wt.Repo, "", wt.Base, wt.BaseSHA, strconv.FormatInt(wt.ID, 10))
 	if err != nil {
 		item.Reason = "Could not verify merge: " + scriptErr(stderr, err).Error()
-		return item
+		return item, false
 	}
 	m := kv(out)
 	if m["reason"] != "" {
 		item.Reason = m["reason"]
-		return item
+		return item, false
 	}
 	head, branch := m["head"], m["branch"]
 	if head == "" || branch == "" {
 		item.Reason = "Could not verify the current commit"
-		return item
+		return item, false
 	}
 	item.Branch = branch
 	merged := m["merged"] == "1"
@@ -267,11 +286,11 @@ func (s *Server) cleanupOne(ctx context.Context, uid, id int64, in cleanupInput)
 		if m["pr_error"] == "1" {
 			item.Reason += "; PR lookup unavailable"
 		}
-		return item
+		return item, false
 	}
 	item.Status, item.Reason = "ready", "Merged and safe to clean up"
 	if in.Preview {
-		return item
+		return item, false
 	}
 	for _, t := range threads {
 		s.rt.stop(t.ID)
@@ -285,7 +304,7 @@ func (s *Server) cleanupOne(ctx context.Context, uid, id int64, in cleanupInput)
 	out, stderr, err = shOn(ctx, h, time.Minute, wtCleanupRemove, wt.Path, wt.Repo, branch, head, ref, del)
 	if err != nil {
 		item.Status, item.Reason = "skipped", "Cleanup stopped: "+scriptErr(stderr, err).Error()
-		return item
+		return item, true
 	}
 	// Restore recreates the branch that was actually checked out.
 	wt.Branch, wt.Status, wt.ArchivedAt, wt.MergedAt, wt.Setup, wt.ArchiveRef = branch, "archived", store.Now(), store.Now(), "", ref
@@ -297,13 +316,96 @@ func (s *Server) cleanupOne(ctx context.Context, uid, id int64, in cleanupInput)
 	defer cancel()
 	if err := s.store.UpdateWorktree(saveCtx, wt); err != nil {
 		item.Status, item.Reason = "skipped", "Folder removed and recovery saved, but recording the archive failed: "+err.Error()
-		return item
+		return item, true
 	}
 	item.Status, item.Reason = "archived", "Cleaned up; conversation and recovery reference kept"
 	if in.DeleteBranches && kv(out)["branch_deleted"] != "1" {
 		item.Reason += "; local branch retained because it changed or is in use"
 	}
+	return item, true
+}
+
+// cleanupIdle archives a worktree nothing happened in for in.IdleDays: no
+// prompt or reply in its conversations, no commit, checkout or file change
+// in the checkout, and not created or restored since. Unlike merged cleanup
+// it keeps the branch and saves uncommitted work, so Restore brings back
+// everything but ignored files. prior: why merged cleanup kept it.
+func (s *Server) cleanupIdle(ctx context.Context, h *store.Host, wt *store.Worktree, threads []*store.Thread, in cleanupInput, prior string) cleanupItem {
+	item := cleanupItem{ID: wt.ID, Branch: wt.Branch, Status: "skipped"}
+	keep := func(reason string) cleanupItem {
+		if prior != "" && prior != reason {
+			reason = prior + "; " + strings.ToLower(reason[:1]) + reason[1:]
+		}
+		item.Reason = reason
+		return item
+	}
+	out, stderr, err := shOn(ctx, h, 90*time.Second, wtIdleInspect, wt.Path, wt.Repo, "")
+	if err != nil {
+		return keep("Could not check for activity: " + scriptErr(stderr, err).Error())
+	}
+	m := kv(out)
+	if m["reason"] != "" {
+		return keep(m["reason"])
+	}
+	head, branch := m["head"], m["branch"]
+	act, err := strconv.ParseInt(m["act"], 10, 64)
+	if head == "" || branch == "" || err != nil {
+		return keep("Could not check for activity")
+	}
+	item.Branch = branch
+	last := time.Unix(act, 0)
+	seen := func(at string) {
+		if t, err := time.Parse(time.RFC3339Nano, at); err == nil && t.After(last) {
+			last = t
+		}
+	}
+	seen(wt.CreatedAt)
+	for _, t := range threads {
+		seen(t.ActivityAt)
+		seen(t.PromptAt)
+		seen(t.CreatedAt)
+	}
+	idleFor := time.Since(last)
+	if idleFor < time.Duration(in.IdleDays)*24*time.Hour {
+		return keep(fmt.Sprintf("Last active %s; idle cleanup after %d days", daysAgo(idleFor), in.IdleDays))
+	}
+	what := "branch and commits"
+	if m["dirty"] == "1" {
+		what = "branch, commits and uncommitted work"
+	}
+	idle := fmt.Sprintf("No activity for %d days", int(idleFor.Hours()/24))
+	item.Status, item.Reason = "ready", idle+"; can be archived ("+what+" kept)"
+	if in.Preview {
+		return item
+	}
+	for _, t := range threads {
+		s.rt.stop(t.ID)
+	}
+	ref := "refs/pocket-ai/archive/" + strconv.FormatInt(wt.ID, 10)
+	if _, stderr, err := shOn(ctx, h, 3*time.Minute, wtIdleArchive, wt.Path, wt.Repo, branch, head, m["act"], ref); err != nil {
+		item.Status, item.Reason = "skipped", "Cleanup stopped: "+scriptErr(stderr, err).Error()
+		return item
+	}
+	wt.Branch, wt.Status, wt.ArchivedAt, wt.Setup, wt.ArchiveRef = branch, "archived", store.Now(), "", ref
+	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := s.store.UpdateWorktree(saveCtx, wt); err != nil {
+		item.Status, item.Reason = "skipped", "Folder removed and recovery saved, but recording the archive failed: "+err.Error()
+		return item
+	}
+	item.Status, item.Reason = "archived", idle+"; archived with its "+what+" (Restore brings them back)"
 	return item
+}
+
+func daysAgo(d time.Duration) string {
+	switch n := int(d.Hours() / 24); n {
+	case 0:
+		return "today"
+	case 1:
+		return "yesterday"
+	default:
+		return fmt.Sprintf("%d days ago", n)
+	}
 }
 
 func (s *Server) handleWorktreeCleanupResult(w http.ResponseWriter, r *http.Request) {
@@ -342,16 +444,19 @@ func (s *Server) autoCleanupWorktrees(ctx context.Context) {
 	}
 }
 
-// autoCleanupUser runs one automatic pass for a person who opted in; also
-// right when they turn it on, instead of an hour later.
+// autoCleanupUser runs one automatic pass for a person who opted in to
+// merged or idle cleanup (or both); also right when they turn one on,
+// instead of an hour later.
 func (s *Server) autoCleanupUser(ctx context.Context, uid int64) {
-	if s.store.UserSetting(ctx, uid, "worktree_auto_cleanup") != "1" {
+	merged := s.store.UserSetting(ctx, uid, "worktree_auto_cleanup") == "1"
+	idleDays, _ := strconv.Atoi(s.store.UserSetting(ctx, uid, "worktree_idle_days"))
+	if !merged && idleDays <= 0 {
 		return
 	}
 	// Bound a pass across offline hosts and leave shutdown cancellable.
 	passCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
-	_, err := s.cleanupWorktrees(passCtx, uid, cleanupInput{DeleteBranches: true})
+	_, err := s.cleanupWorktrees(passCtx, uid, cleanupInput{DeleteBranches: true, IdleDays: idleDays, IdleOnly: !merged})
 	if err != nil && ctx.Err() == nil {
 		s.log.Warn("automatic worktree cleanup", "user", uid, "error", fmt.Sprint(err))
 	}

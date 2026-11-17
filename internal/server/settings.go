@@ -71,6 +71,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		ShowThinking        *bool                `json:"show_thinking"`
 		UsageWidget         *bool                `json:"usage_widget"`
 		WorktreeAutoCleanup *bool                `json:"worktree_auto_cleanup"`
+		WorktreeIdleDays    *int                 `json:"worktree_idle_days"`
 		ThreadTabs          *bool                `json:"thread_tabs"`
 		UsagePinned         *[]string            `json:"usage_pinned"`
 		Sidebar             *[]string            `json:"sidebar"`
@@ -213,6 +214,13 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	if in.NotifyURL != nil {
 		st.NotifyURL = strings.TrimSpace(*in.NotifyURL)
 	}
+	if in.WorktreeIdleDays != nil {
+		if *in.WorktreeIdleDays < 0 || *in.WorktreeIdleDays > 365 {
+			writeErr(w, http.StatusBadRequest, "worktree_idle_days must be 0 (never) to 365")
+			return
+		}
+		st.WorktreeIdleDays = *in.WorktreeIdleDays
+	}
 	for _, b := range []struct {
 		in  *bool
 		out *bool
@@ -230,7 +238,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	if in.NotifyToken != nil {
 		_ = s.store.SetUserSetting(ctx, u.ID, "notify_token", strings.TrimSpace(*in.NotifyToken))
 	}
-	if in.WorktreeAutoCleanup != nil && *in.WorktreeAutoCleanup && u.MayRun() {
+	if ((in.WorktreeAutoCleanup != nil && *in.WorktreeAutoCleanup) || (in.WorktreeIdleDays != nil && *in.WorktreeIdleDays > 0)) && u.MayRun() {
 		base := s.rt.ctx // the server's lifetime, not this request's
 		if base == nil {
 			base = context.Background()

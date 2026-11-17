@@ -56,6 +56,9 @@ type Settings struct {
 	// browser).
 	ThreadTabs          bool `json:"thread_tabs"`
 	WorktreeAutoCleanup bool `json:"worktree_auto_cleanup"`
+	// Archive worktrees with no prompts, commits or file changes for this
+	// many days (branch and uncommitted work kept); 0 = never.
+	WorktreeIdleDays int `json:"worktree_idle_days"`
 
 	// The sidebar menu: item ids in the person's order, "-id" = removed.
 	// Empty = the default menu; ids missing here keep their default place.
@@ -160,6 +163,8 @@ func (s *Store) GetSettings(ctx context.Context, userID int64) (Settings, error)
 			st.UsageWidget = v != "0"
 		case "worktree_auto_cleanup":
 			st.WorktreeAutoCleanup = v == "1"
+		case "worktree_idle_days":
+			st.WorktreeIdleDays, _ = strconv.Atoi(v)
 		case "thread_tabs":
 			st.ThreadTabs = v != "0"
 		case "usage_pinned":
@@ -194,6 +199,7 @@ func (s *Store) SaveSettings(ctx context.Context, userID int64, st Settings) err
 		"enter_send_now": b2s(st.EnterSendNow), "enter_sends": b2s(st.EnterSends), "show_thinking": b2s(st.ShowThinking),
 		"usage_widget": b2s(st.UsageWidget), "thread_tabs": b2s(st.ThreadTabs), "usage_pinned": strings.Join(st.UsagePinned, ","),
 		"worktree_auto_cleanup": b2s(st.WorktreeAutoCleanup),
+		"worktree_idle_days":    strconv.Itoa(st.WorktreeIdleDays),
 		"sidebar":               strings.Join(st.Sidebar, ","),
 		"shortcuts":             shortcutsJSON(st.Shortcuts),
 	})

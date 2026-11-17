@@ -6,7 +6,7 @@ const browser = await chromium.launch({ headless: true, executablePath: process.
 try {
  for (const width of [390, 1280]) {
   const context = await browser.newContext({ viewport: { width, height: 900 } })
-  let cleaned = false, auto = false, previewed = false, latest = null
+  let cleaned = false, auto = false, idleDays = 0, previewed = false, latest = null
   const now = new Date().toISOString()
   await context.route(`${base}/api/v1/**`, async route => {
    const req = route.request(), p = new URL(req.url()).pathname
@@ -29,9 +29,13 @@ try {
    if (p === '/api/v1/worktrees') return json([1, 2].map(id => ({ id, owner_id: 1, host_id: 0, repo: '/projects/app', path: `/projects/topic-${id}`, branch: id === 1 ? 'merged-work' : 'unfinished-work', base: 'main', status: cleaned && id === 1 ? 'archived' : 'active', setup: '', title: `Task ${id}`, created_at: now, threads: [] })))
    if (p === '/api/v1/worktrees/others' || p === '/api/v1/worktree-groups') return json([])
    if (p === '/api/v1/settings') {
-    if (req.method() === 'PUT') auto = !!req.postDataJSON().worktree_auto_cleanup
+    if (req.method() === 'PUT') {
+     const body = req.postDataJSON()
+     if ('worktree_auto_cleanup' in body) auto = !!body.worktree_auto_cleanup
+     if ('worktree_idle_days' in body) idleDays = body.worktree_idle_days
+    }
     const result = await route.fetch()
-    return json({ ...await result.json(), worktree_auto_cleanup: auto })
+    return json({ ...await result.json(), worktree_auto_cleanup: auto, worktree_idle_days: idleDays })
    }
    return route.continue()
   })
@@ -49,6 +53,11 @@ try {
   await page.getByRole('checkbox', { name: 'Automatically clean up merged worktrees' }).check()
   await page.getByText('Automatic cleanup enabled; checking now, then hourly', { exact: true }).waitFor()
   assert.equal(auto, true)
+  await page.getByRole('button', { name: 'Archive idle worktrees after' }).click()
+  await page.getByRole('option', { name: '30 days' }).click()
+  await page.getByText('Worktrees idle for 30 days will be archived; checking now, then hourly', { exact: true }).waitFor()
+  assert.equal(idleDays, 30)
+  assert.equal(auto, true, 'idle cleanup leaves merged cleanup as it was')
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
   assert.deepEqual(errors, [])
   await page.screenshot({ path: `/tmp/pocket-cleanup-${width}.png`, fullPage: true })

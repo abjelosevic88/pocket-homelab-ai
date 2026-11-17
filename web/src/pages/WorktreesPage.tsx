@@ -10,6 +10,7 @@ import { ago, shortPath } from '../lib/format'
 import type { Worktree } from '../lib/types'
 import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
+import { Select } from '../components/Select'
 import { WorktreePanel } from '../components/Worktree'
 import { type Anchor, Confirm, Empty, errMsg, Loading, Menu, type MenuItem, MenuButton, Spinner, useToast } from '../components/ui'
 
@@ -172,6 +173,13 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
       toast(enabled ? 'Automatic cleanup enabled; checking now, then hourly' : 'Automatic cleanup turned off')
     } catch (e) { toast(errMsg(e), 'err') } finally { setBusy('') }
   }
+  const setIdleDays = async (days: number) => {
+    setBusy('auto')
+    try {
+      await saveSettings({ worktree_idle_days: days })
+      toast(days ? `Worktrees idle for ${days} days will be archived; checking now, then hourly` : 'Idle cleanup turned off')
+    } catch (e) { toast(errMsg(e), 'err') } finally { setBusy('') }
+  }
   const adopt = async (o: Other) => {
     setBusy(o.path)
     try { await api.post(`${V1}/worktrees/adopt`, { host: o.host_id, path: o.path }); toast(`${o.branch || o.path} is managed here now`); reload() } catch (e) { toast(errMsg(e), 'err') } finally { setBusy('') }
@@ -278,7 +286,11 @@ export default function WorktreesPage({ onMenu }: { onMenu?: () => void }) {
           <section className="wt-cleanup" aria-label="Worktree cleanup">
             <div className="wt-cleanup-actions">{activeCount > 0 && <button type="button" className="btn sm" disabled={!!busy} onClick={() => cleanup(true)} title="Check current merge status and review what can be removed">{busy === 'cleanup' ? <Spinner /> : <Icon name="archive" size={13} />}Clean up merged</button>}</div>
             <label className="row"><input type="checkbox" checked={!!settings?.worktree_auto_cleanup} disabled={!settings || !!busy} onChange={e => toggleAutoCleanup(e.target.checked)} /> Automatically clean up merged worktrees</label>
-            <p className="muted xsmall">Checks right away, then hourly, even when this page is closed. Only merged, idle worktrees without uncommitted work are removed; ignored files (.env copies, node_modules) go with the folder. Conversations stay available, and archived worktrees can be restored.</p>
+            <div className="row wt-idle">Archive worktrees with no activity for
+              <Select label="Archive idle worktrees after" size="sm" searchable={false} value={settings?.worktree_idle_days || 0} disabled={!settings || !!busy} onChange={setIdleDays}
+                options={[0, 3, 7, 14, 30, 60, 90].map(d => ({ value: d, label: d ? `${d} days` : 'Never' }))} />
+            </div>
+            <p className="muted xsmall">Checks right away, then hourly, even when this page is closed. Merged cleanup removes merged worktrees and their branch. Idle cleanup archives any worktree with no prompts, commits or file changes for that long, keeping its branch and uncommitted work for Restore. Both leave worktrees with an agent at work or an open terminal alone; ignored files (.env copies, node_modules) go with the folder, and conversations stay.</p>
             {cleanupResult && <details open>
               <summary className="xsmall">{cleanupResult.items.filter(i => i.status === 'ready').length ? `${ready.length} ready to clean up` : `${cleanupResult.archived.length} cleaned up`} · {cleanupResult.skipped.length} kept · checked {ago(cleanupResult.checked_at)}</summary>
               <div className="wt-cleanup-results" aria-live="polite">

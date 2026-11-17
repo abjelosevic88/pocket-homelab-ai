@@ -64,6 +64,10 @@ Personal app assistance: [Briefing, workflows, memory, sources and document uplo
   Git operations, locks or custom teardown for manual review. Ignored files (.env copies, node_modules)
   go with the folder, as with Archive. A branch the agent switched to is judged instead of the original
   one. Automatic cleanup starts off; turning it on runs a pass right away.
+  Separately, **Archive worktrees with no activity for** (Never, 3–90 days) archives any worktree, merged or
+  not, after that long without a prompt, a commit or checkout, or a change to an uncommitted file. It keeps
+  the branch and saves uncommitted work under the recovery ref, so Restore brings it all back; the same
+  in-use checks apply.
 - **Agents that start agents**: an agent can start other agents (Claude Code or Codex, on any of your
   machines, in a folder or its own worktree), message them, wait for them and read what they wrote; each is a
   conversation of its own, nested under the one that started it, and its answer comes back by itself. Starting
