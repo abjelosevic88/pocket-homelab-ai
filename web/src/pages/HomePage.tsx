@@ -28,6 +28,8 @@ type Choice = AgentValue & { cwd: string; host_id?: number; worktree?: WorktreeS
 interface LinkDraft {
   id: string; provider: ProviderId | ''; account_id: number | null; model: string; effort: string; mode: string; cwd: string
   title: string; text: string; system: string; source: string; ref: string; ref_url: string; ref_label: string; thread_id: string | null
+  /** sent, and its conversation is still starting (making the worktree): wait for it */
+  starting?: boolean
   /** files the app attached (the issue's screenshots, documents): they go with the first message */
   uploads?: DraftFile[]
   /** the app asks for a git worktree of its own on this branch (a ticket's) */
@@ -117,6 +119,9 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
   const [params, setParams] = useSearchParams()
   const draftId = params.get('draft')
   const [draft, setDraft] = useState<LinkDraft | null>(null)
+  // the draft was sent (here before the panel went away, or elsewhere) and its
+  // conversation is still starting: wait for it instead of offering to send it again
+  const [draftStarting, setDraftStarting] = useState(false)
   const [draftFiles, setDraftFiles] = useState<DraftFile[]>([])
   const draftApplied = useRef('')
   const serverComposer = useRef<ComposerHandle>(null)
@@ -207,22 +212,36 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
     setParams(p => { p.delete('worktree'); return p }, { replace: true })
   }, [wtParam, !!choice, worktrees]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => { setDraftStarting(false) }, [draftId])
   // ?draft=<id>: load what the other app prepared (already sent → open that thread)
   useEffect(() => {
     setDraft(null)
     draftApplied.current = ''
-    if (!draftId) return
+    if (!draftId || draftStarting) return
     let live = true
     api.get<LinkDraft>(`${V1}/drafts/${encodeURIComponent(draftId)}`).then(d => {
       if (!live) return
       if (d.thread_id) { navigate(`/t/${d.thread_id}`, { replace: true }); return }
+      if (d.starting) { setDraftStarting(true); return }
       // the composer reads its slot when its draftKey switches to this draft (an edit in progress survives a reload)
       if (!sessionStorage.getItem('pai-draft-link-' + d.id)) sessionStorage.setItem('pai-draft-link-' + d.id, d.text)
       setDraftFiles(d.uploads || [])
       setDraft(d)
     }).catch(e => { if (live) { toast(errMsg(e), 'err'); setParams({}, { replace: true }) } })
     return () => { live = false }
-  }, [draftId]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [draftId, draftStarting]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!draftId || !draftStarting) return
+    let live = true
+    const look = () => api.get<LinkDraft>(`${V1}/drafts/${encodeURIComponent(draftId)}`).then(d => {
+      if (!live) return
+      if (d.thread_id) navigate(`/t/${d.thread_id}`, { replace: true })
+      else if (d.starting) timer = window.setTimeout(look, 1500)
+      else setDraftStarting(false) // the start failed: the prompt is back, ready to send
+    }, () => { if (live) timer = window.setTimeout(look, 3000) })
+    let timer = window.setTimeout(look, 1000)
+    return () => { live = false; window.clearTimeout(timer) }
+  }, [draftId, draftStarting]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!draft || !settings || !providersReady || draftApplied.current === draft.id) return
     draftApplied.current = draft.id
@@ -279,6 +298,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
       return true
     } catch (e) {
       if (draft && e instanceof ApiError && e.status === 409 && e.data.thread_id) { navigate(`/t/${e.data.thread_id}`); return true }
+      if (draft && e instanceof ApiError && e.status === 409) { setDraftStarting(true); return true }
       toast(errMsg(e), 'err'); return false
     }
   }
@@ -297,6 +317,11 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
 
   // Embedded in the app that prepared it: folder, agent and context are chosen there,
   // so only the prompt (filled in, ready to add to and send) and the composer's own chips
+  if (draftId && draftStarting) return (
+    <div className={embedded ? 'home embed-draft' : 'home'}>
+      <div className="embed-starting"><Loading label="Starting the conversation…" /></div>
+    </div>
+  )
   if (embedded && draftId) return (
     <div className="home embed-draft">
       {!draft || !choice || (params.get('send') === '1' && autoSent.current !== 'failed') ? <div className="embed-starting"><Loading label={params.get('send') === '1' ? 'Starting the conversation…' : 'Loading…'} /></div> : (

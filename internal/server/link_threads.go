@@ -255,6 +255,7 @@ func (s *Server) handleLinkCreateDraft(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "save draft")
 		return
 	}
+	s.warmDraftWorktree(u, d)
 	s.touch()
 	writeJSON(w, http.StatusCreated, map[string]any{"id": d.ID, "url": s.draftURL(d.ID), "files": files})
 }
@@ -409,6 +410,16 @@ func (s *Server) handleGetDraft(w http.ResponseWriter, r *http.Request) {
 			d.AccountID = &id
 		}
 	}
+	// sent, its conversation still starting (making the worktree): the page
+	// waits for it. A claim no start here holds any more (a restart) is let go.
+	starting := false
+	if d.UsedAt != nil && d.ThreadID == nil {
+		if _, starting = draftsStarting.Load(s.draftStartKey(d.ID)); !starting {
+			if err := s.store.FinishLinkDraft(r.Context(), d.ID, ""); err == nil {
+				d.UsedAt = nil
+			}
+		}
+	}
 	uploads := []uploadOut{}
 	for _, id := range d.UploadIDs {
 		if up, err := s.store.GetUpload(r.Context(), d.UserID, id); err == nil {
@@ -417,8 +428,9 @@ func (s *Server) handleGetDraft(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, struct {
 		*store.LinkDraft
-		Uploads []uploadOut `json:"uploads"`
-	}{d, uploads})
+		Uploads  []uploadOut `json:"uploads"`
+		Starting bool        `json:"starting"`
+	}{d, uploads, starting})
 }
 
 // linkStarts holds a draft while its thread starts: the first process start
@@ -436,7 +448,11 @@ func (s *Server) handleStartDraft(w http.ResponseWriter, r *http.Request) {
 	if !s.requireRun(w, r) {
 		return
 	}
-	ctx := r.Context()
+	// The start outlives the request: the app's panel goes away when the
+	// person switches to another issue or tab, and that must not stop a
+	// conversation half-way through making its worktree (it shows up there
+	// when they come back). What a warm-up saw of the repo is reused.
+	ctx := withRepoMemo(context.WithoutCancel(r.Context()))
 	u := userFrom(ctx)
 	d, err := s.store.GetLinkDraft(ctx, u.ID, chi.URLParam(r, "id"))
 	if err != nil {
@@ -467,10 +483,19 @@ func (s *Server) handleStartDraft(w http.ResponseWriter, r *http.Request) {
 			in.UploadIDs = append(in.UploadIDs, id)
 		}
 	}
+	startKey := s.draftStartKey(d.ID)
+	if _, busy := draftsStarting.LoadOrStore(startKey, struct{}{}); busy {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "this conversation is starting", "thread_id": ""})
+		return
+	}
+	defer draftsStarting.Delete(startKey) // after the thread is recorded (deferred calls run last)
 	ok, err := s.store.ClaimLinkDraft(ctx, u.ID, d.ID)
 	if err != nil {
 		s.fail(w, err, "draft")
 		return
+	}
+	if ok && draftClaimedHook != nil {
+		draftClaimedHook()
 	}
 	if !ok {
 		d, _ = s.store.GetLinkDraft(ctx, u.ID, d.ID)
@@ -512,9 +537,9 @@ func (s *Server) handleStartDraft(w http.ResponseWriter, r *http.Request) {
 	linkStarts.Delete(key)
 	linkStartMu.Unlock()
 
-	// Record the outcome even if the person left meanwhile (a closed panel
-	// cancels the request): a claim without its thread blocks the draft for good.
-	bg := context.WithoutCancel(ctx)
+	// Record the outcome even if the person left meanwhile: a claim without
+	// its thread blocks the draft for good.
+	bg := ctx
 	if t == nil {
 		_ = s.store.FinishLinkDraft(bg, d.ID, "")
 		s.fail(w, err, "start conversation")

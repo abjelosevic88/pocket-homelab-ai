@@ -366,7 +366,8 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	t, err := s.createThread(context.WithValue(r.Context(), startInBackground{}, true), userFrom(r.Context()), in, clientSource(in.Source), "")
+	// a closed tab must not stop a start half-way (making a worktree takes seconds)
+	t, err := s.createThread(context.WithValue(context.WithoutCancel(r.Context()), startInBackground{}, true), userFrom(r.Context()), in, clientSource(in.Source), "")
 	if err != nil && t == nil {
 		s.fail(w, err, "create thread")
 		return

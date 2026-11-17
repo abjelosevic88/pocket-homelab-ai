@@ -102,7 +102,7 @@ type wtConfigView struct {
 
 func (s *Server) repoConfig(ctx context.Context, h *store.Host, hostID int64, repo string) wtConfigView {
 	v := wtConfigView{DefaultCopy: defaultCopy}
-	out, _, err := shOn(ctx, h, 20*time.Second, wtReadConfig, repo)
+	out, err := s.readRepoConfig(ctx, h, hostID, repo)
 	if first, rest, _ := strings.Cut(out, "\n"); err == nil && strings.HasPrefix(first, "@@origin=") {
 		v.Project = gitProjectID(strings.TrimPrefix(first, "@@origin="))
 		out = rest
@@ -255,7 +255,7 @@ func (s *Server) unclaimedWorktree(ctx context.Context, hostID int64, m map[stri
 // createWorktree makes a worktree for a new thread started in cwd. It
 // returns the worktree and the folder inside it matching cwd.
 func (s *Server) createWorktree(ctx context.Context, u *store.User, h *store.Host, cwd string, spec newWorktree, text string) (*store.Worktree, string, error) {
-	info, err := inspectRepo(ctx, h, cwd)
+	info, err := s.inspectRepoMemo(ctx, h, cwd)
 	if err != nil {
 		return nil, "", err
 	}
@@ -564,7 +564,7 @@ func (s *Server) runSetup(w *store.Worktree, threadID string, copyFiles bool) {
 	if err != nil {
 		return
 	}
-	cfg := s.repoConfig(ctx, h, w.HostID, w.Repo).Effective
+	cfg := s.repoConfig(withRepoMemo(ctx), h, w.HostID, w.Repo).Effective // read moments ago by the start
 	var lines []string
 	if copyFiles {
 		if out, _, err := shOn(ctx, h, 2*time.Minute, wtCopy, append([]string{w.Repo, w.Path}, cfg.Copy...)...); err == nil {

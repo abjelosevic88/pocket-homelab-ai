@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -652,5 +653,90 @@ func TestForkInheritsLink(t *testing.T) {
 	app.want("GET", "/api/v1/link/threads?source=projects&ref=AS-9", nil, 200, &l)
 	if len(l) != 2 {
 		t.Fatalf("plain fork changed the issue: %d", len(l))
+	}
+}
+
+// The app's panel going away (another issue, another tab) cancels the start
+// request half-way; the conversation still starts, in its worktree, and the
+// draft page meanwhile says it is starting instead of offering it again.
+func TestLinkDraftStartOutlivesRequest(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	s, h, root := testServer(t)
+	owner, user := person(t, s, h, "link@example.test", "member", true)
+	linkCore(t, s, map[string]string{"pcx_valid": "link@example.test"})
+	fakeClaude(t, s, root)
+	app := &client{t: t, h: h, token: "pcx_valid"}
+	repo := filepath.Join(root, "repo")
+	if err := os.MkdirAll(repo, 0700); err != nil {
+		t.Fatal(err)
+	}
+	gitT(t, repo, "init", "-q", "-b", "main")
+	_ = os.WriteFile(filepath.Join(repo, "a.txt"), []byte("one\n"), 0o644)
+	gitT(t, repo, "add", "-A")
+	gitT(t, repo, "commit", "-q", "-m", "init")
+	var made struct{ ID string }
+	app.want("POST", "/api/v1/link/drafts", map[string]any{"cwd": repo, "text": "Fix AS-7", "source": "projects", "ref": "AS-7",
+		"worktree": map[string]any{"name": "you/as-7"}}, 201, &made)
+
+	// while it starts, the page waits (and a second send is refused, not doubled)
+	var during struct {
+		Starting bool    `json:"starting"`
+		UsedAt   *string `json:"used_at"`
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	draftClaimedHook = func() {
+		owner.want("GET", "/api/v1/drafts/"+made.ID, nil, 200, &during)
+		if code, _ := owner.call("POST", "/api/v1/drafts/"+made.ID+"/start", map[string]any{}); code != 409 {
+			t.Errorf("second start while starting: %d", code)
+		}
+		cancel() // the panel went away
+	}
+	t.Cleanup(func() { draftClaimedHook = nil })
+	b, _ := json.Marshal(map[string]any{"worktree": map[string]any{"mode": "new", "name": "you/as-7"}})
+	req := httptest.NewRequest("POST", "/api/v1/drafts/"+made.ID+"/start", bytes.NewReader(b)).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+owner.token)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	draftClaimedHook = nil
+	if !during.Starting || during.UsedAt == nil {
+		t.Fatalf("draft while starting: %+v", during)
+	}
+	if w.Code != 201 {
+		t.Fatalf("start with the request gone: %d %s", w.Code, w.Body.String())
+	}
+	var th struct {
+		ID         string `json:"id"`
+		WorktreeID int64  `json:"worktree_id"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &th)
+	t.Cleanup(func() {
+		for i := 0; i < 100 && s.holds().held(th.ID); i++ {
+			time.Sleep(50 * time.Millisecond)
+		}
+		s.rt.stop(th.ID)
+		time.Sleep(200 * time.Millisecond)
+	})
+	if th.WorktreeID == 0 {
+		t.Fatalf("no worktree: %s", w.Body.String())
+	}
+	var after struct {
+		ThreadID *string `json:"thread_id"`
+		Starting bool    `json:"starting"`
+	}
+	owner.want("GET", "/api/v1/drafts/"+made.ID, nil, 200, &after)
+	if after.ThreadID == nil || *after.ThreadID != th.ID || after.Starting {
+		t.Fatalf("draft after the start: %+v", after)
+	}
+
+	// a claim no start holds any more (Pocket AI restarted mid-start) is let go
+	var left struct{ ID string }
+	app.want("POST", "/api/v1/link/drafts", map[string]any{"cwd": repo, "text": "Fix AS-8", "source": "projects", "ref": "AS-8"}, 201, &left)
+	if ok, err := s.store.ClaimLinkDraft(t.Context(), user.ID, left.ID); !ok || err != nil {
+		t.Fatalf("claim: %v %v", ok, err)
+	}
+	owner.want("GET", "/api/v1/drafts/"+left.ID, nil, 200, &during)
+	if during.Starting || during.UsedAt != nil {
+		t.Fatalf("leftover claim kept: %+v", during)
 	}
 }
