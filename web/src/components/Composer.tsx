@@ -1,6 +1,6 @@
 import { Modal } from './ui'
-import { Snippets } from './Snippets'
-// The prompt box: text, images (paste / drop / camera / photo library), dictation, slash menu (the CLI's commands and skills; recipes run from ⌘J, never in here).
+import { Snippets, useSnippetList, type Snippet } from './Snippets'
+// The prompt box: text, images (paste / drop / camera / photo library), dictation, "$word" snippets, slash menu (the CLI's commands and skills; recipes run from ⌘J, never in here).
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api, upload, uploadWithProgress, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
@@ -229,6 +229,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
   const [atHi, setAtHi] = useState(0)
   const [atShut, setAtShut] = useState('')
   const [slashShut, setSlashShut] = useState('')
+  const [snipShut, setSnipShut] = useState('')
   const [ctx, setCtx] = useState<{ label: string; items: ParentContextItem[] } | null>(null)
   const [ctxBusy, setCtxBusy] = useState(false)
   // the menus open above the box; with no room there (a draft filling the panel) they open inside it
@@ -436,17 +437,34 @@ export const Composer = React.forwardRef<ComposerHandle, {
   const sideCommand: Skill[] = onSide ? [{ name: 'btw', description: 'Side question — answered from the chat so far, without interrupting the agent or joining its chat', argument_hint: '<question>', invoke: '/btw' }] : []
   const commandList: Skill[] = lead === '/' ? byName([...sideCommand, ...allCommands.filter(c => !onSide || c.name !== 'btw')], 8) : []
   const skillList: Skill[] = lead === '/' || lead === '$' ? byName(allSkills, 8) : []
-  type SlashPick = { skill: Skill; command?: boolean }
-  const slashList: SlashPick[] = [...commandList.map(skill => ({ skill, command: true })), ...skillList.map(skill => ({ skill }))]
-  const group = (p: SlashPick) => p.command ? 'Commands' : p.skill.scope === 'pocket-ai' ? 'Other agents' : 'Skills'
-  useEffect(() => setSlashHi(0), [slash, lead])
+  const before = text.slice(0, caret)
+  // "$word" anywhere (after a space or at the start) finds the person's snippets; "$5" stays money. Codex: "$" at the start also lists its skills.
+  const snipMatch = before !== snipShut ? /(^|\s)\$((?![\d.,])[^\s$]*)$/.exec(before) : null
+  const snipQ = snipMatch ? snipMatch[2].toLowerCase() : null
+  const allSnippets = useSnippetList(snipQ !== null)
+  const snippetList: Snippet[] = snipQ === null ? [] : allSnippets
+    .filter(s => s.title.toLowerCase().includes(snipQ) || (snipQ.length > 2 && s.body.toLowerCase().includes(snipQ)))
+    .sort((a, b) => Number(!a.title.toLowerCase().startsWith(snipQ)) - Number(!b.title.toLowerCase().startsWith(snipQ)) || Number(!a.title.toLowerCase().includes(snipQ)) - Number(!b.title.toLowerCase().includes(snipQ)))
+    .slice(0, 8)
+  type SlashPick = { skill: Skill; command?: boolean; snippet?: undefined } | { snippet: Snippet; skill?: undefined; command?: undefined }
+  const slashList: SlashPick[] = [...snippetList.map(snippet => ({ snippet })), ...commandList.map(skill => ({ skill, command: true })), ...skillList.map(skill => ({ skill }))]
+  const group = (p: SlashPick) => p.snippet ? 'Snippets' : p.command ? 'Commands' : p.skill.scope === 'pocket-ai' ? 'Other agents' : 'Skills'
+  useEffect(() => setSlashHi(0), [slash, lead, snipQ])
   const pick = (p: SlashPick) => {
+    if (p.snippet) {
+      if (!snipMatch) return
+      const start = caret - snipMatch[2].length - 1 // the "$"
+      const pos = start + p.snippet.body.length
+      setText(text.slice(0, start) + p.snippet.body + text.slice(caret))
+      setCaret(pos)
+      setTimeout(() => { ta.current?.focus(); ta.current?.setSelectionRange(pos, pos) }, 0)
+      return
+    }
     if (p.command && !p.skill.argument_hint && onCommand?.(p.skill.name, '')) { setText(''); return }
     setText(p.skill.invoke + ' ')
     setTimeout(() => ta.current?.focus(), 0)
   }
 
-  const before = text.slice(0, caret)
   // "@documents #tax" (or "@documents#tax"): search inside that app, up to three words
   const hashMatch = slash === null && before !== atShut ? /(^|\s)@([a-z][a-z0-9-]*) ?#((?:[^\s#]+ ?){0,3})$/i.exec(before) : null
   const atMatch = slash === null && !hashMatch ? /(^|\s)@([^\s@]*)$/.exec(before) : null
@@ -528,12 +546,13 @@ export const Composer = React.forwardRef<ComposerHandle, {
       const t = e.target as Node
       if (t === ta.current || box.current?.querySelector('.slash-menu')?.contains(t)) return
       setAtShut(before)
+      setSnipShut(before)
       setSlashShut(text)
     }
     document.addEventListener('pointerdown', down, true)
     return () => document.removeEventListener('pointerdown', down, true)
   }, [menuOpen, before, text])
-  const reopen = (e: React.MouseEvent<HTMLTextAreaElement>) => { setAtShut(''); setSlashShut(''); setCaret(e.currentTarget.selectionStart) }
+  const reopen = (e: React.MouseEvent<HTMLTextAreaElement>) => { setAtShut(''); setSlashShut(''); setSnipShut(''); setCaret(e.currentTarget.selectionStart) }
 
   // arrow keys move the highlight: keep it in view (the first row also shows its section heading)
   useEffect(() => {
@@ -556,7 +575,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
       if (e.key === 'ArrowDown') { e.preventDefault(); setSlashHi(h => (h + 1) % slashList.length); return }
       if (e.key === 'ArrowUp') { e.preventDefault(); setSlashHi(h => (h - 1 + slashList.length) % slashList.length); return }
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pick(slashList[slashHi]); return }
-      if (e.key === 'Escape') { e.preventDefault(); setText(''); return }
+      if (e.key === 'Escape') { e.preventDefault(); if (slash !== null) setText(''); else setSnipShut(before); return }
     }
     if (onSide && sideKeys && actionFor(e.nativeEvent, shortcutKeys) === 'side_question') { e.preventDefault(); askSide(); return }
     if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
@@ -626,15 +645,20 @@ export const Composer = React.forwardRef<ComposerHandle, {
   return (
     <div ref={box} className={`composer ${big ? 'big' : ''} ${disabled ? 'disabled' : ''}`}>
       {slashList.length > 0 && (
-        <div className={`slash-menu ${menuInside ? 'inside' : ''}`} role="listbox" aria-label="Commands and skills">
+        <div className={`slash-menu ${menuInside ? 'inside' : ''}`} role="listbox" aria-label={slash === null ? "Snippets" : "Commands, skills and snippets"}>
           {slashList.map((p, i) => {
             const first = i === 0 || group(p) !== group(slashList[i - 1])
             return (
-              <React.Fragment key={(p.command ? 'c' : 's') + p.skill.name}>
+              <React.Fragment key={p.snippet ? 'n' + p.snippet.id : (p.command ? 'c' : 's') + p.skill.name}>
                 {first && <div className="slash-h">{group(p)}</div>}
                 <button type="button" role="option" aria-selected={i === slashHi} className={`slash-row ${i === slashHi ? 'hi' : ''}`} onMouseMove={() => { if (i !== slashHi) setSlashHi(i) }} onMouseDown={e => e.preventDefault()} onClick={() => pick(p)}>
-                  <span className="slash-ico"><Icon name={p.command ? 'terminal' : 'sparkles'} size={14} /></span>
-                  <span className="grow"><span className="slash-name">{p.skill.invoke}{p.skill.argument_hint ? <span className="slash-hint"> {p.skill.argument_hint}</span> : null}</span><span className="slash-sub">{p.skill.description.slice(0, 110)}</span></span>
+                  {p.snippet ? <>
+                    <span className="slash-ico"><Icon name="bookmark" size={14} /></span>
+                    <span className="grow"><span className="slash-name">{p.snippet.title}</span><span className="slash-sub">{p.snippet.body.replace(/\s+/g, ' ').slice(0, 110)}</span></span>
+                  </> : <>
+                    <span className="slash-ico"><Icon name={p.command ? 'terminal' : 'sparkles'} size={14} /></span>
+                    <span className="grow"><span className="slash-name">{p.skill.invoke}{p.skill.argument_hint ? <span className="slash-hint"> {p.skill.argument_hint}</span> : null}</span><span className="slash-sub">{p.skill.description.slice(0, 110)}</span></span>
+                  </>}
                 </button>
               </React.Fragment>
             )

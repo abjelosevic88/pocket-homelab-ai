@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api, V1 } from '../lib/api'
 import { Icon } from './icons'
 import { Confirm, copyText, Empty, Field, Loading, Modal, Spinner, errMsg, noGrammarly, useAsync, useToast } from './ui'
@@ -6,12 +6,46 @@ import { Confirm, copyText, Empty, Field, Loading, Modal, Spinner, errMsg, noGra
 export type Snippet = { id: number; title: string; body: string }
 type Draft = { id?: number; title: string; body: string }
 
+/** Every word of the query in the title or the text, any case; the title matches rank first. */
+export function searchSnippets<T extends Snippet>(list: T[], query: string): T[] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean)
+  if (!words.length) return list
+  const hits = list.filter(s => { const all = (s.title + '\n' + s.body).toLowerCase(); return words.every(w => all.includes(w)) })
+  const inTitle = (s: T) => words.every(w => s.title.toLowerCase().includes(w))
+  return [...hits.filter(inTitle), ...hits.filter(s => !inTitle(s))]
+}
+
+let cache: { at: number; list: Snippet[] } | null = null
+/** Snippets changed here: the composer's "/" menu asks again. */
+function forgetSnippets() { cache = null }
+
+/** The person's snippets for the composer's "/" menu, fetched when it opens (cached 30 seconds). */
+export function useSnippetList(wanted: boolean): Snippet[] {
+  const [list, setList] = useState<Snippet[]>(() => cache?.list ?? [])
+  useEffect(() => {
+    if (!wanted) return
+    if (cache) setList(cache.list)
+    if (cache && Date.now() - cache.at < 30_000) return
+    let live = true
+    api.get<Snippet[]>(`${V1}/snippets`).then(r => {
+      cache = { at: Date.now(), list: r || [] }
+      if (live) setList(cache.list)
+    }).catch(() => {})
+    return () => { live = false }
+  }, [wanted])
+  return list
+}
+
 /** Shared by the library and composer; insertion always leaves sending to the person. */
 export function Snippets({ onInsert }: { onInsert?: (snippet: Snippet) => void }) {
-  const list = useAsync(() => api.get<Snippet[]>(`${V1}/snippets`))
+  const list = useAsync(() => api.get<Snippet[]>(`${V1}/snippets`).then(r => { forgetSnippets(); return r }))
   const [edit, setEdit] = useState<Draft | null>(null)
   const [del, setDel] = useState<Snippet | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [query, setQuery] = useState('')
+  const shown = list.data ? searchSnippets(list.data, query) : null
+  // in the composer the search takes the keys at once (not on phones: the keyboard would cover the list)
+  const focusSearch = !!onInsert && window.matchMedia?.('(pointer: fine)').matches
   const { toast } = useToast()
   const remove = async () => {
     if (!del || deleting) return
@@ -25,7 +59,17 @@ export function Snippets({ onInsert }: { onInsert?: (snippet: Snippet) => void }
     {list.error && <div className="callout error" role="alert"><span className="grow">{list.error}</span><button type="button" className="btn sm" onClick={list.reload}>Try again</button></div>}
     {list.loading && !list.data && <Loading />}
     {list.data?.length === 0 && <Empty icon="bookmark" title="No snippets yet">Save text you reuse in chats.</Empty>}
-    <div className="list-cards">{list.data?.map(s => <div className="list-card" key={s.id}>
+    {!!list.data?.length && <div className="search-box snippet-search">
+      <Icon name="search" size={15} />
+      <input type="search" autoFocus={focusSearch} aria-label="Search snippets" placeholder={`Search ${list.data.length} ${list.data.length === 1 ? 'snippet' : 'snippets'}…`} value={query}
+        onChange={e => setQuery(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Escape' && query) { e.preventDefault(); e.stopPropagation(); setQuery('') }
+          else if (e.key === 'Enter' && onInsert && shown?.[0]) { e.preventDefault(); onInsert(shown[0]) }
+        }} />
+    </div>}
+    {query.trim() && shown?.length === 0 && <p className="muted small">No snippet matches “{query.trim()}”.</p>}
+    <div className="list-cards">{shown?.map(s => <div className="list-card" key={s.id}>
       <div className="grow" style={{ minWidth: 0 }}><div className="list-card-title">{s.title}</div><div className="list-card-sub" style={{ whiteSpace: 'pre-wrap' }}>{s.body}</div></div>
       <div className="row wrap">
         <button type="button" className="btn sm" aria-label={`${onInsert ? 'Insert' : 'Copy'} snippet: ${s.title}`} onClick={async () => {
@@ -37,7 +81,7 @@ export function Snippets({ onInsert }: { onInsert?: (snippet: Snippet) => void }
         <button type="button" className="btn ghost icon-only" aria-label={`Delete snippet: ${s.title}`} onClick={() => setDel(s)}><Icon name="trash" size={15} /></button>
       </div>
     </div>)}</div>
-    {onInsert && <p className="muted small">Insert adds text to your draft. You choose when to send.</p>}
+    {onInsert && <p className="muted small">Insert adds text to your draft (Enter in the search inserts the first one). You choose when to send. Or type “$” and a word anywhere in your message.</p>}
     {edit && <SnippetEditor draft={edit} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); void list.reload() }} />}
     {del && <Confirm title={`Delete “${del.title}”?`} message={deleting ? 'Deleting…' : 'Text already inserted into a draft or chat is kept.'} onCancel={() => { if (!deleting) setDel(null) }} onConfirm={remove} />}
   </div>
