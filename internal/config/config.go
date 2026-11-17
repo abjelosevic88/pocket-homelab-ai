@@ -116,6 +116,31 @@ func envDuration(key string, def time.Duration) time.Duration {
 	return def
 }
 
+// serverOnly are Pocket AI's own settings: who it is to Pocket Core, where
+// its data lives, how people sign in. Agents, ssh and holders inherit the
+// process environment, so these must not be in it — an agent that starts a
+// test copy of Pocket AI (screenshots, a demo) would otherwise register with
+// Core as "ai" using the registration key, Core would mint a new token, and
+// the real server's token (and every Core sign-in) would stop working.
+var serverOnly = []string{
+	"DATA_DIR", "DB_PATH", "HOST", "PORT", "BASE_URL", "TRUST_PROXY",
+	"AUTH_MODE", "AUTH_PROXY_HEADER", "AUTH_PROXY_EMAIL_HEADER", "SESSION_TTL", "SECURE_COOKIES",
+	"ADMIN_EMAIL", "ADMIN_PASSWORD", "ADMIN_NAME",
+	"OIDC_ISSUER", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET", "OIDC_NAME", "OIDC_AUTO_CREATE",
+	"CORE_URL", "CORE_REGISTRATION_KEY", "CORE_APP_URL",
+	"NOTIFY_URL", "NOTIFY_KIND", "APNS_TEAM_ID", "APNS_KEY_ID", "APNS_KEY_FILE", "APNS_TOPIC",
+	"OFFICE_CONVERT_URL",
+}
+
+// ForgetServerEnv removes Pocket AI's own settings from the process
+// environment once they are loaded, so nothing it starts inherits them.
+// A restart (systemd, deploy/update.sh) reads them from the env file again.
+func ForgetServerEnv() {
+	for _, k := range serverOnly {
+		_ = os.Unsetenv(k)
+	}
+}
+
 // Load reads configuration from the environment.
 func Load() (*Config, error) {
 	dataDir := env("DATA_DIR", "./data")

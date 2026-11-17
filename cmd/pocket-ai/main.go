@@ -90,6 +90,7 @@ func mustLoad() (*config.Config, *slog.Logger, *store.Store) {
 		fmt.Fprintln(os.Stderr, "config:", err)
 		os.Exit(1)
 	}
+	config.ForgetServerEnv() // agents must not inherit the Core registration key
 	log := newLogger(cfg)
 	st, err := store.Open(cfg.DBPath, log)
 	if err != nil {
