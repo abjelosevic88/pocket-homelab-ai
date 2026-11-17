@@ -25,7 +25,7 @@ func (s *Server) ticketWorktree(ctx context.Context, u *store.User, h *store.Hos
 	if h != nil {
 		hostID = h.ID
 	}
-	info, err := inspectRepo(ctx, h, cwd)
+	info, err := s.inspectRepoMemo(ctx, h, cwd)
 	if err != nil || !info.Repo {
 		return &spec
 	}
@@ -48,9 +48,7 @@ func (s *Server) ticketWorktree(ctx context.Context, u *store.User, h *store.Hos
 	}
 	// start from today's base, not the last time someone pulled it: fast-forward
 	// only (a local branch with its own commits, or checked out, stays as it is)
-	if _, errOut, err := shOn(ctx, h, 45*time.Second, wtFastForward, info.Main, strings.TrimPrefix(spec.Base, "origin/")); err != nil {
-		s.log.Info("worktree base not brought up to date", "repo", info.Main, "base", spec.Base, "err", strings.TrimSpace(errOut))
-	}
+	s.freshenBase(ctx, h, info.Main, spec.Base)
 	return &spec
 }
 
