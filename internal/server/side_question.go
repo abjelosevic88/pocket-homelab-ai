@@ -10,20 +10,49 @@ import (
 	"time"
 
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/agent"
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
 )
 
 const maxSideQuestionBytes = 8000
 
+// maxSideHistoryBytes bounds what a side question reads (~90k tokens): every
+// message first, then as many tool calls with their results as fit, newest first.
+const maxSideHistoryBytes = 320000
+
 const sideQuestionSystem = "You answer a quick side question about an ongoing conversation between a person and an AI agent. " +
-	"The conversation so far is in the user message as reference text; the agent may still be working on it right now. " +
+	"The conversation so far is in the user message as reference text, with the tools the agent ran and what they returned; the agent may still be working on it right now. " +
 	"You cannot run tools, read files or change anything, and nothing you write reaches the agent. " +
 	"Answer briefly and directly from the conversation and your general knowledge. " +
 	"If the answer depends on something the conversation does not show, say so in one line instead of guessing. " +
 	"Reply in the language of the question."
 
+// sideHistory is the whole chat for a side question: all messages, plus the
+// input and result of the agent's tool calls (the files it read, commands it
+// ran) while they fit, newest first; older ones shrink to one-line labels.
+func (s *Server) sideHistory(ctx context.Context, t *store.Thread, rows []*store.Item) (string, error) {
+	entries, err := s.historyEntries(ctx, t, rows, true)
+	if err != nil || len(entries) == 0 {
+		return "", err
+	}
+	texts := make([]string, len(entries))
+	size := 0
+	for i, e := range entries {
+		texts[i] = e.text
+		size += len(e.text) + 2
+	}
+	room := maxSideHistoryBytes - 1000 - size // header
+	for i := len(entries) - 1; i >= 0 && room > 0; i-- {
+		if d := entries[i].detail; d != "" && len(d)-len(texts[i]) <= room {
+			room -= len(d) - len(texts[i])
+			texts[i] = d
+		}
+	}
+	return fitHistory(t, texts, maxSideHistoryBytes), nil
+}
+
 // handleSideQuestion answers a question about a chat without touching it: a
-// one-shot, tool-less completion on the person's app model, from the same
-// bounded text snapshot a fork carries. The running agent keeps working, its
+// one-shot, tool-less completion on the person's app model, from the whole
+// chat, tool results included (sideHistory). The running agent keeps working, its
 // session, queue and history stay as they are, and the answer is not saved.
 func (s *Server) handleSideQuestion(w http.ResponseWriter, r *http.Request) {
 	if !s.requireRun(w, r) {
@@ -54,7 +83,7 @@ func (s *Server) handleSideQuestion(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "read history")
 		return
 	}
-	history, err := s.forkHistory(ctx, t, rows)
+	history, err := s.sideHistory(ctx, t, rows)
 	if err != nil {
 		s.fail(w, err, "read history")
 		return

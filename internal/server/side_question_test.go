@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +24,8 @@ func TestSideQuestionAnswersWithoutTouchingTheChat(t *testing.T) {
 	for _, it := range []agent.Item{
 		{Key: "u1", Kind: "user", Text: "Set the approval threshold to 70"},
 		{Key: "a1", Kind: "assistant", Text: "Changing the threshold in the Worker now."},
+		{Key: "t1", Kind: "tool", Tool: &agent.Tool{Name: "Read", Title: "catalog.yml", Status: "done", Input: json.RawMessage(`{"file_path":"catalog.yml"}`), Output: "on:\n  schedule:\n    - cron: '0 3 * * *'"}},
+		{Key: "t2", Kind: "tool", Tool: &agent.Tool{Name: "Bash", Title: "go test", Status: "running", Input: json.RawMessage(`{"command":"go test ./..."}`)}},
 		{Key: "q1", Kind: "user", Text: "queued follow-up", Queued: true},
 	} {
 		data, _ := json.Marshal(it)
@@ -48,7 +51,7 @@ for line in sys.stdin:
     if m.get('type')=='user':
         c=m['message']['content']
         text=c if isinstance(c,str) else ''.join(b.get('text','') for b in c)
-        ans='saw-history' if 'threshold to 70' in text and 'Changing the threshold' in text and 'queued follow-up' not in text and 'why 70?' in text else 'missing'
+        ans='saw-history' if 'threshold to 70' in text and 'Changing the threshold' in text and 'queued follow-up' not in text and 'why 70?' in text and "cron: '0 3 * * *'" in text and 'go test ./...' in text else 'missing'
         print(json.dumps({'type':'assistant','message':{'id':'a','content':[{'type':'text','text':ans}]}}),flush=True)
         print(json.dumps({'type':'result','subtype':'success','usage':{'input_tokens':5,'output_tokens':2}}),flush=True)
         break
@@ -79,5 +82,41 @@ for line in sys.stdin:
 	got, _ := s.store.GetThread(ctx, u.ID, parent.ID)
 	if got.Status != "running" || got.ProviderSessionID != parent.ProviderSessionID || strings.Contains(got.Title, "70") {
 		t.Fatalf("side question changed the thread: %+v", got)
+	}
+}
+
+func TestSideHistoryKeepsMessagesAndNewestToolResults(t *testing.T) {
+	s, h, root := testServer(t)
+	ctx := t.Context()
+	_, u := person(t, s, h, "long@example.test", "admin", true)
+	th := thread(t, s, u.ID, root)
+	big := strings.Repeat("x", maxToolOutputBytes)
+	var items []agent.Item
+	for i := range 60 {
+		items = append(items,
+			agent.Item{Key: fmt.Sprintf("u%d", i), Kind: "user", Text: fmt.Sprintf("message %d", i)},
+			agent.Item{Key: fmt.Sprintf("t%d", i), Kind: "tool", Tool: &agent.Tool{Name: "Read", Title: "f", Status: "done", Output: fmt.Sprintf("result-%d-%s", i, big)}})
+	}
+	for _, it := range items {
+		data, _ := json.Marshal(it)
+		if _, err := s.store.UpsertItem(ctx, th.ID, it.Key, it.Kind, data, it.Text); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, _ := s.store.ListItems(ctx, th.ID)
+	hist, err := s.sideHistory(ctx, th, rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hist) > maxSideHistoryBytes {
+		t.Fatalf("history over budget: %d", len(hist))
+	}
+	for i := range 60 {
+		if !strings.Contains(hist, fmt.Sprintf("message %d\n", i)) {
+			t.Fatalf("message %d dropped", i)
+		}
+	}
+	if !strings.Contains(hist, "result-59-") || strings.Contains(hist, "result-0-") || strings.Contains(hist, "omitted") {
+		t.Fatalf("expected newest tool results only, every message kept")
 	}
 }
