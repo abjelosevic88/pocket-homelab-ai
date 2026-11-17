@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -476,6 +477,15 @@ func (s *Server) registerWithCore(ctx context.Context) error {
 	}
 	if s.cfg.BaseURL != "" {
 		m.OIDC = &core.OIDCRequest{RedirectURIs: []string{s.cfg.BaseURL + "/api/v1/auth/oidc/callback"}}
+	}
+	// Enrolling with the registration key mints a new token for "ai" and
+	// kills the one the real server holds. A copy listening on another port
+	// than the address it would give Core (a screenshot or test copy started
+	// from an agent that inherited the server's .env) is not that server.
+	if s.core.Token() == "" {
+		if u, err := url.Parse(s.cfg.CoreAppURL); err == nil && u.Port() != "" && u.Port() != strconv.Itoa(s.cfg.Port) {
+			return fmt.Errorf("not enrolling with Pocket Core: this copy listens on port %d but CORE_APP_URL is %s (another Pocket AI's address); enrolling would take that server's Core token", s.cfg.Port, s.cfg.CoreAppURL)
+		}
 	}
 	reg, err := s.core.Register(ctx, s.cfg.CoreRegistrationKey, m)
 	if err != nil {

@@ -14,11 +14,11 @@ build:                     ## build the Go binary (embeds web/dist and pocket-ho
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o pocket-ai ./cmd/pocket-ai
 
 run: build                 ## run locally on 127.0.0.1:8195 without a login (loopback only)
-	DATA_DIR=./data AUTH_MODE=none HOST=127.0.0.1 LOG_LEVEL=debug ./pocket-ai
+	CORE_URL= CORE_REGISTRATION_KEY= DATA_DIR=./data AUTH_MODE=none HOST=127.0.0.1 LOG_LEVEL=debug ./pocket-ai
 
 dev:                       ## backend on :8195 + vite dev server on :5173 with hot reload
 	@echo "Starting API on :8195 and Vite on :5173 (open http://localhost:5173)"
-	@(DATA_DIR=./data AUTH_MODE=none HOST=127.0.0.1 LOG_LEVEL=debug go run ./cmd/pocket-ai &) && cd web && PAI_API=http://127.0.0.1:8195 npm run dev
+	@(CORE_URL= CORE_REGISTRATION_KEY= DATA_DIR=./data AUTH_MODE=none HOST=127.0.0.1 LOG_LEVEL=debug go run ./cmd/pocket-ai &) && cd web && PAI_API=http://127.0.0.1:8195 npm run dev
 
 test:                      ## run Go tests and type-check the UI
 	go vet ./... && go test ./...
