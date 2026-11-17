@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -377,5 +378,151 @@ func TestCleanupKeepsActiveWork(t *testing.T) {
 	unlock()
 	if result.Status != "skipped" || !strings.Contains(result.Reason, "in use") {
 		t.Fatalf("use gate: %+v", result)
+	}
+}
+
+// ageWorktree makes everything in a cleanupRepo fixture look old: the
+// checkout's reflog, its files, and the records Pocket AI keeps.
+func ageWorktree(t *testing.T, s *Server, w *store.Worktree, days int, files ...string) {
+	t.Helper()
+	old := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+	paths := []string{gitT(t, w.Path, "rev-parse", "--path-format=absolute", "--git-path", "logs/HEAD")}
+	for _, f := range files {
+		paths = append(paths, filepath.Join(w.Path, f))
+	}
+	for _, p := range paths {
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	at := old.UTC().Format(time.RFC3339Nano)
+	if _, err := s.store.DB.Exec(`UPDATE worktrees SET created_at = ? WHERE id = ?`, at, w.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.store.DB.Exec(`UPDATE threads SET created_at = ?, activity_at = ?, prompt_at = ? WHERE worktree_id = ?`, at, at, at, w.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIdleCleanupArchivesAndRestoresEverything(t *testing.T) {
+	t.Setenv("GIT_COMMITTER_DATE", time.Now().Add(-40*24*time.Hour).Format(time.RFC3339))
+	s, h, _ := testServer(t)
+	s.cfg.PeopleDir = ""
+	_, u := person(t, s, h, "idle-cleanup@example.test", "member", true)
+	w, _ := cleanupRepo(t) // one unmerged commit
+	_ = os.WriteFile(filepath.Join(w.Path, "draft"), []byte("unsaved idea\n"), 0644)
+	_ = os.WriteFile(filepath.Join(w.Path, "file"), []byte("half done\n"), 0644)
+	head := gitT(t, w.Path, "rev-parse", "HEAD")
+	w.UserID = u.ID
+	ctx := context.Background()
+	if err := s.store.CreateWorktree(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	th := &store.Thread{ID: "idle-thread", UserID: u.ID, Provider: "codex", Cwd: w.Path, WorktreeID: w.ID, Title: "Old idea"}
+	if err := s.store.CreateThread(ctx, th); err != nil {
+		t.Fatal(err)
+	}
+	in := cleanupInput{DeleteBranches: true, IdleDays: 7}
+
+	// Recent prompt: kept, whatever the files say.
+	ageWorktree(t, s, w, 30, "draft", "file")
+	if _, err := s.store.DB.Exec(`UPDATE threads SET activity_at = ? WHERE id = ?`, store.Now(), th.ID); err != nil {
+		t.Fatal(err)
+	}
+	if r := s.cleanupOne(ctx, u.ID, w.ID, in); r.Status != "skipped" || !strings.Contains(r.Reason, "last active today") || !strings.Contains(r.Reason, "Uncommitted") {
+		t.Fatalf("recent prompt: %+v", r)
+	}
+	// Recent edit to an uncommitted file: kept.
+	ageWorktree(t, s, w, 30, "draft", "file")
+	if err := os.Chtimes(filepath.Join(w.Path, "draft"), time.Now(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if r := s.cleanupOne(ctx, u.ID, w.ID, in); r.Status != "skipped" || !strings.Contains(r.Reason, "today") {
+		t.Fatalf("recent edit: %+v", r)
+	}
+	// Recent commit or checkout (this checkout's reflog): kept.
+	ageWorktree(t, s, w, 30, "draft", "file")
+	reflog := gitT(t, w.Path, "rev-parse", "--path-format=absolute", "--git-path", "logs/HEAD")
+	_ = os.Chtimes(reflog, time.Now(), time.Now())
+	if r := s.cleanupOne(ctx, u.ID, w.ID, in); r.Status != "skipped" || !strings.Contains(r.Reason, "today") {
+		t.Fatalf("recent commit: %+v", r)
+	}
+	ageWorktree(t, s, w, 30, "draft", "file")
+	m := runSh(t, wtIdleInspect, w.Path, w.Repo, "")
+	if act, _ := strconv.ParseInt(m["act"], 10, 64); time.Since(time.Unix(act, 0)) < 29*24*time.Hour || m["dirty"] != "1" {
+		t.Fatalf("aged inspect: %v", m)
+	}
+	// Preview says ready and touches nothing.
+	if r := s.cleanupOne(ctx, u.ID, w.ID, cleanupInput{Preview: true, IdleDays: 7, IdleOnly: true}); r.Status != "ready" {
+		t.Fatalf("preview: %+v", r)
+	}
+	// A change after the check stops the archive.
+	if _, _, err := shOn(ctx, nil, time.Minute, wtIdleArchive, w.Path, w.Repo, w.Branch, head, strconv.FormatInt(time.Now().Add(-40*24*time.Hour).Unix(), 10), "refs/pocket-ai/archive/x"); err == nil {
+		t.Fatal("archived despite newer changes")
+	}
+	if _, err := os.Stat(w.Path); err != nil {
+		t.Fatal("stopped archive removed folder", err)
+	}
+
+	r := s.cleanupOne(ctx, u.ID, w.ID, in)
+	if r.Status != "archived" || !strings.Contains(r.Reason, "uncommitted work") {
+		t.Fatalf("idle cleanup: %+v", r)
+	}
+	if _, err := os.Stat(w.Path); !os.IsNotExist(err) {
+		t.Fatal("folder remains", err)
+	}
+	if gitT(t, w.Repo, "rev-parse", "refs/heads/topic") != head {
+		t.Fatal("idle cleanup must keep the branch")
+	}
+	got, _ := s.store.GetWorktree(ctx, u.ID, w.ID)
+	if got.Status != "archived" || got.ArchiveRef == "" || got.MergedAt != "" {
+		t.Fatalf("record: %+v", got)
+	}
+	if _, err := s.store.GetThread(ctx, u.ID, th.ID); err != nil {
+		t.Fatal("conversation lost", err)
+	}
+	runSh(t, wtRestore, w.Repo, w.Path, got.Branch, got.ArchiveRef)
+	if gitT(t, w.Path, "rev-parse", "HEAD") != head {
+		t.Fatal("restore lost commits")
+	}
+	for f, want := range map[string]string{"draft": "unsaved idea\n", "file": "half done\n"} {
+		if b, _ := os.ReadFile(filepath.Join(w.Path, f)); string(b) != want {
+			t.Fatalf("restore lost %s: %q", f, b)
+		}
+	}
+}
+
+func TestIdleCleanupSetting(t *testing.T) {
+	t.Setenv("GIT_COMMITTER_DATE", time.Now().Add(-40*24*time.Hour).Format(time.RFC3339))
+	s, h, _ := testServer(t)
+	s.cfg.PeopleDir = ""
+	alex, au := person(t, s, h, "idle-setting@example.test", "member", true)
+	ctx := context.Background()
+	w, _ := cleanupRepo(t)
+	w.UserID = au.ID
+	if err := s.store.CreateWorktree(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	ageWorktree(t, s, w, 10)
+	alex.want("PUT", "/api/v1/settings", map[string]any{"worktree_idle_days": 999}, 400, nil)
+	// Merged cleanup stays off; idle cleanup alone runs a pass right away.
+	var st store.Settings
+	alex.want("PUT", "/api/v1/settings", map[string]any{"worktree_idle_days": 30}, 200, &st)
+	if st.WorktreeIdleDays != 30 || st.WorktreeAutoCleanup {
+		t.Fatalf("settings: %+v", st)
+	}
+	for i := 0; i < 100 && s.store.UserSetting(ctx, au.ID, "worktree_cleanup_result") == ""; i++ {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if got, _ := s.store.GetWorktree(ctx, au.ID, w.ID); got.Status != "active" {
+		t.Fatal("archived before 30 idle days")
+	}
+	_ = s.store.SetUserSetting(ctx, au.ID, "worktree_idle_days", "7")
+	s.autoCleanupWorktrees(ctx)
+	if got, _ := s.store.GetWorktree(ctx, au.ID, w.ID); got.Status != "archived" {
+		t.Fatalf("idle cleanup did not run: %+v", got)
+	}
+	if out := gitT(t, w.Repo, "branch", "--list", "topic"); out == "" {
+		t.Fatal("unmerged branch deleted")
 	}
 }

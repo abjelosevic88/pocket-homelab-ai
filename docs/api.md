@@ -411,6 +411,13 @@ Same access rule as terminals (this server: owner/admins; people with a folder o
   or null before the first run. Preview does not replace this record.
 - `PUT /settings` accepts `{worktree_auto_cleanup: true|false}` (default false). The server checks opted-in
   users after startup and hourly thereafter, and right away when it is turned on. Disabling it prevents subsequent passes.
+- `PUT /settings` accepts `{worktree_idle_days: 0..365}` (default 0 = never). Independently of merged cleanup, each
+  pass also archives worktrees with no activity for that many days: no prompt or reply in their conversations, no
+  commit, checkout or reset in the checkout, no change to an uncommitted file (ignored files do not count), and not
+  created or restored since. Unlike merged cleanup it keeps the branch and saves uncommitted work under the recovery
+  ref, so Restore brings everything back but ignored files. The same safety checks apply (agent at work, open
+  terminal, setup, locked, Git operation, custom teardown); a commit or change after the check stops removal.
+  `POST /worktrees/cleanup` takes the same `idle_days`, and `idle_only: true` skips the merge check.
 
 Cleanups save the commit under `refs/pocket-ai/archive/<id>` and archive the worktree record; conversation
 history stays linked and Restore recreates the checkout (on the branch that was checked out, also when an

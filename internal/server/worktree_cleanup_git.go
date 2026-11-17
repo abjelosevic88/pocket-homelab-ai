@@ -6,7 +6,14 @@ package server
 // empty branch (inspection) accepts whatever branch an agent switched to;
 // removal passes the branch inspection saw. Ignored files (.env copies,
 // node_modules, build output) go with the folder, as with manual Archive.
-const wtCleanupGuard = `cd -- "$1" 2>/dev/null || fail "Worktree folder is missing"
+const wtCleanupGuard = wtCheckoutGuard + `status=$(git status --porcelain --untracked-files=all) || fail "Could not inspect local files"
+[ -z "$status" ] || fail "Uncommitted or untracked files"
+head=$(git rev-parse --verify HEAD) || fail "Could not inspect the current commit"
+`
+
+// wtCheckoutGuard is the part both merged and idle cleanup share; idle
+// cleanup saves uncommitted work instead of refusing it. Sets $branch.
+const wtCheckoutGuard = `cd -- "$1" 2>/dev/null || fail "Worktree folder is missing"
 [ -f .git ] || fail "This is not a linked worktree"
 top=$(git rev-parse --show-toplevel) || fail "Could not inspect the repository"
 [ "$(pwd -P)" = "$(cd -- "$top" && pwd -P)" ] || fail "Worktree path is not the checkout root"
@@ -26,9 +33,6 @@ for marker in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply 
 done
 flags=$(git ls-files -v) || fail "Could not inspect index flags"
 if printf '%s\n' "$flags" | grep -q '^[a-zS]'; then fail "Index flags can hide local changes; review this worktree manually"; fi
-status=$(git status --porcelain --untracked-files=all) || fail "Could not inspect local files"
-[ -z "$status" ] || fail "Uncommitted or untracked files"
-head=$(git rev-parse --verify HEAD) || fail "Could not inspect the current commit"
 `
 
 // Always fetch the actual remote target, without moving the main checkout
@@ -77,5 +81,51 @@ if [ "$6" = 1 ]; then
   git update-ref -d "refs/heads/$3" "$4" && echo "branch_deleted=1"
  fi
 fi
+exit 0
+`
+
+// wtIdleActivity sets $act to when something last happened in this
+// checkout, in Unix seconds: its own HEAD reflog (commits, checkouts,
+// resets, and the worktree add of creation or Restore), the HEAD commit, and
+// every file that differs from HEAD or is untracked. Ignored files
+// (node_modules, build output) do not count. GNU and BSD stat differ.
+const wtIdleActivity = `if stat -c %Y . >/dev/null 2>&1; then sf='-c %Y'; else sf='-f %m'; fi
+act=$(git log -1 --format=%ct HEAD 2>/dev/null)
+for t in $(stat $sf -- "$(git rev-parse --git-path logs/HEAD)" 2>/dev/null) $({ git diff -z --name-only --no-renames HEAD; git ls-files -z --others --exclude-standard; } 2>/dev/null | xargs -0 -r stat $sf -- 2>/dev/null | sort -n | tail -n 1); do
+ [ "$t" -gt "${act:-0}" ] 2>/dev/null && act=$t
+done
+act=${act:-0}
+`
+
+// wtIdleInspect reports head, branch, act (wtIdleActivity) and dirty for
+// idle cleanup, or a reason to keep the worktree. Arguments: path, main, "".
+const wtIdleInspect = gitEnv + `fail() { printf 'reason=%s\n' "$1"; exit 0; }
+` + wtCheckoutGuard + `head=$(git rev-parse --verify HEAD) || fail "Could not inspect the current commit"
+` + wtIdleActivity + `echo "head=$head"
+echo "branch=$branch"
+echo "act=$act"
+[ -z "$(git status --porcelain --untracked-files=all 2>/dev/null)" ] || echo "dirty=1"
+exit 0
+`
+
+// wtIdleArchive archives an idle worktree the way Archive does, minus
+// teardown and branch deletion: commits and uncommitted work (not ignored
+// files) are saved under the recovery ref first, then the folder goes.
+// Arguments: path, main, branch, HEAD and activity the inspection saw, ref.
+// A new commit or a newer change stops it.
+const wtIdleArchive = gitEnv + `fail() { printf '%s\n' "$1" >&2; exit 1; }
+` + wtCheckoutGuard + `head=$(git rev-parse --verify HEAD) || fail "Could not inspect the current commit"
+[ "$head" = "$4" ] || fail "New commits appeared after the idle check"
+` + wtIdleActivity + `[ "$act" -le "$5" ] || fail "New changes appeared after the idle check"
+tmp=$(mktemp) || fail "Could not save the uncommitted work"
+cp -- "$(git rev-parse --git-path index)" "$tmp" 2>/dev/null
+if GIT_INDEX_FILE=$tmp git add -A >&2 && tree=$(GIT_INDEX_FILE=$tmp git write-tree); then rm -f "$tmp"
+else rm -f "$tmp"; fail "Could not save the uncommitted work; nothing was removed"; fi
+if [ "$tree" = "$(git rev-parse 'HEAD^{tree}')" ]; then c=$head
+else c=$(git commit-tree "$tree" -p HEAD -m "Pocket AI: uncommitted work in $branch when it was archived") || fail "Could not save the uncommitted work"; fi
+git update-ref "$6" "$c" || fail "Could not save the recovery reference"
+echo "saved=$c"
+cd -- "$2" || fail "Main repository is missing"
+git worktree remove --force -- "$1" >&2 || fail "Git refused to remove the worktree"
 exit 0
 `
