@@ -174,6 +174,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	go func() { s.providers(ctx, true) }() // warm the provider cache
 	if s.core.Configured() {
 		go s.coreLoop(ctx)
+		go s.selfUpdateLoop(ctx) // updates when Pocket Core says so (selfupdate.go)
 	}
 	return nil
 }
