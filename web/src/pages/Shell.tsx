@@ -1,6 +1,6 @@
 // The app shell: thread sidebar (a drawer on phones) + the page; palette and shortcuts.
 import { FOCUS_MODE, SHOW_ARCHIVE, SHOW_FAVORITES } from '../lib/sidebar'
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, useRef } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { useApp } from '../lib/app-context'
 import { api, V1 } from '../lib/api'
@@ -69,6 +69,29 @@ function ShellInner() {
   }, [])
   const drawer = !embedded && (mobile || narrow || focus)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  // Inside Pocket Hub: a link from another app (Projects' "Open in Pocket AI")
+  // opens here in place, without a reload; the hub's sidebar shortcut opens and
+  // closes the drawer (the wide layout keeps its sidebar: nothing to hide there).
+  const drawerRef = useRef(drawer)
+  drawerRef.current = drawer
+  useEffect(() => {
+    const hub = (window as unknown as { pocketHub?: { handle?: (h: { navigate: (url: string) => boolean; toggleSidebar: () => boolean }) => void } }).pocketHub
+    if (!hub?.handle) return
+    hub.handle({
+      navigate: url => {
+        const u = new URL(url, location.href)
+        if (u.origin !== location.origin) return false
+        const path = u.pathname + u.search + u.hash
+        if (path !== location.pathname + location.search + location.hash) navigate(path)
+        return true
+      },
+      toggleSidebar: () => {
+        if (!drawerRef.current) return false
+        setDrawerOpen(o => !o)
+        return true
+      },
+    })
+  }, [navigate])
   const [palette, setPalette] = useState<'' | 'all' | 'recent' | 'recipes'>('')
   const [shortcuts, setShortcuts] = useState(false)
   const runRecipe = useRunRecipe()
