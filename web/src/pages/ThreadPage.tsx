@@ -65,7 +65,30 @@ function upsert(list: Item[], it: Item): Item[] {
 // going back to its tab lands there instead of at the bottom. Scrolled to the
 // bottom: nothing kept, it opens at the bottom and follows new messages.
 type Spot = { key: string; off: number; first: number }
-const spots = new Map<string, Spot>()
+// Kept in localStorage too, so a reload (the app updating, a home-screen app or
+// Pocket Hub coming back after a restart) still lands where each conversation
+// was left; the 100 most recently scrolled conversations.
+const SPOTS_KEY = 'pai-spots'
+const spots = (() => {
+  const map = new Map<string, Spot>()
+  try {
+    const saved = JSON.parse(localStorage.getItem(SPOTS_KEY) || '[]') as [string, Spot][]
+    if (Array.isArray(saved)) for (const [k, v] of saved) if (v && typeof v.key === 'string') map.set(k, v)
+  } catch { /* nothing kept, or not readable: start empty */ }
+  let timer = 0
+  const save = () => {
+    clearTimeout(timer)
+    timer = window.setTimeout(() => {
+      try { localStorage.setItem(SPOTS_KEY, JSON.stringify([...map].slice(-100))) } catch { /* full or blocked */ }
+    }, 400)
+  }
+  return {
+    get: (id: string) => map.get(id),
+    // newest last, so the oldest go first when there are too many
+    set: (id: string, s: Spot) => { map.delete(id); map.set(id, s); save() },
+    delete: (id: string) => { if (map.delete(id)) save() },
+  }
+})()
 function itemEl(box: HTMLElement, key: string) { return box.querySelector<HTMLElement>(`#${CSS.escape('item-' + key)}`) }
 function spotIn(box: HTMLElement): Omit<Spot, 'first'> | null {
   const top = box.getBoundingClientRect().top

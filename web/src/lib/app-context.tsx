@@ -260,6 +260,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const nav = navigator as Navigator & { setAppBadge?: (n?: number) => Promise<void>; clearAppBadge?: () => Promise<void> }
     if (n) nav.setAppBadge?.(n).catch(() => {}); else nav.clearAppBadge?.().catch(() => {})
   }, [threads, user])
+  // Inside Pocket Hub: what is working right now, for its sidebar and Activity panel.
+  useEffect(() => {
+    const hub = (window as unknown as { pocketHub?: { setStatus: (text: string | null) => void } }).pocketHub
+    if (!hub) return
+    const n = (threads || []).filter(t => (!t.owner_id || t.owner_id === user?.id) && t.status === 'running').length
+    hub.setStatus(n ? `${n} working` : null)
+  }, [threads, user])
 
   const saveSettings = useCallback(async (patch: Partial<Settings> & { notify_token?: string }) => {
     setSr(s => s ? { ...s, settings: { ...s.settings, ...patch } } : s)
