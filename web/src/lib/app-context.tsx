@@ -260,12 +260,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const nav = navigator as Navigator & { setAppBadge?: (n?: number) => Promise<void>; clearAppBadge?: () => Promise<void> }
     if (n) nav.setAppBadge?.(n).catch(() => {}); else nav.clearAppBadge?.().catch(() => {})
   }, [threads, user])
-  // Inside Pocket Hub: what is working right now, for its sidebar and Activity panel.
+  // Inside Pocket Hub: what is working right now, and the conversations that
+  // need you, failed, are working or unread, for its sidebar and Activity panel
+  // (picking one there opens it here, without a reload).
   useEffect(() => {
-    const hub = (window as unknown as { pocketHub?: { setStatus: (text: string | null) => void } }).pocketHub
+    type HubItem = { id: string; title: string; detail: string; state: string; url: string; at: string }
+    const hub = (window as unknown as { pocketHub?: { setStatus: (text: string | null) => void; setItems?: (items: HubItem[], onOpen: (id: string) => void) => void } }).pocketHub
     if (!hub) return
-    const n = (threads || []).filter(t => (!t.owner_id || t.owner_id === user?.id) && t.status === 'running').length
+    const mine = (threads || []).filter(t => !t.owner_id || t.owner_id === user?.id)
+    const n = mine.filter(t => t.status === 'running').length
     hub.setStatus(n ? `${n} working` : null)
+    const state = (t: Thread) => t.status === 'waiting' ? 'needs-you' : t.status === 'error' ? 'failed' : t.status === 'running' ? 'working' : t.unread ? 'unread' : ''
+    const rank: Record<string, number> = { 'needs-you': 0, failed: 1, working: 2, unread: 3 }
+    const items = mine.map(t => ({ t, s: state(t) })).filter(x => x.s)
+      .sort((a, b) => rank[a.s] - rank[b.s] || (b.t.activity_at || '').localeCompare(a.t.activity_at || ''))
+      .slice(0, 30)
+      .map(({ t, s }) => ({
+        id: t.id, title: t.title || 'Untitled', state: s,
+        detail: s === 'failed' ? (t.error || 'Stopped with an error') : s === 'needs-you' ? (t.preview || 'Needs your answer') : (t.preview || ''),
+        url: `${location.origin}/t/${t.id}`, at: t.activity_at || '',
+      }))
+    hub.setItems?.(items, id => {
+      const to = `/t/${id}`
+      if (location.pathname !== to) { history.pushState(null, '', to); dispatchEvent(new PopStateEvent('popstate')) }
+    })
   }, [threads, user])
 
   const saveSettings = useCallback(async (patch: Partial<Settings> & { notify_token?: string }) => {

@@ -599,6 +599,10 @@ func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {
 		f.Close()
 		if strings.HasPrefix(path, "assets/") {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else if strings.HasSuffix(path, ".html") || strings.HasSuffix(path, ".webmanifest") {
+			// The page itself (and "/"): always asked again, so an update's new
+			// assets load instead of a cached page still pointing at the old ones.
+			w.Header().Set("Cache-Control", "no-cache")
 		}
 		http.FileServerFS(s.webFS).ServeHTTP(w, r)
 		return
