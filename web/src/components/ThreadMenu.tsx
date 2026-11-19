@@ -23,7 +23,7 @@ export async function retitleThread(id: string, toast: ToastFn): Promise<Thread 
 }
 
 export function useThreadMenu() {
-  const { user, upsertThread, dropThread } = useApp()
+  const { user, settings, upsertThread, dropThread } = useApp()
   const { toast } = useToast()
   const navigate = useNavigate()
   const loc = useLocation()
@@ -65,7 +65,9 @@ export function useThreadMenu() {
       ...(t.cwd && t.source !== 'ask' && (user?.role === 'admin' || user?.can_run) ? [{ label: 'Open a terminal here', icon: 'terminal', onSelect: () => navigate(`/term?host=${t.host_id || 0}&cwd=${encodeURIComponent(t.cwd)}`) }] : []),
       'sep',
       { label: t.archived ? 'Move out of archive' : 'Archive', icon: 'archive', onSelect: async () => { const th = await patch(t, { archived: !t.archived }); if (th?.archived) toast('Archived') } },
-      { label: 'Delete…', icon: 'trash', danger: true, onSelect: () => setDeleting(t) },
+      settings?.delete_no_confirm
+        ? { label: 'Delete', icon: 'trash', danger: true, onSelect: () => remove(t) }
+        : { label: 'Delete…', icon: 'trash', danger: true, onSelect: () => setDeleting(t) },
     ]
   }
 

@@ -498,7 +498,9 @@ export default function ThreadPage({ onMenu, threadId, embedded, reading }: { on
     { label: 'Export as Markdown', icon: 'download', onSelect: () => download(`${V1}/threads/${id}/export.md`) },
     'sep',
     { label: t.archived ? 'Move out of archive' : 'Archive', icon: 'archive', onSelect: async () => { const th = await patch({ archived: !t.archived }); if (th?.archived) { dropThread(id); toast('Archived') } } },
-    { label: 'Delete…', icon: 'trash', danger: true, onSelect: () => setConfirmDelete(true) },
+    settings?.delete_no_confirm
+      ? { label: 'Delete', icon: 'trash', danger: true, onSelect: remove }
+      : { label: 'Delete…', icon: 'trash', danger: true, onSelect: () => setConfirmDelete(true) },
   ]
   palette.current = { title: threadTitle(t), items: menu }
 

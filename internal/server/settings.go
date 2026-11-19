@@ -69,6 +69,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		EnterSendNow        *bool                `json:"enter_send_now"`
 		EnterSends          *bool                `json:"enter_sends"`
 		ShowThinking        *bool                `json:"show_thinking"`
+		DeleteNoConfirm     *bool                `json:"delete_no_confirm"`
 		UsageWidget         *bool                `json:"usage_widget"`
 		WorktreeAutoCleanup *bool                `json:"worktree_auto_cleanup"`
 		WorktreeIdleDays    *int                 `json:"worktree_idle_days"`
@@ -225,7 +226,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		in  *bool
 		out *bool
 	}{{in.NotifyFinished, &st.NotifyFinished}, {in.NotifyInput, &st.NotifyInput}, {in.NotifyFailed, &st.NotifyFailed},
-		{in.NotifyOnlyAway, &st.NotifyOnlyAway}, {in.EnterSends, &st.EnterSends}, {in.EnterSendNow, &st.EnterSendNow}, {in.ShowThinking, &st.ShowThinking},
+		{in.NotifyOnlyAway, &st.NotifyOnlyAway}, {in.EnterSends, &st.EnterSends}, {in.EnterSendNow, &st.EnterSendNow}, {in.ShowThinking, &st.ShowThinking}, {in.DeleteNoConfirm, &st.DeleteNoConfirm},
 		{in.WorktreeAutoCleanup, &st.WorktreeAutoCleanup}, {in.UsageWidget, &st.UsageWidget}, {in.ThreadTabs, &st.ThreadTabs}} {
 		if b.in != nil {
 			*b.out = *b.in
