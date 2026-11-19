@@ -37,6 +37,7 @@ import { type PageActions, usePageActions } from '../lib/palette'
 import { FolderPicker } from '../components/FolderPicker'
 import { McpDialog } from '../components/McpDialog'
 import { retitleThread } from '../components/ThreadMenu'
+import { pathAfterDelete } from '../components/TabBar'
 import { Confirm, download, Empty, errMsg, Loading, type MenuItem, MenuButton, useContextMenu, useIsMobile, useToast } from '../components/ui'
 
 // A reload after the stream came back: the server keeps a streaming reply's
@@ -428,7 +429,7 @@ export default function ThreadPage({ onMenu, threadId, embedded, reading }: { on
   }
   const remove = async () => {
     setConfirmDelete(false)
-    try { await api.del(`${V1}/threads/${id}`); dropThread(id); navigate('/'); toast('Thread deleted') } catch (e) { toast(errMsg(e), 'err') }
+    try { await api.del(`${V1}/threads/${id}`); dropThread(id); navigate(pathAfterDelete(id)); toast('Thread deleted') } catch (e) { toast(errMsg(e), 'err') }
   }
   const clearQueue = async () => {
     try { await api.del(`${V1}/threads/${id}/queue`); load() } catch (e) { toast(errMsg(e), 'err') }

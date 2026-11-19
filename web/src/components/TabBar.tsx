@@ -18,6 +18,18 @@ import { RunDots } from './RunningList'
 
 const KEY = 'pai-tabs'
 const load = (key = KEY): string[] => { try { const v = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(v) ? v.filter(x => typeof x === 'string') : [] } catch { return [] } }
+/** The open tabs while the bar is on (null when off), for leaving a deleted conversation. */
+let openTabs: string[] | null = null
+/** Where to go when conversation `id` is deleted: the tab after its own (or
+ * the one before, when it was last), else a new thread. */
+export function pathAfterDelete(id: string): string {
+  const tabs = openTabs
+  if (!tabs) return '/'
+  const i = tabs.indexOf(id)
+  const rest = tabs.filter(x => x !== id)
+  const to = rest[i < 0 ? rest.length - 1 : Math.min(i, rest.length - 1)]
+  return to ? tabPath(to) : '/'
+}
 /** Closed tabs, most recent first, for "Reopen closed tab". */
 const CLOSED = 'pai-tabs-closed'
 
@@ -62,6 +74,7 @@ export function useTabs(enabled: boolean) {
   const active = /^\/t\/([^/]+)/.exec(loc.pathname)?.[1] || ((g => g ? TERM_TAB + g : '')(/^\/term\/([^/]+)/.exec(loc.pathname)?.[1]))
     || (fileHost && filePathParam ? fileTab(Number(fileHost), filePathParam) : '')
   useEffect(() => { localStorage.setItem(KEY, JSON.stringify(tabs)) }, [tabs])
+  useEffect(() => { openTabs = enabled ? tabs : null; return () => { openTabs = null } }, [enabled, tabs])
   useEffect(() => { localStorage.setItem(CLOSED, JSON.stringify(closed)) }, [closed])
   // conversations another agent started (pocket_agent_start) never get a tab:
   // they are reached from their parent's agents chip and the sidebar
