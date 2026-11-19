@@ -8,6 +8,7 @@ import { threadTitle } from '../lib/format'
 import { accessOf } from '../lib/share'
 import type { Thread } from '../lib/types'
 import { ShareDialog } from './ShareDialog'
+import { pathAfterDelete } from './TabBar'
 import { Confirm, copyText, download, errMsg, type MenuItem, Modal, type ToastFn, useToast } from './ui'
 
 type Patch = Partial<Pick<Thread, 'title' | 'pinned' | 'archived'>>
@@ -44,7 +45,7 @@ export function useThreadMenu() {
     try {
       await api.del(`${V1}/threads/${t.id}`)
       dropThread(t.id)
-      if (isOpen(t)) navigate('/')
+      if (isOpen(t)) navigate(pathAfterDelete(t.id))
       toast('Thread deleted')
     } catch (e) { toast(errMsg(e), 'err') }
   }
