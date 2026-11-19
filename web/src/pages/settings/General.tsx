@@ -33,6 +33,9 @@ export function GeneralTab() {
         <SettingRow title="Show the agent’s thinking" help="Expanded by default. Off: a small “Thinking” line you can open.">
           <Switch label="Show thinking" checked={!!s.show_thinking} onChange={v => save({ show_thinking: v })} />
         </SettingRow>
+        <SettingRow title="Delete without asking" help="Delete in a conversation’s menu removes it at once, without “Delete this thread?”. Archive never asks.">
+          <Switch label="Delete without asking" checked={!!s.delete_no_confirm} onChange={v => save({ delete_no_confirm: v })} />
+        </SettingRow>
         <SettingRow title="Threads as tabs" help="Every thread you open gets a tab along the top, like a browser — switch with a click, drag to reorder, middle-click or ✕ to close. On computers and tablets; phones use the menu.">
           <Switch label="Threads as tabs" checked={s.thread_tabs !== false} onChange={v => save({ thread_tabs: v })} />
         </SettingRow>

@@ -46,6 +46,8 @@ type Settings struct {
 	EnterSends   bool `json:"enter_sends"`
 	EnterSendNow bool `json:"enter_send_now"`
 	ShowThinking bool `json:"show_thinking"`
+	// Delete a conversation from its menu at once, without "Delete this thread?".
+	DeleteNoConfirm bool `json:"delete_no_confirm"`
 
 	// The plan-limit panel in the sidebar, and which limits it shows
 	// ("provider:window id"; empty = all of them).
@@ -159,6 +161,8 @@ func (s *Store) GetSettings(ctx context.Context, userID int64) (Settings, error)
 			st.EnterSends = v != "0"
 		case "show_thinking":
 			st.ShowThinking = v == "1"
+		case "delete_no_confirm":
+			st.DeleteNoConfirm = v == "1"
 		case "usage_widget":
 			st.UsageWidget = v != "0"
 		case "worktree_auto_cleanup":
@@ -197,7 +201,8 @@ func (s *Store) SaveSettings(ctx context.Context, userID int64, st Settings) err
 		"notify_kind":   st.NotifyKind, "notify_url": st.NotifyURL, "notify_finished": b2s(st.NotifyFinished),
 		"notify_input": b2s(st.NotifyInput), "notify_failed": b2s(st.NotifyFailed), "notify_only_away": b2s(st.NotifyOnlyAway),
 		"enter_send_now": b2s(st.EnterSendNow), "enter_sends": b2s(st.EnterSends), "show_thinking": b2s(st.ShowThinking),
-		"usage_widget": b2s(st.UsageWidget), "thread_tabs": b2s(st.ThreadTabs), "usage_pinned": strings.Join(st.UsagePinned, ","),
+		"delete_no_confirm": b2s(st.DeleteNoConfirm),
+		"usage_widget":      b2s(st.UsageWidget), "thread_tabs": b2s(st.ThreadTabs), "usage_pinned": strings.Join(st.UsagePinned, ","),
 		"worktree_auto_cleanup": b2s(st.WorktreeAutoCleanup),
 		"worktree_idle_days":    strconv.Itoa(st.WorktreeIdleDays),
 		"sidebar":               strings.Join(st.Sidebar, ","),
