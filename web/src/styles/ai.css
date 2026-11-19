@@ -203,7 +203,9 @@
 .composer { position: relative; border: 1px solid var(--border-strong); border-radius: 18px; background: var(--surface); box-shadow: var(--shadow); transition: border-color .12s, box-shadow .12s; }
 .composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow); }
 .composer.disabled { opacity: .6; }
-.composer textarea { border: 0; box-shadow: none !important; background: transparent; resize: none; min-height: 0; padding: 12px 14px 4px; font-size: 15px; line-height: 1.5; max-height: 280px; }
+.composer textarea { border: 0; box-shadow: none !important; background: transparent; resize: none; min-height: 0; padding: 12px 14px 4px; font-size: 15px; line-height: 1.5; max-height: 280px; overflow-x: hidden; overflow-wrap: anywhere; }
+/* zoomed in (a browser's or Pocket Hub's zoom), fractional widths let the text run a pixel past the
+   box and a sideways scrollbar appeared: a message wraps, it never scrolls sideways */
 .composer.big textarea { min-height: 78px; font-size: 15.5px; }
 @media (max-width: 760px) {
   .composer textarea, .composer.big textarea { font-size: 16px; }
