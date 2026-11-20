@@ -16,6 +16,9 @@ export function renderMarkdown(src: string): string {
   if (hit !== undefined) return hit
   let html: string
   try { html = md.parse(src, { async: false }) as string } catch { html = `<pre>${escapeHtml(src)}</pre>` }
+  // marked ends every code block with a newline; selecting the last line
+  // (double/triple click) would take it too and paint the empty row below.
+  html = html.replace(/\n+(<\/code><\/pre>)/g, '$1')
   const clean = DOMPurify.sanitize(html, { USE_PROFILES: { html: true } })
   if (src.length < 20000) {
     if (cache.size > 400) cache.clear()
