@@ -11,6 +11,45 @@ export const FileLinkContext = createContext<FileLinkPlace | null>(null)
 // A folder ("…/") opens in Files, anything else in the file viewer.
 const viewerPath = (host: number, p: string) => p.endsWith('/') ? filesPath(host, p.replace(/\/+$/, '') || '/') : filePath(host, p)
 
+// Triple-click in a code block selects that line's text only. The browser's
+// own line selection also takes the line break (and paints the empty row
+// below it), so a copied command would come with a newline.
+function selectLine(e: globalThis.MouseEvent) {
+  if (e.detail < 3 || e.button !== 0) return
+  const pre = e.currentTarget as HTMLElement
+  const doc = document as Document & { caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null }
+  const pos = doc.caretPositionFromPoint?.(e.clientX, e.clientY)
+  const r = pos ? null : document.caretRangeFromPoint?.(e.clientX, e.clientY)
+  const node = pos ? pos.offsetNode : r?.startContainer
+  const offset = pos ? pos.offset : r?.startOffset ?? 0
+  if (!node || !pre.contains(node)) return
+  const before = document.createRange()
+  before.setStart(pre, 0)
+  before.setEnd(node, offset)
+  const at = before.toString().length
+  const text = pre.textContent || ''
+  const from = text.lastIndexOf('\n', at - 1) + 1
+  let to = text.indexOf('\n', at)
+  if (to < 0) to = text.length
+  const a = textPoint(pre, from), b = textPoint(pre, to)
+  if (!a || !b) return
+  e.preventDefault()
+  getSelection()?.setBaseAndExtent(a[0], a[1], b[0], b[1])
+}
+
+// The text node and offset at character n of el's text.
+function textPoint(el: HTMLElement, n: number): [Node, number] | null {
+  const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+  let last: Text | null = null
+  for (let t = w.nextNode() as Text | null; t; t = w.nextNode() as Text | null) {
+    const len = t.data.length
+    if (n <= len) return [t, n]
+    n -= len
+    last = t
+  }
+  return last ? [last, last.data.length] : null
+}
+
 /** Agent Markdown, sanitized, with a copy button on every code block. */
 export const Markdown = memo(function Markdown({ text, className = '' }: { text: string; className?: string }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -73,6 +112,7 @@ export const Markdown = memo(function Markdown({ text, className = '' }: { text:
         setTimeout(() => { b.textContent = 'Copy' }, 1400)
       })
       wrap.appendChild(b)
+      pre.addEventListener('mousedown', selectLine)
     })
   }, [html])
   return <div ref={ref} className={`md ${className}`} onClick={place ? onClick : undefined} dangerouslySetInnerHTML={{ __html: html }} />
