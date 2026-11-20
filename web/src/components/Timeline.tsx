@@ -111,6 +111,8 @@ function SentFiles({ tool, itemKey, threadId }: { tool: ToolInfo; itemKey: strin
       {tool.status === 'running' && <div className="sent-card busy"><span className="sent-ext">{files[0] ? fileExt(files[0].name) : 'FILE'}</span><span className="sent-name ellipsis">{files.map(f => f.name).join(', ') || 'File'}</span><span className="muted small">sending…</span></div>}
       {tool.status === 'done' && pics.length > 0 && <Images images={pics.map(({ f, n }) => ({ id: `${itemKey}-${n}`, name: f.name, url: sentURL(threadId, itemKey, n) }) as ItemImage)} />}
       {tool.status === 'done' && cards.map(({ f, n }) => {
+        // Text files open right here, to read and copy, and still download.
+        if (viewOf(f) === 'text') return <SentText key={n} f={f} url={sentURL(threadId, itemKey, n)} download={sentURL(threadId, itemKey, n, true)} />
         const view = attach ? '' : viewOf(f)
         const body = <>
           <span className="sent-ext">{fileExt(f.name)}</span>
@@ -132,6 +134,52 @@ function SentFiles({ tool, itemKey, threadId }: { tool: ToolInfo; itemKey: strin
           <SentView f={shown} url={sentURL(threadId, itemKey, open)} />
         </Modal>
       )}
+    </div>
+  )
+}
+
+// A text file the agent sent: the card folds open to show it (Markdown
+// rendered), with Copy (the file's own text) and Download beside it.
+function SentText({ f, url, download }: { f: SentFile; url: string; download: string }) {
+  const [open, setOpen] = useState(false)
+  const [text, setText] = useState<string | null>(null)
+  const [err, setErr] = useState('')
+  const [copied, setCopied] = useState(false)
+  const loading = useRef<Promise<string> | null>(null)
+  const load = () => {
+    if (!loading.current) {
+      loading.current = fetch(url, { credentials: 'same-origin' })
+        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => null))?.error || `Could not open ${f.name} (${r.status})`); return r.text() })
+        .then(t => { setText(t); setErr(''); return t })
+        .catch(e => { loading.current = null; setErr(e.message || String(e)); throw e })
+    }
+    return loading.current
+  }
+  const toggle = () => { if (!open) load().catch(() => {}); setOpen(o => !o) }
+  const copy = async () => {
+    try {
+      if (await copyText(await load())) { setCopied(true); window.setTimeout(() => setCopied(false), 1500) }
+    } catch { setOpen(true) }
+  }
+  const md = /\.(md|markdown|mdx)$/i.test(f.name)
+  return (
+    <div className={`sent-text${open ? ' open' : ''}`}>
+      <div className="sent-text-head">
+        <button type="button" className="sent-card" onClick={toggle} aria-expanded={open} aria-label={`${open ? 'Fold' : 'Show'} ${f.name}`}>
+          <span className="sent-ext">{fileExt(f.name)}</span>
+          <span className="sent-name ellipsis" title={f.path}>{f.name}</span>
+          {f.size ? <span className="sent-size tnum">{fmtBytes(f.size)}</span> : null}
+          <Icon name={open ? 'chevron-up' : 'chevron-down'} size={14} className="sent-act" />
+        </button>
+        <button type="button" className="btn ghost icon-only sm" onClick={copy} title={copied ? 'Copied' : 'Copy the text'} aria-label={`Copy the text of ${f.name}`}><Icon name={copied ? 'check' : 'copy'} size={15} /></button>
+        <a className="btn ghost icon-only sm" href={download} download={f.name} title="Download" aria-label={`Download ${f.name}`}><Icon name="download" size={15} /></a>
+      </div>
+      {open && <div className="sent-text-body">
+        {err ? <div className="muted small">{err}</div>
+          : text === null ? <div className="muted small">Opening…</div>
+          : md ? <Markdown text={text} />
+          : <pre>{text}</pre>}
+      </div>}
     </div>
   )
 }
