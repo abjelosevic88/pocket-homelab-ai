@@ -621,6 +621,12 @@
 .sent-name { min-width: 0; font-size: 14px; }
 .sent-size { flex: none; font-size: 12px; color: var(--muted); }
 .sent-act { flex: none; color: var(--muted); }
+.sent-text { display: flex; flex-direction: column; gap: 6px; max-width: 100%; }
+.sent-text.open { width: min(760px, 100%); }
+.sent-text-head { display: flex; align-items: center; gap: 2px; min-width: 0; max-width: 100%; }
+.sent-text-head .sent-card { margin-right: 4px; min-width: 0; }
+.sent-text-body { max-height: 60vh; overflow: auto; padding: 10px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); user-select: text; -webkit-user-select: text; }
+.sent-text-body pre { margin: 0; padding: 0; border: 0; border-radius: 0; background: none; font: 12.5px/1.5 var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace); white-space: pre-wrap; word-break: break-word; }
 .sent-view .modal-body { padding: 0 12px 12px; }
 .sent-view-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .sent-frame { display: block; width: 100%; height: min(78vh, 900px); border: 0; border-radius: 8px; background: #fff; }
