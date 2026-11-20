@@ -395,6 +395,12 @@
 .code-copy:hover { color: var(--text); }
 .md .code-wrap:hover .code-copy, .code-copy:focus-visible { opacity: 1; }
 @media (hover: none) { .code-copy { opacity: .85; } }
+.md .cl-hot { background: color-mix(in srgb, var(--accent) 10%, transparent); border-radius: 4px; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 10%, transparent); }
+.code-line-copy { position: absolute; z-index: 1; display: grid; place-items: center; width: 22px; height: 20px; padding: 0; border-radius: 5px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); cursor: pointer; opacity: 0; pointer-events: none; transition: opacity .1s; }
+.code-line-copy.on { opacity: 1; pointer-events: auto; }
+.code-line-copy:hover { color: var(--text); border-color: var(--border-strong); }
+.code-line-copy.done { color: var(--accent); }
+@media (hover: none) { .code-line-copy { display: none; } .md .cl-hot { background: none; box-shadow: none; } }
 .md table { border-collapse: collapse; margin: 0 0 12px; font-size: 13px; display: block; overflow-x: auto; max-width: 100%; }
 .md th, .md td { border: 1px solid var(--border); padding: 5px 9px; text-align: left; vertical-align: top;
   /* the message's overflow-wrap:anywhere would let a column shrink to one

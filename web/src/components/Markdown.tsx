@@ -37,6 +37,73 @@ function selectLine(e: globalThis.MouseEvent) {
   getSelection()?.setBaseAndExtent(a[0], a[1], b[0], b[1])
 }
 
+// Each line of a code block in its own span, so it can be found and copied.
+// The text (and so Copy and selection) stays exactly the same.
+function splitLines(code: Element) {
+  if (code.children.length) return // only plain text is split
+  const lines = (code.textContent || '').split('\n')
+  code.textContent = ''
+  lines.forEach((l, i) => {
+    if (i) code.appendChild(document.createTextNode('\n'))
+    if (!l) return
+    const s = document.createElement('span')
+    s.className = 'cl'
+    s.textContent = l
+    code.appendChild(s)
+  })
+}
+
+const COPY_ICON = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
+const DONE_ICON = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>'
+
+// Hovering a row of a multi-line code block shows a copy button at the end of
+// that line: one click copies just the line, without its newline.
+function lineCopy(wrap: HTMLElement, blockCopy: HTMLElement) {
+  const btn = document.createElement('button')
+  btn.type = 'button'
+  btn.className = 'code-line-copy'
+  btn.title = 'Copy this line'
+  btn.setAttribute('aria-label', 'Copy this line')
+  btn.innerHTML = COPY_ICON
+  wrap.appendChild(btn)
+  let line: HTMLElement | null = null
+  let timer = 0
+  const show = (l: HTMLElement | null) => {
+    if (l === line) return
+    line?.classList.remove('cl-hot')
+    line = l
+    clearTimeout(timer)
+    btn.innerHTML = COPY_ICON
+    btn.classList.remove('done')
+    if (!l) { btn.classList.remove('on'); return }
+    l.classList.add('cl-hot')
+    const w = wrap.getBoundingClientRect(), r = l.getBoundingClientRect()
+    const max = w.width - blockCopy.offsetWidth - 7 - 6 - btn.offsetWidth
+    btn.style.left = `${Math.max(14, Math.min(r.right - w.left + 8, max))}px`
+    btn.style.top = `${r.top - w.top + (r.height - btn.offsetHeight) / 2}px`
+    btn.classList.add('on')
+  }
+  wrap.addEventListener('mousemove', e => {
+    if (e.target === btn || btn.contains(e.target as Node)) return
+    let hit: HTMLElement | null = null
+    for (const l of wrap.querySelectorAll<HTMLElement>('.cl')) {
+      const r = l.getBoundingClientRect()
+      if (e.clientY >= r.top - 2 && e.clientY < r.bottom + 2) { hit = l; break }
+    }
+    show(hit)
+  })
+  wrap.addEventListener('mouseleave', () => show(null))
+  btn.addEventListener('mousedown', e => e.preventDefault()) // keep any selection
+  btn.addEventListener('click', async () => {
+    if (!line) return
+    const ok = await copyText(line.textContent || '')
+    btn.innerHTML = ok ? DONE_ICON : COPY_ICON
+    btn.classList.toggle('done', ok)
+    clearTimeout(timer)
+    timer = window.setTimeout(() => { btn.innerHTML = COPY_ICON; btn.classList.remove('done') }, 1200)
+  })
+}
+
 // The text node and offset at character n of el's text.
 function textPoint(el: HTMLElement, n: number): [Node, number] | null {
   const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
@@ -113,6 +180,9 @@ export const Markdown = memo(function Markdown({ text, className = '' }: { text:
       })
       wrap.appendChild(b)
       pre.addEventListener('mousedown', selectLine)
+      if (wrap.classList.contains('one-line')) return
+      splitLines(pre.querySelector('code') ?? pre)
+      lineCopy(wrap, b)
     })
   }, [html])
   return <div ref={ref} className={`md ${className}`} onClick={place ? onClick : undefined} dangerouslySetInnerHTML={{ __html: html }} />
