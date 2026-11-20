@@ -341,13 +341,30 @@ export function MenuButton({ items, children, className = 'btn ghost icon-only',
   )
 }
 
+// What was selected before the right-click went down. macOS (Safari, WKWebView in
+// Pocket Hub) selects the word under the pointer on a right-click before
+// `contextmenu` fires, so the selection seen there is not one the user made.
+let selBeforeRightClick: Range | null = null
+if (typeof document !== 'undefined') {
+  document.addEventListener('mousedown', e => {
+    if (e.button !== 2 && !(e.button === 0 && e.ctrlKey)) return
+    const sel = window.getSelection()
+    selBeforeRightClick = sel && sel.rangeCount && sel.toString().trim() ? sel.getRangeAt(0).cloneRange() : null
+  }, true)
+}
+
 /** Right-click menus: `onContextMenu={e => ctx.open(e, items)}` on the row, `{ctx.menu}` once in the tree.
- *  Text you can select keeps the browser's own menu (inputs, the selection, links). */
+ *  Text you can select keeps the browser's own menu (inputs, links, a selection you made and clicked on). */
 export function useContextMenu() {
   const [state, setState] = useState<{ anchor: Anchor; items: MenuItem[] } | null>(null)
   const open = useCallback((e: React.MouseEvent, items: MenuItem[] | (() => MenuItem[])) => {
     const el = e.target as Element
-    if (el.closest?.('input, textarea, [contenteditable="true"], a[href]') || (window.getSelection()?.toString() || '').trim()) return
+    if (el.closest?.('input, textarea, [contenteditable="true"], a[href]')) return
+    const before = selBeforeRightClick
+    if (before && !before.collapsed && before.intersectsNode(el)) return
+    // a selection the right-click itself made (macOS word pick) goes away
+    const sel = window.getSelection()
+    if (sel && !sel.isCollapsed && !before) sel.removeAllRanges()
     e.preventDefault()
     e.stopPropagation()
     setState({ anchor: { x: e.clientX, y: e.clientY, w: 0, h: 0 }, items: typeof items === 'function' ? items() : items })
