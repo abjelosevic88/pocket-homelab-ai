@@ -242,6 +242,9 @@ func (s *Server) callPocketTool(ctx, session context.Context, t *store.Thread, s
 	if json.Unmarshal(call.Arguments, &args) != nil || args == nil {
 		return toolFailure("Arguments must be an object")
 	}
+	if tool.link == "analytics" {
+		return s.callAnalyticsTool(ctx, uid, t.ID, call.Name, args)
+	}
 	if tool.Annotations.ReadOnly {
 		return s.readApp(ctx, uid, t.ID, call.Name, args)
 	}

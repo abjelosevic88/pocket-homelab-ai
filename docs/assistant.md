@@ -10,6 +10,10 @@ A small relevant tool set is advertised initially. `pocket_find_tools` returns e
 
 `pocket_vehicle_costs` separates confirmed linked duplicates from possible date/amount matches. Confirmation requires the recorded transaction ID and Money owner plus matching date, currency and amount. Uncertain matches are never subtracted. The tool does not produce a combined total from incomplete records.
 
+## Websites, through a Core link
+
+The link **Pocket AI → Pocket Analytics** (`analytics:read`) gives every conversation five read-only tools about the person's websites, served by Pocket AI itself with a fresh link token per call: `pocket_analytics_sites`, `pocket_analytics_report` (a period on one page: totals against the period before, the chart, top lists, goals, funnels, robots, Google words, page speed), `pocket_analytics_stats`, `pocket_analytics_breakdown` and `pocket_analytics_view` (landing pages, journeys, paths, reading, speed, busy hours, robots, AI assistants, searches, events, notes, live). The link does not expire like the Ask connection, so these tools are there also when the other app tools are not; with both, they replace Core's own Analytics tools in the list. A new link starts off: an admin switches it on in Pocket Core → Links. While it is off the agent is told so and says how to switch it on. Answers never hold a site's proxy key or snippet, and never one visitor from another (Analytics does not open visits one by one to a link).
+
 ## Approvals and undo
 
 Every app write pauses for an exact operation approval, including coding threads in full-access mode. Multiple pending writes can be reviewed and selected; new proposals are never preselected. A timeout/denial sends nothing. An interrupted in-flight write is marked unknown: check the app before retrying.
