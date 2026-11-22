@@ -110,21 +110,31 @@ function useSkills(scope: SkillScope | undefined, wanted: boolean): SkillList {
 interface MentionApp { slug: string; name: string; tools: string[]; reads: number }
 let mentionApps: { at: number; apps: MentionApp[] } | null = null
 
-/** The person's Pocket apps, fetched when the @ menu first opens (cached 2 minutes). */
-function useMentionApps(wanted: boolean): MentionApp[] | null {
+/** Why there are no apps to mention: the Ask connection (which lists them) is off or has ended;
+ *  url is Core's page that turns it (back) on. */
+interface MentionOff { url?: string }
+
+/** The person's Pocket apps, fetched when the @ menu first opens (cached 2 minutes; a failure is
+ *  asked again on the next @, so turning Ask back on shows the apps at once). */
+function useMentionApps(wanted: boolean): { apps: MentionApp[] | null; off: MentionOff | null } {
   const [apps, setApps] = useState<MentionApp[] | null>(() => mentionApps?.apps ?? null)
+  const [off, setOff] = useState<MentionOff | null>(null)
   useEffect(() => {
     if (!wanted) return
     if (mentionApps) setApps(mentionApps.apps)
     if (mentionApps && Date.now() - mentionApps.at < 120_000) return
     let live = true
-    api.get<{ apps: MentionApp[] }>(`${V1}/pocket-tools/apps`).then(r => {
+    api.get<{ apps: MentionApp[]; error?: string; connect_url?: string }>(`${V1}/pocket-tools/apps`).then(r => {
+      if (r.error) {
+        if (live) { setApps(mentionApps?.apps ?? []); setOff({ url: r.connect_url }) }
+        return
+      }
       mentionApps = { at: Date.now(), apps: r.apps || [] }
-      if (live) setApps(mentionApps.apps)
+      if (live) { setApps(mentionApps.apps); setOff(null) }
     }).catch(() => { if (live) setApps(a => a ?? []) })
     return () => { live = false }
   }, [wanted])
-  return apps
+  return { apps, off }
 }
 
 /** One item found in a Pocket app ("@documents #tax"); see server pocket_items.go. */
@@ -469,7 +479,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
   const hashMatch = slash === null && before !== atShut ? /(^|\s)@([a-z][a-z0-9-]*) ?#((?:[^\s#]+ ?){0,3})$/i.exec(before) : null
   const atMatch = slash === null && !hashMatch ? /(^|\s)@([^\s@]*)$/.exec(before) : null
   const atQ = atMatch && before !== atShut ? atMatch[2].toLowerCase() : null
-  const apps = useMentionApps(atQ !== null || hashMatch !== null)
+  const { apps, off: appsOff } = useMentionApps(atQ !== null || hashMatch !== null)
   const hashApp = hashMatch && apps ? apps.find(a => a.slug === hashMatch[2].toLowerCase()) ?? null : null
   const found = usePocketItems(hashApp?.slug ?? null, hashMatch?.[3] ?? '')
   useEffect(() => {
@@ -526,7 +536,9 @@ export const Composer = React.forwardRef<ComposerHandle, {
     } catch (err) { toast(errMsg(err), 'err') } finally { setCtxBusy(false) }
   }
 
-  const atOpen = hashMatch ? !!hashApp || atLoading : atQ !== null && (atList.length > 0 || atLoading)
+  // no apps because the Ask connection is off or has ended: the menu says so instead of staying shut
+  const askOff = !!appsOff && !hashMatch && atQ !== null && appList.length === 0
+  const atOpen = hashMatch ? !!hashApp || atLoading : atQ !== null && (atList.length > 0 || atLoading || askOff)
   const menuOpen = slashList.length > 0 || atOpen
   useLayoutEffect(() => {
     if (!menuOpen || !box.current) return
@@ -571,6 +583,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); void pickAt(atList[atHi]); return }
       if (e.key === 'Escape') { e.preventDefault(); setAtShut(before); return }
     }
+    if (askOff && e.key === 'Escape') { e.preventDefault(); setAtShut(before); return }
     if (slashList.length) {
       if (e.key === 'ArrowDown') { e.preventDefault(); setSlashHi(h => (h + 1) % slashList.length); return }
       if (e.key === 'ArrowUp') { e.preventDefault(); setSlashHi(h => (h - 1 + slashList.length) % slashList.length); return }
@@ -704,6 +717,14 @@ export const Composer = React.forwardRef<ComposerHandle, {
             )
           })}
           {atLoading && <div className="slash-row muted"><Spinner size={14} /> Looking…</div>}
+          {askOff && !atLoading && <>
+            <div className="slash-h">Apps</div>
+            <div className="slash-row muted ask-off">
+              <span className="slash-ico at-ico app-mention"><Icon name="grid" size={14} /></span>
+              <span className="grow"><span className="slash-name">Pocket Ask is not connected</span><span className="slash-sub">Your apps show here once it is on again</span></span>
+              {appsOff?.url && <a className="btn sm" href={appsOff.url} target="_blank" rel="noreferrer" onMouseDown={e => e.preventDefault()}>Turn on<Icon name="external" size={12} /></a>}
+            </div>
+          </>}
           {hashApp && found?.length === 0 && <div className="slash-row muted">{hashMatch?.[3].trim() ? `Nothing in ${hashApp.name} matches “${hashMatch[3].trim()}”` : `Type to search ${hashApp.name}`}</div>}
         </div>
       )}

@@ -91,7 +91,14 @@ func mentionName(slug string) string {
 func (s *Server) handleMentionApps(w http.ResponseWriter, r *http.Request) {
 	apps, err := s.mentionApps(r.Context(), me(r))
 	if err != nil {
-		writeJSON(w, 200, map[string]any{"apps": []mentionApp{}, "error": err.Error()})
+		// the apps come through the Ask connection: say so, with where to turn it (back) on
+		out := map[string]any{"apps": []mentionApp{}, "error": err.Error()}
+		if s.core.Configured() {
+			if iss := strings.TrimRight(s.core.OIDC().Issuer, "/"); iss != "" {
+				out["connect_url"] = iss + "/ask"
+			}
+		}
+		writeJSON(w, 200, out)
 		return
 	}
 	writeJSON(w, 200, map[string]any{"apps": apps})

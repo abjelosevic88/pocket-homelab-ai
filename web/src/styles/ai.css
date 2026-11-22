@@ -700,6 +700,9 @@ button.privacy-badge:disabled { cursor: default; }
 .wt-scope b { font-size: 14px; font-weight: 600; }
 /* "@" in a conversation framed by Pocket Projects: the issue's notes, files, links */
 .at-menu .slash-row.muted { display: flex; align-items: center; gap: 8px; color: var(--muted); cursor: default; }
+.at-menu .slash-row.ask-off { gap: 10px; }
+.at-menu .slash-row.ask-off .slash-name { color: var(--text); }
+.at-menu .slash-row.ask-off .btn { flex: none; gap: 4px; }
 .at-ico.note { color: #a16207; } .at-ico.file { color: #0284c7; } .at-ico.link { color: #7c3aed; }
 [data-theme="dark"] .at-ico.note { color: #facc15; } [data-theme="dark"] .at-ico.file { color: #38bdf8; } [data-theme="dark"] .at-ico.link { color: #a78bfa; }
 .at-ico.app-mention { color: #059669; } [data-theme="dark"] .at-ico.app-mention { color: #34d399; }
