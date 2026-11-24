@@ -2,6 +2,7 @@ import { createContext, memo, type MouseEvent, useContext, useEffect, useRef } f
 import { useNavigate } from 'react-router-dom'
 import { codePath, type FileLinkPlace, linkPath } from '../lib/filelinks'
 import { filePath, filesPath } from '../lib/files'
+import { codeLang, commandRanges } from '../lib/codeLines'
 import { renderMarkdown } from '../lib/markdown'
 import { copyText } from './ui'
 
@@ -48,6 +49,7 @@ function splitLines(code: Element) {
     if (!l) return
     const s = document.createElement('span')
     s.className = 'cl'
+    s.dataset.n = String(i)
     s.textContent = l
     code.appendChild(s)
   })
@@ -57,27 +59,51 @@ const COPY_ICON = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" s
 const DONE_ICON = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>'
 
 // Hovering a row of a multi-line code block shows a copy button at the end of
-// that line: one click copies just the line, without its newline.
-function lineCopy(wrap: HTMLElement, blockCopy: HTMLElement) {
+// that line: one click copies the line without its newline, or the whole
+// command when the line is part of one that spans lines (a for … done loop,
+// lines ending in \, a heredoc; lib/codeLines.ts). Then every line of it
+// lights up and the button says how many; Shift-click copies only the line.
+function lineCopy(wrap: HTMLElement, blockCopy: HTMLElement, code: Element) {
+  const text = code.textContent || ''
+  const lines = text.split('\n')
+  const ranges = commandRanges(text, codeLang(code.className))
+  const spans = new Map<number, HTMLElement>()
+  code.querySelectorAll<HTMLElement>('.cl').forEach(s => spans.set(Number(s.dataset.n), s))
   const btn = document.createElement('button')
   btn.type = 'button'
   btn.className = 'code-line-copy'
-  btn.title = 'Copy this line'
-  btn.setAttribute('aria-label', 'Copy this line')
-  btn.innerHTML = COPY_ICON
   wrap.appendChild(btn)
   let line: HTMLElement | null = null
+  let range: [number, number] = [0, 0]
   let timer = 0
+  const count = () => range[1] - range[0] + 1
+  const paint = (done: boolean) => {
+    const n = count()
+    btn.innerHTML = (done ? DONE_ICON : COPY_ICON) + (n > 1 ? `<span>${n}</span>` : '')
+    btn.classList.toggle('done', done)
+    btn.classList.toggle('multi', n > 1)
+    const label = n > 1 ? `Copy these ${n} lines (Shift-click: only this line)` : 'Copy this line'
+    btn.title = label
+    btn.setAttribute('aria-label', label)
+  }
+  const light = (on: boolean) => {
+    for (let i = range[0]; i <= range[1]; i++) spans.get(i)?.classList.toggle('cl-hot', on)
+  }
   const show = (l: HTMLElement | null) => {
     if (l === line) return
-    line?.classList.remove('cl-hot')
+    light(false)
     line = l
     clearTimeout(timer)
-    btn.innerHTML = COPY_ICON
-    btn.classList.remove('done')
     if (!l) { btn.classList.remove('on'); return }
-    l.classList.add('cl-hot')
-    const w = wrap.getBoundingClientRect(), r = l.getBoundingClientRect()
+    const n = Number(l.dataset.n)
+    range = ranges[n] ?? [n, n]
+    light(true)
+    paint(false)
+    // A command's button sits on its first line, so it stays put while the
+    // mouse moves over the command (unless that line is scrolled away).
+    const first = spans.get(range[0])
+    const at = first && first.getBoundingClientRect().top >= 0 ? first : l
+    const w = wrap.getBoundingClientRect(), r = at.getBoundingClientRect()
     const max = w.width - blockCopy.offsetWidth - 7 - 6 - btn.offsetWidth
     btn.style.left = `${Math.max(14, Math.min(r.right - w.left + 8, max))}px`
     btn.style.top = `${r.top - w.top + (r.height - btn.offsetHeight) / 2}px`
@@ -94,13 +120,15 @@ function lineCopy(wrap: HTMLElement, blockCopy: HTMLElement) {
   })
   wrap.addEventListener('mouseleave', () => show(null))
   btn.addEventListener('mousedown', e => e.preventDefault()) // keep any selection
-  btn.addEventListener('click', async () => {
+  btn.addEventListener('click', async e => {
     if (!line) return
-    const ok = await copyText(line.textContent || '')
-    btn.innerHTML = ok ? DONE_ICON : COPY_ICON
-    btn.classList.toggle('done', ok)
+    const whole = !e.shiftKey && count() > 1
+    // A line taken out of a command loses its indentation.
+    const one = line.textContent || ''
+    const ok = await copyText(whole ? lines.slice(range[0], range[1] + 1).join('\n') : count() > 1 ? one.trimStart() : one)
+    paint(ok)
     clearTimeout(timer)
-    timer = window.setTimeout(() => { btn.innerHTML = COPY_ICON; btn.classList.remove('done') }, 1200)
+    timer = window.setTimeout(() => paint(false), 1200)
   })
 }
 
@@ -181,8 +209,9 @@ export const Markdown = memo(function Markdown({ text, className = '' }: { text:
       wrap.appendChild(b)
       pre.addEventListener('mousedown', selectLine)
       if (wrap.classList.contains('one-line')) return
-      splitLines(pre.querySelector('code') ?? pre)
-      lineCopy(wrap, b)
+      const code = pre.querySelector('code') ?? pre
+      splitLines(code)
+      lineCopy(wrap, b, code)
     })
   }, [html])
   return <div ref={ref} className={`md ${className}`} onClick={place ? onClick : undefined} dangerouslySetInnerHTML={{ __html: html }} />

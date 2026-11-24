@@ -400,6 +400,7 @@
 .code-line-copy.on { opacity: 1; pointer-events: auto; }
 .code-line-copy:hover { color: var(--text); border-color: var(--border-strong); }
 .code-line-copy.done { color: var(--accent); }
+.code-line-copy.multi { width: auto; padding: 0 5px; grid-auto-flow: column; gap: 3px; font: 600 10.5px/1 var(--font); font-variant-numeric: tabular-nums; }
 @media (hover: none) { .code-line-copy { display: none; } .md .cl-hot { background: none; box-shadow: none; } }
 .md table { border-collapse: collapse; margin: 0 0 12px; font-size: 13px; display: block; overflow-x: auto; max-width: 100%; }
 .md th, .md td { border: 1px solid var(--border); padding: 5px 9px; text-align: left; vertical-align: top;
