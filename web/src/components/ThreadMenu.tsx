@@ -8,7 +8,7 @@ import { threadTitle } from '../lib/format'
 import { accessOf } from '../lib/share'
 import type { Thread } from '../lib/types'
 import { ShareDialog } from './ShareDialog'
-import { pathAfterDelete } from './TabBar'
+import { pathAfterDelete, tabBarOn } from './TabBar'
 import { Confirm, copyText, download, errMsg, type MenuItem, Modal, type ToastFn, useToast } from './ui'
 
 type Patch = Partial<Pick<Thread, 'title' | 'pinned' | 'archived'>>
@@ -36,7 +36,12 @@ export function useThreadMenu() {
   const patch = async (t: Thread, p: Patch) => {
     try {
       const th = await api.patch<Thread>(`${V1}/threads/${t.id}`, p)
-      if (th.archived && !isOpen(t)) dropThread(t.id); else upsertThread(th)
+      // archiving closes the conversation's tab (with tabs on, the one on
+      // screen too: on to its neighbour, as after Delete)
+      if (th.archived && (!isOpen(t) || tabBarOn())) {
+        dropThread(t.id)
+        if (isOpen(t)) navigate(pathAfterDelete(t.id))
+      } else upsertThread(th)
       return th
     } catch (e) { toast(errMsg(e), 'err') }
   }

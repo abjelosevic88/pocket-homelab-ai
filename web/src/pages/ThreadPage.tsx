@@ -37,7 +37,7 @@ import { type PageActions, usePageActions } from '../lib/palette'
 import { FolderPicker } from '../components/FolderPicker'
 import { McpDialog } from '../components/McpDialog'
 import { retitleThread } from '../components/ThreadMenu'
-import { pathAfterDelete } from '../components/TabBar'
+import { pathAfterDelete, tabBarOn } from '../components/TabBar'
 import { Confirm, download, Empty, errMsg, Loading, type MenuItem, MenuButton, useContextMenu, useIsMobile, useToast } from '../components/ui'
 
 // A reload after the stream came back: the server keeps a streaming reply's
@@ -498,7 +498,7 @@ export default function ThreadPage({ onMenu, threadId, embedded, reading }: { on
     { label: 'Fork into a new thread', icon: 'fork', disabled: t.source === 'ask' || !t.provider_session_id || !canRun, hint: 'Claude Code or Codex', onSelect: fork },
     { label: 'Export as Markdown', icon: 'download', onSelect: () => download(`${V1}/threads/${id}/export.md`) },
     'sep',
-    { label: t.archived ? 'Move out of archive' : 'Archive', icon: 'archive', onSelect: async () => { const th = await patch({ archived: !t.archived }); if (th?.archived) { dropThread(id); toast('Archived') } } },
+    { label: t.archived ? 'Move out of archive' : 'Archive', icon: 'archive', onSelect: async () => { const th = await patch({ archived: !t.archived }); if (th?.archived) { dropThread(id); if (!embedded && tabBarOn()) navigate(pathAfterDelete(id)); toast('Archived') } } },
     settings?.delete_no_confirm
       ? { label: 'Delete', icon: 'trash', danger: true, onSelect: remove }
       : { label: 'Delete…', icon: 'trash', danger: true, onSelect: () => setConfirmDelete(true) },

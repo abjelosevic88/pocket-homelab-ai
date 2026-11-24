@@ -30,6 +30,8 @@ export function pathAfterDelete(id: string): string {
   const to = rest[i < 0 ? rest.length - 1 : Math.min(i, rest.length - 1)]
   return to ? tabPath(to) : '/'
 }
+/** Whether conversations show as tabs here (the tab bar is on). */
+export const tabBarOn = () => openTabs !== null
 /** Closed tabs, most recent first, for "Reopen closed tab". */
 const CLOSED = 'pai-tabs-closed'
 
