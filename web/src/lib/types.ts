@@ -486,6 +486,10 @@ export interface ProviderLimits {
   host_id?: number
   /** names of the other logins on the same account, folded into this one */
   also?: string[]
+  /** several named accounts are signed in to this one account (usually a sign-in with the wrong account) */
+  same_account?: string[]
+  /** label is the account (email or org), not one login's name */
+  by_account?: boolean
 }
 /** Keyed "claude" / "codex" for the server's own login, "claude:3" for account 3, "claude@2" for a login on machine 2;
  * logins signed in to the same account arrive once, under the named one. */

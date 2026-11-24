@@ -147,8 +147,8 @@
 .limit-prov { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .limit-prov .badge, .limit-prov .nowrap { flex-shrink: 0; white-space: nowrap; }
 .limit-who { display: grid; gap: 2px; min-width: 0; }
-.limit-acct { display: flex; align-items: center; gap: 6px; min-width: 0; padding-left: 18px; }
-.limit-acct .badge { flex-shrink: 0; }
+.limit-acct { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; min-width: 0; padding-left: 18px; }
+.limit-acct .badge { flex-shrink: 1; min-width: 0; max-width: 100%; height: auto; min-height: 18px; padding: 2px 8px; white-space: normal; text-align: left; justify-content: flex-start; line-height: 1.35; }
 .limit { display: grid; gap: 5px; }
 .limit-h { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; flex-wrap: wrap; }
 .limit-bar { height: 8px; border-radius: 4px; background: var(--surface-3); overflow: hidden; }

@@ -172,7 +172,55 @@ func TestLimitsSameAccountOnManyMachines(t *testing.T) {
 	delete(rt.limits, main)
 	rt.mu.Unlock()
 	snap = rt.limitsSnapshot(arno.ID)
-	if l, ok := snap[ka].(provLimits); len(snap) != 1 || !ok || !slices.Equal(l.Also, []string{"build-box"}) || l.ServerLogin {
+	if l, ok := snap[ka].(provLimits); len(snap) != 1 || !ok || !slices.Equal(l.Also, []string{"build-box"}) || l.ServerLogin || l.ByAccount {
 		t.Fatalf("two machines, one account: %v", snap)
+	}
+
+	// knowing who it is, the machines-only card is named after the account
+	rt.mu.Lock()
+	for _, k := range []string{ka, kb} {
+		rt.limits[k].Email = "arno@example.test"
+	}
+	rt.mu.Unlock()
+	snap = rt.limitsSnapshot(arno.ID)
+	if l := snap[ka].(provLimits); l.Label != "arno@example.test" || !l.ByAccount || !slices.Equal(l.Also, []string{"AB-box", "build-box"}) || l.SameAccount != nil {
+		t.Fatalf("machines-only card named after the account: %+v", l)
+	}
+}
+
+// Two named accounts signed in to one account (a sign-in with the wrong
+// account): one card, named after the account, both names to warn about.
+func TestLimitsNamedAccountsOnOneAccount(t *testing.T) {
+	s, h, root := testServer(t)
+	ctx := t.Context()
+	_, arno := person(t, s, h, "arno@example.test", "member", true)
+	var keys []string
+	for _, n := range []string{"Work", "Personal"} {
+		acct := &store.Account{Provider: "claude", Label: n, Home: filepath.Join(root, "people", n, ".claude"), UserID: &arno.ID}
+		if err := s.store.CreateAccount(ctx, acct); err != nil {
+			t.Fatal(err)
+		}
+		keys = append(keys, limitsKey("claude", acct.ID))
+	}
+	id := loginIdent("claude", "arno@example.test", "org-a")
+	rt := s.rt
+	rt.mu.Lock()
+	for _, k := range keys {
+		rt.limits[k] = &provLimits{Windows: []agent.Window{{ID: "seven_day", Name: "7 days", Used: 15}}, UpdatedAt: "2026-11-24T09:00:00Z", Ident: id, Email: "arno@example.test"}
+	}
+	rt.mu.Unlock()
+	snap := rt.limitsSnapshot(arno.ID)
+	l, ok := snap[keys[0]].(provLimits)
+	if len(snap) != 1 || !ok || l.Label != "arno@example.test" || !l.ByAccount || !slices.Equal(l.SameAccount, []string{"Work", "Personal"}) || !slices.Equal(l.Also, []string{"Work", "Personal"}) {
+		t.Fatalf("one card named after the account, both names warned about: %+v", snap)
+	}
+
+	// signed in to different accounts again: two cards, each its own name
+	rt.mu.Lock()
+	rt.limits[keys[1]].Ident, rt.limits[keys[1]].Email = loginIdent("claude", "arno@home.test", "org-b"), "arno@home.test"
+	rt.mu.Unlock()
+	snap = rt.limitsSnapshot(arno.ID)
+	if a, b := snap[keys[0]].(provLimits), snap[keys[1]].(provLimits); len(snap) != 2 || a.Label != "Work" || b.Label != "Personal" || a.ByAccount || a.SameAccount != nil {
+		t.Fatalf("two accounts, two cards: %+v", snap)
 	}
 }

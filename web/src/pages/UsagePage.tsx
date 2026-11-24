@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 // What the agents cost and how close you are to the plan limits.
 import { useState } from 'react'
 import { api, qs, V1 } from '../lib/api'
@@ -100,17 +101,20 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
                   const l = limits[src]
                   const keys = (w: LimitWindow) => [limitKey(src, w), ...aliases.map(a => limitKey(a, w))]
                   // Who it is: the email (yours or as admin), else the org; then the plan.
-                  const who = [l?.email || l?.org, l?.plan && planName(l.plan)].filter(Boolean).join(' · ')
+                  const acct = l?.email || l?.org
+                  const who = [acct !== label && acct, l?.plan && planName(l.plan)].filter(Boolean).join(' · ')
+                  const same = l?.same_account || []
                   return (
                     <div key={src} className="limit-box">
                       <div className="limit-who">
-                        <div className="limit-prov"><span className={`prov-dot prov-${p}`} /><b className="nowrap">{providerName(p)}</b>{l?.host_id ? <Icon name="server" size={13} className="inline-ico" /> : null}<span className="ellipsis">{label || 'Server login'}</span>
+                        <div className="limit-prov"><span className={`prov-dot prov-${p}`} /><b className="nowrap">{providerName(p)}</b>{l?.host_id && !l.by_account ? <Icon name="server" size={13} className="inline-ico" /> : null}<span className="ellipsis">{label || 'Server login'}</span>
                           {l?.updated_at && <span className="muted xsmall nowrap">· {when(l.updated_at)}</span>}</div>
                         {(who || (label && l?.server_login) || l?.also?.length) && <div className="muted xsmall limit-acct">
                           {label && l?.server_login && <span className="badge" title={`The server's own ${providerName(p)} login is signed in to this same account, so they share these limits.`}>Also the server login</span>}
-                          {l?.also?.length ? <span className="badge" title={`${l.also.join(', ')} ${l.also.length === 1 ? 'is' : 'are'} signed in to this same account, so they share these limits.`}>Also {l.also.join(', ')}</span> : null}
+                          {l?.also?.length ? <span className="badge" title={`${l.also.join(', ')} ${l.also.length === 1 ? 'is' : 'are'} signed in to this same account, so they share these limits.`}>{l.by_account ? '' : 'Also '}{l.also.join(', ')}</span> : null}
                           {who && <span className="ellipsis">{who}</span>}</div>}
                       </div>
+                      {same.length > 1 && <div className="callout warn small"><Icon name="alert" size={15} /><span>{same.slice(0, -1).join(', ')} and {same[same.length - 1]} are all signed in to this one account, so they show as one. If they should be different accounts, sign each in again under <Link to="/settings/machines">Machines</Link>, with the right account open in the browser (or a private window).</span></div>}
                       {l?.windows?.length ? l.windows.map(w => <LimitBar key={w.id || w.name} w={w}
                         pinned={isPinned(settings?.usage_pinned, keys(w))} onPin={settings?.usage_widget !== false ? () => togglePin(keys(w)) : undefined} />) : <p className="muted small" style={{ margin: 0 }}>{l?.error ? 'Could not read the limits: ' + l.error : 'Reading the limits…'}</p>}
                       {l?.note && <p className="muted xsmall" style={{ margin: 0 }}><Icon name="info" size={12} className="inline-ico" />{l.note}</p>}

@@ -23,12 +23,18 @@ export function limitSources(limits: Limits) {
     .map(k => ({ src: k, p, label: limits[k]?.label || '', aliases: limits[k]?.aliases || [] })))
 }
 
+/** A short name for a card in tight places: an account named by its email shows the part before the @. */
+export function shortLabel(l?: { label?: string; by_account?: boolean }) {
+  const s = l?.label || ''
+  return l?.by_account && s.includes('@') ? s.slice(0, s.indexOf('@')) : s
+}
+
 /** Every window; keys = its pin key plus the keys it had under the logins
  * folded into it, so a pin survives two logins turning out to be one. */
 export function limitRows(limits: Limits) {
   return limitSources(limits).flatMap(({ src, p, label, aliases }) => (limits[src]?.windows || []).map(w => {
     const key = limitKey(src, w)
-    return { src, p, label, w, key, keys: [key, ...aliases.map(a => limitKey(a, w))] }
+    return { src, p, label: shortLabel(limits[src]) || label, w, key, keys: [key, ...aliases.map(a => limitKey(a, w))] }
   }))
 }
 
