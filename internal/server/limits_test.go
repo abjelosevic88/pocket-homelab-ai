@@ -211,7 +211,7 @@ func TestLimitsNamedAccountsOnOneAccount(t *testing.T) {
 	rt.mu.Unlock()
 	snap := rt.limitsSnapshot(arno.ID)
 	l, ok := snap[keys[0]].(provLimits)
-	if len(snap) != 1 || !ok || l.Label != "arno@example.test" || !l.ByAccount || !slices.Equal(l.SameAccount, []string{"Work", "Personal"}) || !slices.Equal(l.Also, []string{"Work", "Personal"}) {
+	if len(snap) != 1 || !ok || l.Label != "arno@example.test" || !l.ByAccount || l.Group != limitsGroup(id) || l.Group == "" || !slices.Equal(l.SameAccount, []string{"Work", "Personal"}) || !slices.Equal(l.Also, []string{"Work", "Personal"}) {
 		t.Fatalf("one card named after the account, both names warned about: %+v", snap)
 	}
 

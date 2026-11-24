@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1323,6 +1325,18 @@ type provLimits struct {
 	// The card is named after the account (email or org), not one login:
 	// it stands for several named ones, or only for other machines' logins.
 	ByAccount bool `json:"by_account,omitempty"`
+	// Group names the account (the same for every login on it, without
+	// saying who it is), for the person's own name for it.
+	Group string `json:"group,omitempty"`
+}
+
+// limitsGroup is an account's id for the web app: stable, not its email.
+func limitsGroup(ident string) string {
+	if ident == "" {
+		return ""
+	}
+	h := sha256.Sum256([]byte("pocket-ai limits group|" + ident))
+	return "g" + hex.EncodeToString(h[:8])
 }
 
 // Limits merges what a running CLI reports (it only reports the windows of
@@ -1807,7 +1821,7 @@ func (rt *engine) limitsSnapshot(uid int64) map[string]any {
 			continue // folded into its group's lead below
 		}
 		cp := *l
-		cp.Label, cp.Ident = srcs[k].label, ""
+		cp.Label, cp.Ident, cp.Group = srcs[k].label, "", limitsGroup(l.Ident)
 		cp.Provider, cp.AccountID, cp.HostID, _ = limitsKeyParts(k)
 		cp.ServerLogin = limitsRank(k) == 0
 		mine := srcs[k].mine

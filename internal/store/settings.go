@@ -72,6 +72,12 @@ type Settings struct {
 	// Keyboard shortcuts changed from their defaults: action id → keys
 	// ("mod+shift+t"; "" = turned off). The defaults live in the web app.
 	Shortcuts map[string]string `json:"shortcuts"`
+
+	// Usage → Plan limits: the person's own names for their accounts
+	// (account group id → name), and logins that cannot tell who they are
+	// (a token login) put with an account by hand (limits key → group id).
+	UsageNames map[string]string `json:"usage_names"`
+	UsageLinks map[string]string `json:"usage_links"`
 }
 
 func defaults() Settings {
@@ -85,6 +91,8 @@ func defaults() Settings {
 		ThreadTabs:  true,
 		Sidebar:     []string{},
 		Shortcuts:   map[string]string{},
+		UsageNames:  map[string]string{},
+		UsageLinks:  map[string]string{},
 	}
 }
 
@@ -182,6 +190,10 @@ func (s *Store) GetSettings(ctx context.Context, userID int64) (Settings, error)
 			st.Sidebar = splitList(v)
 		case "shortcuts":
 			_ = json.Unmarshal([]byte(v), &st.Shortcuts)
+		case "usage_names":
+			_ = json.Unmarshal([]byte(v), &st.UsageNames)
+		case "usage_links":
+			_ = json.Unmarshal([]byte(v), &st.UsageLinks)
 		}
 	}
 	return st, rows.Err()
@@ -212,6 +224,8 @@ func (s *Store) SaveSettings(ctx context.Context, userID int64, st Settings) err
 		"worktree_idle_days":    strconv.Itoa(st.WorktreeIdleDays),
 		"sidebar":               strings.Join(st.Sidebar, ","),
 		"shortcuts":             shortcutsJSON(st.Shortcuts),
+		"usage_names":           shortcutsJSON(st.UsageNames),
+		"usage_links":           shortcutsJSON(st.UsageLinks),
 	})
 }
 

@@ -11,31 +11,55 @@ export const limitKey = (src: string, w: LimitWindow) => `${src}:${w.id || w.nam
 export const usedFrac = (w: LimitWindow) => Math.max(0, Math.min(1, w.used > 1 ? w.used / 100 : w.used))
 export const limitTone = (f: number) => f > 0.9 ? 'danger' : f > 0.7 ? 'warn' : ''
 
-/** The logins that have limits, the one the server's own login is first per
- * provider, other machines' last. Logins on the same account arrive as one
- * (with aliases). */
-export function limitSources(limits: Limits) {
+/** Your own names for accounts, and logins put with an account by hand. */
+export interface UsageNaming { usage_names?: Record<string, string>; usage_links?: Record<string, string> }
+
+/** The accounts that have limits, the one the server's own login is on
+ * first per provider, other machines' last. Logins on the same account
+ * arrive as one (with aliases); a login that cannot tell who it is (a token
+ * login) joins the account it was put with by hand. title = your name for
+ * the account, else its email / the login's name; logins = every login on it. */
+export function limitSources(limits: Limits, naming?: UsageNaming | null) {
   const id = (k: string) => Number(k.split(':')[1] || 0)
   const rank = (k: string) => limits[k]?.server_login ? -1 : limits[k]?.host_id ? 1e9 + limits[k]!.host_id! : id(k)
-  return (['claude', 'codex'] as ProviderId[]).flatMap(p => Object.keys(limits)
-    .filter(k => k === p || k.startsWith(p + ':') || k.startsWith(p + '@'))
-    .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
-    .map(k => ({ src: k, p, label: limits[k]?.label || '', aliases: limits[k]?.aliases || [] })))
+  const loginName = (k: string) => limits[k]?.label || 'Server login'
+  return (['claude', 'codex'] as ProviderId[]).flatMap(p => {
+    const keys = Object.keys(limits).filter(k => k === p || k.startsWith(p + ':') || k.startsWith(p + '@'))
+    const byGroup = new Map(keys.filter(k => limits[k]?.group).map(k => [limits[k]!.group!, k]))
+    const joined = new Map<string, string[]>() // card key → logins put with it
+    const shown = keys.filter(k => {
+      const to = !limits[k]?.group && byGroup.get(naming?.usage_links?.[k] || '')
+      if (to) joined.set(to, [...(joined.get(to) || []), k])
+      return !to
+    })
+    return shown.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b)).map(k => {
+      const l = limits[k]
+      const extra = joined.get(k) || []
+      const own = l?.by_account ? [] : [loginName(k), ...(l?.server_login && l.label ? ['Server login'] : [])]
+      return {
+        src: k, p, label: l?.label || '', group: l?.group || '',
+        title: (l?.group && naming?.usage_names?.[l.group]) || '',
+        aliases: [...(l?.aliases || []), ...extra],
+        logins: [...own, ...(l?.also || []), ...extra.map(loginName)],
+        joined: extra,
+      }
+    })
+  })
+}
+
+/** Every window; keys = its pin key plus the keys it had under the logins
+ * folded into it, so a pin survives two logins turning out to be one. */
+export function limitRows(limits: Limits, naming?: UsageNaming | null) {
+  return limitSources(limits, naming).flatMap(({ src, p, title, aliases }) => (limits[src]?.windows || []).map(w => {
+    const key = limitKey(src, w)
+    return { src, p, label: title || shortLabel(limits[src]), w, key, keys: [key, ...aliases.map(a => limitKey(a, w))] }
+  }))
 }
 
 /** A short name for a card in tight places: an account named by its email shows the part before the @. */
 export function shortLabel(l?: { label?: string; by_account?: boolean }) {
   const s = l?.label || ''
   return l?.by_account && s.includes('@') ? s.slice(0, s.indexOf('@')) : s
-}
-
-/** Every window; keys = its pin key plus the keys it had under the logins
- * folded into it, so a pin survives two logins turning out to be one. */
-export function limitRows(limits: Limits) {
-  return limitSources(limits).flatMap(({ src, p, label, aliases }) => (limits[src]?.windows || []).map(w => {
-    const key = limitKey(src, w)
-    return { src, p, label: shortLabel(limits[src]) || label, w, key, keys: [key, ...aliases.map(a => limitKey(a, w))] }
-  }))
 }
 
 /** No pins yet means every limit shows. */
@@ -54,7 +78,7 @@ export function UsageWidget({ onNavigate }: { onNavigate?: () => void }) {
   const { limits, settings } = useApp()
   const navigate = useNavigate()
   if (!settings || settings.usage_widget === false) return null
-  const rows = limitRows(limits).filter(r => isPinned(settings.usage_pinned, r.keys))
+  const rows = limitRows(limits, settings).filter(r => isPinned(settings.usage_pinned, r.keys))
   if (!rows.length) return null
   const resets = rows.some(r => r.p === 'codex') ? limits.codex?.resets : undefined
   const next = resets?.credits?.find(c => c.expires_at)?.expires_at

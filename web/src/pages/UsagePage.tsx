@@ -1,11 +1,10 @@
-import { Link } from 'react-router-dom'
 // What the agents cost and how close you are to the plan limits.
 import { useState } from 'react'
 import { api, qs, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { fmtCost, fmtTokens, planName, providerName, resetsIn, when } from '../lib/format'
 import { isPinned, limitKey, limitRows, limitSources, limitTone, usedFrac } from '../components/UsageWidget'
-import type { LimitWindow, ProviderId, Resets, UsageReport } from '../lib/types'
+import type { LimitWindow, ProviderId, ProviderLimits, Resets, UsageReport } from '../lib/types'
 import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
 import { Loading, Segmented, useAsync } from '../components/ui'
@@ -23,6 +22,43 @@ function LimitBar({ w, pinned, onPin }: { w: LimitWindow; pinned?: boolean; onPi
           title={pinned ? 'Shown in the sidebar — click to hide it there' : 'Show in the sidebar'} aria-label={pinned ? 'Unpin from the sidebar' : 'Pin to the sidebar'}><Icon name="pushpin" size={14} /></button>}
       </div>
       <div className={`limit-bar ${limitTone(used)}`}><span style={{ width: `${Math.max(1, used * 100)}%` }} /></div>
+    </div>
+  )
+}
+
+// A card's head: the account (your name for it, else its email or the
+// login's name; the pencil renames it), its plan, and the logins on it
+// folded behind "on N logins". A login that cannot tell who it is (a token
+// login) is put with one of your accounts by hand.
+function AccountHead({ p, l, name, named, logins, joined, others, onRename, onLink, onUnlink }: {
+  p: ProviderId; l?: ProviderLimits; name: string; named: boolean; logins: string[]; joined: string[]
+  others: { group: string; name: string }[]; onRename?: (name: string) => void; onLink: (group: string) => void; onUnlink: (key: string) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [open, setOpen] = useState(false)
+  const acct = l?.email || l?.org
+  const sub = [named || acct !== name ? acct : '', l?.plan && planName(l.plan)].filter(Boolean).join(' · ')
+  const save = (v: string) => { setEditing(false); if (v.trim() !== (named ? name : '')) onRename?.(v.trim()) }
+  return (
+    <div className="limit-who">
+      <div className="limit-prov"><span className={`prov-dot prov-${p}`} /><b className="nowrap">{providerName(p)}</b>
+        {editing ? <input className="limit-name-input" autoFocus defaultValue={named ? name : ''} placeholder={name} maxLength={60} aria-label="Name for this account"
+          onBlur={e => save(e.currentTarget.value)} onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setEditing(false) }} />
+          : <span className="ellipsis">{name}</span>}
+        {onRename && !editing && <button type="button" className="btn ghost icon-only xs" title="Name this account" aria-label="Name this account" onClick={() => setEditing(true)}><Icon name="pen" size={13} /></button>}
+        {l?.updated_at && <span className="muted xsmall nowrap">· {when(l.updated_at)}</span>}</div>
+      {(sub || logins.length > 1) && <div className="muted xsmall limit-acct">
+        {sub && <span className="ellipsis">{sub}</span>}
+        {logins.length > 1 && <button type="button" className="link-btn nowrap" aria-expanded={open} onClick={() => setOpen(!open)}>{sub ? '· ' : ''}on {logins.length} logins</button>}</div>}
+      {open && <div className="muted xsmall limit-acct limit-logins">{logins.map((n, i) => {
+        const k = joined[i - (logins.length - joined.length)]
+        return <span key={i} className="nowrap">{n}{k && <button type="button" className="link-btn" title="Take this login out of this account" aria-label={`Take ${n} out`} onClick={() => onUnlink(k)}> ×</button>}{i < logins.length - 1 ? ',' : ''}</span>
+      })}</div>}
+      {!l?.group && others.length > 0 && <label className="muted xsmall limit-acct">This login can't say which account it is.
+        <select className="limit-link" value="" onChange={e => e.target.value && onLink(e.target.value)}>
+          <option value="">Put it with…</option>
+          {others.map(o => <option key={o.group} value={o.group}>{o.name}</option>)}
+        </select></label>}
     </div>
   )
 }
@@ -75,12 +111,15 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
     return a
   }, {})).sort((a, b) => b[1] - a[1])
   const awayProv = providers.map(p => [p, away.filter(x => x.provider === p).reduce((a, x) => a + x.cost_usd, 0)] as const).filter(([, v]) => v > 0)
-  const sources = limitSources(limits)
+  const sources = limitSources(limits, settings)
+  // empty values are dropped: a name cleared, a login taken out again
+  const saveNaming = (patch: { usage_names?: Record<string, string>; usage_links?: Record<string, string> }) =>
+    saveSettings(Object.fromEntries(Object.entries(patch).map(([k, m]) => [k, Object.fromEntries(Object.entries(m!).filter(([, v]) => v))]))).catch(() => {})
   // Pins pick what the sidebar panel shows. No pins = all; unpinning the
   // last one leaves a marker that matches nothing, so the panel is empty.
   // A window's keys include the ones it had under logins folded into it.
   const togglePin = (keys: string[]) => {
-    const cur = settings?.usage_pinned?.length ? settings.usage_pinned.filter(k => k !== '-') : limitRows(limits).map(x => x.key)
+    const cur = settings?.usage_pinned?.length ? settings.usage_pinned.filter(k => k !== '-') : limitRows(limits, settings).map(x => x.key)
     const next = keys.some(k => cur.includes(k)) ? cur.filter(k => !keys.includes(k)) : [...cur, keys[0]]
     saveSettings({ usage_pinned: next.length ? next : ['-'] }).catch(() => {})
   }
@@ -97,24 +136,17 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
                 <Icon name="refresh" size={15} className={refreshing ? 'spin' : ''} /></button></div>
             <div className="card-body">
               <div className="two-col">
-                {(sources.length ? sources : providers.map(p => ({ src: p as string, p, label: '', aliases: [] as string[] }))).map(({ src, p, label, aliases }) => {
+                {(sources.length ? sources : providers.map(p => ({ src: p as string, p, label: '', title: '', group: '', aliases: [] as string[], logins: [] as string[], joined: [] as string[] }))).map(({ src, p, label, title, group, aliases, logins, joined }) => {
                   const l = limits[src]
                   const keys = (w: LimitWindow) => [limitKey(src, w), ...aliases.map(a => limitKey(a, w))]
-                  // Who it is: the email (yours or as admin), else the org; then the plan.
-                  const acct = l?.email || l?.org
-                  const who = [acct !== label && acct, l?.plan && planName(l.plan)].filter(Boolean).join(' · ')
-                  const same = l?.same_account || []
+                  const others = sources.filter(x => x.p === p && x.group).map(x => ({ group: x.group, name: x.title || x.label || 'Server login' }))
                   return (
                     <div key={src} className="limit-box">
-                      <div className="limit-who">
-                        <div className="limit-prov"><span className={`prov-dot prov-${p}`} /><b className="nowrap">{providerName(p)}</b>{l?.host_id && !l.by_account ? <Icon name="server" size={13} className="inline-ico" /> : null}<span className="ellipsis">{label || 'Server login'}</span>
-                          {l?.updated_at && <span className="muted xsmall nowrap">· {when(l.updated_at)}</span>}</div>
-                        {(who || (label && l?.server_login) || l?.also?.length) && <div className="muted xsmall limit-acct">
-                          {label && l?.server_login && <span className="badge" title={`The server's own ${providerName(p)} login is signed in to this same account, so they share these limits.`}>Also the server login</span>}
-                          {l?.also?.length ? <span className="badge" title={`${l.also.join(', ')} ${l.also.length === 1 ? 'is' : 'are'} signed in to this same account, so they share these limits.`}>{l.by_account ? '' : 'Also '}{l.also.join(', ')}</span> : null}
-                          {who && <span className="ellipsis">{who}</span>}</div>}
-                      </div>
-                      {same.length > 1 && <div className="callout warn small"><Icon name="alert" size={15} /><span>{same.slice(0, -1).join(', ')} and {same[same.length - 1]} are all signed in to this one account, so they show as one. If they should be different accounts, sign each in again under <Link to="/settings/machines">Machines</Link>, with the right account open in the browser (or a private window).</span></div>}
+                      <AccountHead p={p} l={l} name={title || label || 'Server login'} named={!!title} logins={logins} joined={joined}
+                        others={l?.group ? [] : others}
+                        onRename={group ? n => saveNaming({ usage_names: { ...(settings?.usage_names || {}), [group]: n } }) : undefined}
+                        onLink={g => saveNaming({ usage_links: { ...(settings?.usage_links || {}), [src]: g } })}
+                        onUnlink={k => saveNaming({ usage_links: { ...(settings?.usage_links || {}), [k]: '' } })} />
                       {l?.windows?.length ? l.windows.map(w => <LimitBar key={w.id || w.name} w={w}
                         pinned={isPinned(settings?.usage_pinned, keys(w))} onPin={settings?.usage_widget !== false ? () => togglePin(keys(w)) : undefined} />) : <p className="muted small" style={{ margin: 0 }}>{l?.error ? 'Could not read the limits: ' + l.error : 'Reading the limits…'}</p>}
                       {l?.note && <p className="muted xsmall" style={{ margin: 0 }}><Icon name="info" size={12} className="inline-ico" />{l.note}</p>}

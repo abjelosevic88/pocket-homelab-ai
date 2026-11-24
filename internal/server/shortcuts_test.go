@@ -29,3 +29,22 @@ func TestShortcutsSaveAndStayPersonal(t *testing.T) {
 		t.Fatalf("bob sees alice's shortcuts: %#v", other.Shortcuts)
 	}
 }
+
+// Your names for accounts and token logins put with an account are kept;
+// empty names and bad keys are dropped.
+func TestUsageNamesSave(t *testing.T) {
+	s, h, _ := testServer(t)
+	alice, _ := person(t, s, h, "alice@example.com", "admin", false)
+	alice.want("PUT", "/api/v1/settings", map[string]any{
+		"usage_names": map[string]string{"g0123abcd": " Athena Max ", "g99": "", "Bad Key": "x"},
+		"usage_links": map[string]string{"claude@3": "g0123abcd", "claude@4": "bad group"},
+	}, 200, nil)
+	var st store.Settings
+	alice.want("GET", "/api/v1/settings", nil, 200, &st)
+	if len(st.UsageNames) != 1 || st.UsageNames["g0123abcd"] != "Athena Max" {
+		t.Fatalf("names: %#v", st.UsageNames)
+	}
+	if len(st.UsageLinks) != 1 || st.UsageLinks["claude@3"] != "g0123abcd" {
+		t.Fatalf("links: %#v", st.UsageLinks)
+	}
+}

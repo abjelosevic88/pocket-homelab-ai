@@ -125,6 +125,9 @@ export interface Settings {
   /** Keyboard shortcuts changed from their defaults (lib/shortcuts.ts); "" = off. */
   shortcuts?: Record<string, string>
   usage_pinned: string[]
+  /** Usage → Plan limits: your names for accounts (group → name), token logins put with an account (limits key → group). */
+  usage_names?: Record<string, string>
+  usage_links?: Record<string, string>
   system_prompt: string
 }
 
@@ -490,6 +493,8 @@ export interface ProviderLimits {
   same_account?: string[]
   /** label is the account (email or org), not one login's name */
   by_account?: boolean
+  /** the account's id (same for every login on it), for your own name for it */
+  group?: string
 }
 /** Keyed "claude" / "codex" for the server's own login, "claude:3" for account 3, "claude@2" for a login on machine 2;
  * logins signed in to the same account arrive once, under the named one. */

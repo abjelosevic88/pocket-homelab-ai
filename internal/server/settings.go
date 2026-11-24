@@ -78,6 +78,8 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		UsagePinned         *[]string            `json:"usage_pinned"`
 		Sidebar             *[]string            `json:"sidebar"`
 		Shortcuts           *map[string]string   `json:"shortcuts"`
+		UsageNames          *map[string]string   `json:"usage_names"`
+		UsageLinks          *map[string]string   `json:"usage_links"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
@@ -210,6 +212,22 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		for id, keys := range *in.Shortcuts {
 			if shortcutID.MatchString(id) && len(keys) <= 40 && len(st.Shortcuts) < 40 {
 				st.Shortcuts[id] = strings.ToLower(strings.TrimSpace(keys))
+			}
+		}
+	}
+	if in.UsageNames != nil {
+		st.UsageNames = map[string]string{}
+		for g, n := range *in.UsageNames {
+			if n = strings.TrimSpace(n); usageKey.MatchString(g) && n != "" && len(n) <= 60 && len(st.UsageNames) < 50 {
+				st.UsageNames[g] = n
+			}
+		}
+	}
+	if in.UsageLinks != nil {
+		st.UsageLinks = map[string]string{}
+		for k, g := range *in.UsageLinks {
+			if usageKey.MatchString(k) && usageKey.MatchString(g) && len(st.UsageLinks) < 50 {
+				st.UsageLinks[k] = g
 			}
 		}
 	}
@@ -363,6 +381,9 @@ func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
 
 // shortcutID is a keyboard shortcut action id ("reopen_tab").
 var shortcutID = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+
+// usageKey: a limits key ("claude", "claude:3", "claude@2+claude-max") or an account group id.
+var usageKey = regexp.MustCompile(`^[a-z][a-z0-9:@+._-]{0,79}$`)
 
 // a sidebar menu item ("files"), or "-files" when the person removed it
 var sidebarID = regexp.MustCompile(`^-?[a-z][a-z0-9_]{0,31}$`)
