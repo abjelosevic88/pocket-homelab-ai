@@ -34,6 +34,8 @@ func (s *Server) hostRoutes(r chi.Router) {
 	r.Patch("/hosts/{id}", s.handleUpdateHost)
 	r.Delete("/hosts/{id}", s.handleDeleteHost)
 	r.Post("/hosts/{id}/check", s.handleCheckHost)
+	r.Post("/hosts/{id}/update/{provider}", s.handleCLIUpdate) // id 0 = this server (cli_update.go)
+	r.Get("/cli/latest", s.handleCLILatest)
 	r.Get("/hosts/key", s.handleHostKey)
 	r.Post("/fs/mkdir", s.handleMkdir)
 	r.Post("/fs/clone", s.handleClone)

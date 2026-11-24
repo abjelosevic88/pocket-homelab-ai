@@ -89,6 +89,11 @@ the accounts above; one already there is kept) and answers it; sign it in with `
 /hosts/{id}/login/{provider}?dir=…` (then `/code`, as above). A thread on the machine switches with `PATCH
 /threads/{id} {host_home: dir}`.
 
+CLI versions: `GET /cli/latest[?refresh=1]` → `{versions: {claude, codex}, checked_at}`, the newest release of each
+(npm `latest`, asked at most hourly). `POST /hosts/{id}/update/{claude|codex}` (id 0 = this server, admins; another
+machine, whoever may manage it) runs the CLI's own `update` there (up to 5 minutes; 409 while one runs), checks the
+machine again and answers `{ok, version, output, error?}`.
+
 ## Threads
 
 `Thread`:

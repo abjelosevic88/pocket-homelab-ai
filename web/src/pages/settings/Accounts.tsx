@@ -17,7 +17,7 @@ import { Select } from '../../components/Select'
 import { Icon } from '../../components/icons'
 import { Confirm, CopyField, copyText, errMsg, Field, MenuButton, Modal, Spinner, useAsync, useToast, type MenuItem, useContextMenu } from '../../components/ui'
 import { ago, StatusDot } from './common'
-import { LoginList, MachineCard, osIcon } from './MachineParts'
+import { LoginList, MachineCard, osIcon, useCLIUpdate, useLatestCLIs } from './MachineParts'
 
 /** "max" → "Max", "PRO" → "Pro". */
 
@@ -38,6 +38,8 @@ export function AccountsSection() {
   const [del, setDel] = useState<Account | null>(null)
   const ctx = useContextMenu()
   const done = () => { list.reload(); reloadAccounts().catch(() => {}) }
+  const latest = useLatestCLIs()
+  const upd = useCLIUpdate()
   const mine = (a: Account) => !a.default && a.user_id != null && a.user_id === user?.id
   const canManage = (a: Account) => !a.default && (isAdmin || mine(a))
   const who = (a: Account) => a.default || a.user_id == null ? `Only ${pi?.owner || 'the server owner'}` : mine(a) ? 'Only you' : 'Only ' + (people.data?.find(p => p.id === a.user_id)?.name || 'one person')
@@ -53,7 +55,8 @@ export function AccountsSection() {
       health={!providers.length ? 'off' : providers.every(p => p.available) ? 'ok' : providers.some(p => p.available) ? 'warn' : 'error'}
       healthLabel={providers.length && providers.every(p => p.available) ? 'Pocket AI runs here' : undefined}
       meta={[pi?.owner ? <>owned by {pi.owner}</> : 'where Pocket AI runs', ...(list.data ? [`${list.data.length} ${list.data.length === 1 ? 'login' : 'logins'}`] : [])]}
-      clis={providers.map(p => ({ provider: p.id, version: p.available ? p.version : undefined, error: p.available ? undefined : p.error || 'not installed' }))}
+      clis={providers.map(p => ({ provider: p.id, version: p.available ? p.version : undefined, error: p.available ? undefined : p.error || 'not installed',
+        latest: latest[p.id], updating: upd.busy(0, p.id), onUpdate: isAdmin ? () => { void upd.update(0, 'this server', p.id, () => reloadProviders()) } : undefined }))}
       actions={<button type="button" className="btn sm ghost icon-only" aria-label="Check this server again" title="Check again" disabled={list.loading || cliCheck}
         onClick={() => { setRefresh(n => n + 1); setCliCheck(true); reloadProviders().catch(() => {}).finally(() => setCliCheck(false)) }}>
         <Icon name="refresh" size={15} className={list.loading || cliCheck ? 'spin' : ''} /></button>}>

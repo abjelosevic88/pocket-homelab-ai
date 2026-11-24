@@ -16,7 +16,7 @@ import { ProviderToggle } from '../../components/AgentPicker'
 import { Confirm, CopyField, errMsg, Field, MenuButton, Modal, Spinner, useAsync, useToast, type MenuItem } from '../../components/ui'
 import { SignInDialog, type SignInTarget } from './Accounts'
 import { ago } from './common'
-import { LoginList, MachineCard, osIcon, provName, tilde, type CliChip } from './MachineParts'
+import { LoginList, MachineCard, osIcon, provName, tilde, type CliChip, useCLIUpdate, useLatestCLIs } from './MachineParts'
 
 
 /** Settings → Machines after "This server": a card per machine (status,
@@ -30,6 +30,8 @@ export function HostsSection({ logins, only, onAdded, onRemoved }: { logins: Hos
   const jailed = !!own.data
   // their own machines, or the server's for an admin
   const isAdmin = jailed ? !!user?.can_run : user?.role === 'admin'
+  const latest = useLatestCLIs()
+  const upd = useCLIUpdate()
   const [edit, setEdit] = useState<Host | 'new' | null>(null)
   const [del, setDel] = useState<Host | null>(null)
   const [checking, setChecking] = useState<number | null>(null)
@@ -63,7 +65,8 @@ export function HostsSection({ logins, only, onAdded, onRemoved }: { logins: Hos
         ]
         const missing = Object.entries(h.info.missing || {})
         const busy = checking === h.id || logins.asking(h.id)
-        const clis: CliChip[] = (['claude', 'codex'] as ProviderId[]).flatMap((p): CliChip[] => h.info.versions?.[p] ? [{ provider: p, version: h.info.versions[p] }] : h.info.missing?.[p] ? [{ provider: p, error: h.info.missing[p] }] : [])
+        const clis: CliChip[] = (['claude', 'codex'] as ProviderId[]).flatMap((p): CliChip[] => h.info.versions?.[p] ? [{ provider: p, version: h.info.versions[p], latest: latest[p], updating: upd.busy(h.id, p),
+          onUpdate: isAdmin ? () => { void upd.update(h.id, h.name, p, () => { logins.refresh(h.id); return reloadHosts() }) } : undefined }] : h.info.missing?.[p] ? [{ provider: p, error: h.info.missing[p] }] : [])
         const list = logins.byHost[h.id]
         const signed = list?.filter(l => !l.missing && l.signed_in).length
         return (

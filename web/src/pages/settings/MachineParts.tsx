@@ -2,10 +2,12 @@
 // CLI chips) and its logins grouped by CLI; the machine picker on top uses
 // osIcon and Health. This server and the other machines use the same ones.
 import type React from 'react'
+import { useEffect, useState } from 'react'
+import { api, V1 } from '../../lib/api'
 import { planName } from '../../lib/format'
 import type { ProviderId } from '../../lib/types'
 import { Icon } from '../../components/icons'
-import { MenuButton, type MenuItem } from '../../components/ui'
+import { errMsg, MenuButton, type MenuItem, Spinner, useToast } from '../../components/ui'
 import { StatusDot } from './common'
 
 export type Health = 'ok' | 'warn' | 'error' | 'off'
@@ -22,7 +24,60 @@ export function osIcon(os?: string, here = false) {
   return 'server'
 }
 
-export interface CliChip { provider: ProviderId; version?: string; error?: string }
+export interface CliChip {
+  provider: ProviderId; version?: string; error?: string
+  /** the newest release (GET /cli/latest) */
+  latest?: string
+  /** updates it there (who may: an admin, or the machine's own person) */
+  onUpdate?: () => void; updating?: boolean
+}
+
+/** a newer than b ("2.1.331" vs "2.1.326 (Claude Code)") */
+export function isNewer(a: string, b: string): boolean {
+  const n = (v: string) => (/(\d+(?:\.\d+)*)/.exec(v)?.[1] || '').split('.').map(Number)
+  const x = n(a), y = n(b)
+  if (!x.length || !y.length || Number.isNaN(x[0]) || Number.isNaN(y[0])) return false
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] || 0) - (y[i] || 0)
+    if (d) return d > 0
+  }
+  return false
+}
+
+let latestCache: { at: number; p: Promise<Partial<Record<ProviderId, string>>> } | null = null
+/** The newest Claude Code and Codex (the server asks npm at most hourly). */
+export function useLatestCLIs(): Partial<Record<ProviderId, string>> {
+  const [v, setV] = useState<Partial<Record<ProviderId, string>>>({})
+  useEffect(() => {
+    if (!latestCache || Date.now() - latestCache.at > 10 * 60_000) {
+      latestCache = { at: Date.now(), p: api.get<{ versions: Partial<Record<ProviderId, string>> }>(`${V1}/cli/latest`).then(r => r.versions || {}).catch(() => { latestCache = null; return {} }) }
+    }
+    let live = true
+    void latestCache.p.then(r => { if (live) setV(r) })
+    return () => { live = false }
+  }, [])
+  return v
+}
+
+/** Update on a machine (0 = this server): runs claude/codex update there,
+ * then onDone (check it again). `updating` is "hostId:provider" while one runs. */
+export function useCLIUpdate() {
+  const { toast } = useToast()
+  const [updating, setUpdating] = useState<string | null>(null)
+  const update = async (hostId: number, name: string, p: ProviderId, onDone: () => unknown) => {
+    setUpdating(`${hostId}:${p}`)
+    toast(`Updating ${provName(p)} on ${name}…`)
+    try {
+      const r = await api.post<{ ok: boolean; version: string; error?: string }>(`${V1}/hosts/${hostId}/update/${p}`)
+      if (r.ok) toast(`${provName(p)} on ${name} is ${shortVersion(r.version || '') || 'updated'}`, 'ok')
+      else toast(`${provName(p)} on ${name}: ${r.error || 'the update did not finish'}`, 'err')
+    } catch (e) { toast(errMsg(e), 'err') } finally {
+      setUpdating(null)
+      await Promise.resolve(onDone()).catch(() => {})
+    }
+  }
+  return { updating, update, busy: (hostId: number, p: ProviderId) => updating === `${hostId}:${p}` }
+}
 
 const HEALTH_LABEL: Record<Health, string> = { ok: 'Online', warn: 'Needs a look', error: 'Unreachable', off: 'Not checked' }
 
@@ -43,11 +98,22 @@ export function MachineCard({ icon, name, health, healthLabel, meta, clis, actio
       </header>
       {clis && clis.length > 0 && (
         <div className="mc-clis">
-          {clis.map(c => (
-            <span key={c.provider} className={`mc-cli ${c.provider} ${c.error ? 'bad' : ''}`} title={c.error || `${provName(c.provider)} ${c.version || ''}`}>
-              <Icon name={c.provider} size={13} />{provName(c.provider)}<b>{c.error ? 'not installed' : shortVersion(c.version || '')}</b>
-            </span>
-          ))}
+          {clis.map(c => {
+            const behind = !c.error && !!c.version && !!c.latest && isNewer(c.latest, c.version)
+            const current = !c.error && !!c.version && !!c.latest && !behind
+            return (
+              <span key={c.provider} className="mc-cli-row">
+                <span className={`mc-cli ${c.provider} ${c.error ? 'bad' : ''}`} title={c.error || `${provName(c.provider)} ${c.version || ''}${current ? ' — the latest' : behind ? ` — ${c.latest} is out` : ''}`}>
+                  <Icon name={c.provider} size={13} />{provName(c.provider)}<b>{c.error ? 'not installed' : shortVersion(c.version || '')}</b>
+                  {current && <Icon name="check" size={12} className="mc-cli-ok" aria-label="latest" />}
+                </span>
+                {behind && (c.onUpdate
+                  ? <button type="button" className="btn sm mc-cli-update" disabled={c.updating} onClick={c.onUpdate} title={`Update ${provName(c.provider)} to ${c.latest}`}>
+                      {c.updating ? <Spinner /> : <Icon name="arrow-up" size={13} />}{c.updating ? 'Updating…' : `Update to ${c.latest}`}</button>
+                  : <span className="mc-cli-new">{c.latest} out</span>)}
+              </span>
+            )
+          })}
         </div>
       )}
       {children && <div className="mc-body">{children}</div>}
