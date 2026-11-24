@@ -179,7 +179,9 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	return nil
 }
 
-// housekeeping prunes expired sessions and images never sent, once an hour.
+// housekeeping prunes expired sessions and images never sent, and deletes
+// archived conversations past their person's "Delete archived conversations
+// after", once an hour.
 func (s *Server) housekeeping(ctx context.Context) {
 	t := time.NewTicker(time.Hour)
 	defer t.Stop()
@@ -190,6 +192,11 @@ func (s *Server) housekeeping(ctx context.Context) {
 			for _, u := range ups {
 				s.removeUploadFile(u.Path)
 				_ = s.store.DeleteUpload(ctx, u.UserID, u.ID)
+			}
+		}
+		if users, err := s.store.ListUsers(ctx); err == nil {
+			for _, u := range users {
+				s.deleteOldArchived(ctx, u.ID)
 			}
 		}
 		select {

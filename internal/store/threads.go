@@ -112,9 +112,11 @@ func (s *Store) UpdateThread(ctx context.Context, t *Thread) error {
 	t.UpdatedAt = Now()
 	_, err := s.DB.ExecContext(ctx, `UPDATE threads SET title = ?, model = ?, effort = ?, mode = ?, speed = ?, cwd = ?, workspace_id = ?,
 		provider_session_id = ?, log_offset = ?, status = ?, error = ?, pinned = ?, archived = ?, unread = ?, completed_unread = ?, preview = ?, last_prompt = ?, prompt_at = ?, usage = ?,
-		updated_at = ?, activity_at = ?, account_id = ?, host_home = ? WHERE id = ?`,
+		updated_at = ?, activity_at = ?, account_id = ?, host_home = ?,
+		archived_at = CASE WHEN ? = 0 THEN '' WHEN archived_at = '' THEN ? ELSE archived_at END WHERE id = ?`,
 		t.Title, t.Model, t.Effort, t.Mode, t.Speed, t.Cwd, nullInt(t.WorkspaceID), t.ProviderSessionID, t.LogOffset, t.Status, t.Error,
-		boolInt(t.Pinned), boolInt(t.Archived), boolInt(t.Unread), boolInt(t.CompletedUnread), t.Preview, t.LastPrompt, t.PromptAt, jsonMarshal(t.Usage), t.UpdatedAt, t.ActivityAt, t.AccountID, t.HostHome, t.ID)
+		boolInt(t.Pinned), boolInt(t.Archived), boolInt(t.Unread), boolInt(t.CompletedUnread), t.Preview, t.LastPrompt, t.PromptAt, jsonMarshal(t.Usage), t.UpdatedAt, t.ActivityAt, t.AccountID, t.HostHome,
+		boolInt(t.Archived), t.UpdatedAt, t.ID)
 	if err == nil {
 		s.claimSession(ctx, t)
 	}
@@ -165,6 +167,25 @@ func (s *Store) DeleteThread(ctx context.Context, userID int64, id string) error
 		return ErrNotFound
 	}
 	return nil
+}
+
+// ArchivedBefore lists a person's archived threads that went to the archive
+// before cutoff; favorites (pinned) are left out, they are kept.
+func (s *Store) ArchivedBefore(ctx context.Context, userID int64, cutoff string) ([]string, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id FROM threads WHERE user_id = ? AND archived = 1 AND pinned = 0 AND archived_at != '' AND archived_at < ?`, userID, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // ThreadBySession finds a person's thread that resumes a provider session.

@@ -70,6 +70,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		EnterSends          *bool                `json:"enter_sends"`
 		ShowThinking        *bool                `json:"show_thinking"`
 		DeleteNoConfirm     *bool                `json:"delete_no_confirm"`
+		ArchiveDeleteDays   *int                 `json:"archive_delete_days"`
 		UsageWidget         *bool                `json:"usage_widget"`
 		WorktreeAutoCleanup *bool                `json:"worktree_auto_cleanup"`
 		WorktreeIdleDays    *int                 `json:"worktree_idle_days"`
@@ -222,6 +223,13 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		st.WorktreeIdleDays = *in.WorktreeIdleDays
 	}
+	if in.ArchiveDeleteDays != nil {
+		if *in.ArchiveDeleteDays < 0 || *in.ArchiveDeleteDays > 3650 {
+			writeErr(w, http.StatusBadRequest, "archive_delete_days must be 0 (never) to 3650")
+			return
+		}
+		st.ArchiveDeleteDays = *in.ArchiveDeleteDays
+	}
 	for _, b := range []struct {
 		in  *bool
 		out *bool
@@ -245,6 +253,13 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 			base = context.Background()
 		}
 		go s.autoCleanupUser(base, u.ID)
+	}
+	if in.ArchiveDeleteDays != nil && *in.ArchiveDeleteDays > 0 {
+		base := s.rt.ctx
+		if base == nil {
+			base = context.Background()
+		}
+		go s.deleteOldArchived(base, u.ID) // right away, not an hour later
 	}
 	s.touch()
 	st, _ = s.store.GetSettings(ctx, u.ID)

@@ -409,6 +409,9 @@ Same access rule as terminals (this server: owner/admins; people with a folder o
   reason. A simultaneous cleanup pass returns 409. User ownership and run permission are enforced.
 - `GET /worktrees/cleanup` returns the latest completed cleanup result, including hourly automatic runs,
   or null before the first run. Preview does not replace this record.
+- `PUT /settings` accepts `{archive_delete_days: 0..3650}` (default 0 = never). Archived conversations are deleted
+  for good that many days after they went to the archive (`threads.archived_at`; moving one out clears it, ones
+  archived before 0.109.0 count from the upgrade). Favorites (pinned) are kept. Checked hourly and right when set.
 - `PUT /settings` accepts `{worktree_auto_cleanup: true|false}` (default false). The server checks opted-in
   users after startup and hourly thereafter, and right away when it is turned on. Disabling it prevents subsequent passes.
 - `PUT /settings` accepts `{worktree_idle_days: 0..365}` (default 0 = never). Independently of merged cleanup, each

@@ -241,7 +241,7 @@ func (s *Server) handleDeleteNotebook(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, t := range chats {
 		// its folder is going: the chat stays readable in the archive
-		_, _ = s.store.DB.ExecContext(r.Context(), `UPDATE threads SET archived=1 WHERE id=? AND user_id=?`, t.ID, nb.UserID)
+		_, _ = s.store.DB.ExecContext(r.Context(), `UPDATE threads SET archived=1, archived_at=CASE WHEN archived_at='' THEN ? ELSE archived_at END WHERE id=? AND user_id=?`, store.Now(), t.ID, nb.UserID)
 		s.rt.stop(t.ID)
 	}
 	if err := s.store.DeleteNotebook(r.Context(), nb.UserID, nb.ID); err != nil {

@@ -36,6 +36,10 @@ export function GeneralTab() {
         <SettingRow title="Delete without asking" help="Delete in a conversation’s menu removes it at once, without “Delete this thread?”. Archive never asks.">
           <Switch label="Delete without asking" checked={!!s.delete_no_confirm} onChange={v => save({ delete_no_confirm: v })} />
         </SettingRow>
+        <SettingRow title="Delete archived conversations after" help="Archived conversations are deleted for good this long after you archived them. Favorites are kept. Never by default.">
+          <Select label="Delete archived conversations after" size="sm" searchable={false} value={s.archive_delete_days || 0} onChange={v => save({ archive_delete_days: v })}
+            options={[0, 7, 14, 30, 60, 90, 180, 365].map(d => ({ value: d, label: d ? `${d} days` : 'Never' }))} />
+        </SettingRow>
         <SettingRow title="Threads as tabs" help="Every thread you open gets a tab along the top, like a browser — switch with a click, drag to reorder, middle-click or ✕ to close. On computers and tablets; phones use the menu.">
           <Switch label="Threads as tabs" checked={s.thread_tabs !== false} onChange={v => save({ thread_tabs: v })} />
         </SettingRow>

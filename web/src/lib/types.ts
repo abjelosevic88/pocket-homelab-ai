@@ -114,6 +114,7 @@ export interface Settings {
   show_thinking: boolean
   /** Delete a conversation from its menu without asking first. */
   delete_no_confirm?: boolean
+  archive_delete_days?: number
   usage_widget: boolean
   thread_tabs: boolean
   worktree_auto_cleanup?: boolean
