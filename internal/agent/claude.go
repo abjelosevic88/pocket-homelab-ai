@@ -1098,6 +1098,7 @@ func (s *claudeSession) handleResult(m map[string]json.RawMessage) {
 		default:
 			t.Error = r.Subtype
 		}
+		t.Error = loginEndedHint(t.Error)
 	}
 	if wasRunning {
 		s.sink.TurnDone(t)
@@ -1421,4 +1422,13 @@ func sentTitle(caption string, files []SentFile) string {
 		return "Send a file"
 	}
 	return "Sent " + oneLine(strings.Join(names, ", "), 140)
+}
+
+// loginEndedHint turns Claude Code's "Failed to authenticate … run claude
+// auth login" into where to sign in again here: no terminal needed.
+func loginEndedHint(msg string) string {
+	if !strings.Contains(msg, "Failed to authenticate") && !strings.Contains(msg, "claude auth login") {
+		return msg
+	}
+	return "This Claude login has ended. Sign in again in Settings → Machines: open the login's menu and choose Sign in again…. (" + msg + ")"
 }

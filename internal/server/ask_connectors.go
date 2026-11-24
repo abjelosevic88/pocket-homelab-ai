@@ -60,13 +60,8 @@ func (s *Server) askClaudeEnv(ctx context.Context, uid, accountID int64) ([]stri
 		return nil, err
 	}
 	credentials, _ := filepath.Abs(filepath.Join(home, ".credentials.json"))
-	if _, err := os.Stat(credentials); err == nil {
-		dest := filepath.Join(configDir, ".credentials.json")
-		if _, err := os.Lstat(dest); os.IsNotExist(err) {
-			if err = os.Symlink(credentials, dest); err != nil {
-				return nil, err
-			}
-		}
+	if err := shareLogin(credentials, filepath.Join(configDir, ".credentials.json")); err != nil {
+		return nil, err
 	}
 	return []string{"CLAUDE_CONFIG_DIR=" + configDir}, nil
 }
