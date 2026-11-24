@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { api, qs, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { fmtCost, fmtTokens, planName, providerName, resetsIn, when } from '../lib/format'
-import { isPinned, limitKey, limitRows, limitSources, limitTone, usedFrac } from '../components/UsageWidget'
+import { type Login, isPinned, limitKey, limitRows, limitSources, limitTone, usedFrac } from '../components/UsageWidget'
 import type { LimitWindow, ProviderId, ProviderLimits, Resets, UsageReport } from '../lib/types'
 import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
@@ -30,8 +30,8 @@ function LimitBar({ w, pinned, onPin }: { w: LimitWindow; pinned?: boolean; onPi
 // login's name; the pencil renames it), its plan, and the logins on it
 // folded behind "on N logins". A login that cannot tell who it is (a token
 // login) is put with one of your accounts by hand.
-function AccountHead({ p, l, name, named, logins, joined, others, onRename, onLink, onUnlink }: {
-  p: ProviderId; l?: ProviderLimits; name: string; named: boolean; logins: string[]; joined: string[]
+function AccountHead({ p, l, name, named, logins, others, onRename, onLink, onUnlink }: {
+  p: ProviderId; l?: ProviderLimits; name: string; named: boolean; logins: Login[]
   others: { group: string; name: string }[]; onRename?: (name: string) => void; onLink: (group: string) => void; onUnlink: (key: string) => void
 }) {
   const [editing, setEditing] = useState(false)
@@ -50,10 +50,17 @@ function AccountHead({ p, l, name, named, logins, joined, others, onRename, onLi
       {(sub || logins.length > 1) && <div className="muted xsmall limit-acct">
         {sub && <span className="ellipsis">{sub}</span>}
         {logins.length > 1 && <button type="button" className="link-btn nowrap" aria-expanded={open} onClick={() => setOpen(!open)}>{sub ? '· ' : ''}on {logins.length} logins</button>}</div>}
-      {open && <div className="muted xsmall limit-acct limit-logins">{logins.map((n, i) => {
-        const k = joined[i - (logins.length - joined.length)]
-        return <span key={i} className="nowrap">{n}{k && <button type="button" className="link-btn" title="Take this login out of this account" aria-label={`Take ${n} out`} onClick={() => onUnlink(k)}> ×</button>}{i < logins.length - 1 ? ',' : ''}</span>
-      })}</div>}
+      {open && <ul className="limit-logins" aria-label="Logins on this account">{logins.map((x, i) => {
+        const [where, folder] = x.kind === 'machine' ? x.name.split(' · ') : [x.name]
+        return (
+          <li key={i} className="login-chip" title={folder ? `${where}, folder ~/.${folder}` : x.kind === 'server' ? "This server's own login" : where}>
+            <Icon name={x.kind === 'machine' ? 'server' : x.kind === 'server' ? 'home' : 'key'} size={12} />
+            <span className="nowrap">{where}</span>
+            {folder && <span className="login-folder nowrap">{folder}</span>}
+            {x.key && <button type="button" className="login-x" title="Take this login out of this account" aria-label={`Take ${x.name} out`} onClick={() => onUnlink(x.key!)}><Icon name="x" size={11} /></button>}
+          </li>
+        )
+      })}</ul>}
       {!l?.group && others.length > 0 && <label className="muted xsmall limit-acct">This login can't say which account it is.
         <select className="limit-link" value="" onChange={e => e.target.value && onLink(e.target.value)}>
           <option value="">Put it with…</option>
@@ -136,13 +143,13 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
                 <Icon name="refresh" size={15} className={refreshing ? 'spin' : ''} /></button></div>
             <div className="card-body">
               <div className="two-col">
-                {(sources.length ? sources : providers.map(p => ({ src: p as string, p, label: '', title: '', group: '', aliases: [] as string[], logins: [] as string[], joined: [] as string[] }))).map(({ src, p, label, title, group, aliases, logins, joined }) => {
+                {(sources.length ? sources : providers.map(p => ({ src: p as string, p, label: '', title: '', group: '', aliases: [] as string[], logins: [] as Login[] }))).map(({ src, p, label, title, group, aliases, logins }) => {
                   const l = limits[src]
                   const keys = (w: LimitWindow) => [limitKey(src, w), ...aliases.map(a => limitKey(a, w))]
                   const others = sources.filter(x => x.p === p && x.group).map(x => ({ group: x.group, name: x.title || x.label || 'Server login' }))
                   return (
                     <div key={src} className="limit-box">
-                      <AccountHead p={p} l={l} name={title || label || 'Server login'} named={!!title} logins={logins} joined={joined}
+                      <AccountHead p={p} l={l} name={title || label || 'Server login'} named={!!title} logins={logins}
                         others={l?.group ? [] : others}
                         onRename={group ? n => saveNaming({ usage_names: { ...(settings?.usage_names || {}), [group]: n } }) : undefined}
                         onLink={g => saveNaming({ usage_links: { ...(settings?.usage_links || {}), [src]: g } })}

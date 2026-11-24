@@ -14,6 +14,10 @@ export const limitTone = (f: number) => f > 0.9 ? 'danger' : f > 0.7 ? 'warn' : 
 /** Your own names for accounts, and logins put with an account by hand. */
 export interface UsageNaming { usage_names?: Record<string, string>; usage_links?: Record<string, string> }
 
+/** A login on an account: one of your named logins here, the server's own, or one on another machine
+ * ("athena-box · claude-athena-team" = that machine's ~/.claude-athena-team); key = put with it by hand. */
+export interface Login { name: string; kind: 'account' | 'server' | 'machine'; key?: string }
+
 /** The accounts that have limits, the one the server's own login is on
  * first per provider, other machines' last. Logins on the same account
  * arrive as one (with aliases); a login that cannot tell who it is (a token
@@ -23,6 +27,7 @@ export function limitSources(limits: Limits, naming?: UsageNaming | null) {
   const id = (k: string) => Number(k.split(':')[1] || 0)
   const rank = (k: string) => limits[k]?.server_login ? -1 : limits[k]?.host_id ? 1e9 + limits[k]!.host_id! : id(k)
   const loginName = (k: string) => limits[k]?.label || 'Server login'
+  const login = (k: string, key?: string): Login => ({ name: loginName(k), kind: limits[k]?.host_id ? 'machine' : limits[k]?.label ? 'account' : 'server', key })
   return (['claude', 'codex'] as ProviderId[]).flatMap(p => {
     const keys = Object.keys(limits).filter(k => k === p || k.startsWith(p + ':') || k.startsWith(p + '@'))
     const byGroup = new Map(keys.filter(k => limits[k]?.group).map(k => [limits[k]!.group!, k]))
@@ -35,13 +40,12 @@ export function limitSources(limits: Limits, naming?: UsageNaming | null) {
     return shown.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b)).map(k => {
       const l = limits[k]
       const extra = joined.get(k) || []
-      const own = l?.by_account ? [] : [loginName(k), ...(l?.server_login && l.label ? ['Server login'] : [])]
+      const own: Login[] = l?.by_account ? [] : [login(k), ...(l?.server_login && l.label ? [{ name: 'Server login', kind: 'server' as const }] : [])]
       return {
         src: k, p, label: l?.label || '', group: l?.group || '',
         title: (l?.group && naming?.usage_names?.[l.group]) || '',
         aliases: [...(l?.aliases || []), ...extra],
-        logins: [...own, ...(l?.also || []), ...extra.map(loginName)],
-        joined: extra,
+        logins: [...own, ...(l?.also || []).map((name, i): Login => ({ name, kind: l?.also_host?.[i] ? 'machine' : 'account' })), ...extra.map(x => login(x, x))],
       }
     })
   })

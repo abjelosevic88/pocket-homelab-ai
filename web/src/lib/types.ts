@@ -489,6 +489,8 @@ export interface ProviderLimits {
   host_id?: number
   /** names of the other logins on the same account, folded into this one */
   also?: string[]
+  /** per also: a login on another machine ("machine · folder"), not a named account */
+  also_host?: boolean[]
   /** several named accounts are signed in to this one account (usually a sign-in with the wrong account) */
   same_account?: string[]
   /** label is the account (email or org), not one login's name */

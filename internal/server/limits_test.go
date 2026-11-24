@@ -183,7 +183,7 @@ func TestLimitsSameAccountOnManyMachines(t *testing.T) {
 	}
 	rt.mu.Unlock()
 	snap = rt.limitsSnapshot(arno.ID)
-	if l := snap[ka].(provLimits); l.Label != "arno@example.test" || !l.ByAccount || !slices.Equal(l.Also, []string{"AB-box", "build-box"}) || l.SameAccount != nil {
+	if l := snap[ka].(provLimits); l.Label != "arno@example.test" || !l.ByAccount || !slices.Equal(l.Also, []string{"AB-box", "build-box"}) || !slices.Equal(l.AlsoHost, []bool{true, true}) || l.SameAccount != nil {
 		t.Fatalf("machines-only card named after the account: %+v", l)
 	}
 }
@@ -211,7 +211,7 @@ func TestLimitsNamedAccountsOnOneAccount(t *testing.T) {
 	rt.mu.Unlock()
 	snap := rt.limitsSnapshot(arno.ID)
 	l, ok := snap[keys[0]].(provLimits)
-	if len(snap) != 1 || !ok || l.Label != "arno@example.test" || !l.ByAccount || l.Group != limitsGroup(id) || l.Group == "" || !slices.Equal(l.SameAccount, []string{"Work", "Personal"}) || !slices.Equal(l.Also, []string{"Work", "Personal"}) {
+	if len(snap) != 1 || !ok || l.Label != "arno@example.test" || !l.ByAccount || l.Group != limitsGroup(id) || l.Group == "" || !slices.Equal(l.SameAccount, []string{"Work", "Personal"}) || !slices.Equal(l.Also, []string{"Work", "Personal"}) || !slices.Equal(l.AlsoHost, []bool{false, false}) {
 		t.Fatalf("one card named after the account, both names warned about: %+v", snap)
 	}
 

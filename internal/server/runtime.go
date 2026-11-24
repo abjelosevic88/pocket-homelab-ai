@@ -1317,8 +1317,9 @@ type provLimits struct {
 	// the limits keys of the other logins folded into this one (same account).
 	ServerLogin bool     `json:"server_login,omitempty"`
 	Aliases     []string `json:"aliases,omitempty"`
-	HostID      int64    `json:"host_id,omitempty"` // a login on another machine (Label names it)
-	Also        []string `json:"also,omitempty"`    // names of the other logins folded in (not the server's own)
+	HostID      int64    `json:"host_id,omitempty"`   // a login on another machine (Label names it)
+	Also        []string `json:"also,omitempty"`      // names of the other logins folded in (not the server's own)
+	AlsoHost    []bool   `json:"also_host,omitempty"` // per Also: a login on another machine ("name · folder"), not a named account
 	// Several named accounts turned out to be one account (almost always a
 	// sign-in with the wrong account): their names, to warn about it.
 	SameAccount []string `json:"same_account,omitempty"`
@@ -1840,7 +1841,7 @@ func (rt *engine) limitsSnapshot(uid int64) map[string]any {
 				if limitsRank(o) == 0 {
 					cp.ServerLogin = true
 				} else if n := srcs[o].label; n != "" && !slices.Contains(cp.Also, n) {
-					cp.Also = append(cp.Also, n)
+					cp.Also, cp.AlsoHost = append(cp.Also, n), append(cp.AlsoHost, limitsRank(o) == 2)
 				}
 				if limitsRank(o) == 1 {
 					named = append(named, srcs[o].label)
@@ -1862,7 +1863,7 @@ func (rt *engine) limitsSnapshot(uid int64) map[string]any {
 		// accounts (whichever has the lowest id would win) or only for other
 		// machines' logins: name it after the account, all logins under Also.
 		if acct := firstNonEmpty(cp.Email, cp.Org); acct != "" && (len(named) > 1 || cp.HostID > 0 && len(cp.Also) > 0) {
-			cp.Also = append([]string{cp.Label}, cp.Also...)
+			cp.Also, cp.AlsoHost = append([]string{cp.Label}, cp.Also...), append([]bool{cp.HostID > 0}, cp.AlsoHost...)
 			cp.Label, cp.ByAccount = acct, true
 		}
 		cp.Windows = append([]agent.Window(nil), cp.Windows...)
