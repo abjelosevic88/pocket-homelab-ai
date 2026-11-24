@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -83,13 +85,14 @@ func (s *Server) thread(w http.ResponseWriter, r *http.Request) *store.Thread {
 }
 
 func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.providersFor(r.Context(), userFrom(r.Context()), queryBool(r, "refresh")))
+	writeJSON(w, http.StatusOK, s.providersFor(r.Context(), userFrom(r.Context()), queryBool(r, "refresh") || s.cliChanged()))
 }
 
 // providers probes both CLIs (cached for 30 minutes).
 func (s *Server) providers(ctx context.Context, refresh bool) []agent.Provider {
 	s.provMu.Lock()
 	defer s.provMu.Unlock()
+	bins := s.cliTargets()
 	if !refresh && s.provList != nil && time.Since(s.provAt) < 30*time.Minute {
 		return s.provList
 	}
@@ -115,8 +118,36 @@ func (s *Server) providers(ctx context.Context, refresh bool) []agent.Provider {
 			out[i].Speeds = []agent.Speed{}
 		}
 	}
-	s.provList, s.provAt = out, time.Now()
+	s.provList, s.provAt, s.provBins = out, time.Now(), bins
 	return out
+}
+
+// cliChanged: a CLI was updated or reinstalled since it was last asked (it
+// points at another file), so the list the app shows is asked again now.
+func (s *Server) cliChanged() bool {
+	s.provMu.Lock()
+	was := s.provBins
+	s.provMu.Unlock()
+	return was != "" && s.cliTargets() != was
+}
+
+// cliTargets is the files the server's claude and codex resolve to (native
+// installs switch a symlink on update), with their change times.
+func (s *Server) cliTargets() string {
+	var b strings.Builder
+	for _, bin := range []string{s.cfg.ClaudeBin, s.cfg.CodexBin} {
+		p, err := exec.LookPath(bin)
+		if err == nil {
+			if r, err := filepath.EvalSymlinks(p); err == nil {
+				p = r
+			}
+			if fi, err := os.Stat(p); err == nil {
+				p += "@" + fi.ModTime().UTC().Format(time.RFC3339Nano)
+			}
+		}
+		b.WriteString(p + "|")
+	}
+	return b.String()
 }
 
 func (s *Server) agentProvider(ctx context.Context, id string) (agent.Provider, bool) {

@@ -102,15 +102,13 @@ export function MachineCard({ icon, name, health, healthLabel, meta, clis, actio
             const behind = !c.error && !!c.version && !!c.latest && isNewer(c.latest, c.version)
             const current = !c.error && !!c.version && !!c.latest && !behind
             return (
-              <span key={c.provider} className="mc-cli-row">
-                <span className={`mc-cli ${c.provider} ${c.error ? 'bad' : ''}`} title={c.error || `${provName(c.provider)} ${c.version || ''}${current ? ' — the latest' : behind ? ` — ${c.latest} is out` : ''}`}>
-                  <Icon name={c.provider} size={13} />{provName(c.provider)}<b>{c.error ? 'not installed' : shortVersion(c.version || '')}</b>
-                  {current && <Icon name="check" size={12} className="mc-cli-ok" aria-label="latest" />}
-                </span>
+              <span key={c.provider} className={`mc-cli ${c.provider} ${c.error ? 'bad' : ''} ${behind ? 'behind' : ''}`} title={c.error || `${provName(c.provider)} ${c.version || ''}${current ? ' — the latest' : behind ? ` — ${c.latest} is out` : ''}`}>
+                <Icon name={c.provider} size={13} />{provName(c.provider)}<b>{c.error ? 'not installed' : shortVersion(c.version || '')}</b>
+                {current && <Icon name="check" size={12} className="mc-cli-ok" aria-label="latest" />}
                 {behind && (c.onUpdate
-                  ? <button type="button" className="btn sm mc-cli-update" disabled={c.updating} onClick={c.onUpdate} title={`Update ${provName(c.provider)} to ${c.latest}`}>
-                      {c.updating ? <Spinner /> : <Icon name="arrow-up" size={13} />}{c.updating ? 'Updating…' : `Update to ${c.latest}`}</button>
-                  : <span className="mc-cli-new">{c.latest} out</span>)}
+                  ? <button type="button" className="mc-cli-up" disabled={c.updating} onClick={c.onUpdate} aria-label={`Update ${provName(c.provider)} to ${c.latest}`} title={`Update ${provName(c.provider)} to ${c.latest}`}>
+                      {c.updating ? <Spinner size={11} /> : <Icon name="arrow-up" size={12} />}{c.updating ? 'Updating…' : `Update to ${c.latest}`}</button>
+                  : <span className="mc-cli-up off">{c.latest} out</span>)}
               </span>
             )
           })}

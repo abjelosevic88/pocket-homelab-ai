@@ -191,10 +191,14 @@ button.sbset-grip:hover, button.sbset-grip:focus-visible { color: var(--text-2);
 .mc-cli.codex { --pc: var(--codex); }
 .mc-cli b { font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
 .mc-cli.bad { --pc: var(--danger); }
-.mc-cli-row { display: inline-flex; align-items: center; gap: 4px; }
 .mc-cli-ok { color: var(--success); }
-.mc-cli-update { height: 24px; padding: 0 8px; font-size: 12px; gap: 5px; }
-.mc-cli-new { font-size: 12px; color: var(--muted); }
+/* a newer release: Update sits inside the CLI's own chip, in its colour */
+.mc-cli.behind { padding-right: 0; overflow: hidden; }
+.mc-cli-up { display: inline-flex; align-items: center; gap: 4px; align-self: stretch; margin-left: 3px; padding: 0 9px; border: 0; border-left: 1px solid color-mix(in srgb, var(--pc) 22%, transparent);
+  background: color-mix(in srgb, var(--pc) 16%, transparent); color: inherit; font: inherit; font-weight: 600; cursor: pointer; }
+.mc-cli-up:hover:not(:disabled) { background: color-mix(in srgb, var(--pc) 26%, transparent); }
+.mc-cli-up:disabled { cursor: default; opacity: .75; }
+.mc-cli-up.off { cursor: default; font-weight: 550; color: var(--muted); background: transparent; }
 .mc-body { position: relative; display: flex; flex-direction: column; gap: 10px; padding: 4px 18px 18px; border-top: 1px solid var(--hairline); padding-top: 14px; }
 .mc-note { display: flex; align-items: flex-start; gap: 7px; font-size: 12.5px; color: var(--muted); margin: 0; }
 .mc-note svg { flex-shrink: 0; margin-top: 2px; }

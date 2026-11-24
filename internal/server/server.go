@@ -72,6 +72,7 @@ type Server struct {
 	provMu   sync.Mutex
 	provList []agent.Provider
 	provAt   time.Time
+	provBins string // where the CLIs pointed when last asked (cliTargets)
 
 	inferenceSlots      chan struct{}
 	inferenceModelsMu   sync.Mutex
