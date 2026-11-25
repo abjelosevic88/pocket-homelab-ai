@@ -153,6 +153,31 @@ func (s *Server) readApp(ctx context.Context, uid int64, tid, name string, args 
 	s.finishAppCall(id, status, result, time.Since(start))
 	return result
 }
+
+// freshCatalog is the person's Core tool list now (nil when it cannot be read).
+func (s *Server) freshCatalog(ctx context.Context, uid int64) map[string]askTool {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	cat, err := s.catalog(ctx, uid)
+	if err != nil {
+		return nil
+	}
+	return cat
+}
+
+// withNewTools is the session's catalog plus the tools Core lists now that it
+// lacks; the session's own (link-served tools in place of Core's) are kept.
+func withNewTools(session, fresh map[string]askTool) map[string]askTool {
+	out := make(map[string]askTool, len(session)+len(fresh))
+	for k, v := range fresh {
+		out[k] = v
+	}
+	for k, v := range session {
+		out[k] = v
+	}
+	return out
+}
+
 func (s *Server) callPocketTool(ctx, session context.Context, t *store.Thread, sink *runSink, catalog map[string]askTool, raw json.RawMessage) json.RawMessage {
 	// whose apps: the person whose message this turn answers (in a shared
 	// thread that need not be the owner); approvals are theirs too
@@ -191,7 +216,7 @@ func (s *Server) callPocketTool(ctx, session context.Context, t *store.Thread, s
 			return toolFailure("Use a query up to 200 characters")
 		}
 		all := []askTool{}
-		for _, v := range catalog {
+		for _, v := range withNewTools(catalog, s.freshCatalog(ctx, uid)) {
 			all = append(all, v)
 		}
 		sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
@@ -235,6 +260,11 @@ func (s *Server) callPocketTool(ctx, session context.Context, t *store.Thread, s
 		call.Arguments = args
 	}
 	tool, ok := catalog[call.Name]
+	if !ok && strings.HasPrefix(call.Name, "pocket_") {
+		// a tool an app added after this conversation's agent started (its list is fixed then)
+		catalog = withNewTools(catalog, s.freshCatalog(ctx, uid))
+		tool, ok = catalog[call.Name]
+	}
 	if !ok {
 		return toolFailure("Unknown or unavailable Pocket tool. Discover it with pocket_find_tools.")
 	}

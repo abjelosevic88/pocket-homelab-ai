@@ -62,3 +62,15 @@ func TestPocketItemsPhotosCarryDateAndThumb(t *testing.T) {
 		t.Fatalf("photos = %+v", got)
 	}
 }
+
+func TestWithNewToolsKeepsSessionTools(t *testing.T) {
+	session := map[string]askTool{"pocket_analytics_report": {Name: "pocket_analytics_report", Description: "link"}}
+	fresh := map[string]askTool{"pocket_analytics_report": {Name: "pocket_analytics_report", Description: "core"}, "pocket_photos_view": {Name: "pocket_photos_view"}}
+	got := withNewTools(session, fresh)
+	if len(got) != 2 || got["pocket_analytics_report"].Description != "link" || got["pocket_photos_view"].Name == "" {
+		t.Fatalf("merged = %+v", got)
+	}
+	if len(withNewTools(session, nil)) != 1 {
+		t.Fatal("no fresh list should keep the session's")
+	}
+}
