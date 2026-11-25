@@ -21,6 +21,7 @@ type pocketItem struct {
 	Title      string `json:"title"`
 	Subtitle   string `json:"subtitle,omitempty"`
 	URL        string `json:"url,omitempty"`
+	Thumb      string `json:"thumb,omitempty"` // a picture's small image (Pocket Photos), loaded by the browser
 	Attachable bool   `json:"attachable"`
 }
 
@@ -162,6 +163,15 @@ func toPocketItem(app string, row map[string]any) (pocketItem, bool) {
 		item.Attachable = size <= pocketTextMax && (strings.HasPrefix(mime, "text/") || textFileExt[strings.ToLower(filepath.Ext(item.ID))])
 	case "contacts":
 		item.Subtitle = firstString(row, "email", "company", "organization", "phone")
+	case "photos":
+		day := firstString(row, "taken_at")
+		if len(day) >= 10 {
+			day = day[:10]
+		}
+		item.Subtitle = strings.Trim(day+" · "+firstString(row, "place"), " ·")
+		if t := firstString(row, "thumb_url"); strings.HasPrefix(t, "https://") || strings.HasPrefix(t, "http://") {
+			item.Thumb = t
+		}
 	default:
 		item.Subtitle = firstString(row, "status", "excerpt")
 	}

@@ -50,3 +50,15 @@ func TestFindTextReadsCommonBodyFields(t *testing.T) {
 		t.Error("no body should give no text")
 	}
 }
+
+func TestPocketItemsPhotosCarryDateAndThumb(t *testing.T) {
+	sections := []appSection{{Tool: "pocket_photos_search", Data: map[string]any{"result": map[string]any{"items": []any{
+		map[string]any{"id": "03d3d01d-f4e7-4bc5-b148-9c2687ddc8db", "title": "IMG_1257.JPG", "taken_at": "2026-10-25T13:44:13.000Z", "place": "Mostar, Bosnia and Herzegovina",
+			"item_url": "https://photos.test/?photo=03d3d01d-f4e7-4bc5-b148-9c2687ddc8db", "thumb_url": "https://photos.test/api/v1/immich/assets/03d3d01d-f4e7-4bc5-b148-9c2687ddc8db/thumbnail?size=thumbnail"},
+		map[string]any{"id": "x", "title": "bad thumb", "thumb_url": "javascript:alert(1)"},
+	}}}}}
+	got := pocketItems(sections, []string{"photos"}, pocketItemsOneApp)
+	if len(got) != 2 || got[0].Subtitle != "2026-10-25 · Mostar, Bosnia and Herzegovina" || got[0].Thumb == "" || got[0].URL == "" || got[1].Thumb != "" {
+		t.Fatalf("photos = %+v", got)
+	}
+}

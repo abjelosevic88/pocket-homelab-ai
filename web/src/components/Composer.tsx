@@ -138,7 +138,7 @@ function useMentionApps(wanted: boolean): { apps: MentionApp[] | null; off: Ment
 }
 
 /** One item found in a Pocket app ("@documents #tax"); see server pocket_items.go. */
-interface PocketItem { app: string; id: string; title: string; subtitle?: string; url?: string; attachable: boolean }
+interface PocketItem { app: string; id: string; title: string; subtitle?: string; url?: string; thumb?: string; attachable: boolean }
 const itemCache = new Map<string, { at: number; items: PocketItem[] }>()
 
 /** Searches one app as the person types after "#" (debounced, cached a minute); null while looking. */
@@ -171,6 +171,14 @@ function AppIcon({ slug }: { slug: string }) {
   const [missing, setMissing] = useState(false)
   if (missing) return <span className="slash-ico at-ico app-mention"><Icon name="grid" size={14} /></span>
   return <span className="slash-ico app-icon"><img src={`/app-icons/${slug}.svg`} alt="" width={22} height={22} loading="lazy" onError={() => setMissing(true)} /></span>
+}
+
+/** A picture's own small image in the "#" list (Pocket Photos); the app icon when it does not load
+ *  (signed out of that app in this browser). */
+function ItemThumb({ src, app }: { src: string; app: string }) {
+  const [failed, setFailed] = useState(false)
+  if (failed) return <AppIcon slug={app} />
+  return <span className="slash-ico item-thumb"><img src={src} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} /></span>
 }
 
 function draftAttachments(key?: string): Attachment[] {
@@ -697,7 +705,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
             const head = 'found' in p ? hashApp?.name : 'app' in p ? 'Apps' : ctx?.label ? `From ${ctx.label}` : 'Add as context'
             const row = 'found' in p
               ? <>
-                <AppIcon slug={p.found.app} />
+                {p.found.thumb ? <ItemThumb src={p.found.thumb} app={p.found.app} /> : <AppIcon slug={p.found.app} />}
                 <span className="grow"><span className="slash-name">{p.found.title}</span>{p.found.subtitle && <span className="slash-sub">{p.found.subtitle}</span>}</span>
               </>
               : 'app' in p
