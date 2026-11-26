@@ -16,22 +16,22 @@ Personal app assistance: [Briefing, workflows, memory, sources and document uplo
 <table>
   <tr>
     <td width="50%"><img src="docs/screenshots/permission.png" alt="A permission request: Allow, Allow for session, Deny"></td>
-    <td width="50%"><img src="docs/screenshots/home.png" alt="New thread: Claude Code or Codex, model, effort, permission mode, folder, recipes"></td>
+    <td width="50%"><img src="docs/screenshots/home.png" alt="New thread: model (Claude Code or Codex), effort, permission mode, folder; a thread waiting for you on top"></td>
   </tr>
   <tr>
     <td align="center"><sub>The agent asks before it runs something; answer from wherever you are.</sub></td>
-    <td align="center"><sub>Start a thread with either CLI, or tap a recipe.</sub></td>
+    <td align="center"><sub>Start a thread with either CLI; type / for a recipe.</sub></td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/screenshots/schedules.png" alt="Schedules with their last verdict"></td>
     <td width="50%" align="center">
-      <img src="docs/screenshots/phone-image.png" width="190" alt="A screenshot sent to Codex from a phone">&nbsp;
+      <img src="docs/screenshots/phone-thread.png" width="190" alt="A finished thread on a phone: the agent explains the fix">&nbsp;
       <img src="docs/screenshots/phone-permission-dark.png" width="190" alt="A permission request on a phone, dark">
     </td>
   </tr>
   <tr>
     <td align="center"><sub>Scheduled checks answer OK or ATTENTION; you hear only about the second.</sub></td>
-    <td align="center"><sub>On the phone: send a screenshot, approve a command.</sub></td>
+    <td align="center"><sub>On the phone: read what it did, approve a command.</sub></td>
   </tr>
 </table>
 
