@@ -3,10 +3,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, V1 } from '../lib/api'
-import { KIND_ICON, PANEL_EVENT, SEND_TO, type Panel } from '../lib/panels'
+import { KIND_ICON, openPanelSheet, PANEL_EVENT, SEND_TO, startPanelNow, type Panel } from '../lib/panels'
 import type { Item, Thread } from '../lib/types'
 import { Icon } from './icons'
-import { MenuButton, Spinner, type MenuItem } from './ui'
+import { errMsg, MenuButton, Spinner, useToast, type MenuItem } from './ui'
 
 /** "Part of a panel" in the header of a participant's conversation. */
 export function PanelParentChip({ t }: { t: Thread }) {
@@ -54,8 +54,30 @@ export function reviewMaterial(items: Item[], turnKey: string, label = 'The answ
   return (asked && !asked.startsWith('<') ? `What was asked:\n\n${asked}\n\n---\n\n` : '') + `${label}:\n\n${said}`
 }
 
-/** "Send to a panel": refine it, have it judged, reviewed, brainstormed on… */
-export function SendToPanel({ onPick, size = 'sm', what = 'this' }: { onPick: (kind: string) => void; size?: 'xs' | 'sm'; what?: string }) {
-  const items: MenuItem[] = [{ heading: 'Send to a panel of models' }, ...SEND_TO.map(k => ({ label: k.label, icon: k.kind === 'refine' ? 'refresh' : KIND_ICON[k.kind], hint: k.hint, onSelect: () => onPick(k.kind) }))]
-  return <MenuButton label={`Send ${what} to a panel of models`} className={`btn ghost icon-only ${size}`} align="right" width={280} items={items}><Icon name="panel" size={size === 'xs' ? 14 : 15} /></MenuButton>
+/** "Send to a panel": picking a kind starts the panel at once on the default models, with a
+ *  question that fits, and opens it; nothing is written into the conversation. The last item
+ *  opens the start sheet instead, to choose models or change the question first. */
+export function SendToPanel({ material, name, threadId, size = 'sm' }: { material: () => Promise<string> | string; name: string; threadId?: string; size?: 'xs' | 'sm' }) {
+  const navigate = useNavigate()
+  const { toast } = useToast()
+  const [busy, setBusy] = useState(false)
+  const go = async (kind: string) => {
+    if (busy) return
+    setBusy(true)
+    let text = ''
+    try {
+      text = await material()
+      const p = await startPanelNow(kind, text, name, threadId)
+      navigate(`/panels/${p.id}`)
+    } catch (e) {
+      // it could not start as it is (too few models by default, a limit used up): the sheet says why and lets them pick
+      toast(errMsg(e), 'err')
+      if (text) openPanelSheet({ kind, fromThreadId: threadId, material: text })
+    } finally { setBusy(false) }
+  }
+  const choose = async () => { try { openPanelSheet({ kind: 'council', fromThreadId: threadId, material: await material() }) } catch (e) { toast(errMsg(e), 'err') } }
+  const items: MenuItem[] = [{ heading: 'Send to a panel of models' },
+    ...SEND_TO.map(k => ({ label: k.label, icon: KIND_ICON[k.kind], hint: k.hint, onSelect: () => { void go(k.kind) } })),
+    'sep', { label: 'Choose models first…', icon: 'settings', onSelect: () => { void choose() } }]
+  return <MenuButton label={`Send ${name} to a panel of models`} className={`btn ghost icon-only ${size}`} align="right" width={290} items={items}>{busy ? <Spinner size={size === 'xs' ? 11 : 13} /> : <Icon name="panel" size={size === 'xs' ? 14 : 15} />}</MenuButton>
 }

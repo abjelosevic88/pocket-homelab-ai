@@ -13,7 +13,6 @@ import { ToolActivity } from './ToolActivity'
 import { groupToolActivity } from '../lib/tool-activity'
 import { Modal, copyText } from './ui'
 import { SendToPanel } from './PanelChips'
-import { openPanelSheet, sendToThread } from '../lib/panels'
 
 export function Images({ images }: { images: ItemImage[] }) {
   const [big, setBig] = useState<ItemImage | null>(null)
@@ -164,12 +163,6 @@ function SentText({ f, url, download, threadId }: { f: SentFile; url: string; do
       if (await copyText(await load())) { setCopied(true); window.setTimeout(() => setCopied(false), 1500) }
     } catch { setOpen(true) }
   }
-  // to a panel of models: its text is the material; "Refine" asks this conversation's agent to run the rounds
-  const toPanel = async (kind: string) => {
-    if (!threadId) return
-    if (kind === 'refine') { sendToThread(threadId, `/refine the plan in ${f.name}${f.path ? ` (${f.path})` : ''}`); return }
-    try { openPanelSheet({ kind, fromThreadId: threadId, material: `From the file ${f.name}:\n\n${await load()}` }) } catch { setOpen(true) }
-  }
   const md = /\.(md|markdown|mdx)$/i.test(f.name)
   return (
     <div className={`sent-text${open ? ' open' : ''}`}>
@@ -182,7 +175,7 @@ function SentText({ f, url, download, threadId }: { f: SentFile; url: string; do
         </button>
         <button type="button" className="btn ghost icon-only sm" onClick={copy} title={copied ? 'Copied' : 'Copy the text'} aria-label={`Copy the text of ${f.name}`}><Icon name={copied ? 'check' : 'copy'} size={15} /></button>
         <a className="btn ghost icon-only sm" href={download} download={f.name} title="Download" aria-label={`Download ${f.name}`}><Icon name="download" size={15} /></a>
-        {threadId && <SendToPanel what={f.name} onPick={k => { void toPanel(k) }} />}
+        {threadId && <SendToPanel name={f.name} threadId={threadId} material={async () => `From the file ${f.name}:\n\n${await load()}`} />}
       </div>
       {open && <div className="sent-text-body">
         {err ? <div className="muted small">{err}</div>
@@ -330,7 +323,7 @@ export const ItemView = memo(function ItemView({ item, showThinking, threadId, o
 
 // Under every reply, like Paseo: what it cost, copy, fork from here, and how
 // long the agent worked.
-function TurnFoot({ t, onFork, onRewindHere, rewindDisabled, text, onReview }: { t: TurnInfo; onFork?: () => void; onRewindHere?: () => void; rewindDisabled?: boolean; text?: string; onReview?: (kind: string) => void }) {
+function TurnFoot({ t, onFork, onRewindHere, rewindDisabled, text, panel }: { t: TurnInfo; onFork?: () => void; onRewindHere?: () => void; rewindDisabled?: boolean; text?: string; panel?: { name: string; threadId: string; material: () => string } }) {
   const [copied, setCopied] = useState(false)
   const copy = async () => {
     if (!text || !await copyText(text)) return
@@ -348,7 +341,7 @@ function TurnFoot({ t, onFork, onRewindHere, rewindDisabled, text, onReview }: {
       <span className="grow" />
       {bits.length > 0 && <span className="tnum turn-bits">{bits.join(' · ')}</span>}
       {text && <button type="button" className="btn ghost icon-only xs" onClick={() => { void copy() }} title={copied ? 'Copied' : 'Copy response'} aria-label="Copy response"><Icon name={copied ? 'check' : 'copy'} size={14} /></button>}
-      {text && onReview && <SendToPanel size="xs" what="this answer" onPick={onReview} />}
+      {text && panel && <SendToPanel size="xs" name={panel.name} threadId={panel.threadId} material={panel.material} />}
       {onRewindHere && <button type="button" className="btn ghost icon-only xs" disabled={rewindDisabled} onClick={onRewindHere} title={rewindDisabled ? 'Stop the agent and clear its queue before rewinding' : 'Rewind to here: remove all later messages from this chat'} aria-label="Rewind to here"><Icon name="undo" size={14} /></button>}
       {onFork && <button type="button" className="btn ghost icon-only xs" onClick={onFork} title="Fork from here into a new tab" aria-label="Fork from here into a new tab"><Icon name="fork" size={14} /></button>}
       <span className="run-time tnum" title="How long the agent worked on this">Worked for {fmtDuration(t.duration_ms)}</span>
@@ -356,9 +349,9 @@ function TurnFoot({ t, onFork, onRewindHere, rewindDisabled, text, onReview }: {
   )
 }
 
-export function Timeline({ items, showThinking, streamingKey, onFork, threadId, onResend, onDropUnsent, onEdit, onRewind, rewindDisabled, owner, onMoveFolder, onReview }: { items: Item[]; showThinking: boolean; streamingKey?: string; onFork?: (after: string) => void;
-  /** send a reply to a panel of models: which kind ("refine" = council rounds), and the turn it ended */
-  onReview?: (kind: string, turnKey: string) => void; threadId?: string; onResend?: (it: Item) => void; onDropUnsent?: (it: Item) => void; onEdit?: (it: Item) => void; onRewind?: (it: Item, keepText?: boolean) => void; rewindDisabled?: boolean; owner?: Owner; onMoveFolder?: () => void }) {
+export function Timeline({ items, showThinking, streamingKey, onFork, threadId, onResend, onDropUnsent, onEdit, onRewind, rewindDisabled, owner, onMoveFolder, panelFrom }: { items: Item[]; showThinking: boolean; streamingKey?: string; onFork?: (after: string) => void;
+  /** replies can be sent to a panel of models: the conversation, what to call it, and a reply's text for the turn it ended */
+  panelFrom?: { threadId: string; name: string; material: (turnKey: string) => string }; threadId?: string; onResend?: (it: Item) => void; onDropUnsent?: (it: Item) => void; onEdit?: (it: Item) => void; onRewind?: (it: Item, keepText?: boolean) => void; rewindDisabled?: boolean; owner?: Owner; onMoveFolder?: () => void }) {
   // Items there when the thread opened render still; anything that arrives
   // while you watch slides in.
   const initial = useRef<Set<string> | null>(null)
@@ -389,7 +382,7 @@ export function Timeline({ items, showThinking, streamingKey, onFork, threadId, 
         const it = entry.type === 'item' ? entry.item : entry.items[0]
         return (
         <div key={entry.key} className={`tl-item ${initial.current!.has(it.key) ? '' : 'appear'} ${it.key === streamingKey ? 'streaming' : ''}`}>
-          {entry.type === 'tools' ? <ToolActivity items={entry.items} /> : it.kind === 'turn' && it.turn ? <TurnFoot t={it.turn} text={said.get(it.key)} onFork={onFork ? () => onFork(it.key) : undefined} onReview={onReview && said.get(it.key) ? kind => onReview(kind, it.key) : undefined}
+          {entry.type === 'tools' ? <ToolActivity items={entry.items} /> : it.kind === 'turn' && it.turn ? <TurnFoot t={it.turn} text={said.get(it.key)} onFork={onFork ? () => onFork(it.key) : undefined} panel={panelFrom && said.get(it.key) ? { name: panelFrom.name, threadId: panelFrom.threadId, material: () => panelFrom.material(it.key) } : undefined}
               onRewindHere={onRewind && nextUser.has(it.key) ? () => onRewind(nextUser.get(it.key)!, false) : undefined} rewindDisabled={rewindDisabled} />
             : <ItemView item={it} showThinking={showThinking} threadId={threadId} ownerId={owner?.id} ownerName={owner?.name} onMoveFolder={onMoveFolder} />}
           {it.kind === 'user' && !it.queued && !it.unsent && (onEdit || onRewind) && <div className="message-actions">

@@ -422,7 +422,7 @@ export function PanelSetup({ draft, onClose }: { draft: PanelDraft; onClose: () 
           </div>
 
           {needsChair && chair && <div className="stack tight">
-            <span className="label">{building ? 'Who judges' : debate ? 'Who rules' : 'Who writes the summary'}</span>
+            <span className="label">{building ? 'Who judges' : debate ? 'Who rules' : !ownKind && kind === 'refine' ? 'Who rewrites it' : 'Who writes the summary'}</span>
             <SeatRow seat={chair} label="" opts={opts} providers={providers} roles={[]} only={building ? where : undefined} onChange={setChair} />
             <span className="help muted xsmall">It gets the answers by letter (A, B, C…), not by model, so it cannot favour one.</span>
           </div>}

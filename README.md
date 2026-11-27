@@ -86,7 +86,8 @@ Personal app assistance: [Briefing, workflows, memory, sources and document uplo
 - **Panels**: one question to several models at once, on any of your agents, models, logins and machines.
   **Ask all** (answers side by side and one merged answer), **Brainstorm** (ideas, then built on each other),
   **Council** (they judge a plan from different points of view and criticise each other without seeing who
-  wrote what), **Debate** (two sides, a judge), **Second opinion** (other models review an answer or a change;
+  wrote what), **Refine** (they judge a plan, an editor model rewrites it from their verdicts, they judge the
+  rewrite again; you get the improved version), **Debate** (two sides, a judge), **Second opinion** (other models review an answer or a change;
   the button under every reply) and **Best of N** (the same coding task in a worktree each, a judge picks).
   Pocket AI runs the rounds itself: everyone answers alone first, later rounds show the others' answers by
   letter only, and the summary writer gets them without the models' names. Quick, Standard or Deep; your own
@@ -95,7 +96,8 @@ Personal app assistance: [Briefing, workflows, memory, sources and document uplo
   anything else from your Pocket apps as context: the button under the question, or `@` in it. Start one on the Panels page or with
   `/council`, `/brainstorm`, `/debate`, `/ask-all`, `/second-opinion` in a conversation; `/refine` has the
   conversation's agent run council rounds on its plan and revise it until the council says Go; every
-  reply and every text file an agent sends has a menu to send it to a panel on the spot; **Default models**
+  reply and every text file an agent sends has a menu that starts a panel on it at once (nothing is written
+  into the conversation; the panel opens in its own tab); **Default models**
   on the Panels page sets who takes part when you do not pick (switch agents off there) and what they may do without
   asking: only look (the default), work on their own in each agent's automatic mode, or full access; agents start them with
   `pocket_panel_start` (with your OK).

@@ -63,6 +63,7 @@ export default function PanelsPage({ onMenu }: { onMenu?: () => void }) {
     { id: 'ask', name: 'Ask all', text: 'Same question, answers side by side' },
     { id: 'brainstorm', name: 'Brainstorm', text: 'Ideas, built on each other' },
     { id: 'council', name: 'Council', text: 'Judge a plan from several views' },
+    { id: 'refine', name: 'Refine', text: 'Judge, rewrite, judge again' },
     { id: 'debate', name: 'Debate', text: 'For and against, then a ruling' },
     { id: 'review', name: 'Second opinion', text: 'Other models check an answer' },
     { id: 'build', name: 'Best of N', text: 'Same coding task, best result wins' },
@@ -172,7 +173,7 @@ function SeatCard({ seat, text, live, current, onOpen }: { seat: PanelSeat; text
   return (
     <article className={`pn-answer ${failed ? 'failed' : ''} ${working ? 'working' : ''}`}>
       <header className="pn-answer-h">
-        <span className="pn-letter">{seat.label}</span>
+        <span className={`pn-letter ${seat.chair ? 'chair' : ''}`}>{seat.chair ? <Icon name="edit" size={12} /> : seat.label}</span>
         <div className="grow" style={{ minWidth: 0 }}>
           <div className="pn-who"><Icon name={seat.provider} size={14} className={`prov-glyph ${seat.provider}`} /><span className="ellipsis">{providerName(seat.provider)}{seat.model ? ` · ${seat.model}` : ''}</span></div>
           <div className="pn-sub muted xsmall">{[seat.role, seat.machine].filter(Boolean).join(' · ')}</div>
@@ -230,14 +231,16 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
   const seats = p.seats.filter(s => !s.chair)
   const chairs = p.seats.filter(s => s.chair)
   const chair = chairs.find(s => s.state !== 'failed') || chairs[chairs.length - 1]
-  const rounds = stages.map((s, i) => ({ ...s, i })).filter(s => s.who !== 'chair')
-  const chairStage = stages.findIndex(s => s.who === 'chair')
+  // the last step, when the summary writer has it, is the outcome on top; every other step is a tab
+  // (also a rewrite in between, in a Refine panel)
+  const finalStage = stages.length > 0 && stages[stages.length - 1].who === 'chair' ? stages.length - 1 : -1
+  const rounds = stages.map((s, i) => ({ ...s, i })).filter(s => s.i !== finalStage)
   // the step shown: the one picked, else the one being answered, else the last one answered
   const lastAnswered = [...rounds].reverse().find(r => answers.some(a => a.stage === r.i))
-  const auto = running && stages[p.stage]?.who !== 'chair' ? p.stage : (lastAnswered?.i ?? rounds[0]?.i ?? 0)
+  const auto = running && p.stage !== finalStage && p.stage < stages.length ? p.stage : (lastAnswered?.i ?? rounds[0]?.i ?? 0)
   const shown = tab ?? auto
   const st = STATUS[p.status]
-  const writing = running && stages[p.stage]?.who === 'chair'
+  const writing = running && p.stage === finalStage
   const chairLive = writing ? chair?.live : ''
   const failedSeats = seats.filter(s => s.state === 'failed' || s.state === 'skipped')
   const openThread = (tid: string) => {
@@ -299,10 +302,10 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
               {p.from_thread_id && p.from_title && <> · from <button type="button" className="link-btn" onClick={() => openThread(p.from_thread_id)}>{p.from_title}</button></>}</div>
           </div>}
 
-          {(outcome || writing) && chairStage >= 0 && (
+          {(outcome || writing) && finalStage >= 0 && (
             <section className={`pn-outcome ${writing ? 'writing' : ''}`}>
               <header className="pn-outcome-h">
-                <Icon name="sparkles" size={15} /><b className="grow">{stages[stages.length - 1].who === 'chair' ? stages[stages.length - 1].name : 'Outcome'}</b>
+                <Icon name="sparkles" size={15} /><b className="grow">{p.kind === 'refine' ? 'The refined version' : stages[finalStage].name}</b>
                 {writing ? <span className="badge accent-soft"><Spinner size={9} />{chair?.activity === 'starting' ? 'Starting…' : 'Being written…'}</span>
                   : chair && <span className="muted xsmall pn-by" title="It got the answers by letter, without the models’ names"><Icon name={chair.provider} size={12} className={`prov-glyph ${chair.provider}`} />{providerName(chair.provider)}{chair.model ? ` · ${chair.model}` : ''}</span>}
                 {chair?.thread_id && <button type="button" className="btn ghost icon-only xs" title="Open the summary writer’s conversation" aria-label="Open the summary writer’s conversation" onClick={() => openThread(chair.thread_id)}><Icon name="external" size={14} /></button>}
@@ -316,7 +319,7 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
               </div>}
             </section>
           )}
-          {!p.result && !running && answers.length > 0 && chairStage < 0 && <div className="row"><button type="button" className="btn primary sm" onClick={() => setCont({ text: '', provider: '' })}><Icon name="arrow-right" size={13} />Continue with these answers</button></div>}
+          {!p.result && !running && answers.length > 0 && finalStage < 0 && <div className="row"><button type="button" className="btn primary sm" onClick={() => setCont({ text: '', provider: '' })}><Icon name="arrow-right" size={13} />Continue with these answers</button></div>}
 
           {rounds.length > 0 && <section className="pn-rounds">
             <div className="pn-tabs" role="tablist">
@@ -328,14 +331,26 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
                 </button>
               })}
             </div>
-            <div className={`pn-cols n${Math.min(seats.length, 4)}`}>
-              {seats.map(s => {
-                const a = answers.find(x => x.stage === shown && x.seat_id === s.id)
-                const current = running && p.stage === shown
-                const live = current && !a && s.state === 'working' ? s.live : ''
-                return <SeatCard key={s.id} seat={s} text={a?.text || live || undefined} live={!!live} current={current} onOpen={() => openThread(s.thread_id)} />
-              })}
-            </div>
+            {stages[shown]?.who === 'chair' ? (
+              // a step of the summary writer in between (a rewrite): one card
+              <div className="pn-cols n1">
+                {chair && (() => {
+                  const a = answers.find(x => x.stage === shown && chairs.some(c => c.id === x.seat_id))
+                  const current = running && p.stage === shown
+                  const live = current && !a && chair.state === 'working' ? chair.live : ''
+                  return <SeatCard seat={chair} text={a?.text || live || undefined} live={!!live} current={current} onOpen={() => openThread(chair.thread_id)} />
+                })()}
+              </div>
+            ) : (
+              <div className={`pn-cols n${Math.min(seats.length, 4)}`}>
+                {seats.map(s => {
+                  const a = answers.find(x => x.stage === shown && x.seat_id === s.id)
+                  const current = running && p.stage === shown
+                  const live = current && !a && s.state === 'working' ? s.live : ''
+                  return <SeatCard key={s.id} seat={s} text={a?.text || live || undefined} live={!!live} current={current} onOpen={() => openThread(s.thread_id)} />
+                })}
+              </div>
+            )}
           </section>}
         </div>
       </div>

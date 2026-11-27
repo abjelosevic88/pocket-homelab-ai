@@ -5,7 +5,7 @@
 .pn-letter.chair { background: var(--surface-2); color: var(--muted); }
 
 /* ----- the list ----- */
-.pn-starts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.pn-starts { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 10px; }
 .pn-start { display: flex; align-items: center; gap: 12px; padding: 12px 14px; text-align: left; font: inherit; color: inherit; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; cursor: pointer; transition: border-color .12s, background .12s; }
 .pn-start:hover:not(:disabled) { border-color: var(--accent); background: var(--surface-2); }
 .pn-start:disabled { opacity: .55; cursor: default; }

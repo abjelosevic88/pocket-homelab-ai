@@ -354,3 +354,54 @@ func TestPanelAccessLevels(t *testing.T) {
 		t.Fatalf("capped by the starting agent: mode %q", mode)
 	}
 }
+
+// Refine: the council judges, the editor rewrites, the council judges the
+// rewrite (which it is handed), the editor rewrites again: that is the outcome.
+func TestRefineRewritesBetweenVerdicts(t *testing.T) {
+	fastPanels(t)
+	s, h, root := testServer(t)
+	c, _ := person(t, s, h, "refine@example.test", "admin", true)
+	fakeClaude(t, s, root)
+	if err := os.WriteFile(s.cfg.ClaudeBin, []byte(panelClaude), 0700); err != nil {
+		t.Fatal(err)
+	}
+	var started struct {
+		ID string `json:"id"`
+	}
+	c.want("POST", "/api/v1/panels", map[string]any{"kind": "refine", "material": "The plan: do it in one go.", "depth": "standard", "cwd": root,
+		"seats": []map[string]any{{"provider": "claude", "model": "default"}, {"provider": "claude", "model": "default"}},
+		"chair": map[string]any{"provider": "claude", "model": "default"}}, 201, &started)
+	p := panelDone(t, s, started.ID)
+	if p.Status != "done" || p.Stage != 4 || p.Result != "ANSWER 2 [Second rewrite]" {
+		t.Fatalf("panel %+v", p)
+	}
+	ctx := context.Background()
+	answers, _ := s.store.PanelAnswers(ctx, p.ID)
+	if len(answers) != 6 {
+		t.Fatalf("answers %d", len(answers))
+	}
+	seats, _ := s.store.PanelSeats(ctx, p.ID)
+	said := func(threadID string) []string {
+		items, _ := s.store.ListItems(ctx, threadID)
+		out := []string{}
+		for _, it := range items {
+			if it.Kind == "user" {
+				out = append(out, it.Body)
+			}
+		}
+		return out
+	}
+	// a participant's second step: the rewrite itself, not the others' verdicts
+	second := said(seats[0].ThreadID)[1]
+	if !strings.Contains(second, "ANSWER 1 [Rewrite]") || !strings.Contains(second, "rewritten from the verdicts") || strings.Contains(second, "## Participant") {
+		t.Fatalf("verdict on the rewrite was handed %q", second)
+	}
+	// the editor: told it is one, no word limit, the verdicts by letter; then only the new ones
+	editor := said(seats[2].ThreadID)
+	if !strings.Contains(editor[0], "You are the editor") || !strings.Contains(editor[0], "do not cut it to fit") || !strings.Contains(editor[0], "## Participant A") || !strings.Contains(editor[0], "The plan: do it in one go.") {
+		t.Fatalf("editor was told %q", editor[0])
+	}
+	if !strings.Contains(editor[1], "ANSWER 2 [Verdicts on the rewrite]") || strings.Contains(editor[1], "ANSWER 1 [Verdicts]") {
+		t.Fatalf("editor's second step %q", editor[1])
+	}
+}

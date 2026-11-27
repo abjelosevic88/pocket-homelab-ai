@@ -61,7 +61,7 @@ export const PANEL_EVENT = 'pai:panel'
 /** The "/" commands that start a panel → its kind. */
 export const PANEL_COMMANDS: Record<string, string> = { 'ask-all': 'ask', brainstorm: 'brainstorm', council: 'council', debate: 'debate', 'second-opinion': 'review', 'best-of': 'build', committee: 'ask', advisor: 'review', panel: '' }
 
-export const KIND_ICON: Record<string, string> = { ask: 'message', brainstorm: 'sparkles', council: 'users', debate: 'repeat', review: 'eye', build: 'fork', recipe: 'list-checks' }
+export const KIND_ICON: Record<string, string> = { refine: 'refresh', ask: 'message', brainstorm: 'sparkles', council: 'users', debate: 'repeat', review: 'eye', build: 'fork', recipe: 'list-checks' }
 
 export const sameLogin = (a: Pick<SeatSpec, 'provider' | 'account_id' | 'host_id' | 'host_home'>, b: Pick<SeatSpec, 'provider' | 'account_id' | 'host_id' | 'host_home'>) =>
   a.provider === b.provider && (a.account_id || 0) === (b.account_id || 0) && (a.host_id || 0) === (b.host_id || 0) && (a.host_home || '') === (b.host_home || '')
@@ -127,16 +127,18 @@ export function useRunningPanels(on: boolean): number {
   return n
 }
 
-/** Send a message into an open conversation from outside its composer ("/refine" from a file's menu). */
-export const SEND_EVENT = 'pai:panel-send'
-export const sendToThread = (threadId: string, text: string) => window.dispatchEvent(new CustomEvent(SEND_EVENT, { detail: { threadId, text } }))
-
-/** What a plan, a file or an answer can be sent to. "refine" is not a panel but rounds of them, run by the conversation's agent. */
-export const SEND_TO: { kind: string; label: string; hint: string }[] = [
-  { kind: 'refine', label: 'Refine', hint: 'council rounds until it holds' },
-  { kind: 'council', label: 'Council', hint: 'judge it' },
-  { kind: 'review', label: 'Second opinion', hint: 'find what is wrong' },
-  { kind: 'brainstorm', label: 'Brainstorm', hint: 'ideas on it' },
-  { kind: 'debate', label: 'Debate', hint: 'for and against' },
-  { kind: 'ask', label: 'Ask all', hint: 'a question about it' },
+/** What a plan, a file or an answer can be sent to, with the question the panel is started with. */
+export const SEND_TO: { kind: string; label: string; hint: string; question: string }[] = [
+  { kind: 'refine', label: 'Refine', hint: 'judge, rewrite, judge again', question: 'Refine this: judge it, improve it, and judge the improved version.' },
+  { kind: 'council', label: 'Council', hint: 'judge it', question: 'Judge this: is it ready to act on, and what has to change?' },
+  { kind: 'review', label: 'Second opinion', hint: 'find what is wrong', question: 'Review this critically: what is wrong, risky or missing?' },
+  { kind: 'brainstorm', label: 'Brainstorm', hint: 'ideas on it', question: 'Brainstorm on this: what could be added, done differently or done better?' },
+  { kind: 'debate', label: 'Debate', hint: 'for and against', question: 'Should we go ahead with this as it is?' },
+  { kind: 'ask', label: 'Ask all', hint: 'what they make of it', question: 'What do you make of this? Give your own assessment.' },
 ]
+
+/** Start a panel right away on the person's default models (no sheet, nothing posted to a conversation). */
+export function startPanelNow(kind: string, material: string, name: string, fromThreadId?: string): Promise<Panel> {
+  const k = SEND_TO.find(x => x.kind === kind)
+  return api.post<Panel>(`${V1}/panels`, { kind, question: k?.question || '', material, title: `${k?.label || 'Panel'}: ${name}`.slice(0, 140), from_thread_id: fromThreadId || undefined, report: false })
+}

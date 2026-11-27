@@ -28,8 +28,8 @@ func panelToolDefs() []struct {
 		read                      bool
 	}{
 		{"pocket_panel_start", "Put one question to a panel of several AI models (the person's agents and models), run by Pocket AI in rounds; one model writes the summary. The person approves the start unless they always allow it, and sees every answer on the panel's page. The participants do not see this conversation, so question and material must be complete. Returns its panel_id: wait for the outcome with pocket_panel_wait (or it comes back to you as a message when it finishes).", `{"type":"object","properties":{
-"kind":{"type":"string","enum":["ask","brainstorm","council","debate","review"],"description":"ask: the same question to all, answers compared and merged. brainstorm: ideas, built on each other, grouped. council: they judge a plan or idea from different points of view and criticise each other without seeing who wrote what. debate: two sides are assigned and argue, a judge rules. review: a second opinion on an answer, plan or change (material)."},
-"question":{"type":"string","maxLength":20000,"description":"What they are asked, written so that a model without this conversation understands it."},
+"kind":{"type":"string","enum":["ask","brainstorm","council","refine","debate","review"],"description":"refine: they judge a plan or text (material), an editor model rewrites it from their verdicts, they judge the rewrite again; the outcome is the improved version in full. ask: the same question to all, answers compared and merged. brainstorm: ideas, built on each other, grouped. council: they judge a plan or idea from different points of view and criticise each other without seeing who wrote what. debate: two sides are assigned and argue, a judge rules. review: a second opinion on an answer, plan or change (material)."},
+"question":{"type":"string","maxLength":20000,"description":"What they are asked, written so that a model without this conversation understands it (refine, review: what to pay attention to)."},
 "material":{"type":"string","maxLength":200000,"description":"What is judged or reviewed, in full: the plan, the idea, the answer, the diff, the background. They can also read files in this conversation's folder."},
 "depth":{"type":"string","enum":["quick","standard","deep"],"description":"quick: one round and the summary. standard (default): they also see and answer each other. deep: one more round to revise; slower, more quota."},
 "title":{"type":"string","maxLength":120},
@@ -122,12 +122,12 @@ func (s *Server) callPanelTool(ctx, session context.Context, owner *store.User, 
 			Title    string `json:"title"`
 			Report   *bool  `json:"report"`
 		}
-		if json.Unmarshal(raw, &in) != nil || strings.TrimSpace(in.Question) == "" {
+		if json.Unmarshal(raw, &in) != nil || strings.TrimSpace(in.Question) == "" && strings.TrimSpace(in.Material) == "" {
 			return toolFailure("Write the question")
 		}
 		kind, ok := panelKindByID(in.Kind)
 		if !ok || kind.ID == "build" {
-			return toolFailure("kind must be one of ask, brainstorm, council, debate, review")
+			return toolFailure("kind must be one of ask, brainstorm, council, refine, debate, review")
 		}
 		if s.agentDepth(ctx, t) >= agentMaxDepth {
 			return toolFailure("An agent started by another agent cannot start a panel")

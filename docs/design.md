@@ -247,6 +247,10 @@ The app shows a chat in its own page with `<BASE_URL>/t/<id>?embed=1&links=1` in
   limit is out of the panel, with the reason. The first step needs the kind's
   quorum of answers, else the panel fails and says who dropped out. A summary
   writer that fails is replaced once by another model of the panel.
+- Refine: the summary writer is an editor that rewrites the material between
+  rounds of verdicts; a step with `sees: revision` hands the participants the
+  editor's latest text. Every step but the last one of the summary writer is
+  a tab on the panel's page.
 - Blindness: participants are labelled A, B, C. Later steps and the summary
   writer get the answers as "Participant A" and so on; `revealNames` puts the
   models' names into the summary afterwards.

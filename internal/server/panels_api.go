@@ -101,6 +101,16 @@ func (s *Server) viewPanel(ctx context.Context, p *store.Panel, full bool) panel
 		if v.Answers == nil {
 			v.Answers = []*store.PanelAnswer{}
 		}
+		// what the summary writer wrote says "Participant A": shown with who that was
+		chairs := map[int64]bool{}
+		for _, st := range seats {
+			chairs[st.ID] = st.Chair
+		}
+		for _, a := range v.Answers {
+			if chairs[a.SeatID] {
+				a.Text = revealNames(a.Text, seats)
+			}
+		}
 		if p.FromThreadID != "" {
 			if th, err := s.store.GetThreadAny(ctx, p.FromThreadID); err == nil && th.UserID == p.UserID {
 				v.FromTitle = firstNonEmpty(th.Title, "a conversation")

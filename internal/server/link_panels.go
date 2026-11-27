@@ -85,7 +85,7 @@ func (s *Server) handleLinkStartPanel(w http.ResponseWriter, r *http.Request) {
 	}
 	kind, ok := panelKindByID(in.Kind)
 	if !ok || kind.ID == "build" {
-		writeErr(w, http.StatusBadRequest, "kind must be one of ask, brainstorm, council, debate, review")
+		writeErr(w, http.StatusBadRequest, "kind must be one of ask, brainstorm, council, refine, debate, review")
 		return
 	}
 	// one app does not run a person's quota dry: two of its panels at a time
