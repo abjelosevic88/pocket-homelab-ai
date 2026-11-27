@@ -32,15 +32,17 @@
 .pn-steps { display: flex; flex-wrap: wrap; gap: 5px; }
 .pn-step-chip { font-size: 11.5px; padding: 2px 8px; border-radius: 6px; background: var(--surface-2); color: var(--text-2); }
 .pn-step-chip.chair { background: var(--accent-soft); color: var(--accent-ink); }
-.pn-seats { display: grid; gap: 6px; }
+.pn-seats { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
 .pn-seat { display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
-.pn-seat-picks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: 1; min-width: 0; }
-.pn-seat-picks .select-trigger { max-width: 100%; min-width: 0; }
-.pn-seat-picks .pn-pick-model { min-width: 190px; }
+.pn-seat-picks { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+/* one line: the pickers give way (their text shortens) before anything wraps */
+.pn-seat-picks .select-trigger { flex: 0 1 auto; max-width: 100%; min-width: 64px; }
+.pn-seat-picks .select-trigger.pn-pick-model { flex: 0 2 auto; min-width: 120px; }
+.pn-seat-picks .select-value { min-width: 0; }
 .pn-side { font-size: 11.5px; font-weight: 650; padding: 2px 9px; border-radius: 999px; }
 .pn-side.for { background: var(--success-soft); color: var(--success); }
 .pn-side.against { background: var(--danger-soft); color: var(--danger); }
-.pn-quota { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); margin-left: auto; }
+.pn-quota { display: inline-flex; align-items: center; gap: 5px; flex: none; font-size: 11px; color: var(--muted); }
 .pn-quota-bar { width: 44px; height: 4px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
 .pn-quota-bar > span { display: block; height: 100%; border-radius: 3px; background: var(--success); }
 .pn-quota.high .pn-quota-bar > span { background: var(--warning); }
@@ -74,7 +76,7 @@
 .pp-chip button:hover { opacity: 1; background: color-mix(in srgb, currentColor 14%, transparent); }
 
 .field .help.pn-access-full { color: var(--warning); }
-.pn-default-row { display: flex; align-items: center; gap: 10px; }
+.pn-default-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .pn-default-row > .pn-seat { flex: 1; min-width: 0; }
 .pn-default-row.off > .pn-seat { opacity: .5; }
 @media (max-width: 760px) { .pn-defaults-label { display: none; } }
@@ -141,9 +143,14 @@
   .pn-start-text .muted { display: none; }
   .pn-back { display: none; }
   .pn-seat { align-items: flex-start; }
-  .pn-seat-picks .select-trigger { flex: 1 1 40%; min-width: 120px; }
+  .pn-seat-picks { flex-wrap: wrap; }
+  .pn-seat-picks .select-trigger { flex: 1 1 40%; min-width: 110px; }
   .pn-seat-picks .select-trigger.pn-pick-model { flex: 1 1 100%; }
-  .pn-quota { margin-left: 0; }
+  /* on a phone the plan limit gets a line of its own under the pickers, which keep the width */
+  .pn-seat { flex-wrap: wrap; }
+  .pn-seat > .pn-seat-picks { order: 1; flex: 1 1 0; }
+  .pn-seat > .btn { order: 2; }
+  .pn-seat > .pn-quota { order: 3; flex: 0 0 100%; padding-left: 32px; }
   /* the participants side by side become cards to swipe through */
   .pn-cols, .pn-cols.n1 { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; gap: 10px; margin: 0 -12px; padding: 0 12px 6px; scrollbar-width: none; }
   .pn-cols::-webkit-scrollbar { display: none; }

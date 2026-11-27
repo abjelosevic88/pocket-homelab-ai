@@ -85,9 +85,10 @@ function SeatRow({ seat, label, onChange, onRemove, opts, providers, roles, fixe
         {fixedRole ? <span className={`pn-side ${fixedRole === 'For' ? 'for' : 'against'}`}>{fixedRole}</span>
           : roles.length > 0 && <Select size="sm" className="inline" label="Point of view" value={seat.role} options={roleOpts} onChange={v => onChange({ ...seat, role: v })} width={220}
             renderValue={o => <span className="ellipsis"><Icon name="eye" size={12} className="inline-ico" />{seat.role || o?.label || 'Point of view'}</span>} />}
-        <Quota login={login} />
         {login && !login.signed_in && <span className="pn-warn"><Icon name="alert" size={12} />not signed in</span>}
       </div>
+      {/* its own place at the end of the row: it never drops under the pickers */}
+      <Quota login={login} />
       {onRemove && <button type="button" className="btn ghost icon-only sm" aria-label={`Remove participant ${label}`} title="Remove" onClick={onRemove}><Icon name="x" size={14} /></button>}
     </div>
   )
