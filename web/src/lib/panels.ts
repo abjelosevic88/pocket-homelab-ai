@@ -1,13 +1,13 @@
 // Panels: one question put to several models at once (GET/POST /panels).
 import { useEffect, useState } from 'react'
 import { api, V1 } from './api'
-import type { ProviderId } from './types'
+import type { LimitWindow, ProviderId } from './types'
 
 export interface PanelStage { name: string; who: 'all' | 'chair'; sees: '' | 'others' | 'all' | 'everything'; prompt: string; depth?: number }
 export interface PanelKind { id: string; name: string; description: string; ask: string; material: string; roles: string[] | null; quorum: number; stages: PanelStage[]; command: string }
 export interface OwnKind { id: number; name: string; description: string; stages: PanelStage[] }
 export interface SeatSpec { provider: ProviderId; model: string; effort: string; account_id: number; host_id: number; host_home: string; role: string }
-export interface PanelLogin { provider: ProviderId; account_id: number; host_id: number; host_home: string; label: string; where: string; signed_in: boolean; email?: string; plan?: string; used: number; resets_at?: string; error?: string }
+export interface PanelLogin { provider: ProviderId; account_id: number; host_id: number; host_home: string; label: string; where: string; signed_in: boolean; email?: string; plan?: string; used: number; resets_at?: string; windows?: LimitWindow[]; error?: string }
 export interface Lineup { id: number; name: string; seats: SeatSpec[]; chair: SeatSpec | null; default: boolean; access: Access }
 /** What participants may do without asking: only look, each agent's own automatic mode, or anything. */
 export type Access = '' | 'auto' | 'full'
@@ -75,6 +75,52 @@ export const KIND_ICON: Record<string, string> = { refine: 'refresh', ask: 'mess
 
 export const sameLogin = (a: Pick<SeatSpec, 'provider' | 'account_id' | 'host_id' | 'host_home'>, b: Pick<SeatSpec, 'provider' | 'account_id' | 'host_id' | 'host_home'>) =>
   a.provider === b.provider && (a.account_id || 0) === (b.account_id || 0) && (a.host_id || 0) === (b.host_id || 0) && (a.host_home || '') === (b.host_home || '')
+
+const normLimitTokens = (s: string) => s.toLowerCase().replace(/[-_/[\]()\s]+/g, ' ').trim()
+
+function windowScope(w: LimitWindow): string {
+  const dot = w.name.indexOf(' · ')
+  if (dot >= 0) return w.name.slice(dot + 3).trim().toLowerCase()
+  const id = w.id || ''
+  const col = id.indexOf(':')
+  if (col >= 0 && id.slice(0, col).includes('scoped')) return id.slice(col + 1).trim().toLowerCase()
+  return ''
+}
+
+function windowApplies(w: LimitWindow, models: (string | undefined)[]): boolean {
+  const scope = windowScope(w)
+  if (!scope) return true
+  const cands = models
+    .map(m => normLimitTokens(m || ''))
+    .filter(t => t && t !== 'default' && !t.startsWith('default '))
+    .map(t => ` ${t} `)
+  if (!cands.length) return false
+  const parts = scope.replace(/ and /g, ',').replace(/ & /g, ',').replace(/\//g, ',').split(',')
+  for (const part of parts) {
+    const p = normLimitTokens(part)
+    if (!p) continue
+    const needle = ` ${p} `
+    if (cands.some(c => c.includes(needle))) return true
+  }
+  return false
+}
+
+/** Plan limit usage for a login and selected model (general windows + any
+ *  model-scoped window that matches the model). */
+export function loginQuota(l: PanelLogin | undefined, ...models: (string | undefined)[]): { used: number; resets_at?: string } {
+  if (!l) return { used: -1 }
+  if (!l.windows?.length) return { used: l.used, resets_at: l.resets_at }
+  let used = -1
+  let resets_at: string | undefined
+  for (const w of l.windows) {
+    if (!windowApplies(w, models)) continue
+    if (used < 0 || w.used > used) {
+      used = w.used
+      resets_at = w.resets_at
+    }
+  }
+  return { used, resets_at }
+}
 
 /** How many model runs a panel takes: every participant per round, plus the summaries. */
 export function panelRuns(stages: PanelStage[], depth: number, seats: number): number {

@@ -530,18 +530,19 @@ func panelMarkdown(p *store.Panel, seats []*store.PanelSeat, answers []*store.Pa
 
 // panelLogin is a login a participant can run on.
 type panelLogin struct {
-	Provider  string  `json:"provider"`
-	AccountID int64   `json:"account_id"`
-	HostID    int64   `json:"host_id"`
-	HostHome  string  `json:"host_home"`
-	Label     string  `json:"label"`
-	Where     string  `json:"where"` // "This server" or the machine's name
-	SignedIn  bool    `json:"signed_in"`
-	Email     string  `json:"email,omitempty"`
-	Plan      string  `json:"plan,omitempty"`
-	Used      float64 `json:"used"` // of its plan limit, 0..1; -1 = not known
-	ResetsAt  string  `json:"resets_at,omitempty"`
-	Error     string  `json:"error,omitempty"`
+	Provider  string         `json:"provider"`
+	AccountID int64          `json:"account_id"`
+	HostID    int64          `json:"host_id"`
+	HostHome  string         `json:"host_home"`
+	Label     string         `json:"label"`
+	Where     string         `json:"where"` // "This server" or the machine's name
+	SignedIn  bool           `json:"signed_in"`
+	Email     string         `json:"email,omitempty"`
+	Plan      string         `json:"plan,omitempty"`
+	Used      float64        `json:"used"` // of its general plan limit, 0..1; -1 = not known
+	ResetsAt  string         `json:"resets_at,omitempty"`
+	Windows   []agent.Window `json:"windows,omitempty"`
+	Error     string         `json:"error,omitempty"`
 }
 
 // panelLogins lists every login the person can seat a participant on: this
@@ -551,7 +552,9 @@ func (s *Server) panelLogins(ctx context.Context, u *store.User) []panelLogin {
 	out := []panelLogin{}
 	quota := func(l *panelLogin) {
 		l.Used = -1
-		if used, resets, ok := s.rt.loginUsed(seatLimitsKey(store.PanelSeatSpec{Provider: l.Provider, AccountID: l.AccountID, HostID: l.HostID, HostHome: l.HostHome})); ok {
+		wins := s.rt.loginWindows(seatLimitsKey(store.PanelSeatSpec{Provider: l.Provider, AccountID: l.AccountID, HostID: l.HostID, HostHome: l.HostHome}))
+		l.Windows = wins
+		if used, resets, ok := windowsUsed(wins); ok {
 			l.Used, l.ResetsAt = used, resets
 		}
 	}

@@ -141,14 +141,14 @@ func seatLimitsKey(sp store.PanelSeatSpec) string {
 	return limitsKey(sp.Provider, sp.AccountID)
 }
 
-// loginUsed is how much of a login's plan limit is used (the fullest window,
-// 0..1) and when that window resets; ok false = not known.
-func (rt *engine) loginUsed(key string) (used float64, resets string, ok bool) {
+// loginWindows returns a snapshot of the plan-limit windows for a login key
+// (falling back to another login of the same account when known).
+func (rt *engine) loginWindows(key string) []agent.Window {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	l := rt.limits[key]
 	if l == nil {
-		return 0, "", false
+		return nil
 	}
 	wins := l.Windows
 	if len(wins) == 0 && l.Ident != "" { // another login of the same account knows
@@ -159,12 +159,117 @@ func (rt *engine) loginUsed(key string) (used float64, resets string, ok bool) {
 			}
 		}
 	}
+	if len(wins) == 0 {
+		return nil
+	}
+	return append([]agent.Window(nil), wins...)
+}
+
+// windowScope returns the lowercased model/group scope of a scoped limit
+// window (e.g. "7 days · Fable" → "fable", "weekly_scoped:fable" → "fable"),
+// or "" for general plan windows ("5 hours", "7 days").
+func windowScope(w agent.Window) string {
+	if _, after, ok := strings.Cut(w.Name, " · "); ok {
+		return strings.ToLower(strings.TrimSpace(after))
+	}
+	if prefix, after, ok := strings.Cut(w.ID, ":"); ok && strings.Contains(prefix, "scoped") {
+		return strings.ToLower(strings.TrimSpace(after))
+	}
+	return ""
+}
+
+// normLimitTokens turns "claude-opus-5-5" or "Opus 5.5" into space-separated
+// lowercased tokens ("claude opus 5.5") for boundary-safe matching.
+func normLimitTokens(s string) string {
+	var b strings.Builder
+	space := true
+	for _, r := range strings.ToLower(s) {
+		if r == '-' || r == '_' || r == '/' || r == '[' || r == ']' || r == '(' || r == ')' || r == ' ' || r == '\t' {
+			if !space {
+				b.WriteByte(' ')
+				space = true
+			}
+			continue
+		}
+		b.WriteRune(r)
+		space = false
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// windowApplies reports whether a rate-limit window applies to a seat running
+// one of the given model ids/display names. General windows always apply;
+// model-scoped windows only apply when their scope matches the model.
+func windowApplies(w agent.Window, models ...string) bool {
+	scope := windowScope(w)
+	if scope == "" {
+		return true
+	}
+	var cands []string
+	for _, m := range models {
+		t := normLimitTokens(m)
+		if t == "" || t == "default" || strings.HasPrefix(t, "default ") {
+			continue
+		}
+		cands = append(cands, " "+t+" ")
+	}
+	if len(cands) == 0 {
+		return false
+	}
+	s := strings.ReplaceAll(scope, " and ", ",")
+	s = strings.ReplaceAll(s, " & ", ",")
+	s = strings.ReplaceAll(s, "/", ",")
+	for _, part := range strings.Split(s, ",") {
+		p := normLimitTokens(part)
+		if p == "" {
+			continue
+		}
+		needle := " " + p + " "
+		for _, c := range cands {
+			if strings.Contains(c, needle) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// windowsUsed returns the fullest applicable window (0..1) and its reset time.
+func windowsUsed(wins []agent.Window, models ...string) (used float64, resets string, ok bool) {
 	for _, w := range wins {
+		if !windowApplies(w, models...) {
+			continue
+		}
 		if !ok || w.Used > used {
 			used, resets, ok = w.Used, w.ResetsAt, true
 		}
 	}
 	return used, resets, ok
+}
+
+// loginUsed is how much of a login's plan limit is used for the given model
+// (the fullest applicable window, 0..1) and when that window resets;
+// ok false = not known.
+func (rt *engine) loginUsed(key string, models ...string) (used float64, resets string, ok bool) {
+	return windowsUsed(rt.loginWindows(key), models...)
+}
+
+// seatModelNames returns the seat's model id and (when known) its display name,
+// so model-scoped limit windows ("7 days · Fable") match either one.
+func (s *Server) seatModelNames(ctx context.Context, sp store.PanelSeatSpec) []string {
+	out := []string{sp.Model}
+	if sp.Model == "" || strings.EqualFold(strings.TrimSpace(sp.Model), "default") {
+		return out
+	}
+	if p, ok := s.agentProvider(ctx, sp.Provider); ok {
+		for _, m := range p.Models {
+			if m.ID == sp.Model && m.Name != "" {
+				out = append(out, m.Name)
+				break
+			}
+		}
+	}
+	return out
 }
 
 // defaultSeats is who takes part when the person names nobody: their default
@@ -377,7 +482,7 @@ func (s *Server) startPanel(ctx context.Context, u *store.User, in panelStart) (
 			return nil, badRequest(providerName(sp.Provider) + ": " + err.Error())
 		}
 		st := &store.PanelSeat{Idx: i, Label: string(rune('A' + i)), PanelSeatSpec: sp, Asked: -1, State: "waiting"}
-		if used, _, ok := s.rt.loginUsed(seatLimitsKey(sp)); ok && used >= 0.999 {
+		if used, _, ok := s.rt.loginUsed(seatLimitsKey(sp), s.seatModelNames(ctx, sp)...); ok && used >= 0.999 {
 			st.State, st.Error = "skipped", "Its plan limit is used up"
 			full = append(full, providerName(sp.Provider))
 		}

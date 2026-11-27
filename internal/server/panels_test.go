@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/agent"
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
 )
 
@@ -624,5 +625,117 @@ func TestPanelKeepsVersionsAndGoesOn(t *testing.T) {
 	c.want("POST", "/api/v1/panels/"+id+"/save", map[string]string{}, 200, &saved)
 	if got, err := os.ReadFile(saved.Path); err != nil || string(got) != "Short plan.\n" || !strings.HasSuffix(saved.Path, "/one-go-plan.md") {
 		t.Fatalf("saved %q %q %v", saved.Path, got, err)
+	}
+}
+
+// A model-scoped limit window (like Claude's "7 days · Fable" at 100%) only
+// blocks seats running that model — never other models on the same login.
+func TestPanelScopedLimits(t *testing.T) {
+	wins := []agent.Window{
+		{ID: "five_hour", Name: "5 hours", Used: 0.20, ResetsAt: "2026-11-28T00:00:00Z"},
+		{ID: "seven_day", Name: "7 days", Used: 0.90, ResetsAt: "2026-11-29T17:00:00Z"},
+		{ID: "weekly_scoped:fable", Name: "7 days · Fable", Used: 1.0, ResetsAt: "2026-11-29T17:00:00Z"},
+	}
+	if u, _, ok := windowsUsed(wins, "opus", "Opus 5.5"); !ok || u != 0.90 {
+		t.Fatalf("opus should see general 90%%, got %v %v", u, ok)
+	}
+	if u, _, ok := windowsUsed(wins, "default", "Default (recommended)"); !ok || u != 0.90 {
+		t.Fatalf("default should see general 90%%, got %v %v", u, ok)
+	}
+	if u, _, ok := windowsUsed(wins); !ok || u != 0.90 {
+		t.Fatalf("unscoped login summary should see general 90%%, got %v %v", u, ok)
+	}
+	if u, _, ok := windowsUsed(wins, "fable", "Fable"); !ok || u != 1.0 {
+		t.Fatalf("fable should see scoped 100%%, got %v %v", u, ok)
+	}
+	if u, _, ok := windowsUsed(wins, "claude-fable-1"); !ok || u != 1.0 {
+		t.Fatalf("claude-fable-1 should see scoped 100%%, got %v %v", u, ok)
+	}
+	// Codex and Antigravity scoped windows behave the same way.
+	codexWins := []agent.Window{
+		{ID: "codex:10080", Name: "7 days", Used: 0.10},
+		{ID: "codex_bengalfox:10080", Name: "7 days · GPT-5.3-Codex-Spark", Used: 1.0},
+	}
+	if u, _, ok := windowsUsed(codexWins, "gpt-6.2-sol"); !ok || u != 0.10 {
+		t.Fatalf("codex sol got %v %v", u, ok)
+	}
+	if u, _, ok := windowsUsed(codexWins, "gpt-5.3-codex-spark"); !ok || u != 1.0 {
+		t.Fatalf("codex spark got %v %v", u, ok)
+	}
+	agyWins := []agent.Window{
+		{ID: "g0-w", Name: "7 days", Used: 0.12},
+		{ID: "g1-w", Name: "7 days · Claude and GPT", Used: 1.0},
+	}
+	if u, _, ok := windowsUsed(agyWins, "gemini-4-neon"); !ok || u != 0.12 {
+		t.Fatalf("antigravity gemini got %v %v", u, ok)
+	}
+	if u, _, ok := windowsUsed(agyWins, "claude-opus-5-5"); !ok || u != 1.0 {
+		t.Fatalf("antigravity claude got %v %v", u, ok)
+	}
+
+	// End-to-end panel start + options: opus runs, fable is skipped.
+	fastPanels(t)
+	s, h, root := testServer(t)
+	c, _ := person(t, s, h, "limits@example.test", "admin", true)
+	fakeClaude(t, s, root)
+	if err := os.WriteFile(s.cfg.ClaudeBin, []byte(panelClaude), 0700); err != nil {
+		t.Fatal(err)
+	}
+	s.rt.mu.Lock()
+	s.rt.limits["claude"] = &provLimits{Windows: wins}
+	s.rt.mu.Unlock()
+
+	var opts struct {
+		Logins []struct {
+			Provider string         `json:"provider"`
+			Used     float64        `json:"used"`
+			Windows  []agent.Window `json:"windows"`
+		} `json:"logins"`
+	}
+	c.want("GET", "/api/v1/panels/options", nil, 200, &opts)
+	var claudeLoginFound bool
+	for _, l := range opts.Logins {
+		if l.Provider == "claude" {
+			claudeLoginFound = true
+			if l.Used != 0.90 || len(l.Windows) != 3 {
+				t.Fatalf("options login quota = %.2f windows=%d, want 0.90 and 3", l.Used, len(l.Windows))
+			}
+		}
+	}
+	if !claudeLoginFound {
+		t.Fatalf("no claude login in options: %+v", opts.Logins)
+	}
+
+	var started struct {
+		ID    string `json:"id"`
+		Seats []struct {
+			Label string `json:"label"`
+			Model string `json:"model"`
+			State string `json:"state"`
+			Error string `json:"error"`
+			Chair bool   `json:"chair"`
+		} `json:"seats"`
+	}
+	c.want("POST", "/api/v1/panels", map[string]any{
+		"kind": "ask", "question": "Check scoped limits", "depth": "quick", "cwd": root,
+		"seats": []map[string]any{
+			{"provider": "claude", "model": "opus"},
+			{"provider": "claude", "model": "default"},
+			{"provider": "claude", "model": "fable"},
+		},
+		"chair": map[string]any{"provider": "claude", "model": "default"},
+	}, 201, &started)
+	if len(started.Seats) != 3 {
+		t.Fatalf("seats %+v", started.Seats)
+	}
+	if started.Seats[0].State == "skipped" || started.Seats[1].State == "skipped" {
+		t.Fatalf("opus/default were wrongly skipped: %+v", started.Seats)
+	}
+	if started.Seats[2].State != "skipped" || started.Seats[2].Error != "Its plan limit is used up" {
+		t.Fatalf("fable should be skipped: %+v", started.Seats[2])
+	}
+	p := panelDone(t, s, started.ID)
+	if p.Status != "done" {
+		t.Fatalf("panel status %q err %q", p.Status, p.Error)
 	}
 }

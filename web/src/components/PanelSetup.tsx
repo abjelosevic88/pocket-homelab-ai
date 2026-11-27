@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom'
 import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { planName, providerName, resetsIn, shortProviderName } from '../lib/format'
-import { ACCESS, DEPTHS, KIND_ICON, panelRuns, sameLogin, type Access, type Depth, type Lineup, type OwnKind, type Panel, type PanelDraft, type PanelLogin, type PanelOptions, type PanelStage, type SeatSpec } from '../lib/panels'
+import { ACCESS, DEPTHS, KIND_ICON, loginQuota, panelRuns, sameLogin, type Access, type Depth, type Lineup, type OwnKind, type Panel, type PanelDraft, type PanelLogin, type PanelOptions, type PanelStage, type SeatSpec } from '../lib/panels'
 import type { Provider, ProviderId } from '../lib/types'
 import { effortLabel, effortOptions } from './AgentPicker'
 import { FolderButton } from './FolderPicker'
@@ -20,20 +20,22 @@ const loginKey = (l: Pick<SeatSpec, 'account_id' | 'host_id' | 'host_home'>) => 
 /** Remembered between panels on this device: the depth last used per kind. */
 const lastDepth = (kind: string): Depth => (localStorage.getItem('pai-panel-depth-' + kind) as Depth) || 'standard'
 
-function quotaNote(l: PanelLogin | undefined) {
+function quotaNote(l: PanelLogin | undefined, model?: string, modelName?: string) {
   if (!l) return ''
   if (!l.signed_in) return 'not signed in'
-  if (l.used < 0) return ''
-  const pct = Math.round(l.used * 100)
-  return `${pct}% of the plan limit used${l.resets_at ? ', ' + resetsIn(l.resets_at) : ''}`
+  const q = loginQuota(l, model, modelName)
+  if (q.used < 0) return ''
+  const pct = Math.round(q.used * 100)
+  return `${pct}% of the plan limit used${q.resets_at ? ', ' + resetsIn(q.resets_at) : ''}`
 }
 
-/** A thin bar: how much of the login's plan limit is used. */
-function Quota({ login }: { login: PanelLogin | undefined }) {
-  if (!login || login.used < 0) return null
-  const pct = Math.min(100, Math.round(login.used * 100))
-  const cls = login.used >= 0.999 ? 'full' : login.used >= 0.85 ? 'high' : ''
-  return <span className={`pn-quota ${cls}`} title={quotaNote(login)}><span className="pn-quota-bar"><span style={{ width: pct + '%' }} /></span><span className="tnum">{pct}%</span></span>
+/** A thin bar: how much of the login's plan limit is used for this model. */
+function Quota({ login, model, modelName }: { login: PanelLogin | undefined; model?: string; modelName?: string }) {
+  const q = loginQuota(login, model, modelName)
+  if (!login || q.used < 0) return null
+  const pct = Math.min(100, Math.round(q.used * 100))
+  const cls = q.used >= 0.999 ? 'full' : q.used >= 0.85 ? 'high' : ''
+  return <span className={`pn-quota ${cls}`} title={quotaNote(login, model, modelName)}><span className="pn-quota-bar"><span style={{ width: pct + '%' }} /></span><span className="tnum">{pct}%</span></span>
 }
 
 /** One participant: agent and model, effort, login, point of view. */
@@ -51,13 +53,14 @@ function SeatRow({ seat, label, onChange, onRemove, opts, providers, roles, fixe
     if (!list.length) return [{ value: `${id}:`, label: 'Its default model', group: providerName(id) }]
     return list.map(m => ({ value: `${id}:${m.id}`, label: m.name || m.id, description: m.description, keywords: m.id, group: providerName(id) }))
   })
+  const p = providers.find(x => x.id === seat.provider)
+  const modelName = p?.models?.find(m => m.id === seat.model)?.name
   const mine = logins.filter(l => l.provider === seat.provider)
   const login = mine.find(l => sameLogin(l, seat))
   const loginOpts: Option<string>[] = mine.map(l => ({
     value: loginKey(l), label: mine.some(o => o.where !== l.where) ? `${l.where} · ${l.label}` : l.label, group: mine.some(o => o.where !== l.where) ? l.where : undefined,
-    description: [l.plan && planName(l.plan), l.email, quotaNote(l)].filter(Boolean).join(' · ') || l.error, disabled: !l.signed_in && !!l.error,
+    description: [l.plan && planName(l.plan), l.email, quotaNote(l, seat.model, modelName)].filter(Boolean).join(' · ') || l.error, disabled: !l.signed_in && !!l.error,
   }))
-  const p = providers.find(x => x.id === seat.provider)
   const efforts = effortOptions(p, seat.model, true)
   const pickModel = (v: string) => {
     const at = v.indexOf(':')
@@ -88,7 +91,7 @@ function SeatRow({ seat, label, onChange, onRemove, opts, providers, roles, fixe
         {login && !login.signed_in && <span className="pn-warn"><Icon name="alert" size={12} />not signed in</span>}
       </div>
       {/* its own place at the end of the row: it never drops under the pickers */}
-      <Quota login={login} />
+      <Quota login={login} model={seat.model} modelName={modelName} />
       {onRemove && <button type="button" className="btn ghost icon-only sm" aria-label={`Remove participant ${label}`} title="Remove" onClick={onRemove}><Icon name="x" size={14} /></button>}
     </div>
   )
@@ -300,7 +303,10 @@ export function PanelSetup({ draft, onClose }: { draft: PanelDraft; onClose: () 
   const min = !ownKind && kind === 'review' ? 1 : 2
   const max = opts?.max_seats || 6
   const loginOf = (s: SeatSpec) => opts?.logins.find(l => sameLogin(l, s))
-  const full = seats.filter(s => (loginOf(s)?.used ?? -1) >= 0.999)
+  const full = seats.filter(s => {
+    const modelName = providers.find(x => x.id === s.provider)?.models?.find(m => m.id === s.model)?.name
+    return loginQuota(loginOf(s), s.model, modelName).used >= 0.999
+  })
   const out = seats.filter(s => loginOf(s) && !loginOf(s)!.signed_in)
   const sameTwice = seats.some((s, i) => seats.some((o, j) => j > i && sameLogin(s, o) && s.model === o.model && (s.role || '') === (o.role || '')))
   const runs = panelRuns(stages, dnum, seats.length)
