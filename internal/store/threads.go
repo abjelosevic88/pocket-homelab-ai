@@ -489,9 +489,11 @@ func (s *Store) DeleteUpload(ctx context.Context, userID int64, id string) error
 	return err
 }
 
-// OrphanUploads lists uploads never sent, older than the cutoff, or whose thread is gone.
+// OrphanUploads lists uploads never sent, older than the cutoff, or whose thread is gone
+// (a panel's own pictures stay while the panel does).
 func (s *Store) OrphanUploads(ctx context.Context, before string) ([]Upload, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id, user_id, path FROM uploads WHERE thread_id IS NULL AND created_at < ?`, before)
+	rows, err := s.DB.QueryContext(ctx, `SELECT id, user_id, path FROM uploads WHERE thread_id IS NULL AND created_at < ?
+		AND id NOT IN (SELECT json_extract(j.value, '$.id') FROM panels, json_each(panels.spec, '$.images') j)`, before)
 	if err != nil {
 		return nil, err
 	}

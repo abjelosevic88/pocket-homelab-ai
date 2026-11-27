@@ -302,3 +302,9 @@ body.pn-dragging { cursor: col-resize; user-select: none; }
   .pc { padding: 10px 10px 12px; }
   .pc-bubble { max-width: 96%; }
 }
+.pn-context { border-radius: 10px; }
+.pn-context.dragging { outline: 2px dashed var(--accent); outline-offset: 4px; }
+.pn-pics { padding: 2px 0 0; }
+.pn-question-pics { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.pn-question-pics a { display: block; width: 120px; height: 120px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--surface-2); }
+.pn-question-pics img { width: 100%; height: 100%; object-fit: cover; display: block; }

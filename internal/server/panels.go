@@ -97,7 +97,9 @@ type panelStart struct {
 	// Items: things picked from the person's other Pocket apps (a note, a
 	// document, a task…): their text is read once and joins the material.
 	Items []panelItem `json:"items"`
-	App   string      `json:"-"` // the Pocket app that starts it over a Core link (link_panels.go)
+	// UploadIDs: pictures pasted or attached to the question (POST /uploads first).
+	UploadIDs []string `json:"upload_ids"`
+	App       string   `json:"-"` // the Pocket app that starts it over a Core link (link_panels.go)
 }
 
 func panelDepth(name string) int {
@@ -350,9 +352,13 @@ func (s *Server) startPanel(ctx context.Context, u *store.User, in panelStart) (
 	if len(in.Question) > 100000 || len(in.Material) > 300000 {
 		return nil, badRequest("That is too long for a panel")
 	}
+	images, err := s.panelImages(ctx, u, in.UploadIDs)
+	if err != nil {
+		return nil, err
+	}
 	depth := panelDepth(in.Depth)
 	p := &store.Panel{ID: uuid.NewString(), UserID: u.ID, Kind: in.Kind, Question: in.Question, Material: in.Material, Status: "running", Report: in.Report}
-	p.Spec.Depth, p.Spec.App = depth, in.App
+	p.Spec.Depth, p.Spec.App, p.Spec.Images = depth, in.App, images
 	var all []store.PanelStage
 	quorum := 2
 	if in.RecipeID != 0 {
@@ -992,6 +998,7 @@ func (s *Server) askSeat(ctx context.Context, owner *store.User, p *store.Panel,
 		if st.HostID == p.Spec.HostID {
 			nt.Cwd = p.Spec.Cwd
 		}
+		nt.UploadIDs = s.panelImageCopies(bg, owner, p)
 		if building {
 			nt.Mode = panelBuildMode(st.Provider, p.Spec.Mode)
 			nt.Worktree = &newWorktree{Mode: "new", Name: "panel-" + p.ID[:6] + "-" + strings.ToLower(st.Label)}
@@ -1266,6 +1273,7 @@ func (s *Server) deletePanel(ctx context.Context, p *store.Panel) error {
 	if err := s.store.DeletePanel(ctx, p.UserID, p.ID); err != nil {
 		return err
 	}
+	s.dropPanelImages(ctx, p)
 	s.rt.toUser(p.UserID, sseEvent{Name: "panel", Data: map[string]any{"id": p.ID, "status": "deleted", "from_thread_id": p.FromThreadID}})
 	return nil
 }

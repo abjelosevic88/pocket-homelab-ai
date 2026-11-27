@@ -41,7 +41,7 @@ export interface PanelSeat extends SeatSpec {
 export interface PanelAnswer { id: number; seat_id: number; stage: number; text: string; created_at: string }
 export interface Panel {
   id: string; kind: string; title: string; question: string; material: string
-  spec: { depth: number; stages: PanelStage[]; kind_name: string; cwd: string; host_id: number; limit_min: number; quorum: number; access?: Access }
+  spec: { depth: number; stages: PanelStage[]; kind_name: string; cwd: string; host_id: number; limit_min: number; quorum: number; access?: Access; images?: { id: string; name: string }[] }
   status: 'running' | 'done' | 'failed' | 'stopped'
   stage: number; stage_at: string; result: string; error: string
   from_thread_id: string; report: boolean; from_title?: string

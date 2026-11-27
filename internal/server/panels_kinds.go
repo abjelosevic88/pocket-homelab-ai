@@ -385,6 +385,11 @@ func panelMessage(p *store.Panel, seats []*store.PanelSeat, answers []*store.Pan
 	var b strings.Builder
 	if first {
 		b.WriteString(panelIntro(p, st, p.Kind != "build" || st.Chair))
+		if n := len(p.Spec.Images); n == 1 {
+			b.WriteString("\nA picture comes with this message: the person attached it to the question. Look at it closely.\n")
+		} else if n > 1 {
+			fmt.Fprintf(&b, "\n%d pictures come with this message: the person attached them to the question. Look at them closely.\n", n)
+		}
 	} else {
 		fmt.Fprintf(&b, "Next step of the panel: %s.\n", sg.Name)
 	}

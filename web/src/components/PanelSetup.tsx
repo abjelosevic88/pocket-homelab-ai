@@ -1,12 +1,13 @@
 // The start sheet of a panel: what to ask, who takes part (agent, model, login,
 // point of view), who writes the summary, and how deep it goes.
-import { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, V1 } from '../lib/api'
+import { api, uploadWithProgress, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { planName, providerName, resetsIn, shortProviderName } from '../lib/format'
 import { ACCESS, DEPTHS, KIND_ICON, loginQuota, panelRuns, sameLogin, type Access, type Depth, type Lineup, type OwnKind, type Panel, type PanelDraft, type PanelLogin, type PanelOptions, type PanelStage, type SeatSpec } from '../lib/panels'
-import type { Provider, ProviderId } from '../lib/types'
+import type { Provider, ProviderId, Upload } from '../lib/types'
+import { shrink } from './Composer'
 import { effortLabel, effortOptions } from './AgentPicker'
 import { FolderButton } from './FolderPicker'
 import { HostPicker } from './HostPicker'
@@ -14,6 +15,12 @@ import { Icon } from './icons'
 import { PickedChips, PocketPicker, type PickedItem } from './PocketPicker'
 import { type Option, Select } from './Select'
 import { Confirm, errMsg, Field, Loading, MenuButton, Modal, Segmented, Spinner, Switch, useToast, type MenuItem, noGrammarly } from './ui'
+
+/** A picture pasted, dropped or picked for the question: uploaded at once, sent with Start. */
+interface Pic { lid: string; name: string; preview: string; progress: number; upload?: Upload; error?: string; abort?: () => void }
+let picSeq = 0
+const PICS_MAX = 8
+const isPicture = (f: File) => f.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|hei[cf])$/i.test(f.name)
 
 const loginKey = (l: Pick<SeatSpec, 'account_id' | 'host_id' | 'host_home'>) => `${l.host_id || 0}|${l.account_id || 0}|${l.host_home || ''}`
 
@@ -265,6 +272,9 @@ export function PanelSetup({ draft, onClose }: { draft: PanelDraft; onClose: () 
   // things picked from the person's other Pocket apps; picking: which box "@" was typed in (to take it out again)
   const [picks, setPicks] = useState<PickedItem[]>([])
   const [picking, setPicking] = useState<'' | 'button' | 'question' | 'material'>('')
+  const [pics, setPics] = useState<Pic[]>([])
+  const [dragging, setDragging] = useState(false)
+  const picInput = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const [saveAs, setSaveAs] = useState<string | null>(null)
   const [editKind, setEditKind] = useState<Partial<OwnKind> | null>(null)
@@ -315,7 +325,8 @@ export function PanelSetup({ draft, onClose }: { draft: PanelDraft; onClose: () 
     : debate && seats.length % 2 === 1 && seats.length > 2 ? 'A debate needs the same number on both sides: 2 or 4'
     : building && !(cwd || from?.cwd) ? 'Pick the project folder'
     : ''
-  const canStart = !!opts && !busy && !problem && (!!question.trim() || !!material.trim() || picks.length > 0)
+  const picsBusy = pics.some(p => !p.upload && !p.error)
+  const canStart = !!opts && !busy && !picsBusy && !problem && (!!question.trim() || !!material.trim() || picks.length > 0)
 
   const addSeat = () => {
     if (!opts) return
@@ -340,6 +351,7 @@ export function PanelSetup({ draft, onClose }: { draft: PanelDraft; onClose: () 
         from_thread_id: draft.fromThreadId || undefined, report: !!draft.fromThreadId && report,
         mode: building ? mode : undefined, access: building ? undefined : access,
         items: picks.length ? picks : undefined,
+        upload_ids: pics.some(p => p.upload) ? pics.flatMap(p => p.upload ? [p.upload.id] : []) : undefined,
       })
       onClose()
       navigate(`/panels/${p.id}`)
@@ -357,6 +369,38 @@ export function PanelSetup({ draft, onClose }: { draft: PanelDraft; onClose: () 
     if (picking === 'material') setMaterial(v => v.replace(/(^|\s)@(?=\s|$)/, '$1'))
     setPicks(l => l.some(p => p.app === it.app && p.id === it.id) ? l.filter(p => !(p.app === it.app && p.id === it.id)) : [...l, { app: it.app, id: it.id, title: it.title, subtitle: it.subtitle, url: it.url, attachable: it.attachable }])
   }
+  const addPics = async (files: File[]) => {
+    const ok = files.filter(isPicture)
+    if (ok.length < files.length) toast('Panels take pictures here; add documents from your apps', 'err')
+    const room = PICS_MAX - pics.length
+    if (ok.length > room) toast(`At most ${PICS_MAX} pictures per panel`, 'err')
+    for (const raw of ok.slice(0, Math.max(0, room))) {
+      const lid = 'p' + ++picSeq
+      const named = raw.name && raw.name !== 'image.png' ? raw : new File([raw], `pasted-${Date.now()}-${picSeq}.${(raw.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: raw.type })
+      setPics(l => [...l, { lid, name: named.name, preview: URL.createObjectURL(named), progress: 0 }])
+      const file = await shrink(named)
+      const up = uploadWithProgress<Upload[] | Upload>(`${V1}/uploads`, 'file', [file], p => setPics(l => l.map(x => x.lid === lid ? { ...x, progress: p } : x)))
+      setPics(l => l.map(x => x.lid === lid ? { ...x, abort: up.abort } : x))
+      up.promise.then(r => {
+        const u = Array.isArray(r) ? r[0] : r
+        setPics(l => l.map(x => x.lid === lid ? { ...x, upload: u, progress: 1, abort: undefined } : x))
+      }).catch(e => setPics(l => l.map(x => x.lid === lid ? { ...x, error: errMsg(e), abort: undefined } : x)))
+    }
+  }
+  const removePic = (p: Pic) => {
+    p.abort?.()
+    if (p.upload) api.del(`${V1}/uploads/${p.upload.id}`).catch(() => {})
+    URL.revokeObjectURL(p.preview)
+    setPics(l => l.filter(x => x.lid !== p.lid))
+  }
+  // a picture pasted into either box joins the question; text pastes as usual
+  const pasted = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(e.clipboardData.items).filter(i => i.kind === 'file').map(i => i.getAsFile()).filter((f): f is File => !!f)
+    if (!files.length) return
+    e.preventDefault()
+    void addPics(files)
+  }
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes('Files')
   const saveLineup = async (name: string, asDefault: boolean, id = 0) => {
     try {
       const body = { name, seats, chair, default: asDefault, access }
@@ -399,17 +443,31 @@ export function PanelSetup({ draft, onClose }: { draft: PanelDraft; onClose: () 
           </div>
 
           <Field label={ownKind ? 'What do you want to ask?' : (k?.ask || 'The question')}>
-            <textarea {...noGrammarly} autoFocus rows={3} value={question} onChange={e => typed('question', e.target.value, e.target)} placeholder={building ? 'Add a dark mode switch to the settings page…' : 'Write it so that someone without the background understands it'} />
+            <textarea {...noGrammarly} autoFocus rows={3} value={question} onChange={e => typed('question', e.target.value, e.target)} onPaste={pasted} placeholder={building ? 'Add a dark mode switch to the settings page…' : 'Write it so that someone without the background understands it'} />
           </Field>
           {(ownKind || k?.material || material) && <Field label={ownKind ? 'Background or material (optional)' : (k?.material || 'Material')} help={from ? 'They do not see the conversation you came from: put what they need here. They can read files in its folder.' : undefined}>
-            <textarea {...noGrammarly} rows={material.length > 400 ? 8 : 3} value={material} onChange={e => typed('material', e.target.value, e.target)} />
+            <textarea {...noGrammarly} rows={material.length > 400 ? 8 : 3} value={material} onChange={e => typed('material', e.target.value, e.target)} onPaste={pasted} />
           </Field>}
-          <div className="stack tight pn-context">
+          <div className={`stack tight pn-context ${dragging ? 'dragging' : ''}`}
+            onDragOver={e => { if (hasFiles(e)) { e.preventDefault(); setDragging(true) } }} onDragLeave={() => setDragging(false)}
+            onDrop={e => { if (!hasFiles(e)) return; e.preventDefault(); setDragging(false); void addPics(Array.from(e.dataTransfer.files)) }}>
             <div className="row wrap">
               <button type="button" className="btn sm" onClick={() => setPicking('button')}><Icon name="grid" size={13} />Add from your apps</button>
-              <span className="muted xsmall">A note, a document, a task… — or type <kbd>@</kbd> in a box above</span>
+              <button type="button" className="btn sm" onClick={() => picInput.current?.click()} disabled={pics.length >= PICS_MAX}><Icon name="image" size={13} />Add pictures</button>
+              <input ref={picInput} type="file" accept="image/*" multiple hidden onChange={e => { void addPics(Array.from(e.target.files || [])); e.target.value = '' }} />
+              <span className="muted xsmall">A note, a task… — type <kbd>@</kbd>, or paste a picture in a box above</span>
             </div>
             <PickedChips items={picks} onRemove={it => setPicks(l => l.filter(p => !(p.app === it.app && p.id === it.id)))} />
+            {pics.length > 0 && <div className="att-row pn-pics">
+              {pics.map(p => (
+                <div key={p.lid} className={`att ${p.error ? 'err' : ''}`} title={p.error || p.name}>
+                  <img src={p.preview} alt={p.name} />
+                  {!p.upload && !p.error && <div className="att-progress"><span style={{ height: `${Math.round((1 - p.progress) * 100)}%` }} /><Spinner size={16} /></div>}
+                  {p.error && <div className="att-error"><Icon name="alert" size={16} /></div>}
+                  <button type="button" className="att-x" aria-label={`Remove ${p.name}`} onClick={() => removePic(p)}><Icon name="x" size={12} /></button>
+                </div>
+              ))}
+            </div>}
           </div>
 
           <div className="stack tight">

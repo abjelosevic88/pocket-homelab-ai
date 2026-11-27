@@ -54,6 +54,15 @@ type PanelSpec struct {
 	// handed; when the current one is another, it is told before it goes on.
 	EditorKnows int  `json:"editor_knows,omitempty"`
 	ChairSwap   bool `json:"chair_swap,omitempty"` // the summary writer was replaced once already
+	// Images: pictures pasted or attached to the question (uploads the panel
+	// keeps); every participant gets its own copy with its first message.
+	Images []PanelImage `json:"images,omitempty"`
+}
+
+// PanelImage is a picture that comes with a panel's question.
+type PanelImage struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // Panel is one run.

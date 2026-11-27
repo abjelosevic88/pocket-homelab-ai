@@ -413,6 +413,7 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
             {pane === 'asked' ? (
               <div className="pn-asked-body">
                 {p.question && <div className="pn-q">{p.question}</div>}
+                {!!p.spec.images?.length && <div className="pn-question-pics">{p.spec.images.map(im => <a key={im.id} href={`${V1}/uploads/${im.id}`} target="_blank" rel="noreferrer" title={im.name}><img src={`${V1}/uploads/${im.id}`} alt={im.name} loading="lazy" /></a>)}</div>}
                 {p.material && <><div className="label muted xsmall">The material</div><Markdown text={p.material} /></>}
                 <div className="muted xsmall">{p.depth[0].toUpperCase() + p.depth.slice(1)}{p.kind !== 'build' ? ` · ${ACCESS.find(a => a.value === (p.spec.access || ''))?.label.toLowerCase()}` : ''} · {ago(p.created_at)}{p.spec.cwd ? ` · ${p.spec.cwd}` : ''}
                   {p.from_thread_id && p.from_title && <> · from <button type="button" className="link-btn" onClick={() => openThread(p.from_thread_id)}>{p.from_title}</button></>}</div>

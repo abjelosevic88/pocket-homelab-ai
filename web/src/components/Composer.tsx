@@ -37,7 +37,7 @@ const DOC_TYPES = DOC_EXT.map(e => '.' + e).join(',') + ',.example,text/*,applic
 
 /** Big photos are scaled down in the browser before upload: faster on mobile data, and
  *  the CLIs refuse very large images anyway. Screenshots under the limit pass as they are. */
-async function shrink(file: File): Promise<File> {
+export async function shrink(file: File): Promise<File> {
   if (!file.type.startsWith('image/') || file.type === 'image/gif' || file.type === 'image/svg+xml') return file
   try {
     const bmp = await createImageBitmap(file)
