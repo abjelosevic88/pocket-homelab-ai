@@ -15,7 +15,7 @@ import { PageHead } from '../components/PageHead'
 import { Select } from '../components/Select'
 import { PanelDefaults } from '../components/PanelSetup'
 import { EditorChat, PanelPlan } from '../components/PanelPlan'
-import { Confirm, copyText, download, Empty, errMsg, Loading, MenuButton, Modal, Spinner, useContextMenu, useToast, type MenuItem, noGrammarly } from '../components/ui'
+import { Confirm, copyText, download, Empty, errMsg, Loading, MenuButton, Modal, Spinner, useContextMenu, useMediaQuery, useToast, type MenuItem, noGrammarly } from '../components/ui'
 
 const STATUS: Record<string, { label: string; cls: string; icon: string }> = {
   running: { label: 'Running', cls: 'accent-soft', icon: 'refresh' },
@@ -247,8 +247,9 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
   const { providers, settings, upsertThread } = useApp()
   const [p, setP] = useState<Panel | null>(null)
   const [err, setErr] = useState('')
-  const [tab, setTab] = useState<number | null>(null)
-  const [asked, setAsked] = useState(false)
+  // what the page shows: the result ('out'), the editor chat on narrow screens, the question, or a step by number
+  const [tab, setTab] = useState<'out' | 'chat' | 'asked' | number | null>(null)
+  const wide = useMediaQuery('(min-width: 1100px)') // room for the editor chat beside the plan
   // how the answers of a step are read: one at a time in a wide pane, or all side by side
   const [view, setView] = useState<'read' | 'side'>(() => localStorage.getItem('pai-panel-view') === 'side' ? 'side' : 'read')
   const [sel, setSel] = useState(0) // the participant in the reading pane (its seat id; 0 = pick for me)
@@ -286,10 +287,24 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
   // the step shown: the one picked, else the one being answered, else the last one answered
   const lastAnswered = [...rounds].reverse().find(r => answers.some(a => a.stage === r.i))
   const auto = running && p.stage !== finalStage && p.stage < stages.length ? p.stage : (lastAnswered?.i ?? rounds[0]?.i ?? 0)
-  const shown = tab ?? auto
   const st = STATUS[p.status]
   const writing = running && p.stage === finalStage
   const chairLive = writing ? chair?.live : ''
+  const outcome = p.result || chairLive || ''
+  const hasOut = versioned || finalStage >= 0
+  const outReady = versioned || !!outcome || writing
+  // the default: the plan or the outcome when there is one, else the step being answered
+  const picked = tab === 'chat' && wide ? 'out' : tab
+  const pane = picked ?? (hasOut && outReady ? 'out' : auto)
+  const setPane = (v: 'out' | 'chat' | 'asked' | number) => setTab(v)
+  const stepPane = typeof pane === 'number'
+  // short tab names in a Refine panel: "Verdicts 2", "Rewrite 2" (the whole name is the tooltip)
+  const stepName = (i: number) => {
+    if (p.kind !== 'refine') return stages[i].name
+    const who = stages[i].who
+    const n = stages.slice(0, i + 1).filter(s => s.who === who).length
+    return `${who === 'chair' ? 'Rewrite' : 'Verdicts'}${n > 1 ? ` ${n}` : ''}`
+  }
   const failedSeats = seats.filter(s => s.state === 'failed' || s.state === 'skipped')
   const openThread = (tid: string) => {
     const s = p.seats.find(x => x.thread_id === tid)
@@ -310,10 +325,10 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
     { label: 'Copy everything as Markdown', icon: 'copy', onSelect: () => void copyAll() },
     { label: 'Download as Markdown', icon: 'download', onSelect: () => download(`${V1}/panels/${p.id}/export.md?download=1`) },
     { label: 'Run it again', icon: 'refresh', onSelect: () => void again(), disabled: running },
+    ...(p.from_thread_id && p.from_title ? [{ label: 'Back to the conversation', icon: 'message', hint: p.from_title, onSelect: () => openThread(p.from_thread_id) } as MenuItem] : []),
     'sep',
     { label: 'Delete…', icon: 'trash', danger: true, onSelect: () => setDel(true) },
   ]
-  const outcome = p.result || chairLive || ''
   const provOpts = [{ value: '' as ProviderId | '', label: 'My default agent' }, ...offeredProviders(providers, settings?.default_provider).map(x => ({ value: x as ProviderId | '', label: providerName(x), disabled: !providers.find(q => q.id === x)?.available }))]
 
   return (
@@ -325,79 +340,80 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
             : <button type="button" className="btn" disabled={busy === 'again'} onClick={again}>{busy === 'again' ? <Spinner size={11} /> : <Icon name="refresh" size={13} />}Run again</button>}
           <MenuButton label="More" align="right" items={more}><Icon name="more" size={16} /></MenuButton>
         </>} />
-      <div className="page-scroll">
-        <div className="page-inner pn-page">
-          <div className="pn-progress">
-            {stages.map((s, i) => {
-              const state = p.status === 'done' || i < p.stage ? 'done' : i === p.stage ? (running ? 'now' : 'halt') : ''
-              return <span key={i} className={`pn-prog ${state} ${s.who === 'chair' ? 'chair' : ''}`}>{state === 'now' ? <Spinner size={10} /> : state === 'done' ? <Icon name="check" size={11} /> : <span className="pn-prog-n">{i + 1}</span>}{s.name}</span>
-            })}
-            <span className="grow" />
-            <span className={`badge ${st.cls}`}><Icon name={st.icon} size={10} />{st.label}</span>
-            {p.cost_usd > 0 && <span className="faint xsmall tnum" title="What the participants’ runs cost so far">{fmtCost(p.cost_usd)}</span>}
-          </div>
-
+      <div className="pn-body">
+        {(p.error || (p.status === 'done' && failedSeats.length > 0)) && <div className="pn-notes">
           {p.error && <div className={`callout ${p.status === 'failed' ? 'danger' : 'warn'}`}><Icon name="alert" size={15} /><span>{p.error}</span></div>}
           {p.status === 'done' && failedSeats.length > 0 && <div className="callout warn"><Icon name="alert" size={15} /><span>{seats.length - failedSeats.length} of {seats.length} answered. {failedSeats.map(s => `${s.who}: ${s.error}`).join('; ')}</span></div>}
+        </div>}
+        {/* one row for everything there is to look at: the result, the editor (when it has no column), every step, the question */}
+        <div className="pn-bar">
+          <div className="pn-tabs" role="tablist" aria-label="What to show">
+            {hasOut && <button type="button" role="tab" aria-selected={pane === 'out'} disabled={!outReady} className={`pn-tab pn-tab-out ${pane === 'out' ? 'on' : ''}`} onClick={() => setPane('out')}>
+              <Icon name="sparkles" size={13} />{versioned ? (p.kind === 'refine' ? 'Plan' : 'Result') : stages[finalStage].name}
+              {versioned ? <span className="pn-tab-n tnum">v{p.versions!.length}</span> : writing && <Spinner size={9} />}
+            </button>}
+            {versioned && !wide && <button type="button" role="tab" aria-selected={pane === 'chat'} className={`pn-tab ${pane === 'chat' ? 'on' : ''}`} onClick={() => setPane('chat')}>
+              <Icon name="message" size={13} />Editor{chatting ? <Spinner size={9} /> : !!p.chat?.length && <span className="pn-tab-n tnum">{p.chat.length}</span>}
+            </button>}
+            {rounds.length > 0 && hasOut && <span className="pn-tab-sep" aria-hidden />}
+            {rounds.map(r => {
+              const n = answers.filter(a => a.stage === r.i).length
+              const reached = r.i <= p.stage || n > 0
+              const state = running && p.stage === r.i ? 'now' : p.status === 'done' || r.i < p.stage || (n > 0 && r.i !== p.stage) ? 'done' : r.i === p.stage && !running ? 'halt' : ''
+              return <button key={r.i} type="button" role="tab" aria-selected={pane === r.i} disabled={!reached} title={r.name} className={`pn-tab pn-step ${state} ${pane === r.i ? 'on' : ''}`} onClick={() => setPane(r.i)}>
+                {state === 'now' ? <Spinner size={9} /> : state === 'done' ? <Icon name="check" size={12} className="pn-step-ok" /> : state === 'halt' ? <Icon name="x" size={12} className="pn-step-bad" /> : <span className="pn-prog-n">{r.i + 1}</span>}
+                {stepName(r.i)}
+              </button>
+            })}
+            <button type="button" role="tab" aria-selected={pane === 'asked'} className={`pn-tab ${pane === 'asked' ? 'on' : ''}`} onClick={() => setPane('asked')}><Icon name="help-circle" size={13} />Question</button>
+          </div>
+          <span className="pn-bar-end">
+            {stepPane && seats.length > 1 && stages[pane]?.who !== 'chair' && <span className="pn-view">
+              <button type="button" className={`btn ghost icon-only xs ${view === 'read' ? 'on' : ''}`} aria-pressed={view === 'read'} title="One answer at a time, wide" aria-label="One answer at a time" onClick={() => { setView('read'); localStorage.setItem('pai-panel-view', 'read') }}><Icon name="sidebar" size={15} /></button>
+              <button type="button" className={`btn ghost icon-only xs ${view === 'side' ? 'on' : ''}`} aria-pressed={view === 'side'} title="All answers side by side" aria-label="All answers side by side" onClick={() => { setView('side'); localStorage.setItem('pai-panel-view', 'side') }}><Icon name="split-right" size={15} /></button>
+            </span>}
+            {/* done needs no badge: every step in the row has its tick */}
+            {p.status !== 'done' && <span className={`badge ${st.cls}`}><Icon name={st.icon} size={10} />{st.label}</span>}
+            {p.cost_usd > 0 && <span className="faint xsmall tnum pn-cost" title="What the participants’ runs cost so far">{fmtCost(p.cost_usd)}</span>}
+          </span>
+        </div>
 
-          <button type="button" className="pn-asked" onClick={() => setAsked(v => !v)} aria-expanded={asked}>
-            <Icon name={asked ? 'chevron-down' : 'chevron-right'} size={13} /><span className="muted">Asked:</span><span className={asked ? '' : 'ellipsis'}>{asked ? '' : p.question || p.title}</span>
-          </button>
-          {asked && <div className="pn-asked-body">
-            {p.question && <div className="pn-q">{p.question}</div>}
-            {p.material && <><div className="label muted xsmall">The material</div><Markdown text={p.material} /></>}
-            <div className="muted xsmall">{p.depth[0].toUpperCase() + p.depth.slice(1)}{p.kind !== 'build' ? ` · ${ACCESS.find(a => a.value === (p.spec.access || ''))?.label.toLowerCase()}` : ''} · {ago(p.created_at)}{p.spec.cwd ? ` · ${p.spec.cwd}` : ''}
-              {p.from_thread_id && p.from_title && <> · from <button type="button" className="link-btn" onClick={() => openThread(p.from_thread_id)}>{p.from_title}</button></>}</div>
-          </div>}
-
-          {versioned && <PanelPlan p={p} onChange={setP} />}
-          {versioned && <EditorChat p={p} onChange={setP} onOpenThread={openThread} />}
-          {(outcome || writing) && finalStage >= 0 && (
-            <section className={`pn-outcome ${writing ? 'writing' : ''}`}>
-              <header className="pn-outcome-h">
-                <Icon name="sparkles" size={15} /><b className="grow">{p.kind === 'refine' ? 'The refined version' : stages[finalStage].name}</b>
-                {writing ? <span className="badge accent-soft"><Spinner size={9} />{chair?.activity === 'starting' ? 'Starting…' : 'Being written…'}</span>
-                  : chair && <span className="muted xsmall pn-by" title="It got the answers by letter, without the models’ names"><Icon name={chair.provider} size={12} className={`prov-glyph ${chair.provider}`} />{providerName(chair.provider)}{chair.model ? ` · ${chair.model}` : ''}</span>}
-                {chair?.thread_id && <button type="button" className="btn ghost icon-only xs" title="Open the summary writer’s conversation" aria-label="Open the summary writer’s conversation" onClick={() => openThread(chair.thread_id)}><Icon name="external" size={14} /></button>}
-              </header>
-              {writing && chair && <div className="pn-doing flat"><Spinner size={11} /><span className="pn-doing-what ellipsis">{chair.doing || (outcome ? 'Writing…' : 'Reading the answers…')}</span><span className="pn-doing-meta">{!!chair.steps && <span>{chair.steps} {chair.steps === 1 ? 'step' : 'steps'}</span>}<Elapsed since={chair.since} /></span></div>}
-              {outcome ? <Markdown text={outcome} className={writing ? 'pn-live' : ''} /> : <div className="pn-skel" aria-hidden><span /><span /><span /></div>}
-              {p.result && !running && <div className="pn-outcome-foot">
-                <button type="button" className="btn primary sm" onClick={() => setCont({ text: '', provider: '' })}><Icon name="arrow-right" size={13} />Continue with this</button>
-                <button type="button" className="btn sm" onClick={async () => { if (await copyText(p.result)) toast('Copied') }}><Icon name="copy" size={13} />Copy</button>
-                {p.from_thread_id && p.from_title && <button type="button" className="btn ghost sm" onClick={() => openThread(p.from_thread_id)}><Icon name="message" size={13} />Back to the conversation</button>}
-              </div>}
-            </section>
-          )}
-          {!p.result && !running && answers.length > 0 && finalStage < 0 && <div className="row"><button type="button" className="btn primary sm" onClick={() => setCont({ text: '', provider: '' })}><Icon name="arrow-right" size={13} />Continue with these answers</button></div>}
-
-          {rounds.length > 0 && <section className="pn-rounds">
-            {versioned && <h3 className="srv-h pn-rounds-h">The rounds<span className="muted">what each model said, step by step</span></h3>}
-            <div className="pn-tabs" role="tablist">
-              {rounds.map(r => {
-                const n = answers.filter(a => a.stage === r.i).length
-                const reached = r.i <= p.stage || n > 0
-                return <button key={r.i} type="button" role="tab" aria-selected={shown === r.i} disabled={!reached} className={`pn-tab ${shown === r.i ? 'on' : ''}`} onClick={() => setTab(r.i)}>
-                  {r.name}{running && p.stage === r.i ? <Spinner size={9} /> : n > 0 && <span className="muted tnum">{n}</span>}
-                </button>
-              })}
-              {seats.length > 1 && stages[shown]?.who !== 'chair' && <span className="pn-view">
-                <button type="button" className={`btn ghost icon-only xs ${view === 'read' ? 'on' : ''}`} aria-pressed={view === 'read'} title="One answer at a time, wide" aria-label="One answer at a time" onClick={() => { setView('read'); localStorage.setItem('pai-panel-view', 'read') }}><Icon name="sidebar" size={15} /></button>
-                <button type="button" className={`btn ghost icon-only xs ${view === 'side' ? 'on' : ''}`} aria-pressed={view === 'side'} title="All answers side by side" aria-label="All answers side by side" onClick={() => { setView('side'); localStorage.setItem('pai-panel-view', 'side') }}><Icon name="split-right" size={15} /></button>
-              </span>}
-            </div>
-            {stages[shown]?.who === 'chair' ? (
+        <div className={`pn-panes ${versioned && wide ? 'with-side' : ''}`}>
+          <div className={`pn-main ${pane === 'chat' ? 'fill' : ''}`} key={String(pane)}>
+            {pane === 'asked' ? (
+              <div className="pn-asked-body">
+                {p.question && <div className="pn-q">{p.question}</div>}
+                {p.material && <><div className="label muted xsmall">The material</div><Markdown text={p.material} /></>}
+                <div className="muted xsmall">{p.depth[0].toUpperCase() + p.depth.slice(1)}{p.kind !== 'build' ? ` · ${ACCESS.find(a => a.value === (p.spec.access || ''))?.label.toLowerCase()}` : ''} · {ago(p.created_at)}{p.spec.cwd ? ` · ${p.spec.cwd}` : ''}
+                  {p.from_thread_id && p.from_title && <> · from <button type="button" className="link-btn" onClick={() => openThread(p.from_thread_id)}>{p.from_title}</button></>}</div>
+              </div>
+            ) : pane === 'chat' ? (
+              <EditorChat p={p} onChange={setP} onOpenThread={openThread} />
+            ) : pane === 'out' ? (versioned ? <PanelPlan p={p} onChange={setP} /> : (
+              <section className={`pn-outcome ${writing ? 'writing' : ''}`}>
+                <header className="pn-outcome-h">
+                  <Icon name="sparkles" size={15} /><b className="grow">{stages[finalStage].name}</b>
+                  {writing ? <span className="badge accent-soft"><Spinner size={9} />{chair?.activity === 'starting' ? 'Starting…' : 'Being written…'}</span>
+                    : chair && <span className="muted xsmall pn-by" title="It got the answers by letter, without the models’ names"><Icon name={chair.provider} size={12} className={`prov-glyph ${chair.provider}`} />{providerName(chair.provider)}{chair.model ? ` · ${chair.model}` : ''}</span>}
+                  {p.result && !running && <button type="button" className="btn ghost icon-only xs" title="Copy" aria-label="Copy the result" onClick={async () => { if (await copyText(p.result)) toast('Copied') }}><Icon name="copy" size={14} /></button>}
+                  {chair?.thread_id && <button type="button" className="btn ghost icon-only xs" title="Open the summary writer’s conversation" aria-label="Open the summary writer’s conversation" onClick={() => openThread(chair.thread_id)}><Icon name="external" size={14} /></button>}
+                  {p.result && !running && <button type="button" className="btn primary sm" onClick={() => setCont({ text: '', provider: '' })}><Icon name="arrow-right" size={13} />Continue with this</button>}
+                </header>
+                {writing && chair && <div className="pn-doing flat"><Spinner size={11} /><span className="pn-doing-what ellipsis">{chair.doing || (outcome ? 'Writing…' : 'Reading the answers…')}</span><span className="pn-doing-meta">{!!chair.steps && <span>{chair.steps} {chair.steps === 1 ? 'step' : 'steps'}</span>}<Elapsed since={chair.since} /></span></div>}
+                {outcome ? <Markdown text={outcome} className={writing ? 'pn-live' : ''} /> : <div className="pn-skel" aria-hidden><span /><span /><span /></div>}
+              </section>
+            )) : stages[pane]?.who === 'chair' ? (
               // a step of the summary writer in between (a rewrite): one pane
               chair && (() => {
-                const a = answers.find(x => x.stage === shown && chairs.some(c => c.id === x.seat_id))
-                const current = running && p.stage === shown
+                const a = answers.find(x => x.stage === pane && chairs.some(c => c.id === x.seat_id))
+                const current = running && p.stage === pane
                 const live = current && !a && chair.state === 'working' ? chair.live : ''
                 return <SeatCard wide seat={chair} text={a?.text || live || undefined} live={!!live} current={current} onOpen={() => openThread(chair.thread_id)} />
               })()
             ) : (() => {
-              const current = running && p.stage === shown
+              const current = running && p.stage === pane
               const rows = seats.map(s => {
-                const a = answers.find(x => x.stage === shown && x.seat_id === s.id)
+                const a = answers.find(x => x.stage === pane && x.seat_id === s.id)
                 const live = current && !a && s.state === 'working' ? s.live || '' : ''
                 return { s, text: a?.text || live || undefined, live: !!live }
               })
@@ -405,13 +421,15 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
               const at = Math.max(0, rows.findIndex(r => r.s.id === sel) >= 0 ? rows.findIndex(r => r.s.id === sel) : rows.findIndex(r => r.text))
               const cur = rows[at]
               const step = (by: number) => setSel(rows[(at + by + rows.length) % rows.length].s.id)
+              const continueRow = !p.result && !running && answers.length > 0 && finalStage < 0 && <div className="row"><button type="button" className="btn primary sm" onClick={() => setCont({ text: '', provider: '' })}><Icon name="arrow-right" size={13} />Continue with these answers</button></div>
               if (view === 'side' || rows.length === 1) return (
-                <div className={`pn-cols n${Math.min(rows.length, 4)}`}>
+                <>{continueRow}<div className={`pn-cols n${Math.min(rows.length, 4)}`}>
                   {rows.map(r => <SeatCard key={r.s.id} wide={rows.length === 1} seat={r.s} text={r.text} live={r.live} current={current} onOpen={() => openThread(r.s.thread_id)} />)}
-                </div>
+                </div></>
               )
               return (
                 <div className="pn-read" onKeyDown={e => { if (e.key === 'ArrowRight') { e.preventDefault(); step(1) } else if (e.key === 'ArrowLeft') { e.preventDefault(); step(-1) } }}>
+                  {continueRow}
                   <div className="pn-tiles" role="tablist" aria-label="Participants">
                     {rows.map(r => <SeatTile key={r.s.id} seat={r.s} text={r.text} live={r.live} current={current} on={r.s.id === cur.s.id} onPick={() => setSel(r.s.id)} />)}
                   </div>
@@ -419,7 +437,8 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
                 </div>
               )
             })()}
-          </section>}
+          </div>
+          {versioned && wide && <aside className="pn-dock" aria-label="Talk to the editor"><EditorChat p={p} onChange={setP} onOpenThread={openThread} /></aside>}
         </div>
       </div>
       {ren && <RenamePanel panel={p} onClose={() => setRen(false)} onDone={np => { setRen(false); setP(np) }} />}

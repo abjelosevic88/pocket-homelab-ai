@@ -77,7 +77,7 @@ export function PanelPlan({ p, onChange }: { p: Panel; onChange: (p: Panel) => v
   const reference = `[${p.title.replace(/[[\]]/g, m => m === '[' ? '(' : ')')}](${p.url || `${location.origin}/panels/${p.id}`})`
   const more: MenuItem[] = [
     { label: 'Copy this version', icon: 'copy', onSelect: async () => { if (await copyText(shown.text)) toast('Copied') } },
-    { label: 'Copy a link for another chat', icon: 'link', hint: 'always the current version', onSelect: async () => { if (await copyText(reference)) toast('Copied. Paste it into any conversation — or type @panels # there and pick it.', 'ok', undefined, 7000) } },
+    { label: 'Use in a chat', icon: 'link', hint: 'copies a link that always stands for the current version', onSelect: async () => { if (await copyText(reference)) toast('Link copied. Paste it into any conversation — or type @panels # there and pick it. It always stands for the current version.', 'ok', undefined, 8000) } },
     'sep',
     { label: 'Save as a file in the project…', icon: 'folder', onSelect: () => void saveFile() },
     { label: 'Download', icon: 'download', onSelect: () => {
@@ -91,36 +91,37 @@ export function PanelPlan({ p, onChange }: { p: Panel; onChange: (p: Panel) => v
 
   return (
     <section className="pn-outcome pv">
-      <header className="pv-head">
-        <Icon name="sparkles" size={15} className="pv-ico" />
-        <div className="pv-versions" role="tablist" aria-label="Versions">
-          {versions.map(v => (
-            <button key={v.n} type="button" role="tab" aria-selected={v.n === shown.n} className={`pv-v ${v.n === shown.n ? 'on' : ''} ${v.n === cur.n ? 'cur' : ''}`} onClick={() => { setAt(v.n); if (v.n === 1) setCompare(false) }}
-              title={`Version ${v.n} · ${vName(v)} · ${ago(v.created_at)}${v.n === cur.n ? ' · the current one' : ''}`}>
-              <b>v{v.n}</b><span>{v.n === cur.n ? 'Current' : vName(v)}</span>
-            </button>
-          ))}
-          {running && <span className="pv-v pv-next"><Spinner size={10} /><span>v{cur.n + 1} being worked on</span></span>}
+      {/* stays at the top while the text scrolls: the versions, and everything to do with the one shown */}
+      <div className="pv-top">
+        <header className="pv-head">
+          <div className="pv-versions" role="tablist" aria-label="Versions">
+            {versions.map(v => (
+              <button key={v.n} type="button" role="tab" aria-selected={v.n === shown.n} className={`pv-v ${v.n === shown.n ? 'on' : ''} ${v.n === cur.n ? 'cur' : ''}`} onClick={() => { setAt(v.n); if (v.n === 1) setCompare(false) }}
+                title={`Version ${v.n} · ${vName(v)} · ${ago(v.created_at)}${v.n === cur.n ? ' · the current one' : ''}`}>
+                <b>v{v.n}</b><span>{v.n === cur.n ? 'Current' : vName(v)}</span>
+              </button>
+            ))}
+            {running && <span className="pv-v pv-next"><Spinner size={10} /><span>v{cur.n + 1} being worked on</span></span>}
+          </div>
+          <MenuButton label="More" align="right" width={290} items={more}><Icon name="more" size={16} /></MenuButton>
+        </header>
+        <div className="pv-bar">
+          {prev && <button type="button" className={`btn sm ${compare ? 'on' : ''}`} aria-pressed={compare} onClick={() => setCompare(c => !c)} title={`Show what changed against version ${prev.n}`}>
+            <Icon name="split-right" size={13} /><span className="pv-lbl">Compare with v{prev.n}</span>
+            {changed && (changed.added > 0 || changed.removed > 0) && <span className="pv-delta"><span className="add">+{changed.added}</span> <span className="del">−{changed.removed}</span></span>}
+          </button>}
+          {!isCurrent && <button type="button" className="btn sm" disabled={running || busy === 'restore'} onClick={restore} title="Make this version the current one again; nothing is lost, it becomes a new version">{busy === 'restore' ? <Spinner size={11} /> : <Icon name="undo" size={13} />}Go back to this</button>}
+          {isCurrent && <button type="button" className="btn sm" disabled={running} onClick={() => setEdit({ text: cur.text, note: '' })} title="Edit the text yourself"><Icon name="edit" size={13} /><span className="pv-lbl">Edit</span></button>}
+          <span className="grow" />
+          {isCurrent && <>
+            <button type="button" className="btn sm" onClick={() => setImpl({ text: 'Implement phase 1 of this plan.', provider: '', cwd: p.spec.cwd })} title="Start a conversation that works on this plan"><Icon name="play" size={12} /><span className="pv-lbl">Implement…</span></button>
+            <button type="button" className="btn primary sm" disabled={running || chatting} onClick={() => setRound('')} title={chatting ? 'Wait for the editor to finish answering in the chat' : 'The participants judge this version, and the editor rewrites it from their verdicts'}><Icon name="refresh" size={13} />Another round</button>
+          </>}
         </div>
-        <MenuButton label="More" align="right" width={290} items={more}><Icon name="more" size={16} /></MenuButton>
-      </header>
-      <div className="pv-bar">
-        <span className="pv-what"><b>Version {shown.n}</b><span className="muted"> · {vName(shown)} · {ago(shown.created_at)}</span>
-          {changed && (changed.added > 0 || changed.removed > 0) && <span className="pv-delta" title={`Against version ${prev!.n}`}><span className="add">+{changed.added}</span> <span className="del">−{changed.removed}</span></span>}</span>
-        <span className="grow" />
-        {prev && <button type="button" className={`btn sm ${compare ? 'on' : ''}`} aria-pressed={compare} onClick={() => setCompare(c => !c)} title={`Show what changed against version ${prev.n}`}><Icon name="split-right" size={13} />Compare with v{prev.n}</button>}
-        {!isCurrent && <button type="button" className="btn sm" disabled={running || busy === 'restore'} onClick={restore} title="Make this version the current one again; nothing is lost, it becomes a new version">{busy === 'restore' ? <Spinner size={11} /> : <Icon name="undo" size={13} />}Go back to this</button>}
-        {isCurrent && <button type="button" className="btn sm" disabled={running} onClick={() => setEdit({ text: cur.text, note: '' })}><Icon name="edit" size={13} />Edit</button>}
       </div>
       {compare && prev ? <VersionDiff before={prev.text} after={shown.text} /> : <Markdown text={shown.text} />}
       {shown.note && shown.source !== 'restore' && <details className="pv-note"><summary>{shown.source === 'rewrite' ? 'What the editor changed, and what it did not take' : shown.source === 'chat' ? 'What you asked for' : 'Your note'}</summary>
         {shown.source === 'rewrite' ? <Markdown text={shown.note} /> : <p>{shown.note}</p>}</details>}
-      {isCurrent && <div className="pn-outcome-foot">
-        <button type="button" className="btn primary sm" disabled={running || chatting} onClick={() => setRound('')} title={chatting ? 'Wait for the editor to finish answering in the chat' : 'The participants judge this version, and the editor rewrites it from their verdicts'}><Icon name="refresh" size={13} />Another round</button>
-        <button type="button" className="btn sm" onClick={() => setImpl({ text: 'Implement phase 1 of this plan.', provider: '', cwd: p.spec.cwd })}><Icon name="play" size={12} />Implement…</button>
-        <button type="button" className="btn sm" onClick={async () => { if (await copyText(reference)) toast('Link copied. Paste it into any conversation — or type @panels # there and pick it. It always stands for the current version.', 'ok', undefined, 8000) }}><Icon name="link" size={13} />Use in a chat</button>
-        {p.from_thread_id && p.from_title && <button type="button" className="btn ghost sm" onClick={() => navigate(`/t/${p.from_thread_id}`)}><Icon name="message" size={13} />Back to the conversation</button>}
-      </div>}
 
       {edit && <Modal title={`Edit version ${cur.n}`} onClose={() => setEdit(null)} size="xl" footer={<>
         <span className="muted small grow">It is saved as version {cur.n + 1}; version {cur.n} stays.</span>
@@ -201,9 +202,10 @@ export function EditorChat({ p, onChange, onOpenThread }: { p: Panel; onChange: 
       <header className="pc-head">
         <Icon name="message" size={14} /><b>Talk to the editor</b>
         {editor && <span className="muted xsmall pc-who"><Icon name={editor.provider} size={12} className={`prov-glyph ${editor.provider}`} />{providerName(editor.provider)}{editor.model ? ` · ${editor.model}` : ''}</span>}
-        <span className="muted xsmall pc-hint">It knows the text and every verdict. Say what to change; you decide whether to take what it proposes.</span>
+        <span className="grow" />
         {editor?.thread_id && <button type="button" className="btn ghost icon-only xs" title="Open the editor’s conversation" aria-label="Open the editor’s conversation" onClick={openEditor}><Icon name="external" size={14} /></button>}
       </header>
+      {chat.length === 0 && <div className="pc-empty muted small">It knows the text and every verdict. Say what to change, or ask about the plan; you decide whether to take what it proposes.</div>}
       {chat.length > 0 && <div className="pc-list" ref={list}>
         {chat.map(m => m.role === 'person'
           ? <div key={m.id} className="pc-msg me"><div className="pc-bubble">{m.text}</div></div>
