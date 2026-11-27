@@ -521,6 +521,7 @@ func (rt *engine) startRun(t *store.Thread) (*run, error) {
 	case "codex":
 		o.Bin = rt.s.cfg.CodexBin
 	}
+	// an ACP agent finds its own bin; its keys come with accountEnv
 	r.sess, err = startSession(ctx, t.Provider, threadLogin(t, nil), o, sink)
 	if err != nil {
 		cancel()
@@ -1524,6 +1525,12 @@ func (rt *engine) stopServerLogin(provider string) {
 	rt.stopWhere(func(r *run) bool { return r.account == 0 && r.host == 0 && r.provider == provider })
 }
 
+// stopProvider ends the idle conversations of one agent (an ACP agent's keys
+// or sign-in changed; busy ones end after their turn).
+func (rt *engine) stopProvider(provider string) {
+	rt.stopWhere(func(r *run) bool { return r.provider == provider })
+}
+
 func (rt *engine) stopWhere(match func(*run) bool) {
 	rt.mu.Lock()
 	var ids []string
@@ -2232,6 +2239,9 @@ func (rt *engine) notify(t *store.Thread, kind, title, body string) {
 func providerName(p string) string {
 	if p == "codex" {
 		return "Codex"
+	}
+	if ag, ok := agent.ACPAgentByID(p); ok {
+		return ag.Name
 	}
 	return "Claude"
 }

@@ -33,7 +33,9 @@ type Settings struct {
 	DefaultCwd      string        `json:"default_cwd"`
 	Claude          AgentDefaults `json:"claude"`
 	Codex           AgentDefaults `json:"codex"`
-	SystemPrompt    string        `json:"system_prompt"`
+	// Agents: the defaults for the ACP agents (Gemini CLI, OpenCode, …), by id.
+	Agents       map[string]AgentDefaults `json:"agents"`
+	SystemPrompt string                   `json:"system_prompt"`
 
 	NotifyKind     string `json:"notify_kind"` // apprise | ntfy | webhook
 	NotifyURL      string `json:"notify_url"`
@@ -93,6 +95,33 @@ func defaults() Settings {
 		Shortcuts:   map[string]string{},
 		UsageNames:  map[string]string{},
 		UsageLinks:  map[string]string{},
+		Agents:      map[string]AgentDefaults{},
+	}
+}
+
+// For is the person's defaults for one provider.
+func (st Settings) For(provider string) AgentDefaults {
+	switch provider {
+	case "claude":
+		return st.Claude
+	case "codex":
+		return st.Codex
+	}
+	return st.Agents[provider]
+}
+
+// SetFor stores the person's defaults for one provider.
+func (st *Settings) SetFor(provider string, d AgentDefaults) {
+	switch provider {
+	case "claude":
+		st.Claude = d
+	case "codex":
+		st.Codex = d
+	default:
+		if st.Agents == nil {
+			st.Agents = map[string]AgentDefaults{}
+		}
+		st.Agents[provider] = d
 	}
 }
 
@@ -194,6 +223,23 @@ func (s *Store) GetSettings(ctx context.Context, userID int64) (Settings, error)
 			_ = json.Unmarshal([]byte(v), &st.UsageNames)
 		case "usage_links":
 			_ = json.Unmarshal([]byte(v), &st.UsageLinks)
+		default:
+			if id, field, ok := acpKey(k); ok {
+				d := st.Agents[id]
+				switch field {
+				case "model":
+					d.Model = v
+				case "effort":
+					d.Effort = v
+				case "mode":
+					d.Mode = v
+				case "speed":
+					d.Speed = v
+				case "account":
+					d.Account, _ = strconv.ParseInt(v, 10, 64)
+				}
+				st.Agents[id] = d
+			}
 		}
 	}
 	return st, rows.Err()
@@ -208,7 +254,7 @@ func b2s(b bool) string {
 
 // SaveSettings stores a person's preferences (not the notify token).
 func (s *Store) SaveSettings(ctx context.Context, userID int64, st Settings) error {
-	return s.putUserSettings(ctx, userID, map[string]string{
+	kv := map[string]string{
 		"app_effort": st.AppEffort, "app_model": st.AppModel, "app_account": strconv.FormatInt(st.AppAccount, 10), "default_provider": st.DefaultProvider, "default_cwd": st.DefaultCwd,
 		"claude.model": st.Claude.Model, "claude.effort": st.Claude.Effort, "claude.mode": st.Claude.Mode,
 		"codex.model": st.Codex.Model, "codex.effort": st.Codex.Effort, "codex.mode": st.Codex.Mode,
@@ -226,7 +272,57 @@ func (s *Store) SaveSettings(ctx context.Context, userID int64, st Settings) err
 		"shortcuts":             shortcutsJSON(st.Shortcuts),
 		"usage_names":           shortcutsJSON(st.UsageNames),
 		"usage_links":           shortcutsJSON(st.UsageLinks),
-	})
+	}
+	for id, d := range st.Agents {
+		if !validAgentID(id) {
+			continue
+		}
+		kv["acp."+id+".model"], kv["acp."+id+".effort"], kv["acp."+id+".mode"] = d.Model, d.Effort, d.Mode
+		kv["acp."+id+".speed"], kv["acp."+id+".account"] = d.Speed, strconv.FormatInt(d.Account, 10)
+	}
+	return s.putUserSettings(ctx, userID, kv)
+}
+
+// acpKey splits "acp.<id>.<field>".
+func acpKey(k string) (id, field string, ok bool) {
+	rest, found := strings.CutPrefix(k, "acp.")
+	if !found {
+		return "", "", false
+	}
+	i := strings.LastIndexByte(rest, '.')
+	if i <= 0 || !validAgentID(rest[:i]) {
+		return "", "", false
+	}
+	return rest[:i], rest[i+1:], true
+}
+
+func validAgentID(id string) bool {
+	if id == "" || len(id) > 40 {
+		return false
+	}
+	for _, r := range id {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// ACPEnv is what an ACP agent is given in its environment (API keys, an
+// endpoint), set by an admin for the whole box.
+func (s *Store) ACPEnv(ctx context.Context, id string) map[string]string {
+	out := map[string]string{}
+	_ = json.Unmarshal([]byte(s.BoxSetting(ctx, "acp_env."+id)), &out)
+	return out
+}
+
+// SetACPEnv replaces an ACP agent's environment.
+func (s *Store) SetACPEnv(ctx context.Context, id string, env map[string]string) error {
+	if !validAgentID(id) {
+		return ErrNotFound
+	}
+	b, _ := json.Marshal(env)
+	return s.SetBoxSetting(ctx, "acp_env."+id, string(b))
 }
 
 func shortcutsJSON(m map[string]string) string {

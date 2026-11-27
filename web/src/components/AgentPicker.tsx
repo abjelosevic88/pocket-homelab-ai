@@ -3,7 +3,8 @@ import { type ReactNode, useEffect, useState } from 'react'
 import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { planName } from '../lib/format'
-import type { Account, HostLogin, Provider, ProviderId, Settings } from '../lib/types'
+import { providerName } from '../lib/format'
+import { type AgentDefaults, type Account, type HostLogin, type Provider, type ProviderId, type Settings, isAcp } from '../lib/types'
 import { type Option, Select } from './Select'
 import { Segmented } from './ui'
 import { Icon } from './icons'
@@ -13,9 +14,22 @@ export interface AgentValue { provider: ProviderId | ''; model: string; effort: 
 const EFFORT_LABEL: Record<string, string> = { minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max', none: 'None' }
 export const effortLabel = (e: string) => EFFORT_LABEL[e] || e
 
+/** The person's saved defaults for one provider. */
+export function settingsFor(s: Settings, id: ProviderId): AgentDefaults | undefined {
+  return isAcp(id) ? s.agents?.[id] : s[id]
+}
+
+/** The agents to offer: Claude Code and Codex always, an ACP agent once it is set up
+ *  (or when it is the one in use). */
+export function offeredProviders(providers: Provider[], current?: string): ProviderId[] {
+  const ids: ProviderId[] = ['claude', 'codex']
+  for (const p of providers) if (isAcp(p.id) && (p.available || p.id === current)) ids.push(p.id)
+  return ids
+}
+
 /** The person's defaults for a provider, falling back to the provider's own. */
 export function defaultsFor(p: Provider | undefined, s: Settings | null): Omit<AgentValue, 'provider'> {
-  const mine = p && s ? s[p.id] : undefined
+  const mine = p && s ? settingsFor(s, p.id) : undefined
   return {
     model: mine?.model || p?.default_model || '',
     effort: mine?.effort || p?.default_effort || '',
@@ -101,21 +115,33 @@ function shortLabel(label: string) {
 export function modeName(p: Provider | undefined, id: string) { return p?.modes?.find(m => m.id === id)?.name || id }
 export function modelName(p: Provider | undefined, id: string) { return p?.models?.find(m => m.id === id)?.name || id }
 
-/** Claude Code / Codex toggle. */
-export function ProviderToggle({ value, onChange, allowDefault = false }: { value: ProviderId | ''; onChange: (p: ProviderId | '') => void; allowDefault?: boolean }) {
+/** Agent choice: a toggle for two, a menu when ACP agents are set up too.
+ *  `only` limits it (logins exist for Claude Code and Codex alone). */
+export function ProviderToggle({ value, onChange, allowDefault = false, only }: { value: ProviderId | ''; onChange: (p: ProviderId | '') => void; allowDefault?: boolean; only?: ProviderId[] }) {
   const { providers } = useApp()
-  const ids: ProviderId[] = ['claude', 'codex']
-  const options = ids.map(id => {
-    const p = providers.find(x => x.id === id)
-    const ok = !!p?.available
-    return { value: id as ProviderId | '', label: <span className={`prov-opt ${ok ? '' : 'off'}`}><span className={`prov-dot prov-${id}`} />{id === 'claude' ? 'Claude Code' : 'Codex'}</span>, title: ok ? (p?.version ? `${p.name} ${p.version}` : undefined) : (p?.error || 'Not installed on the server') }
-  })
-  if (allowDefault) options.unshift({ value: '', label: <span>My default</span>, title: 'The provider set in Settings → Agents' })
-  return <Segmented label="Agent" value={value} options={options} onChange={v => {
+  const ids = only || offeredProviders(providers, value)
+  const pick = (v: ProviderId | '') => {
     const p = providers.find(x => x.id === v)
     if (v && p && !p.available) return
     onChange(v)
-  }} />
+  }
+  if (ids.length > 2) {
+    const opts: Option<ProviderId | ''>[] = ids.map(id => {
+      const p = providers.find(x => x.id === id)
+      const ok = !!p?.available
+      return { value: id, label: providerName(id), description: ok ? [p?.version && `${p.name} ${p.version}`, p?.account].filter(Boolean).join(' · ') : (p?.error || 'Not installed on the server'), disabled: !ok }
+    })
+    if (allowDefault) opts.unshift({ value: '', label: 'My default', description: 'The agent set in Settings → Agents' })
+    return <Select label="Agent" value={value} options={opts} onChange={pick} width="trigger"
+      renderValue={o => <span className="prov-opt">{value ? <Icon name={value} size={14} className={`prov-glyph ${value}`} /> : null}{o?.label ?? 'Agent'}</span>} />
+  }
+  const options = ids.map(id => {
+    const p = providers.find(x => x.id === id)
+    const ok = !!p?.available
+    return { value: id as ProviderId | '', label: <span className={`prov-opt ${ok ? '' : 'off'}`}><span className={`prov-dot prov-${id}`} />{providerName(id)}</span>, title: ok ? (p?.version ? `${p.name} ${p.version}` : undefined) : (p?.error || 'Not installed on the server') }
+  })
+  if (allowDefault) options.unshift({ value: '', label: <span>My default</span>, title: 'The provider set in Settings → Agents' })
+  return <Segmented label="Agent" value={value} options={options} onChange={pick} />
 }
 
 /** Model, effort and mode for a chosen provider — a form block or a compact chip row. */
@@ -166,8 +192,9 @@ export function machineLoginOptions(list: HostLogin[], pid: ProviderId, current:
 export interface RemoteSwitch { on: boolean; busy?: boolean; state?: string; onToggle: () => void }
 
 /** Every CLI's models in one list, grouped by CLI: value "provider:model". */
-function allModelOptions(providers: Provider[], host: number): Option<string>[] {
-  return (['claude', 'codex'] as ProviderId[]).flatMap(id => {
+function allModelOptions(providers: Provider[], host: number, current: ProviderId): Option<string>[] {
+  // ACP agents run on this server only
+  return offeredProviders(providers, current).filter(id => !host || !isAcp(id)).flatMap(id => {
     const q = providers.find(x => x.id === id)
     if (!q) return []
     // availability is this server's; a machine is checked when the chat switches
@@ -197,7 +224,7 @@ export function AgentPicker({ value, onChange, allowDefault = false, compact = f
   const accts = allowDefault || noAccount || host ? [] : accountOptions(accounts, pid, value.account_id || 0)
   const machineLogins = machineLoginOptions(useHostLogins(allowDefault || noAccount ? 0 : host, accounts), pid, value.host_home || '')
   const both = switchProvider && !ask && !allowDefault
-  const models = ask ? ASK_MODELS : both ? allModelOptions(providers, host) : modelOptions(p, allowDefault)
+  const models = ask ? ASK_MODELS : both ? allModelOptions(providers, host, pid) : modelOptions(p, allowDefault)
   const pickModel = (v: string) => {
     if (!both) return onChange({ model: v })
     const at = v.indexOf(':')

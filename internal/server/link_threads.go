@@ -75,7 +75,7 @@ func (s *Server) linkCaller(w http.ResponseWriter, r *http.Request) (*store.User
 }
 
 // readonlyModes is the mode of each provider that cannot change files.
-var readonlyModes = map[string]string{"claude": "plan", "codex": "read-only"}
+var readonlyModes = map[string]string{"claude": "plan", "codex": "read-only", "gemini": "plan", "opencode": "plan", "qwen": "plan"}
 
 type linkModel struct {
 	ID      string   `json:"id"`
@@ -140,10 +140,7 @@ func (s *Server) handleLinkAgentOptions(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	for _, p := range s.providers(ctx, false) {
-		def := st.Claude
-		if p.ID == "codex" {
-			def = st.Codex
-		}
+		def := st.For(p.ID)
 		lp := linkProvider{ID: p.ID, Name: p.Name, Available: p.Available, Error: p.Error, Models: []linkModel{}, Efforts: p.Efforts, Modes: p.Modes,
 			ReadonlyMode: readonlyModes[p.ID], DefaultModel: firstNonEmpty(def.Model, p.DefaultModel), DefaultEffort: firstNonEmpty(def.Effort, p.DefaultEffort),
 			DefaultMode: firstNonEmpty(def.Mode, p.DefaultMode), DefaultAcct: def.Account}
@@ -283,8 +280,8 @@ func (s *Server) validDraft(ctx context.Context, u *store.User, d *store.LinkDra
 			return nil, badRequest("ref_url must be an http(s) address")
 		}
 	}
-	if d.Provider != "" && d.Provider != "claude" && d.Provider != "codex" {
-		return nil, badRequest("provider must be claude or codex")
+	if d.Provider != "" && !agent.KnownProvider(d.Provider) {
+		return nil, badRequest("unknown agent " + d.Provider)
 	}
 	prov := d.Provider
 	if prov == "" {

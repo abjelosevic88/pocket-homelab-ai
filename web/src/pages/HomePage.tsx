@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api, ApiError, qs, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
-import { shortPath } from '../lib/format'
+import { shortPath, shortProviderName } from '../lib/format'
 import type { ProviderId, Thread, WorktreeRepoInfo, WorktreeSpec } from '../lib/types'
 import { accountOptions, AgentPicker, type AgentValue, defaultsFor } from '../components/AgentPicker'
 import { Composer, type ComposerHandle } from '../components/Composer'
@@ -333,7 +333,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
         }} />}
         <DraftFiles files={draftFiles} source={draft.ref} onRemove={id => setDraftFiles(f => f.filter(x => x.id !== id))} />
         <Composer ref={serverComposer} big autoFocus draftKey={`link-${draft.id}`} onSend={send} onCommand={startFirst} skills={choice?.provider ? { provider: choice.provider, cwd: choice.cwd, account_id: choice.account_id, host_id: hostId, host_home: hostId ? choice.host_home : undefined } : undefined}
-          placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} about ${draft.ref || 'this'}${hostId ? ` on ${hosts.find(h => h.id === hostId)?.name}` : ''}…`}
+          placeholder={`Ask ${shortProviderName(choice.provider)} about ${draft.ref || 'this'}${hostId ? ` on ${hosts.find(h => h.id === hostId)?.name}` : ''}…`}
           footer={<AgentPicker compact switchProvider host={hostId} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} remote={remoteSwitch} />} />
         </>
       )}
@@ -414,7 +414,7 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
               )}
               {draft && <DraftFiles files={draftFiles} source={draft.ref} onRemove={id => setDraftFiles(f => f.filter(x => x.id !== id))} />}
               <Composer ref={serverComposer} big autoFocus draftKey={draft ? `link-${draft.id}` : 'new'} onSend={send} onCommand={startFirst} skills={choice?.provider ? { provider: choice.provider, cwd: choice.cwd, account_id: choice.account_id, host_id: hostId, host_home: hostId ? choice.host_home : undefined } : undefined}
-                placeholder={`Ask ${choice.provider === 'codex' ? 'Codex' : 'Claude'} anything${hostId ? ` on ${hosts.find(h => h.id === hostId)?.name}` : ''}${choice.cwd && !wtSpec ? ` in ${shortPath(choice.cwd)}` : ''}${wtWhere}… paste a screenshot, type / for recipes`}
+                placeholder={`Ask ${shortProviderName(choice.provider)} anything${hostId ? ` on ${hosts.find(h => h.id === hostId)?.name}` : ''}${choice.cwd && !wtSpec ? ` in ${shortPath(choice.cwd)}` : ''}${wtWhere}… paste a screenshot, type / for recipes`}
                 footer={<AgentPicker compact switchProvider host={hostId} value={choice} onChange={patch => setChoice(c => c && { ...c, ...patch })} remote={remoteSwitch} />} />
               {providers.length > 0 && !providers.some(p => p.available) && (
                 <div className="callout danger mt-s"><Icon name="alert" size={15} /><span>Neither Claude Code nor Codex is available on the server. {providers.map(p => p.error).filter(Boolean).join(' ')}</span></div>

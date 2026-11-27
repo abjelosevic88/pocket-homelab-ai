@@ -23,7 +23,34 @@ export interface AuthStatus {
   oidc_name?: string
 }
 
-export type ProviderId = 'claude' | 'codex'
+export type ProviderId = CliId | AcpId
+/** Claude Code and Codex: the CLIs with logins, machines and skills of their own. */
+export type CliId = 'claude' | 'codex'
+/** Agents driven over the Agent Client Protocol (Settings → Agents sets them up). */
+export type AcpId = 'gemini' | 'opencode' | 'qwen'
+export const ACP_IDS: AcpId[] = ['gemini', 'opencode', 'qwen']
+export const isAcp = (p: string | undefined): p is AcpId => !!p && (ACP_IDS as string[]).includes(p)
+
+/** An ACP agent in Settings → Agents (GET /agents/acp, admin). */
+export interface AcpAgent {
+  id: AcpId
+  name: string
+  bin: string
+  package: string
+  site: string
+  note: string
+  keys: { name: string; label: string; help?: string; url?: string; secret: boolean }[]
+  google_login: boolean
+  installed: boolean
+  version?: string
+  available: boolean
+  error?: string
+  account?: string
+  models: number
+  google_signed_in: boolean
+  /** keys set: name → shown value (secrets masked) */
+  set: Record<string, string>
+}
 export type NotifyKind = 'apprise' | 'ntfy' | 'webhook'
 
 export interface AgentDefaults { model: string; effort: string; mode: string; speed?: string; account_id?: number }
@@ -103,6 +130,8 @@ export interface Settings {
   default_cwd: string
   claude: AgentDefaults
   codex: AgentDefaults
+  /** defaults of the ACP agents, by id */
+  agents?: Partial<Record<AcpId, AgentDefaults>>
   notify_kind: NotifyKind
   notify_url: string
   notify_finished: boolean

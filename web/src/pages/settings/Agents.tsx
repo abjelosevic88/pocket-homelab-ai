@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useApp } from '../../lib/app-context'
-import type { ProviderId } from '../../lib/types'
-import { AgentPicker, ProviderToggle } from '../../components/AgentPicker'
+import { isAcp } from '../../lib/types'
+import { providerName } from '../../lib/format'
+import { AgentPicker, offeredProviders, ProviderToggle, settingsFor } from '../../components/AgentPicker'
+import { AcpAgentsSection } from './AcpAgents'
 import { FolderButton } from '../../components/FolderPicker'
 import { Field, Loading, SettingRow, noGrammarly } from '../../components/ui'
 import { Section, useSaveSettings } from './common'
 
 export function AgentsTab() {
-  const { settings, providers } = useApp()
+  const { settings, providers, user } = useApp()
   const save = useSaveSettings()
   const [prompt, setPrompt] = useState(settings?.system_prompt || '')
   useEffect(() => { setPrompt(settings?.system_prompt || '') }, [settings?.system_prompt])
@@ -26,20 +28,27 @@ export function AgentsTab() {
         </SettingRow>
       </Section>
 
-      {(['claude', 'codex'] as ProviderId[]).map(pid => {
+      {offeredProviders(providers, s.default_provider).map(pid => {
         const p = providers.find(x => x.id === pid)
-        const cur = s[pid]
+        const saved = settingsFor(s, pid) || { model: '', effort: '', mode: '' }
+        // an ACP agent shows its own model and mode until the person picks others
+        const cur = isAcp(pid) ? { ...saved, model: saved.model || p?.default_model || '', mode: saved.mode || p?.default_mode || '' } : saved
+        const put = (patch: object) => isAcp(pid)
+          ? save({ agents: { ...(s.agents || {}), [pid]: { ...cur, ...patch } } }, 'Saved')
+          : save({ [pid]: { ...cur, ...patch } }, 'Saved')
         return (
-          <Section key={pid} title={<span className="row"><span className={`prov-dot prov-${pid}`} />{pid === 'claude' ? 'Claude Code' : 'Codex'}</span>}
-            sub={p && !p.available ? <span className="danger-text">{p.error || 'Not installed on this server'}</span> : 'Model, effort, permissions and speed new threads start with.'}>
+          <Section key={pid} title={<span className="row"><span className={`prov-dot prov-${pid}`} />{providerName(pid)}</span>}
+            sub={p && !p.available ? <span className="danger-text">{p.error || 'Not installed on this server'}</span> : isAcp(pid) ? 'Model and permissions new threads start with.' : 'Model, effort, permissions and speed new threads start with.'}>
             {p?.available ? (
-              <AgentPicker showProvider={false} value={{ provider: pid, ...cur }} onChange={patch => save({ [pid]: { ...cur, ...patch } }, 'Saved')} />
-            ) : <p className="muted small" style={{ margin: 0 }}>{p ? <>Install the CLI on this server as the user Pocket AI runs as, then check it again under <Link to="/settings/machines">Machines</Link>.</> : 'Checking…'}</p>}
+              <AgentPicker showProvider={false} noAccount={isAcp(pid)} value={{ provider: pid, ...cur }} onChange={put} />
+            ) : <p className="muted small" style={{ margin: 0 }}>{!p ? 'Checking…' : isAcp(pid) ? 'Set it up under More agents below.' : <>Install the CLI on this server as the user Pocket AI runs as, then check it again under <Link to="/settings/machines">Machines</Link>.</>}</p>}
           </Section>
         )
       })}
 
-      <Section title="Extra instructions" sub="Added to the system prompt of every agent you start (both CLIs). Good for things like “Answer briefly. This is my home server; ask before restarting containers.”">
+      {user?.role === 'admin' && <AcpAgentsSection />}
+
+      <Section title="Extra instructions" sub="Added to the system prompt of every agent you start (every agent). Good for things like “Answer briefly. This is my home server; ask before restarting containers.”">
         <Field label="Instructions">
           <textarea {...noGrammarly} value={prompt} onChange={e => setPrompt(e.target.value)} rows={5} placeholder="Answer briefly…" />
         </Field>

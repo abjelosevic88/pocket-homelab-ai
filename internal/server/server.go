@@ -298,6 +298,7 @@ func (s *Server) Router() http.Handler {
 			s.historyRoutes(r)
 			// More Claude Code / Codex logins: accounts.go.
 			s.accountRoutes(r)
+			s.acpRoutes(r)
 			// Other machines agents run on over ssh: hosts.go.
 			s.hostRoutes(r)
 			s.hostLoginRoutes(r) // their own Claude Code / Codex logins: host_logins.go

@@ -24,6 +24,7 @@
 .attach-btn { color: var(--muted); }
 .prov-glyph.claude { color: #d97757; }
 .prov-glyph.codex { color: #10a37f; }
+.prov-glyph.gemini { color: var(--gemini); } .prov-glyph.opencode { color: var(--opencode); } .prov-glyph.qwen { color: var(--qwen); }
 .speed-toggle { width: 30px; height: 30px; border: 0; background: none; border-radius: 8px; display: grid; place-items: center; color: var(--muted); cursor: pointer; flex-shrink: 0; transition: color .15s, background .15s, transform .12s; }
 .speed-toggle:hover:not(:disabled) { background: var(--hover); color: var(--text); }
 .speed-toggle.on { color: #eab308; }

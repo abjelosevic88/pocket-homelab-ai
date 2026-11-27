@@ -120,6 +120,10 @@ func (s *Server) homes(ctx context.Context) agent.Homes {
 // accountHome is the folder of a thread's account ("" when the account is
 // gone: the server's own login takes over).
 func (s *Server) accountHome(ctx context.Context, provider string, id int64) (dir string, env []string) {
+	if ag, ok := agent.ACPAgentByID(provider); ok {
+		// no logins of its own: its sign-in is where it keeps it, its keys come from Settings
+		return ag.ACPHome(), s.acpEnv(ctx, provider)
+	}
 	if id == 0 {
 		return s.defaultHome(provider), nil
 	}
@@ -175,6 +179,9 @@ func signInFirst(provider string) string {
 	name := "Claude Code"
 	if provider == "codex" {
 		name = "Codex"
+	}
+	if ag, ok := agent.ACPAgentByID(provider); ok {
+		return ag.Name + " runs on the server owner's keys and sign-in, so only they can use it here."
 	}
 	return "Sign in to " + name + " with your own account first: Settings → Machines → This server → Add login."
 }
@@ -617,6 +624,34 @@ type loginRun struct {
 	Error    string `json:"error,omitempty"`
 	Sent     bool   `json:"code_sent,omitempty"` // a code was pasted
 	done     chan struct{}
+	// succeedWhen: the sign-in is done once this is true, though the CLI
+	// goes on (Gemini CLI: its credentials file is there); it is stopped then.
+	succeedWhen func() bool
+	succeeded   bool
+}
+
+// watchSuccess stops the CLI once succeedWhen says the sign-in is done.
+func (l *loginRun) watchSuccess(ctx context.Context) {
+	t := time.NewTicker(time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-l.done:
+			return
+		case <-t.C:
+		}
+		if l.succeedWhen != nil && l.succeedWhen() {
+			l.mu.Lock()
+			l.succeeded = true
+			l.mu.Unlock()
+			if l.cmd.Process != nil {
+				_ = syscall.Kill(-l.cmd.Process.Pid, syscall.SIGTERM)
+			}
+			return
+		}
+	}
 }
 
 func (l *loginRun) snapshot() map[string]any {
@@ -777,6 +812,9 @@ func (s *Server) beginLogin(ctx context.Context, cancel context.CancelFunc, key,
 		expired := ctx.Err() == context.DeadlineExceeded
 		cancel()
 		l.mu.Lock()
+		if l.succeeded {
+			err = nil
+		}
 		switch {
 		case err == nil:
 			l.State = "done"
@@ -837,8 +875,13 @@ func (l *loginRun) feed(line string) {
 		if u := urlRe.FindString(line); u != "" {
 			l.URL = strings.TrimRight(u, ".,)")
 			l.State = "waiting"
-			l.NeedCode = l.provider == "claude"
+			l.NeedCode = l.provider == "claude" || l.provider == "gemini"
 		}
+	}
+	if l.provider == "gemini" && strings.Contains(strings.ToLower(line), "failed to authenticate") {
+		// it asks again with a new link: the code was for the old one
+		l.URL, l.State = "", "waiting"
+		l.Error = "That code was not accepted. Open the new link and paste the code it shows."
 	}
 	if l.provider == "codex" && l.Code == "" {
 		if c := deviceRe.FindString(line); c != "" {
@@ -977,7 +1020,7 @@ func (s *Server) cancelLogin(key string) {
 // before the CLI resumes it there; it is copied from whichever login has
 // the latest version (the thread may have switched accounts).
 func (s *Server) ensureSession(ctx context.Context, t *store.Thread, sessionID string) error {
-	if sessionID == "" {
+	if sessionID == "" || agent.IsACP(t.Provider) {
 		return nil
 	}
 	dir, _ := s.accountHome(ctx, t.Provider, t.AccountID)

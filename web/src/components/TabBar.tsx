@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useApp } from '../lib/app-context'
-import { threadTitle } from '../lib/format'
+import { providerIcon, threadTitle } from '../lib/format'
 import type { Thread } from '../lib/types'
 import { Icon } from './icons'
 import { BgMark, backgroundTitle, hasBackground } from './Background'
@@ -334,7 +334,7 @@ export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, i
                 {busy ? <span className={`tab-busy ${t?.status === 'waiting' || (t?.pending || 0) > 0 ? 'waiting' : ''}`} role="img" aria-label="Working" />
                   : t && hasBackground(t) ? <span className="tab-bg" role="img" aria-label="Still running in the background" title={backgroundTitle(t)}><BgMark size={11} /></span>
                   : t?.unread && !on ? <span className="tab-done" role="img" aria-label="Done, new reply" title="Done — new reply" />
-                  : <Icon name={t?.provider === 'codex' ? 'codex' : 'claude'} size={13} />}
+                  : <Icon name={providerIcon(t?.provider)} size={13} />}
               </span>}
               {t?.pinned && <Icon name="star" size={11} fill className="fav-star" title="Favorite" />}
               <span className="tab-title">{file ? baseOf(file.path) : t ? threadTitle(t) : tLead ? tLead.title : '…'}</span>
@@ -357,7 +357,7 @@ export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, i
         { label: 'Reopen closed tab', icon: 'history', hint: keyCaps(keys.reopen_tab).join(''), disabled: !closed.length, onSelect: () => reopen() },
         ...(closed.length > 1 ? [{ heading: 'Recently closed' }, ...closed.slice(0, 8).map(id => {
           const t = byId.get(id)
-          return { label: <span className="ellipsis">{t ? threadTitle(t) : '…'}</span>, icon: t?.provider === 'codex' ? 'codex' : 'claude', onSelect: () => reopen(id) }
+          return { label: <span className="ellipsis">{t ? threadTitle(t) : '…'}</span>, icon: providerIcon(t?.provider), onSelect: () => reopen(id) }
         }), 'sep' as const] : ['sep' as const]),
         { label: 'Close all tabs', danger: true, onSelect: () => close(shown) },
       ]}><Icon name="more" size={16} /></MenuButton>

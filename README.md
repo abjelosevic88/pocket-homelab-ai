@@ -41,6 +41,11 @@ Personal app assistance: [Briefing, workflows, memory, sources and document uplo
 - Talks to the `claude` and `codex` CLIs that are already installed and signed in on the server: Claude Code
   through its stream-json protocol, Codex through `codex app-server`. Your subscriptions, your `CLAUDE.md` /
   `AGENTS.md`, MCP servers, skills and settings all apply, exactly as in a terminal.
+- **More agents, more models**: Gemini CLI, OpenCode and Qwen Code through the Agent Client Protocol (ACP).
+  Install them, sign Gemini in with a Google account and add API keys in Settings → Agents → More agents; once
+  one is set up it sits next to Claude Code and Codex in the model menu. OpenCode brings free models out of the
+  box and every provider you give a key for (Google AI with Gemini 4 Neon, OpenRouter, DeepSeek, Kimi, Grok,
+  Mistral, Groq). They run on this server (not on other machines yet), on the owner's keys.
 - Model, effort and permission mode per thread (Claude: ask first, accept edits, plan, auto, full access; Codex:
   ask first, sandboxed, read only, full access), changeable mid-thread — the session is resumed with the new flags.
 - **More than one account**: add more Claude Code / Codex logins in Settings (signed in from the browser, each

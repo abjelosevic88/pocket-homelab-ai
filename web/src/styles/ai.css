@@ -2,8 +2,8 @@
    Pocket AI — threads, chat, composer, pages
    ========================================================================== */
 
-:root { --claude: #d97757; --codex: #10a37f; --chat-w: 820px; }
-[data-theme="dark"] { --claude: #e8916f; --codex: #34c79c; }
+:root { --claude: #d97757; --codex: #10a37f; --gemini: #3b7cf0; --opencode: #64748b; --qwen: #6d5ff0; --chat-w: 820px; }
+[data-theme="dark"] { --claude: #e8916f; --codex: #34c79c; --gemini: #7aa7ff; --opencode: #a3b1c6; --qwen: #9d93ff; }
 .accent-text { color: var(--accent); }
 .hide-sm { display: inline; }
 @media (max-width: 640px) { .hide-sm { display: none; } }
@@ -16,6 +16,12 @@
 .prov-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 .prov-dot.prov-claude { background: var(--claude); }
 .prov-dot.prov-codex { background: var(--codex); }
+.prov-gemini { background: color-mix(in srgb, var(--gemini) 15%, transparent); color: color-mix(in srgb, var(--gemini) 85%, var(--ink-base)); }
+.prov-opencode { background: color-mix(in srgb, var(--opencode) 15%, transparent); color: color-mix(in srgb, var(--opencode) 85%, var(--ink-base)); }
+.prov-qwen { background: color-mix(in srgb, var(--qwen) 15%, transparent); color: color-mix(in srgb, var(--qwen) 85%, var(--ink-base)); }
+.prov-dot.prov-gemini { background: var(--gemini); }
+.prov-dot.prov-opencode { background: var(--opencode); }
+.prov-dot.prov-qwen { background: var(--qwen); }
 .prov-opt { display: inline-flex; align-items: center; gap: 7px; }
 .prov-opt.off { opacity: .45; text-decoration: line-through; }
 

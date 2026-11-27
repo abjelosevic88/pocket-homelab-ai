@@ -12,7 +12,7 @@ import type { Account, HostLogin, LoginState, ProviderId, User } from '../../lib
 /** How people are kept apart (GET /settings → people; server people.go). */
 interface PeopleInfo { jailed: boolean; sandbox: boolean; sandbox_off: boolean; sandbox_error?: string; folder?: string; projects?: string; owner?: string }
 import { ProviderToggle } from '../../components/AgentPicker'
-import { planName } from '../../lib/format'
+import { planName, providerName } from '../../lib/format'
 import { Select } from '../../components/Select'
 import { Icon } from '../../components/icons'
 import { Confirm, CopyField, copyText, errMsg, Field, MenuButton, Modal, Spinner, useAsync, useToast, type MenuItem, useContextMenu } from '../../components/ui'
@@ -149,7 +149,7 @@ function AccountDialog({ account, provider: initial, people, isAdmin, own, machi
       <button type="button" className="btn primary" disabled={busy || checking || (machine ? !usable || (sel === NEW_LOGIN && !loginSlug(label)) : !label.trim())} onClick={save}>{busy ? <Spinner /> : null}{account ? 'Save' : machine && sel !== NEW_LOGIN ? (picked?.signed_in ? 'Sign in again' : 'Sign in') : 'Add and sign in'}</button>
     </>}>
       <div className="stack">
-        {!account && <Field label="Agent" group><ProviderToggle value={provider} onChange={v => v && setProvider(v)} /></Field>}
+        {!account && <Field label="Agent" group><ProviderToggle only={['claude', 'codex']} value={provider} onChange={v => v && setProvider(v)} /></Field>}
         {hosts.length > 0 && <Field label="Where" help="This server, or one of your other machines. Threads on a machine run on its login there.">
           <Select label="Where" value={where} onChange={v => { setWhere(v); setPick(null) }}
             options={[{ value: 0, label: 'This server' }, ...hosts.map(([id, name]) => ({ value: id, label: name, description: machines.find(h => h.host_id === id)?.target }))]} />
@@ -249,22 +249,25 @@ export function SignInDialog({ target, onClose }: { target: SignInTarget; onClos
     if (st && (st.state === 'waiting' || st.state === 'starting' || st.state === 'checking')) api.del(at()).catch(() => {})
     onClose()
   }
-  const isClaude = target.provider === 'claude'
+  // Claude Code and Gemini CLI: paste the code the page shows; Codex: type its code on the page
+  const isClaude = target.provider !== 'codex'
+  const service = target.provider === 'claude' ? 'Claude' : target.provider === 'codex' ? 'ChatGPT' : 'Google'
+  const command = target.provider === 'claude' ? 'claude auth login' : target.provider === 'codex' ? 'codex login' : `the ${providerName(target.provider)} sign-in`
   return (
-    <Modal title={where ? `Sign in on ${where}: ${isClaude ? 'Claude Code' : 'Codex'}` : `Sign in: ${label}`} size="sm" onClose={close} footer={
+    <Modal title={where ? `Sign in on ${where}: ${providerName(target.provider)}` : `Sign in: ${label}`} size="sm" onClose={close} footer={
       st?.state === 'done' ? <button type="button" className="btn primary" onClick={onClose}>Done</button>
         : <>
           <button type="button" className="btn" onClick={close}>Cancel</button>
           {st?.need_code && st.state !== 'failed' && <button type="button" className="btn primary" disabled={busy || !code.trim() || st.state === 'checking'} onClick={sendCode}>{busy ? <Spinner /> : null}Sign in</button>}
           {st?.state === 'failed' && <button type="button" className="btn primary" onClick={() => { setSt(null); setCode(''); api.post<LoginState>(at()).then(setSt).catch(e => setSt({ state: 'failed', error: errMsg(e) })) }}>Try again</button>}
         </>}>
-      {!st || st.state === 'starting' && !st.url ? <div className="loading"><Spinner /> Starting {isClaude ? 'claude auth login' : 'codex login'} {where ? `on ${where}` : 'on the server'}…</div>
+      {!st || st.state === 'starting' && !st.url ? <div className="loading"><Spinner /> Starting {command} {where ? `on ${where}` : 'on the server'}…</div>
         : st.state === 'done' ? <div className="callout success"><Icon name="check-circle" size={15} /><span>{where && target.query?.dir ? <>Signed in. In a conversation on that machine, pick <b>{where}</b> next to the model to run on it.</> : where ? <>Signed in. Threads on <b>{where}</b> run on this login now.</> : <>Signed in. New threads can use <b>{label}</b> now.</>}</span></div>
         : st.state === 'failed' ? <div className="callout danger"><Icon name="alert" size={15} /><span>{st.error || 'The sign-in did not finish.'}</span></div>
         : (
           <div className="stack">
             <ol className="signin-steps">
-              <li>Open the sign-in page and sign in with the {isClaude ? 'Claude' : 'ChatGPT'} account this login should use.
+              <li>Open the sign-in page and sign in with the {service} account this login should use.
                 <div className="mt-s row" style={{ flexWrap: 'wrap', gap: 8 }}>
                   <a className="btn sm" href={st.url} target="_blank" rel="noopener noreferrer"><Icon name="external" size={13} />Open the sign-in page</a>
                   <button type="button" className="btn sm" title="Copy the sign-in link, to open it in another browser or on another device"

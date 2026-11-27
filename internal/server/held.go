@@ -185,6 +185,9 @@ func holderStatus(ctx context.Context, h *store.Host, bin, slot string) (hold.He
 // set to adopt the CLI still running there. pin is how that CLI reaches the
 // Pocket tools (nil when a new one starts).
 func (rt *engine) holdFor(ctx context.Context, t *store.Thread, h *store.Host, o *agent.Options) (pin *holdMeta) {
+	if agent.IsACP(t.Provider) {
+		return nil // ACP agents are not held: the next message loads the session again
+	}
 	if h == nil && agent.Jailed(o.Cwd, o.Env) {
 		return nil // a person's sandbox: the holder could not live outside it
 	}
@@ -291,6 +294,9 @@ func startSession(ctx context.Context, provider, login string, o agent.Options, 
 			return agent.StartClaude(ctx, o, sink)
 		case "codex":
 			return agent.StartCodex(ctx, o, sink)
+		}
+		if ag, ok := agent.ACPAgentByID(provider); ok {
+			return agent.StartACP(ctx, ag, o, sink)
 		}
 		return nil, badRequest("unknown provider " + provider)
 	}

@@ -72,6 +72,9 @@ func restartTakeBack(t *testing.T, finishWhileDown bool) {
 	}
 	t.Setenv("CLAUDE_BIN", bin)
 	t.Setenv("CODEX_BIN", filepath.Join(root, "no-codex"))
+	for _, ag := range agent.ACPAgents {
+		t.Setenv(strings.ToUpper(ag.ID)+"_BIN", filepath.Join(root, "no-"+ag.ID))
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatal(err)

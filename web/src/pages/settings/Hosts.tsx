@@ -190,7 +190,7 @@ function AddLoginDialog({ host, provider: initial, logins, onClose, onAdded }: {
       <button type="button" className="btn primary" disabled={!ready} onClick={add}>{busy ? <Spinner /> : null}{useDefault ? 'Sign in' : 'Add and sign in'}</button>
     </>}>
       <form className="stack" onSubmit={e => { e.preventDefault(); if (ready) void add() }}>
-        <Field label="Agent" group><ProviderToggle value={provider} onChange={v => v && setProvider(v)} /></Field>
+        <Field label="Agent" group><ProviderToggle only={['claude', 'codex']} value={provider} onChange={v => v && setProvider(v)} /></Field>
         {missing ? <div className="callout warn"><Icon name="alert" size={15} /><span>{provName(provider)} is not installed on <b>{host.name}</b>. Install it there, then check the machine again.</span></div>
           : useDefault ? <p className="muted small" style={{ margin: 0 }}>The default login on {host.name} (<code>{tilde(def!.home)}</code>) is not signed in yet: sign it in first, then add more.</p>
           : <>

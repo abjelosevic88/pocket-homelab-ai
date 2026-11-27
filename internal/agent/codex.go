@@ -65,12 +65,25 @@ type rpc struct {
 	qcond *sync.Cond
 	queue []rpcIn
 	qdone bool
+	// v2: every message says "jsonrpc":"2.0" (ACP agents insist; Codex
+	// does without).
+	v2 bool
 }
+
+// rpcError is an error answer, with its JSON-RPC code and data.
+type rpcError struct {
+	Code    int
+	Message string
+	Data    json.RawMessage
+}
+
+func (e *rpcError) Error() string { return e.Message }
 
 type rpcIn struct {
 	id     json.RawMessage
 	method string
 	params json.RawMessage
+	fn     func() // a step of the client's own, in order with what came in
 }
 
 func (c *rpc) dispatch() {
@@ -86,6 +99,10 @@ func (c *rpc) dispatch() {
 		m := c.queue[0]
 		c.queue = c.queue[1:]
 		c.qmu.Unlock()
+		if m.fn != nil {
+			m.fn()
+			continue
+		}
 		if len(m.id) > 0 {
 			if c.onRequest != nil {
 				c.onRequest(m.id, m.method, m.params)
@@ -123,9 +140,14 @@ func openRPC(ctx context.Context, o Options, bin string, sink Sink) (*rpc, error
 	if bin == "" {
 		bin = "codex"
 	}
+	return openRPCWith(ctx, o, bin, []string{"app-server"}, codexMarks, sink)
+}
+
+// openRPCWith starts bin with args as a JSON-RPC peer over stdio.
+func openRPCWith(ctx context.Context, o Options, bin string, args []string, m marks, sink Sink) (*rpc, error) {
 	c := &rpc{calls: map[int64]chan rpcReply{}, done: make(chan struct{}), errb: &tail{n: 8 << 10}}
 	c.qcond = sync.NewCond(&c.qmu)
-	l, err := openLink(ctx, o, codexMarks, bin, []string{"app-server"}, c.errb, sink)
+	l, err := openLink(ctx, o, m, bin, args, c.errb, sink)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +161,10 @@ func openRPC(ctx context.Context, o Options, bin string, sink Sink) (*rpc, error
 	return c, nil
 }
 
-func (c *rpc) send(v any) error {
+func (c *rpc) send(v map[string]any) error {
+	if c.v2 {
+		v["jsonrpc"] = "2.0"
+	}
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -187,7 +212,9 @@ func (c *rpc) read() {
 			Params json.RawMessage `json:"params"`
 			Result json.RawMessage `json:"result"`
 			Error  *struct {
-				Message string `json:"message"`
+				Code    int             `json:"code"`
+				Message string          `json:"message"`
+				Data    json.RawMessage `json:"data"`
 			} `json:"error"`
 		}
 		if json.Unmarshal(line, &m) != nil {
@@ -205,7 +232,7 @@ func (c *rpc) read() {
 			if ch != nil {
 				rep := rpcReply{Result: m.Result}
 				if m.Error != nil {
-					rep.Err = errors.New(m.Error.Message)
+					rep.Err = &rpcError{Code: m.Error.Code, Message: m.Error.Message, Data: m.Error.Data}
 				}
 				ch <- rep
 			}

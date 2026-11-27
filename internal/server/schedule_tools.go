@@ -157,8 +157,8 @@ func (s *Server) scheduleFromChat(ctx context.Context, owner *store.User, t *sto
 		return nil, errors.New("that schedule never runs")
 	}
 	provider := firstNonEmpty(in.Provider, t.Provider)
-	if provider != "claude" && provider != "codex" {
-		return nil, errors.New("provider must be claude or codex")
+	if !agent.KnownProvider(provider) {
+		return nil, errors.New("provider must be one of " + strings.Join(agent.ProviderIDs(), ", "))
 	}
 	host, err := s.resolveMachine(ctx, owner, t, in.Machine)
 	if err != nil {

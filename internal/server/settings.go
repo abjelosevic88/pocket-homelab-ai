@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/agent"
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/notify"
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
 	core "github.com/abjelosevic88/pocket-homelab-core/sdk"
@@ -50,36 +51,37 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Title               *string              `json:"title"`
-		AppEffort           *string              `json:"app_effort"`
-		AppModel            *string              `json:"app_model"`
-		AppAccount          *int64               `json:"app_account_id"`
-		DefaultProvider     *string              `json:"default_provider"`
-		DefaultCwd          *string              `json:"default_cwd"`
-		Claude              *store.AgentDefaults `json:"claude"`
-		Codex               *store.AgentDefaults `json:"codex"`
-		SystemPrompt        *string              `json:"system_prompt"`
-		NotifyKind          *string              `json:"notify_kind"`
-		NotifyURL           *string              `json:"notify_url"`
-		NotifyToken         *string              `json:"notify_token"`
-		NotifyFinished      *bool                `json:"notify_finished"`
-		NotifyInput         *bool                `json:"notify_input"`
-		NotifyFailed        *bool                `json:"notify_failed"`
-		NotifyOnlyAway      *bool                `json:"notify_only_away"`
-		EnterSendNow        *bool                `json:"enter_send_now"`
-		EnterSends          *bool                `json:"enter_sends"`
-		ShowThinking        *bool                `json:"show_thinking"`
-		DeleteNoConfirm     *bool                `json:"delete_no_confirm"`
-		ArchiveDeleteDays   *int                 `json:"archive_delete_days"`
-		UsageWidget         *bool                `json:"usage_widget"`
-		WorktreeAutoCleanup *bool                `json:"worktree_auto_cleanup"`
-		WorktreeIdleDays    *int                 `json:"worktree_idle_days"`
-		ThreadTabs          *bool                `json:"thread_tabs"`
-		UsagePinned         *[]string            `json:"usage_pinned"`
-		Sidebar             *[]string            `json:"sidebar"`
-		Shortcuts           *map[string]string   `json:"shortcuts"`
-		UsageNames          *map[string]string   `json:"usage_names"`
-		UsageLinks          *map[string]string   `json:"usage_links"`
+		Title               *string                        `json:"title"`
+		AppEffort           *string                        `json:"app_effort"`
+		AppModel            *string                        `json:"app_model"`
+		AppAccount          *int64                         `json:"app_account_id"`
+		DefaultProvider     *string                        `json:"default_provider"`
+		DefaultCwd          *string                        `json:"default_cwd"`
+		Claude              *store.AgentDefaults           `json:"claude"`
+		Codex               *store.AgentDefaults           `json:"codex"`
+		Agents              map[string]store.AgentDefaults `json:"agents"`
+		SystemPrompt        *string                        `json:"system_prompt"`
+		NotifyKind          *string                        `json:"notify_kind"`
+		NotifyURL           *string                        `json:"notify_url"`
+		NotifyToken         *string                        `json:"notify_token"`
+		NotifyFinished      *bool                          `json:"notify_finished"`
+		NotifyInput         *bool                          `json:"notify_input"`
+		NotifyFailed        *bool                          `json:"notify_failed"`
+		NotifyOnlyAway      *bool                          `json:"notify_only_away"`
+		EnterSendNow        *bool                          `json:"enter_send_now"`
+		EnterSends          *bool                          `json:"enter_sends"`
+		ShowThinking        *bool                          `json:"show_thinking"`
+		DeleteNoConfirm     *bool                          `json:"delete_no_confirm"`
+		ArchiveDeleteDays   *int                           `json:"archive_delete_days"`
+		UsageWidget         *bool                          `json:"usage_widget"`
+		WorktreeAutoCleanup *bool                          `json:"worktree_auto_cleanup"`
+		WorktreeIdleDays    *int                           `json:"worktree_idle_days"`
+		ThreadTabs          *bool                          `json:"thread_tabs"`
+		UsagePinned         *[]string                      `json:"usage_pinned"`
+		Sidebar             *[]string                      `json:"sidebar"`
+		Shortcuts           *map[string]string             `json:"shortcuts"`
+		UsageNames          *map[string]string             `json:"usage_names"`
+		UsageLinks          *map[string]string             `json:"usage_links"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
@@ -91,7 +93,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		_ = s.store.SaveBoxSettings(ctx, box)
 		st.Title = box.Title
 	}
-	if in.DefaultProvider != nil && (*in.DefaultProvider == "claude" || *in.DefaultProvider == "codex") {
+	if in.DefaultProvider != nil && agent.KnownProvider(*in.DefaultProvider) {
 		st.DefaultProvider = *in.DefaultProvider
 	}
 	if in.DefaultCwd != nil {
@@ -111,6 +113,12 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Codex != nil {
 		st.Codex = *in.Codex
+	}
+	for id, d := range in.Agents {
+		if agent.IsACP(id) {
+			d.Account = 0 // the server's own sign-in: ACP agents have no logins of their own
+			st.SetFor(id, d)
+		}
 	}
 	if in.AppModel != nil {
 		if !core.ValidInferenceModel(*in.AppModel) {

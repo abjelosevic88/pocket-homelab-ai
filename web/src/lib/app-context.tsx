@@ -76,6 +76,7 @@ export function normalizeSettings(raw: unknown): SettingsResponse {
     ...DEFAULT_SETTINGS, ...s,
     claude: { ...DEFAULT_SETTINGS.claude, ...(s.claude || {}) },
     codex: { ...DEFAULT_SETTINGS.codex, ...(s.codex || {}) },
+    agents: { ...(s.agents || {}) },
   }
   return wrapped ? { ...(r as unknown as SettingsResponse), settings } : { settings, notify_has_token: !!(r as { notify_has_token?: boolean }).notify_has_token }
 }

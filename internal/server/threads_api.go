@@ -98,12 +98,14 @@ func (s *Server) providers(ctx context.Context, refresh bool) []agent.Provider {
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
 	defer cancel()
-	out := make([]agent.Provider, 2)
-	done := make(chan struct{}, 2)
+	out := make([]agent.Provider, 2+len(agent.ACPAgents))
+	done := make(chan struct{}, len(out))
 	go func() { out[0] = agent.ProbeClaude(ctx, s.cfg.ClaudeBin, s.cfg.Home, nil); done <- struct{}{} }()
 	go func() { out[1] = agent.ProbeCodex(ctx, s.cfg.CodexBin, s.cfg.Home, nil); done <- struct{}{} }()
-	<-done
-	<-done
+	s.probeACP(ctx, out, 2, done)
+	for range out {
+		<-done
+	}
 	for i := range out { // a CLI that is missing still answers with lists, not null
 		if out[i].Models == nil {
 			out[i].Models = []agent.Model{}
@@ -135,7 +137,11 @@ func (s *Server) cliChanged() bool {
 // installs switch a symlink on update), with their change times.
 func (s *Server) cliTargets() string {
 	var b strings.Builder
-	for _, bin := range []string{s.cfg.ClaudeBin, s.cfg.CodexBin} {
+	bins := []string{s.cfg.ClaudeBin, s.cfg.CodexBin}
+	for _, ag := range agent.ACPAgents {
+		bins = append(bins, ag.Command())
+	}
+	for _, bin := range bins {
 		p, err := exec.LookPath(bin)
 		if err == nil {
 			if r, err := filepath.EvalSymlinks(p); err == nil {
@@ -201,8 +207,11 @@ func (s *Server) createThread(ctx context.Context, u *store.User, in newThread, 
 	if in.Provider == "" {
 		in.Provider = st.DefaultProvider
 	}
-	if in.Provider != "claude" && in.Provider != "codex" {
-		return nil, badRequest("provider must be claude or codex")
+	if !agent.KnownProvider(in.Provider) {
+		return nil, badRequest("unknown agent " + in.Provider)
+	}
+	if agent.IsACP(in.Provider) && in.HostID != 0 {
+		return nil, badRequest(providerName(in.Provider) + " runs on this server only, not on other machines (yet)")
 	}
 	host, err := s.checkHostUse(ctx, u, in.HostID)
 	if err != nil {
@@ -220,12 +229,9 @@ func (s *Server) createThread(ctx context.Context, u *store.User, in newThread, 
 	if strings.TrimSpace(in.Text) == "" && len(in.UploadIDs) == 0 {
 		return nil, badRequest("write something to start with")
 	}
-	def := st.Claude
-	if in.Provider == "codex" {
-		def = st.Codex
-	}
+	def := st.For(in.Provider)
 	t := &store.Thread{ID: uuid.NewString(), UserID: u.ID, Provider: in.Provider, Source: source, SourceRef: ref,
-		Model: firstNonEmpty(in.Model, def.Model, prov.DefaultModel), Effort: firstNonEmpty(in.Effort, def.Effort), Mode: firstNonEmpty(in.Mode, def.Mode),
+		Model: firstNonEmpty(in.Model, def.Model, prov.DefaultModel), Effort: firstNonEmpty(in.Effort, def.Effort), Mode: firstNonEmpty(in.Mode, def.Mode, prov.DefaultMode),
 		Title: strings.TrimSpace(in.Title)}
 	if !validMode(t.Provider, t.Mode) {
 		return nil, badRequest("unknown mode " + t.Mode)
@@ -362,6 +368,13 @@ func validMode(provider, mode string) bool {
 	modes := agent.ClaudeModes
 	if provider == "codex" {
 		modes = agent.CodexModes
+	}
+	if agent.IsACP(provider) {
+		p, ok := agent.ACPProbed(provider)
+		if !ok || len(p.Modes) == 0 {
+			return mode != "" // not asked yet (or it has no modes): it says so when it starts
+		}
+		modes = p.Modes
 	}
 	for _, m := range modes {
 		if m.ID == mode {

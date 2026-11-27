@@ -46,7 +46,7 @@ func agentTools() []askTool {
 		{"pocket_agent_start", "Start another coding agent as its own Pocket AI conversation with a task. The person approves the start unless they always allow it. It does not see this conversation, so the prompt must be complete and self-contained. Returns its agent_id; its answer comes back to you as a message when it finishes (report: false to skip), or wait for it with pocket_agent_wait.", `{"type":"object","properties":{
 "prompt":{"type":"string","maxLength":100000,"description":"The whole task: goal, context, relevant files, constraints and how to check the result."},
 "title":{"type":"string","maxLength":120,"description":"A short name for its conversation."},
-"provider":{"type":"string","enum":["claude","codex"],"description":"Default: the same agent as this conversation."},
+"provider":{"type":"string","enum":["claude","codex","gemini","opencode","qwen"],"description":"Default: the same agent as this conversation. gemini (Gemini CLI), opencode (OpenCode: many model providers) and qwen (Qwen Code) work only when set up on this server: see pocket_agent_options."},
 "model":{"type":"string","description":"A model id from pocket_agent_options. Default: the person's default for that agent."},
 "effort":{"type":"string","description":"Reasoning effort, e.g. low, medium, high."},
 "machine":{"type":"string","description":"Machine name or id from pocket_agent_options. Default: this conversation's machine."},
@@ -76,7 +76,7 @@ func agentTools() []askTool {
 "name":{"type":"string","maxLength":120,"description":"A short name (shown on the Schedules page and in notifications)."},
 "report":{"type":"boolean","description":"Send each run's answer to this conversation as a message (default: true when it runs once, false when it repeats)."},
 "notify":{"type":"string","enum":["always","attention","never"],"description":"Push notification after a run: always, only when it needs attention, or never (default: always once, attention when repeating)."},
-"provider":{"type":"string","enum":["claude","codex"],"description":"Default: the same agent as this conversation."},
+"provider":{"type":"string","enum":["claude","codex","gemini","opencode","qwen"],"description":"Default: the same agent as this conversation. gemini (Gemini CLI), opencode (OpenCode: many model providers) and qwen (Qwen Code) work only when set up on this server: see pocket_agent_options."},
 "model":{"type":"string","description":"A model id from pocket_agent_options. Default: this conversation's (same agent) or the person's default."},
 "effort":{"type":"string","description":"Reasoning effort, e.g. low, medium, high."},
 "machine":{"type":"string","description":"Machine name or id from pocket_agent_options. Default: this conversation's machine."},
@@ -247,11 +247,17 @@ func (s *Server) agentDepth(ctx context.Context, t *store.Thread) int {
 var modeLevel = map[string]int{
 	"plan": 0, "default": 1, "acceptEdits": 2, "auto": 3, "bypassPermissions": 4,
 	"read-only": 0, "untrusted": 1, "on-request": 2, "full-access": 4,
+	// ACP agents: Gemini CLI, Qwen Code, OpenCode (Pocket AI's ask / build)
+	"autoEdit": 2, "auto-edit": 2, "yolo": 4, "ask": 1, "build": 4,
 }
 
 func modesOf(provider string) []agent.Mode {
 	if provider == "codex" {
 		return agent.CodexModes
+	}
+	if agent.IsACP(provider) {
+		p, _ := agent.ACPProbed(provider)
+		return p.Modes
 	}
 	return agent.ClaudeModes
 }
@@ -271,12 +277,24 @@ func allowedModes(provider, parentMode string) []string {
 	return out
 }
 
+func hasMode(list []agent.Mode, id string) bool {
+	for _, m := range list {
+		if m.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 // childMode picks the agent's permission mode.
 func childMode(provider string, parent *store.Thread, asked string, readOnly bool) (string, error) {
 	allowed := allowedModes(provider, parent.Mode)
 	if readOnly {
 		if provider == "codex" {
 			return "read-only", nil
+		}
+		if agent.IsACP(provider) && !hasMode(modesOf(provider), "plan") {
+			return "", fmt.Errorf("%s has no read-only mode", providerName(provider))
 		}
 		return "plan", nil
 	}
@@ -505,8 +523,11 @@ func (s *Server) approveOther(ctx, session context.Context, owner *store.User, t
 
 func (s *Server) agentOptions(ctx context.Context, owner *store.User, t *store.Thread) map[string]any {
 	agents := []map[string]any{}
-	for _, id := range []string{"claude", "codex"} {
+	for _, id := range agent.ProviderIDs() {
 		p, ok := s.agentProvider(ctx, id)
+		if !ok && agent.IsACP(id) {
+			continue // not set up: not worth listing
+		}
 		a := map[string]any{"provider": id, "name": providerName(id), "available_on_this_server": ok, "modes": allowedModes(id, t.Mode)}
 		if ok {
 			models := []string{}
@@ -597,8 +618,8 @@ func (s *Server) agentStart(ctx, session context.Context, owner *store.User, t *
 		return nil, fmt.Errorf("%d agents from this conversation are still working; wait for one (pocket_agent_wait) before starting another", working)
 	}
 	provider := firstNonEmpty(in.Provider, t.Provider)
-	if provider != "claude" && provider != "codex" {
-		return nil, errors.New("provider must be claude or codex")
+	if !agent.KnownProvider(provider) {
+		return nil, errors.New("provider must be one of " + strings.Join(agent.ProviderIDs(), ", "))
 	}
 	host, err := s.resolveMachine(ctx, owner, t, in.Machine)
 	if err != nil {

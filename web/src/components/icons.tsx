@@ -118,6 +118,10 @@ const P: Record<string, string> = {
   // provider marks: Claude's burst, Codex's prompt-in-a-hexagon
   claude: 'M12 2.5v19M2.5 12h19M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7M7.9 3.4l8.2 17.2M16.1 3.4l-8.2 17.2M3.4 7.9l17.2 8.2M20.6 7.9L3.4 16.1',
   codex: 'M12 2.5l8.2 4.75v9.5L12 21.5l-8.2-4.75v-9.5zM8.8 9.6l2.7 2.4-2.7 2.4M12.8 14.6h2.6',
+  // ACP agents: a four-point star, a code box, a Q
+  gemini: 'M12 2.5C12.6 7.6 16.4 11.4 21.5 12 16.4 12.6 12.6 16.4 12 21.5 11.4 16.4 7.6 12.6 2.5 12 7.6 11.4 11.4 7.6 12 2.5z',
+  opencode: 'M4 4h16v16H4zM10 9l-3 3 3 3M14 9l3 3-3 3',
+  qwen: 'M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zM14 14l5.5 5.5',
   cpu: 'M4 4h16v16H4zM9 9h6v6H9zM9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3',
   grip: 'M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01',
   chart: 'M18 20V10M12 20V4M6 20v-6',

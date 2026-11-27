@@ -314,10 +314,8 @@ func (s *Server) handleSaveRecipe(w http.ResponseWriter, r *http.Request) {
 
 // checkAgentFields validates the optional provider/mode/folder of a recipe or schedule.
 func (s *Server) checkAgentFields(ctx context.Context, provider, mode, cwd *string) error {
-	switch *provider {
-	case "", "claude", "codex":
-	default:
-		return badRequest("provider must be claude or codex")
+	if *provider != "" && !agent.KnownProvider(*provider) {
+		return badRequest("unknown agent " + *provider)
 	}
 	if *mode != "" && *provider != "" && !validMode(*provider, *mode) {
 		return badRequest("unknown mode " + *mode)

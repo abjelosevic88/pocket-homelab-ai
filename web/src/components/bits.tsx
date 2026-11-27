@@ -1,11 +1,11 @@
 // Small shared pieces: provider chips, status dots, thread meta.
 import { useEffect, useState } from 'react'
 import type { ProviderId, Thread } from '../lib/types'
-import { providerName } from '../lib/format'
+import { providerName, shortProviderName } from '../lib/format'
 import { Icon } from './icons'
 
 export function ProviderBadge({ provider, size = '' }: { provider: ProviderId | string; size?: '' | 'xs' }) {
-  return <span className={`prov prov-${provider} ${size}`}>{size === 'xs' ? (provider === 'codex' ? 'Codex' : 'Claude') : providerName(provider)}</span>
+  return <span className={`prov prov-${provider} ${size}`}>{size === 'xs' ? shortProviderName(provider) : providerName(provider)}</span>
 }
 
 export function ThreadStatus({ t }: { t: Pick<Thread, 'status' | 'unread' | 'pending'> }) {

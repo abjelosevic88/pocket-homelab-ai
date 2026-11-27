@@ -177,6 +177,10 @@ func (s *Server) providersFor(ctx context.Context, u *store.User, refresh bool) 
 	out := make([]agent.Provider, len(list))
 	for i, p := range list {
 		p.Account = ""
+		if ag, ok := agent.ACPAgentByID(p.ID); ok && p.Available {
+			// it runs on the owner's keys and sign-in
+			p.Available, p.Error = false, ag.Name+" runs on the server owner's keys, so only they can use it here."
+		}
 		out[i] = p
 	}
 	return out

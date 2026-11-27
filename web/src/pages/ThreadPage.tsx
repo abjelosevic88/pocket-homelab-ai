@@ -3,7 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { api, ApiError, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
-import { fmtCost, isTouch, providerName, shortPath, threadTitle } from '../lib/format'
+import { fmtCost, isTouch, providerName, shortPath, shortProviderName, threadTitle } from '../lib/format'
 import { openInParent, parentTabs } from '../lib/embed'
 import { openSSE } from '../lib/sse'
 import type { Item, Thread, ThreadDetail, Upload } from '../lib/types'
@@ -579,7 +579,7 @@ export default function ThreadPage({ onMenu, threadId, embedded, reading }: { on
           {(running || t.status === 'waiting' || !!t.subagents?.length || !!t.background?.length) && items ? <RunBar t={t} items={items} reconnecting={streamDown} />
             : <div className="sub-dock">{t.provider === 'claude' && t.provider_session_id && <SubagentsChip t={t} />}<AgentsChip t={t} /><HeartbeatsChip t={t} rev={hbRev} owner={owner} /></div>}
           <SideQuestions list={side.list} onDismiss={side.dismiss} onRetry={q => { void side.ask(q.question) }} />
-          <QueueStrip threadId={id} queued={queuedItems} agent={t.provider === 'codex' ? 'Codex' : 'Claude'} onClearAll={canSend ? clearQueue : undefined} onEdit={canSend ? async it => {
+          <QueueStrip threadId={id} queued={queuedItems} agent={shortProviderName(t.provider)} onClearAll={canSend ? clearQueue : undefined} onEdit={canSend ? async it => {
             const draft = await api.post<{ text: string; uploads: Upload[] }>(`${V1}/threads/${id}/queue/${encodeURIComponent(it.key)}/edit`)
             composer.current?.restoreDraft(draft.text, draft.uploads)
             setItems(list => list?.filter(x => x.key !== it.key) ?? null)

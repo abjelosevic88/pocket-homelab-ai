@@ -154,10 +154,13 @@ func (s *Server) changeProvider(ctx context.Context, t *store.Thread, provider s
 // login are that CLI's own, so they come from the person's defaults for it
 // (as for a new chat), not from the original. Folder, worktree and machine stay.
 func (s *Server) providerSettings(ctx context.Context, n *store.Thread, provider string) error {
-	if provider != "claude" && provider != "codex" {
-		return badRequest("provider must be claude or codex")
+	if !agent.KnownProvider(provider) {
+		return badRequest("unknown agent " + provider)
 	}
 	u := userFrom(ctx)
+	if agent.IsACP(provider) && n.HostID != 0 {
+		return badRequest(providerName(provider) + " runs on this server only, not on other machines (yet)")
+	}
 	prov, ok := s.agentProvider(ctx, provider)
 	if n.HostID != 0 {
 		host, err := s.checkHostUse(ctx, u, n.HostID)
@@ -171,10 +174,7 @@ func (s *Server) providerSettings(ctx context.Context, n *store.Thread, provider
 		return badRequest(firstNonEmpty(prov.Error, provider+" is not available on this server"))
 	}
 	st, _ := s.store.GetSettings(ctx, n.UserID)
-	def := st.Claude
-	if provider == "codex" {
-		def = st.Codex
-	}
+	def := st.For(provider)
 	n.Provider, n.Model = provider, firstNonEmpty(def.Model, prov.DefaultModel)
 	n.Effort, n.Mode = firstNonEmpty(def.Effort, prov.DefaultEffort), firstNonEmpty(def.Mode, prov.DefaultMode)
 	if !validMode(provider, n.Mode) {

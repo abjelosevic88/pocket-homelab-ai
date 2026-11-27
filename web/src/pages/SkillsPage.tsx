@@ -4,26 +4,26 @@
 import { useState, type ReactNode } from 'react'
 import { api, qs, V1 } from '../lib/api'
 import { providerName } from '../lib/format'
-import type { ProviderId, Skill } from '../lib/types'
+import type { CliId, Skill } from '../lib/types'
 import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
 import { Confirm, copyText, Empty, errMsg, Field, Loading, MenuButton, Modal, Segmented, Spinner, Switch, noGrammarly, useAsync, useToast, type MenuItem } from '../components/ui'
 
 type OwnSkill = { name: string; description: string; body?: string; files: number; path: string; sum: string }
 type HostCopy = { home: string; sum: string }
-type HostSkills = { id: number; name: string; error?: string; homes: Partial<Record<ProviderId, string[]>>; skills: Record<ProviderId, Record<string, HostCopy[]>> }
+type HostSkills = { id: number; name: string; error?: string; homes: Partial<Record<CliId, string[]>>; skills: Record<CliId, Record<string, HostCopy[]>> }
 /** How a skill stands on one machine: per CLI it has here and there, all its login folders hold this copy, some do not, or none. */
-type OnHost = { state: 'on' | 'differs' | 'missing' | 'none' | 'error'; todo: ProviderId[]; title: string }
+type OnHost = { state: 'on' | 'differs' | 'missing' | 'none' | 'error'; todo: CliId[]; title: string }
 type OwnList = { dir: string; skills: OwnSkill[]; error?: string }
 type Row = { name: string; claude?: OwnSkill; codex?: OwnSkill }
-type Draft = { name: string; description: string; body: string; files: number; provider?: ProviderId; to: Record<ProviderId, boolean> }
-type Show = 'all' | 'both' | ProviderId
+type Draft = { name: string; description: string; body: string; files: number; provider?: CliId; to: Record<CliId, boolean> }
+type Show = 'all' | 'both' | CliId
 
-const PROVIDERS: ProviderId[] = ['claude', 'codex']
-const other = (p: ProviderId): ProviderId => (p === 'claude' ? 'codex' : 'claude')
-const invoke = (p: ProviderId, name: string) => (p === 'codex' ? '$' : '/') + name
+const PROVIDERS: CliId[] = ['claude', 'codex']
+const other = (p: CliId): CliId => (p === 'claude' ? 'codex' : 'claude')
+const invoke = (p: CliId, name: string) => (p === 'codex' ? '$' : '/') + name
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+/, '').slice(0, 64)
-const both = (v: boolean) => ({ claude: v, codex: v }) as Record<ProviderId, boolean>
+const both = (v: boolean) => ({ claude: v, codex: v }) as Record<CliId, boolean>
 
 export default function SkillsPage({ onMenu }: { onMenu?: () => void }) {
   const { toast } = useToast()
@@ -31,14 +31,14 @@ export default function SkillsPage({ onMenu }: { onMenu?: () => void }) {
   const [q, setQ] = useState('')
   const [refresh, setRefresh] = useState(0)
   const [edit, setEdit] = useState<Draft | null>(null)
-  const [del, setDel] = useState<{ name: string; provider: ProviderId } | null>(null)
+  const [del, setDel] = useState<{ name: string; provider: CliId } | null>(null)
   const [busy, setBusy] = useState(false)
   // every login shares one skills folder (server: skills_share.go), so no login to pick
-  const scope = (p: ProviderId) => qs({ provider: p })
+  const scope = (p: CliId) => qs({ provider: p })
   const own = useAsync(async () => {
     const [claude, codex] = await Promise.all(PROVIDERS.map(p => api.get<OwnList>(`${V1}/skills/own${scope(p)}`)
       .catch((e: unknown): OwnList => ({ dir: '', skills: [], error: errMsg(e) }))))
-    return { claude, codex } as Record<ProviderId, OwnList>
+    return { claude, codex } as Record<CliId, OwnList>
   }, [refresh])
   const cli = useAsync(() => Promise.all(PROVIDERS.map(p => api.get<{ skills: Skill[]; error?: string }>(`${V1}/skills${qs({ provider: p, refresh: refresh ? 1 : undefined })}`)
     .then(r => ({ provider: p, skills: r.skills || [], error: r.error })).catch((e: unknown) => ({ provider: p, skills: [] as Skill[], error: errMsg(e) })))), [refresh])
@@ -62,13 +62,13 @@ export default function SkillsPage({ onMenu }: { onMenu?: () => void }) {
 
   const reload = () => setRefresh(n => n + 1)
   const copy = async (text: string) => { if (await copyText(text)) toast(`Copied ${text}`); else toast('Could not copy', 'err') }
-  const open = async (name: string, p: ProviderId) => {
+  const open = async (name: string, p: CliId) => {
     try {
       const full = await api.get<OwnSkill>(`${V1}/skills/own/${name}${scope(p)}`)
       setEdit({ name: full.name, description: full.description, body: full.body || '', files: full.files, provider: p, to: both(false) })
     } catch (e) { toast(errMsg(e), 'err') }
   }
-  const send = async (name: string, from: ProviderId, opts: { move?: boolean; replace?: boolean }) => {
+  const send = async (name: string, from: CliId, opts: { move?: boolean; replace?: boolean }) => {
     if (busy) return
     const to = other(from)
     setBusy(true)
@@ -80,7 +80,7 @@ export default function SkillsPage({ onMenu }: { onMenu?: () => void }) {
   }
   const onHost = (r: Row, h: HostSkills): OnHost => {
     if (h.error) return { state: 'error', todo: [], title: `${h.name}: ${h.error}` }
-    const todo: ProviderId[] = []
+    const todo: CliId[] = []
     const lines: string[] = []
     let have = 0, wanted = 0
     for (const p of PROVIDERS) {
@@ -101,7 +101,7 @@ export default function SkillsPage({ onMenu }: { onMenu?: () => void }) {
     if (todo.length === 0) return { state: 'on', todo, title }
     return { state: have ? 'differs' : 'missing', todo, title }
   }
-  const toHost = async (r: Row, h: HostSkills, todo: ProviderId[], update: boolean) => {
+  const toHost = async (r: Row, h: HostSkills, todo: CliId[], update: boolean) => {
     if (copying) return
     setCopying(`${r.name}|${h.id}`)
     try {
@@ -148,7 +148,7 @@ export default function SkillsPage({ onMenu }: { onMenu?: () => void }) {
   }
 
   const hosts = machines.data || []
-  const where = (p: ProviderId) => own.data?.[p].dir
+  const where = (p: CliId) => own.data?.[p].dir
   const legend = <span className="skills-legend muted xsmall">
     <span><Icon name="check" size={12} /> there</span><span><Icon name="plus" size={12} /> copy there</span><span className="warn"><Icon name="refresh" size={12} /> different copy, click to update</span>
   </span>
@@ -250,7 +250,7 @@ function origin(s: Skill): string {
   return i > 0 ? s.name.slice(0, i) : ''
 }
 
-function SkillEditor({ draft, scope, onClose, onSaved }: { draft: Draft; scope: (p: ProviderId) => string; onClose: () => void; onSaved: () => void }) {
+function SkillEditor({ draft, scope, onClose, onSaved }: { draft: Draft; scope: (p: CliId) => string; onClose: () => void; onSaved: () => void }) {
   const [value, setValue] = useState(draft)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
