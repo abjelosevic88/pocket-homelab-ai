@@ -165,19 +165,22 @@ function Elapsed({ since }: { since?: string }) {
 }
 
 /** One participant's card in a step: its answer, what it is writing, or why it dropped out. */
-function SeatCard({ seat, text, live, current, onOpen }: { seat: PanelSeat; text?: string; live?: boolean; current: boolean; onOpen: () => void }) {
+function SeatCard({ seat, text, live, current, onOpen, wide, onStep, place }: { seat: PanelSeat; text?: string; live?: boolean; current: boolean; onOpen: () => void
+  /** the reading pane: one answer at full width, with previous / next */
+  wide?: boolean; onStep?: (by: number) => void; place?: string }) {
   const [copied, setCopied] = useState(false)
   const failed = !text && (seat.state === 'failed' || seat.state === 'skipped')
   const working = current && seat.state === 'working'
   const asks = seat.activity === 'waiting_for_person'
   return (
-    <article className={`pn-answer ${failed ? 'failed' : ''} ${working ? 'working' : ''}`}>
+    <article className={`pn-answer ${wide ? 'wide' : ''} ${failed ? 'failed' : ''} ${working ? 'working' : ''}`}>
       <header className="pn-answer-h">
         <span className={`pn-letter ${seat.chair ? 'chair' : ''}`}>{seat.chair ? <Icon name="edit" size={12} /> : seat.label}</span>
         <div className="grow" style={{ minWidth: 0 }}>
           <div className="pn-who"><Icon name={seat.provider} size={14} className={`prov-glyph ${seat.provider}`} /><span className="ellipsis">{providerName(seat.provider)}{seat.model ? ` · ${seat.model}` : ''}</span></div>
           <div className="pn-sub muted xsmall">{[seat.role, seat.machine].filter(Boolean).join(' · ')}</div>
         </div>
+        {wide && onStep && <span className="pn-pager"><button type="button" className="btn ghost icon-only xs" aria-label="Previous participant" title="Previous (←)" onClick={() => onStep(-1)}><Icon name="chevron-left" size={15} /></button><span className="tnum muted xsmall">{place}</span><button type="button" className="btn ghost icon-only xs" aria-label="Next participant" title="Next (→)" onClick={() => onStep(1)}><Icon name="chevron-right" size={15} /></button></span>}
         {text && !live && <button type="button" className="btn ghost icon-only xs" title={copied ? 'Copied' : 'Copy'} aria-label="Copy this answer" onClick={async () => { if (await copyText(text)) { setCopied(true); setTimeout(() => setCopied(false), 1500) } }}><Icon name={copied ? 'check' : 'copy'} size={14} /></button>}
         {seat.thread_id && <button type="button" className="btn ghost icon-only xs" title="Open its conversation in a tab: see how it works, or ask it more" aria-label="Open its conversation" onClick={onOpen}><Icon name="external" size={14} /></button>}
       </header>
@@ -198,6 +201,41 @@ function SeatCard({ seat, text, live, current, onOpen }: { seat: PanelSeat; text
   )
 }
 
+/** The start of an answer in plain words, for a participant's small card. */
+function gist(text: string, max = 170): string {
+  const plain = text.replace(/```[\s\S]*?```/g, ' ').split('\n').map(l => l.replace(/^\s*(#{1,6}|>|[-*+]|\d+[.)])\s+/, '').replace(/[*_`~]/g, '').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').trim()).filter(Boolean).join(' ')
+  return plain.length > max ? plain.slice(0, max - 1).trimEnd() + '…' : plain
+}
+const words = (text: string) => text.trim() ? text.trim().split(/\s+/).length : 0
+
+/** One participant as a small card in the row above the reading pane: who, how far, and how its answer begins. */
+function SeatTile({ seat, text, live, current, on, onPick }: { seat: PanelSeat; text?: string; live?: boolean; current: boolean; on: boolean; onPick: () => void }) {
+  const failed = !text && (seat.state === 'failed' || seat.state === 'skipped')
+  const working = current && seat.state === 'working'
+  const asks = seat.activity === 'waiting_for_person'
+  return (
+    <button type="button" role="tab" aria-selected={on} className={`pn-tile ${on ? 'on' : ''} ${failed ? 'failed' : ''} ${working ? 'working' : ''}`} onClick={onPick}>
+      <span className="pn-tile-h">
+        <span className="pn-letter">{seat.label}</span>
+        <Icon name={seat.provider} size={14} className={`prov-glyph ${seat.provider}`} />
+        <span className="pn-tile-name ellipsis">{providerName(seat.provider)}{seat.model ? ` · ${seat.model}` : ''}</span>
+        {working ? (asks ? <Icon name="alert" size={13} className="pn-tile-warn" /> : <Spinner size={11} />) : text ? <Icon name="check" size={13} className="pn-tile-ok" /> : failed ? <Icon name="x" size={13} className="pn-tile-bad" /> : null}
+      </span>
+      {seat.role && <span className="pn-tile-role ellipsis">{seat.role}</span>}
+      <span className="pn-tile-gist">
+        {working ? <span className="pn-tile-doing">{asks ? 'It asked something — open it to answer' : seat.doing || (seat.activity === 'starting' ? 'Starting…' : text ? 'Writing…' : 'Thinking…')}</span>
+          : text ? gist(text)
+          : failed ? seat.error || 'Dropped out'
+          : current ? ACTIVITY[seat.state] || '' : 'No answer in this step'}
+      </span>
+      <span className="pn-tile-foot">
+        {working ? <><Elapsed since={seat.since} />{!!seat.steps && <span>{seat.steps} {seat.steps === 1 ? 'step' : 'steps'}</span>}{live && text ? <span>{words(text)} words so far</span> : null}</>
+          : text ? <span>{words(text)} words</span> : <span>&nbsp;</span>}
+      </span>
+    </button>
+  )
+}
+
 export function PanelPage({ onMenu }: { onMenu?: () => void }) {
   const { id = '' } = useParams()
   const { toast } = useToast()
@@ -207,6 +245,9 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
   const [err, setErr] = useState('')
   const [tab, setTab] = useState<number | null>(null)
   const [asked, setAsked] = useState(false)
+  // how the answers of a step are read: one at a time in a wide pane, or all side by side
+  const [view, setView] = useState<'read' | 'side'>(() => localStorage.getItem('pai-panel-view') === 'side' ? 'side' : 'read')
+  const [sel, setSel] = useState(0) // the participant in the reading pane (its seat id; 0 = pick for me)
   const [del, setDel] = useState(false)
   const [ren, setRen] = useState(false)
   const [cont, setCont] = useState<{ text: string; provider: ProviderId | '' } | null>(null)
@@ -330,27 +371,44 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
                   {r.name}{running && p.stage === r.i ? <Spinner size={9} /> : n > 0 && <span className="muted tnum">{n}</span>}
                 </button>
               })}
+              {seats.length > 1 && stages[shown]?.who !== 'chair' && <span className="pn-view">
+                <button type="button" className={`btn ghost icon-only xs ${view === 'read' ? 'on' : ''}`} aria-pressed={view === 'read'} title="One answer at a time, wide" aria-label="One answer at a time" onClick={() => { setView('read'); localStorage.setItem('pai-panel-view', 'read') }}><Icon name="sidebar" size={15} /></button>
+                <button type="button" className={`btn ghost icon-only xs ${view === 'side' ? 'on' : ''}`} aria-pressed={view === 'side'} title="All answers side by side" aria-label="All answers side by side" onClick={() => { setView('side'); localStorage.setItem('pai-panel-view', 'side') }}><Icon name="split-right" size={15} /></button>
+              </span>}
             </div>
             {stages[shown]?.who === 'chair' ? (
-              // a step of the summary writer in between (a rewrite): one card
-              <div className="pn-cols n1">
-                {chair && (() => {
-                  const a = answers.find(x => x.stage === shown && chairs.some(c => c.id === x.seat_id))
-                  const current = running && p.stage === shown
-                  const live = current && !a && chair.state === 'working' ? chair.live : ''
-                  return <SeatCard seat={chair} text={a?.text || live || undefined} live={!!live} current={current} onOpen={() => openThread(chair.thread_id)} />
-                })()}
-              </div>
-            ) : (
-              <div className={`pn-cols n${Math.min(seats.length, 4)}`}>
-                {seats.map(s => {
-                  const a = answers.find(x => x.stage === shown && x.seat_id === s.id)
-                  const current = running && p.stage === shown
-                  const live = current && !a && s.state === 'working' ? s.live : ''
-                  return <SeatCard key={s.id} seat={s} text={a?.text || live || undefined} live={!!live} current={current} onOpen={() => openThread(s.thread_id)} />
-                })}
-              </div>
-            )}
+              // a step of the summary writer in between (a rewrite): one pane
+              chair && (() => {
+                const a = answers.find(x => x.stage === shown && chairs.some(c => c.id === x.seat_id))
+                const current = running && p.stage === shown
+                const live = current && !a && chair.state === 'working' ? chair.live : ''
+                return <SeatCard wide seat={chair} text={a?.text || live || undefined} live={!!live} current={current} onOpen={() => openThread(chair.thread_id)} />
+              })()
+            ) : (() => {
+              const current = running && p.stage === shown
+              const rows = seats.map(s => {
+                const a = answers.find(x => x.stage === shown && x.seat_id === s.id)
+                const live = current && !a && s.state === 'working' ? s.live || '' : ''
+                return { s, text: a?.text || live || undefined, live: !!live }
+              })
+              // in the pane: the one picked, else the first that has something to read
+              const at = Math.max(0, rows.findIndex(r => r.s.id === sel) >= 0 ? rows.findIndex(r => r.s.id === sel) : rows.findIndex(r => r.text))
+              const cur = rows[at]
+              const step = (by: number) => setSel(rows[(at + by + rows.length) % rows.length].s.id)
+              if (view === 'side' || rows.length === 1) return (
+                <div className={`pn-cols n${Math.min(rows.length, 4)}`}>
+                  {rows.map(r => <SeatCard key={r.s.id} wide={rows.length === 1} seat={r.s} text={r.text} live={r.live} current={current} onOpen={() => openThread(r.s.thread_id)} />)}
+                </div>
+              )
+              return (
+                <div className="pn-read" onKeyDown={e => { if (e.key === 'ArrowRight') { e.preventDefault(); step(1) } else if (e.key === 'ArrowLeft') { e.preventDefault(); step(-1) } }}>
+                  <div className="pn-tiles" role="tablist" aria-label="Participants">
+                    {rows.map(r => <SeatTile key={r.s.id} seat={r.s} text={r.text} live={r.live} current={current} on={r.s.id === cur.s.id} onPick={() => setSel(r.s.id)} />)}
+                  </div>
+                  {cur && <SeatCard wide key={cur.s.id} seat={cur.s} text={cur.text} live={cur.live} current={current} onOpen={() => openThread(cur.s.thread_id)} onStep={rows.length > 1 ? step : undefined} place={`${at + 1} / ${rows.length}`} />}
+                </div>
+              )
+            })()}
           </section>}
         </div>
       </div>

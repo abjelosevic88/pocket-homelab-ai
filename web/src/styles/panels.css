@@ -82,7 +82,7 @@
 @media (max-width: 760px) { .pn-defaults-label { display: none; } }
 
 /* ----- one panel ----- */
-.page-inner.pn-page { max-width: 1320px; display: grid; gap: 14px; align-content: start; }
+.page-inner.pn-page { max-width: 1320px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-content: start; }
 .pn-head-sub { display: block; max-width: 100%; font: inherit; color: inherit; text-align: left; background: none; border: 0; padding: 0; margin: 0; cursor: text; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pn-head-sub:hover { color: var(--text); text-decoration: underline dotted; text-underline-offset: 3px; }
 .pn-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
@@ -103,12 +103,38 @@
 .pn-outcome-h b { color: var(--text); font-size: 14.5px; }
 .pn-by { display: inline-flex; align-items: center; gap: 4px; }
 .pn-outcome-foot { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
-.pn-rounds { display: grid; gap: 10px; min-width: 0; }
+.pn-rounds { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; }
 .pn-tabs { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--border); }
 .pn-tabs::-webkit-scrollbar { display: none; }
 .pn-tab { display: inline-flex; align-items: center; gap: 7px; flex: none; font: inherit; font-size: 13px; font-weight: 550; color: var(--muted); background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 10px; margin-bottom: -1px; cursor: pointer; }
 .pn-tab.on { color: var(--text); border-bottom-color: var(--accent); }
 .pn-tab:disabled { opacity: .45; cursor: default; }
+/* reading a step: every participant as a small card, the picked one's answer wide below */
+.pn-view { display: inline-flex; gap: 2px; margin-left: auto; align-self: center; flex: none; }
+.pn-view .btn.on { background: var(--surface-2); color: var(--text); }
+.pn-read { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
+.pn-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+.pn-tile { display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 11px 13px 10px; text-align: left; font: inherit; color: inherit; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; cursor: pointer; transition: border-color .12s, box-shadow .12s, background .12s; }
+.pn-tile:hover { background: var(--surface-2); }
+.pn-tile.on { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); background: var(--surface); }
+.pn-tile.failed { border-style: dashed; }
+.pn-tile-h { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.pn-tile-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 650; }
+.pn-tile-ok { color: var(--success); } .pn-tile-bad { color: var(--danger); } .pn-tile-warn { color: var(--warning); }
+.pn-tile-role { font-size: 11.5px; color: var(--muted); margin-top: -2px; padding-left: 29px; }
+.pn-tile-gist { flex: 1; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; min-height: 3.9em; font-size: 12.5px; line-height: 1.3; color: var(--text-2); overflow-wrap: anywhere; }
+.pn-tile.failed .pn-tile-gist { color: var(--danger); }
+.pn-tile-doing { color: var(--accent-ink); font-weight: 550; }
+.pn-tile-foot { display: flex; gap: 10px; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.pn-pager { display: inline-flex; align-items: center; gap: 2px; margin-right: 4px; }
+/* the reading pane: one answer with room, text at a comfortable size and line length */
+.pn-answer.wide .pn-answer-h { padding: 12px 14px 12px 16px; position: static; }
+.pn-answer.wide .pn-who { font-size: 14px; }
+.pn-answer.wide .pn-answer-body { padding: 20px 24px 26px; }
+.pn-answer.wide .pn-answer-body > .md, .pn-outcome > .md { max-width: 840px; font-size: 15px; line-height: 1.65; overflow-wrap: anywhere; }
+.pn-answer.wide .pn-doing { padding: 9px 16px; font-size: 12.5px; }
+.pn-answer.wide .pn-skel { max-width: 840px; }
+
 .pn-cols { display: grid; gap: 12px; align-items: start; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); min-width: 0; }
 .pn-cols.n1 { grid-template-columns: minmax(0, 760px); }
 .pn-answer { display: grid; align-content: start; min-width: 0; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
@@ -151,6 +177,13 @@
   .pn-seat > .pn-seat-picks { order: 1; flex: 1 1 0; }
   .pn-seat > .btn { order: 2; }
   .pn-seat > .pn-quota { order: 3; flex: 0 0 100%; padding-left: 32px; }
+  /* the small cards scroll sideways; the answer below has the whole width */
+  .pn-tiles { display: flex; overflow-x: auto; scroll-snap-type: x proximity; gap: 8px; margin: 0 -12px; padding: 3px 12px 6px; scrollbar-width: none; }
+  .pn-tiles::-webkit-scrollbar { display: none; }
+  .pn-tile { flex: 0 0 62%; scroll-snap-align: start; }
+  .pn-tile-gist { -webkit-line-clamp: 2; min-height: 2.6em; }
+  .pn-answer.wide .pn-answer-body { padding: 14px 14px 18px; }
+  .pn-answer.wide .pn-answer-body > .md, .pn-outcome > .md { font-size: 15px; }
   /* the participants side by side become cards to swipe through */
   .pn-cols, .pn-cols.n1 { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; gap: 10px; margin: 0 -12px; padding: 0 12px 6px; scrollbar-width: none; }
   .pn-cols::-webkit-scrollbar { display: none; }
