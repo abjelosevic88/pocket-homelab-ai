@@ -104,7 +104,8 @@ func (rt *engine) followClaude(ctx context.Context, threadID string) {
 			path, _ = agent.FindClaude(dir, sid)
 		}
 		if path != "" {
-			rt.claudeTick(ctx, t, path, log, &lastLine)
+			dir, _ := rt.s.accountHome(ctx, t.Provider, t.AccountID)
+			rt.claudeTick(ctx, t, path, log, &lastLine, agent.ClaudeRegistry(dir))
 			n++
 			rt.claudeElsewhere(t, path, n%3 == 1)
 		}
@@ -137,6 +138,13 @@ func (rt *engine) claudeElsewhere(t *store.Thread, path string, scan bool) {
 	}
 	p, found := procs[t.ProviderSessionID]
 	busy := found && p.Busy()
+	if busy && rt.takeBackOwn(t, p.PID) {
+		// Pocket AI's own agent under its holder, left untaken by a restart
+		// (its turn was over, only background sub-agents worked): it is
+		// taken back rather than shown as another app's, with no Stop and no
+		// way to send it anything
+		return
+	}
 	if !busy {
 		rt.setExtSubs(t.ID, nil)
 	} else if scan {
@@ -175,7 +183,10 @@ func (rt *engine) setExtSubs(threadID string, subs []agent.Subagent) {
 	}
 }
 
-func (rt *engine) claudeTick(ctx context.Context, t *store.Thread, path string, log *agent.ClaudeLog, lastLine *time.Time) {
+// registry: Claude Code keeps its process registry, so claudeElsewhere knows
+// whether another program's session works; the log only says when a turn
+// starts. Without it the log is the only guess (quiet for long = stopped).
+func (rt *engine) claudeTick(ctx context.Context, t *store.Thread, path string, log *agent.ClaudeLog, lastLine *time.Time, registry bool) {
 	unlock := rt.s.lockThreadEdit(t.ID)
 	defer unlock()
 	if !rt.sameSession(t) {
@@ -196,7 +207,11 @@ func (rt *engine) claudeTick(ctx context.Context, t *store.Thread, path string, 
 	}
 	lines, next, err := agent.ClaudeTail(path, t.LogOffset)
 	if err != nil || next == t.LogOffset {
-		if rt.isExternal(t.ID) && time.Since(*lastLine) > externalQuiet {
+		// with the registry, a quiet log is no sign of an end: waiting on
+		// background sub-agents keeps it quiet while the CLI still works
+		// (clearing it here, only for claudeElsewhere to set it again a
+		// moment later, flipped the page between working and idle every second)
+		if !registry && rt.isExternal(t.ID) && time.Since(*lastLine) > externalQuiet {
 			rt.setExternal(t.ID, false)
 		}
 		return
@@ -236,6 +251,9 @@ func (rt *engine) claudeTick(ctx context.Context, t *store.Thread, path string, 
 		}
 	}
 	rt.saveOffset(ctx, t.ID, next)
+	if registry {
+		return // claudeElsewhere says when it is over (a turn's end may leave background work)
+	}
 	if ended {
 		rt.setExternal(t.ID, false)
 	} else if len(lines) > 0 && !rt.isExternal(t.ID) {

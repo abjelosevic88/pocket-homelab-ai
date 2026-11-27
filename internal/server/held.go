@@ -355,6 +355,68 @@ func (rt *engine) adopt(id string) bool {
 	return true
 }
 
+// takeBackTry: the follower taking back a thread's own held agent.
+type takeBackTry struct {
+	running  bool
+	failedAt time.Time
+}
+
+// takeBackRetry: a take-back that failed is not tried again before this.
+var takeBackRetry = time.Minute
+
+// takeBackOwn: thread t's session works in Claude Code process pid. When
+// that is the CLI under t's own holder on this server, it is Pocket AI's
+// agent, not another app's: a restart left it alone because the holder saw
+// no turn (only background sub-agents worked, or the agent carried on by
+// itself). It is taken back in the background, and true says it is ours;
+// false (another program, or the last try failed) leaves it to be shown as
+// running elsewhere.
+func (rt *engine) takeBackOwn(t *store.Thread, pid int) bool {
+	if t.HostID != 0 || pid <= 0 || t.Provider != "claude" || os.Getenv("POCKET_HOLD") == "off" || rt.s.isReattached(t.ID) {
+		return false
+	}
+	hd, ok, err := hold.Status(t.ID)
+	if err != nil || !ok || hd.Exited || hd.Stopping || hd.PID != pid {
+		return false
+	}
+	rt.mu.Lock()
+	tb := rt.takeBack[t.ID]
+	if tb == nil {
+		tb = &takeBackTry{}
+		rt.takeBack[t.ID] = tb
+	}
+	switch {
+	case tb.running:
+		rt.mu.Unlock()
+		return true
+	case !tb.failedAt.IsZero() && time.Since(tb.failedAt) < takeBackRetry:
+		rt.mu.Unlock()
+		return false
+	}
+	tb.running = true
+	rt.mu.Unlock()
+	rt.setExternal(t.ID, false)
+	go func() {
+		id := t.ID
+		rt.s.re.waitPending(id) // the check after a restart may take it back first
+		ok := rt.get(id) != nil
+		if !ok {
+			rt.s.log.Info("own held agent looked like another app's: taking it back", "thread", id, "pid", pid)
+			rt.reconnecting.Store(id, true)
+			ok = rt.adopt(id)
+			rt.doneReconnecting(id)
+		}
+		rt.mu.Lock()
+		if ok {
+			delete(rt.takeBack, id)
+		} else {
+			tb.running, tb.failedAt = false, time.Now()
+		}
+		rt.mu.Unlock()
+	}()
+	return true
+}
+
 func stopHolder(ctx context.Context, h *store.Host, bin, slot string) {
 	if h == nil {
 		_ = hold.Stop(slot)

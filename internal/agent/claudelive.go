@@ -50,6 +50,13 @@ func ClaudeProcs(claudeHome string) (procs map[string]ClaudeProc, ok bool) {
 	return procs, true
 }
 
+// ClaudeRegistry reports whether this Claude Code keeps its process
+// registry (claudeHome/sessions), which ClaudeProcs reads.
+func ClaudeRegistry(claudeHome string) bool {
+	fi, err := os.Stat(filepath.Join(claudeHome, "sessions"))
+	return err == nil && fi.IsDir()
+}
+
 // ClaudeProcByPID reads one process's registration, if it still runs.
 func ClaudeProcByPID(claudeHome string, pid int) (ClaudeProc, bool) {
 	b, err := ReadConfined(filepath.Join(claudeHome, "sessions", strconv.Itoa(pid)+".json"))

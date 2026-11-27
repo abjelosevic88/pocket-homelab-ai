@@ -403,7 +403,7 @@ func (s *Server) takeBackUnmarked(ctx context.Context, cut []string) {
 	go func() {
 		for _, id := range ids {
 			hd, ok, err := hold.Status(id)
-			if err == nil && ok && hd.Busy && !hd.Exited && !hd.Stopping && s.rt.get(id) == nil && s.re.firstCheck(id) {
+			if err == nil && ok && (hd.Busy || s.claudeBusy(ctx, id, hd.PID)) && !hd.Exited && !hd.Stopping && s.rt.get(id) == nil && s.re.firstCheck(id) {
 				s.rt.reconnecting.Store(id, true)
 				_ = s.rt.adopt(id)
 				s.rt.doneReconnecting(id)
@@ -411,6 +411,23 @@ func (s *Server) takeBackUnmarked(ctx context.Context, cut []string) {
 			s.re.resolve(id)
 		}
 	}()
+}
+
+// claudeBusy: Claude Code says its process pid, on thread id's session,
+// works. The holder only sees turns that a message started, so an agent that
+// carries on by itself (a background task ended) or only waits for its
+// background sub-agents looks idle to it, yet is working.
+func (s *Server) claudeBusy(ctx context.Context, id string, pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	t, err := s.store.GetThreadAny(ctx, id)
+	if err != nil || t.Provider != "claude" || t.ProviderSessionID == "" {
+		return false
+	}
+	dir, _ := s.accountHome(ctx, t.Provider, t.AccountID)
+	p, ok := agent.ClaudeProcByPID(dir, pid)
+	return ok && p.SessionID == t.ProviderSessionID && p.Busy()
 }
 
 // sweepCandidates: the Claude conversations on other machines active in

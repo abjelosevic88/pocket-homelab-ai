@@ -48,6 +48,7 @@ type engine struct {
 	external  map[string]bool                      // thread id → running somewhere else
 	extSubs   map[string][]agent.Subagent          // thread id → sub-agents of a session run elsewhere
 	extSubsAt map[string]time.Time                 // when extSubs last went out
+	takeBack  map[string]*takeBackTry              // thread id → its own held agent being taken back by the follower (held.go)
 	active    []agent.ActiveSession                // last scan of the CLIs' session files (running.go)
 
 	turnBy map[string]int64  // thread id → whose message the running turn answers
@@ -126,7 +127,7 @@ type queued struct {
 func newRuntime(s *Server) *engine {
 	return &engine{s: s, runs: map[string]*run{}, watchers: map[string]map[chan sseEvent]int64{},
 		userSubs: map[int64]map[chan sseEvent]struct{}{}, limits: map[string]*provLimits{}, starting: map[string]chan struct{}{},
-		followers: map[string]*follower{}, turnBy: map[string]int64{}, external: map[string]bool{}, extSubs: map[string][]agent.Subagent{}, extSubsAt: map[string]time.Time{}, rc: map[string]*rcState{}, parkWatch: map[int64]bool{}}
+		followers: map[string]*follower{}, turnBy: map[string]int64{}, external: map[string]bool{}, extSubs: map[string][]agent.Subagent{}, extSubsAt: map[string]time.Time{}, takeBack: map[string]*takeBackTry{}, rc: map[string]*rcState{}, parkWatch: map[int64]bool{}}
 }
 
 func (rt *engine) start(ctx context.Context) {
