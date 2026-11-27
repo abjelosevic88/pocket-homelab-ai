@@ -183,6 +183,8 @@ input, textarea {
   padding: 0 10px; height: 36px; outline: none; width: 100%; transition: border-color .12s, box-shadow .12s;
 }
 textarea { padding: 9px 10px; height: auto; resize: vertical; min-height: 72px; line-height: 1.5; }
+/* text in a box wraps, so it never scrolls sideways (WebKit with always-on scrollbars showed a bar under an empty box with a placeholder) */
+textarea:not([wrap="off"]) { overflow-x: hidden; }
 input::placeholder, textarea::placeholder { color: var(--faint); }
 input:hover, textarea:hover { border-color: var(--border-strong); }
 input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
