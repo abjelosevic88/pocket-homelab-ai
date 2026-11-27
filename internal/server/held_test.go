@@ -41,13 +41,18 @@ done`
 // A redeploy in the middle of a turn: the old Pocket AI lets go of the
 // agent, the new one takes it back at boot, and the turn finishes as if
 // nothing happened.
-func TestRestartTakesBackRunningAgent(t *testing.T) { restartTakeBack(t, false) }
+func TestRestartTakesBackRunningAgent(t *testing.T) { restartTakeBack(t, false, false) }
+
+// A message that arrived while the old Pocket AI was already shutting down:
+// the agent works on it, but the thread was never marked as working. The new
+// one still takes it back, instead of showing it as run by another app.
+func TestRestartTakesBackUnmarkedAgent(t *testing.T) { restartTakeBack(t, false, true) }
 
 // The turn ends while Pocket AI is down: the next one still shows its last
 // reply and its end (it replays the whole last turn).
-func TestRestartTakesBackFinishedTurn(t *testing.T) { restartTakeBack(t, true) }
+func TestRestartTakesBackFinishedTurn(t *testing.T) { restartTakeBack(t, true, false) }
 
-func restartTakeBack(t *testing.T, finishWhileDown bool) {
+func restartTakeBack(t *testing.T, finishWhileDown, unmarked bool) {
 	if _, _, ok := hold.Binary(runtime.GOOS, runtime.GOARCH); !ok {
 		t.Skip("pocket-hold not built in (go generate ./internal/hold)")
 	}
@@ -137,6 +142,11 @@ func restartTakeBack(t *testing.T, finishWhileDown bool) {
 	if got, _ := st.GetThreadAny(context.Background(), th.ID); got.Status != "running" {
 		t.Fatalf("status after letting go: %s", got.Status)
 	}
+	if unmarked {
+		if _, err := st.DB.Exec(`UPDATE threads SET status = 'idle' WHERE id = ?`, th.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if finishWhileDown {
 		waitFor("the turn to end unseen", func() bool { st, ok, _ := hold.Status(th.ID); return ok && !st.Busy })
 	}
@@ -157,7 +167,7 @@ func restartTakeBack(t *testing.T, finishWhileDown bool) {
 			case "thread":
 				tt := ev.Data.(*store.Thread)
 				sawReconnecting = sawReconnecting || tt.Reconnecting
-				if tt.Status == "idle" && !ended && !finishWhileDown {
+				if tt.Status == "idle" && !ended && !finishWhileDown && !unmarked {
 					flicker = append(flicker, "idle mid-turn")
 				}
 			case "item":
@@ -189,7 +199,7 @@ func restartTakeBack(t *testing.T, finishWhileDown bool) {
 	s2.rt.unsubscribeThread(th.ID, seen)
 	close(seen)
 	<-watched
-	if len(flicker) > 0 || (!sawReconnecting && !finishWhileDown) {
+	if len(flicker) > 0 || (!sawReconnecting && !finishWhileDown && !unmarked) {
 		t.Fatalf("flicker while taking back: %v (reconnecting shown: %v)", flicker, sawReconnecting)
 	}
 	// and it goes on as usual

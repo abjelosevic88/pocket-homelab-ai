@@ -45,7 +45,9 @@ The person's words: ` + firstNonEmpty(arg, "(none given — improve the plan thi
 const panelToolNote = " If pocket_panel_start is not among your tools, call it through pocket_call_tool (name \"pocket_panel_start\", arguments = the same fields); pocket_panel_wait likewise."
 
 // The commands Pocket AI had before panels: they still work when typed.
-var oldPanelCommands = map[string]string{"committee": "ask-all", "advisor": "second-opinion"}
+// Rewind matches a typed command to what the agent was told by its name
+// (agent.SamePrompt), so the names live there.
+var oldPanelCommands = agent.CommandAliases
 
 // panelCommand is a "/" command that starts a panel. In the web app it opens
 // the panel's start sheet (who takes part, how deep); anywhere else the agent

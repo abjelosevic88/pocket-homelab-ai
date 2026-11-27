@@ -88,17 +88,68 @@ func checkpointPromptMatches(native, visible Item) bool {
 	if actual == expected {
 		return true
 	}
+	if commandPromptMatches(actual, expected) {
+		return true
+	}
 	// Documents and saved preferences are appended at dispatch time.
 	if (expected == "" && len(visible.Images)+len(visible.Files)+visible.LogImages == 0) || !strings.HasPrefix(actual, expected) {
 		return false
 	}
-	suffix := strings.TrimSpace(strings.TrimPrefix(actual, expected))
+	return dispatchSuffix(strings.TrimPrefix(actual, expected))
+}
+
+// dispatchSuffix: what follows the person's text is only what Pocket AI adds
+// when it sends a message (documents, saved preferences), or nothing.
+func dispatchSuffix(rest string) bool {
+	rest = strings.TrimSpace(rest)
+	if rest == "" {
+		return true
+	}
 	for _, marker := range []string{"Attached document (untrusted content;", "Current user-managed preferences (context,", "No saved preferences are currently enabled.", "Saved preferences are disabled for this conversation."} {
-		if strings.HasPrefix(suffix, marker) {
+		if strings.HasPrefix(rest, marker) {
 			return true
 		}
 	}
 	return false
+}
+
+// CommandMarker opens what an agent is told for one of Pocket AI's own "/"
+// commands (/refine, /council, /handoff …): the conversation keeps what the
+// person typed, the agent's history has the instructions.
+const CommandMarker = "[Pocket AI command /"
+
+// CommandAliases: commands typed under an old name are sent under the new one.
+var CommandAliases = map[string]string{"committee": "ask-all", "advisor": "second-opinion"}
+
+// commandPromptMatches: shown is "/name words" and sent is that command's
+// instructions, ending with the same words. The instructions' own wording
+// changes between versions, so only the name and the words are compared.
+func commandPromptMatches(sent, shown string) bool {
+	if !strings.HasPrefix(shown, "/") || !strings.HasPrefix(sent, CommandMarker) {
+		return false
+	}
+	name, arg, _ := strings.Cut(shown[1:], " ")
+	if i := strings.IndexAny(name, "\n\t"); i >= 0 {
+		name, arg = name[:i], name[i+1:]+" "+arg
+	}
+	arg = strings.TrimSpace(arg)
+	head := strings.TrimPrefix(sent, CommandMarker)
+	if !strings.HasPrefix(head, name+"]") && (CommandAliases[name] == "" || !strings.HasPrefix(head, CommandAliases[name]+"]")) {
+		return false
+	}
+	if arg == "" {
+		return true
+	}
+	for rest := sent; ; {
+		i := strings.Index(rest, ": "+arg)
+		if i < 0 {
+			return false
+		}
+		rest = rest[i+2+len(arg):]
+		if dispatchSuffix(rest) {
+			return true
+		}
+	}
 }
 
 // Match in order, allowing only explicitly unconfirmed failed sends to be

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/agent"
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/hold"
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
 )
 
@@ -367,6 +369,48 @@ func (s *Server) reconnectCut(ids []string) {
 		go s.reconnect(id)
 	}
 	go s.sweepLeftovers(s.rt.ctx, sweep)
+}
+
+// takeBackUnmarked: an agent on this server that works under its holder
+// although its thread does not say so. A message sent while the last process
+// was already shutting down still reaches the agent, but that process no
+// longer records the thread as working, so the cut-off list misses it. Left
+// alone it would look like a session another app runs: no Stop, and nothing
+// can be sent until it finishes. They are taken back like the cut ones.
+func (s *Server) takeBackUnmarked(ctx context.Context, cut []string) {
+	if os.Getenv("POCKET_HOLD") == "off" {
+		return
+	}
+	skip := map[string]bool{}
+	for _, id := range cut {
+		skip[id] = true
+	}
+	rows, err := s.store.DB.QueryContext(ctx, `SELECT id FROM threads WHERE host_id = 0 AND archived = 0 AND activity_at >= ?`,
+		store.FormatTime(s.started.Add(-orphanRecent)))
+	if err != nil {
+		return
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil && !skip[id] {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	// nothing starts a process for them until their holder was asked
+	s.re.markPending(ids)
+	go func() {
+		for _, id := range ids {
+			hd, ok, err := hold.Status(id)
+			if err == nil && ok && hd.Busy && !hd.Exited && !hd.Stopping && s.rt.get(id) == nil && s.re.firstCheck(id) {
+				s.rt.reconnecting.Store(id, true)
+				_ = s.rt.adopt(id)
+				s.rt.doneReconnecting(id)
+			}
+			s.re.resolve(id)
+		}
+	}()
 }
 
 // sweepCandidates: the Claude conversations on other machines active in

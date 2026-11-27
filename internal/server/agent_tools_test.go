@@ -347,3 +347,29 @@ func TestAgentCommandsExpand(t *testing.T) {
 		t.Fatal(l)
 	}
 }
+
+// What the agent is told for a "/" command must stay recognisable as the
+// message the person typed: rewind compares the two (agent.SamePrompt).
+func TestAgentCommandsMatchForRewind(t *testing.T) {
+	names := []string{}
+	for _, c := range agentCommands {
+		names = append(names, c.name)
+	}
+	for old := range oldPanelCommands {
+		names = append(names, old)
+	}
+	prefs := "\nNo saved preferences are currently enabled. Earlier preferences may have been forgotten; do not rely on them.\n"
+	for _, name := range names {
+		for _, typed := range []string{"/" + name, "/" + name + " is this: ready?", "/" + name + "\ntwo\nlines"} {
+			sent := expandAgentCommand("claude", typed)
+			if sent == typed {
+				t.Fatalf("%q was not expanded", typed)
+			}
+			for _, s := range []string{sent, sent + prefs} {
+				if !agent.SamePrompt(agent.Item{Text: s}, agent.Item{Text: typed}) {
+					t.Fatalf("%q is not recognised in what the agent was told:\n%s", typed, s)
+				}
+			}
+		}
+	}
+}

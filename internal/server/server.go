@@ -157,6 +157,8 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	// else reconnect to the agent where it still works, continue it where it
 	// does not (reconnect.go, held.go)
 	s.reconnectCut(cut)
+	// and the ones that got a message while the last process shut down
+	s.takeBackUnmarked(ctx, cut)
 	s.repairCostsOnce(ctx)    // before any agent runs: turns recorded before 0.48.0 (cost_repair.go)
 	s.repairAllCostsOnce(ctx) // then replayed copies, and every conversation from its session file (cost_repair_full.go)
 	go s.housekeeping(ctx)
