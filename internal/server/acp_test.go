@@ -188,13 +188,13 @@ func TestAntigravityHostScripts(t *testing.T) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("%v: %s", err, out)
 	}
-	st := runLoginSh(t, home, hostStatusScript, filepath.Join(home, "no-claude"), filepath.Join(home, "no-codex"), bin, ag.TokenFile)
+	st := runLoginSh(t, home, hostStatusScript(), filepath.Join(home, "no-claude"), filepath.Join(home, "no-codex"), bin, ag.TokenFile)
 	want := "antigravity_home=" + filepath.Join(home, ".gemini") + "\nantigravity_email=first@example.test\nantigravity_home=" + dir + "\nantigravity_email=me@example.test\n"
 	if !strings.Contains(st, want) {
 		t.Fatalf("status:\n%s", st)
 	}
 	// not installed: nothing said about it
-	if st := runLoginSh(t, home, hostStatusScript, "no-claude", "no-codex", filepath.Join(home, "no-agy"), ag.TokenFile); strings.Contains(st, "antigravity") {
+	if st := runLoginSh(t, home, hostStatusScript(), "no-claude", "no-codex", filepath.Join(home, "no-agy"), ag.TokenFile); strings.Contains(st, "antigravity") {
 		t.Fatalf("status without agy:\n%s", st)
 	}
 	if v := runLoginSh(t, home, hostProbe, "no-claude", "no-codex", bin); !strings.Contains(v, "version_antigravity=1.5.18") {

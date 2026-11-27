@@ -8,6 +8,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -62,9 +63,14 @@ func hostLoginKey(id int64, provider, dir string) string {
 }
 
 // hostStatusScript prints the home folder, then for each CLI ($1 claude,
-// $2 codex) whether it is there and its login folders; for Claude with
-// `claude auth status` of each.
-const hostStatusScript = agent.RemoteHomesSh + `echo "home=$HOME"
+// $2 codex) whether it is there and its login folders: for Claude with
+// `claude auth status` of each, for Codex with what its app-server says
+// (agent.RemoteCodexSh). All of it in one ssh connection: the Codex folders
+// are asked while the Claude ones are.
+func hostStatusScript() string {
+	return agent.RemoteHomesSh + agent.RemoteCodexSh() + `echo "home=$HOME"
+codex=
+if command -v "$2" >/dev/null 2>&1; then codex=1; codex_ask "$2"; fi
 if p=$(command -v "$1" 2>/dev/null); then
   first=1
   homes claude | while IFS= read -r d; do
@@ -76,9 +82,7 @@ if p=$(command -v "$1" 2>/dev/null); then
     first=0
   done
 else echo "claude_missing=1"; fi
-if command -v "$2" >/dev/null 2>&1; then
-  homes codex | while IFS= read -r d; do echo "codex_home=$d"; done
-else echo "codex_missing=1"; fi
+if [ -n "$codex" ]; then codex_tell; else echo "codex_missing=1"; fi
 # Antigravity CLI ($3, when there): its login folders, and who each is signed
 # in as (the email its token file names; the token itself is not read out)
 if command -v "$3" >/dev/null 2>&1; then
@@ -89,6 +93,35 @@ if command -v "$3" >/dev/null 2>&1; then
   done
 fi
 `
+}
+
+// codexNoAnswer is a Codex login folder whose app-server said nothing.
+const codexNoAnswer = "Codex did not answer there"
+
+// parseCodexStatus reads the app-server's reply to account/read.
+func parseCodexStatus(line string) acctStatus {
+	var m struct {
+		Result json.RawMessage `json:"result"`
+		Error  *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(line), &m); err != nil {
+		return acctStatus{Error: "Codex answered something else: " + oneLine(line, 200)}
+	}
+	if m.Error != nil {
+		return acctStatus{Error: oneLine(firstNonEmpty(m.Error.Message, codexNoAnswer), 300)}
+	}
+	email, plan, signedIn, err := agent.ParseCodexAccount(m.Result)
+	if err != nil {
+		return acctStatus{Error: "Codex answered something else: " + oneLine(line, 200)}
+	}
+	st := acctStatus{SignedIn: signedIn, Email: email, Plan: plan}
+	if signedIn {
+		st.ident = loginIdent("codex", email, plan)
+	}
+	return st
+}
 
 type hostLoginCache struct {
 	at    time.Time
@@ -125,7 +158,7 @@ func (s *Server) hostLogins(ctx context.Context, h *store.Host, refresh bool) []
 		return hostLoginView{HostID: h.ID, Host: h.Name, Target: h.Target, Provider: provider, Home: home}
 	}
 	agy, _ := agent.ACPAgentByID("antigravity")
-	res, errOut, err := remoteOf(h).Run(ctx, 45*time.Second, hostStatusScript, hostBin(h, "claude"), hostBin(h, "codex"), agy.Bin, agy.TokenFile)
+	res, errOut, err := remoteOf(h).Run(ctx, 45*time.Second, hostStatusScript(), hostBin(h, "claude"), hostBin(h, "codex"), agy.Bin, agy.TokenFile)
 	if err != nil && !strings.Contains(res, "home=") {
 		msg := sshError(errOut, err)
 		out := []hostLoginView{base("claude", "~/.claude"), base("codex", "~/.codex")}
@@ -152,6 +185,17 @@ func (s *Server) hostLogins(ctx context.Context, h *store.Host, refresh bool) []
 			}
 		case "codex_home":
 			codex = append(codex, base("codex", v))
+			// until its answer comes (the script was cut short otherwise)
+			codex[len(codex)-1].acctStatus = acctStatus{Error: codexNoAnswer}
+		case "codex_status":
+			if n := len(codex); n > 0 {
+				codex[n-1].acctStatus = parseCodexStatus(v)
+			}
+		case "codex_error":
+			if n := len(codex); n > 0 && v != "" {
+				// the last lines of its stderr
+				codex[n-1].acctStatus = acctStatus{Error: oneLine(stripANSI(v), 300)}
+			}
 		case "antigravity_home":
 			antigravity = append(antigravity, base("antigravity", v))
 		case "antigravity_email":
@@ -180,21 +224,6 @@ func (s *Server) hostLogins(ctx context.Context, h *store.Host, refresh bool) []
 			v.acctStatus = acctStatus{Error: notInstalled + hostBin(h, "codex") + " is not on the PATH there"}
 		}
 		codex = []hostLoginView{v}
-	} else {
-		// its app-server says who (one more ssh connection per folder)
-		var wg sync.WaitGroup
-		for i := range codex {
-			wg.Add(1)
-			go func(i int) {
-				defer wg.Done()
-				dir := ""
-				if i > 0 {
-					dir = codex[i].Home
-				}
-				codex[i].acctStatus = s.remoteCodexStatus(ctx, h, dir)
-			}(i)
-		}
-		wg.Wait()
 	}
 	var out []hostLoginView
 	for _, group := range [][]hostLoginView{claude, codex, antigravity} {
@@ -226,20 +255,6 @@ func (s *Server) refreshHostLogins(h *store.Host) {
 }
 
 const notInstalled = "Not installed: "
-
-func (s *Server) remoteCodexStatus(ctx context.Context, h *store.Host, dir string) acctStatus {
-	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
-	defer cancel()
-	email, plan, signedIn, err := agent.CodexAccount(ctx, hostBin(h, "codex"), agent.HomeEnv("codex", dir), remoteOf(h))
-	if err != nil {
-		return acctStatus{Error: oneLine(err.Error(), 300)}
-	}
-	st := acctStatus{SignedIn: signedIn, Email: email, Plan: plan}
-	if signedIn {
-		st.ident = loginIdent("codex", email, plan)
-	}
-	return st
-}
 
 // forgetHostLogins drops what is known about a machine's logins and any
 // sign-in there (it was changed or removed).

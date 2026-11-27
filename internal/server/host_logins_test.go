@@ -108,3 +108,70 @@ sys.exit(3)
 		t.Fatalf("member started a sign-in there: %d", code)
 	}
 }
+
+// A machine's Codex logins come with the same one script (no connection per
+// folder): who is signed in, a signed-out folder, one whose app-server failed
+// and one cut short.
+func TestHostCodexLogins(t *testing.T) {
+	s, h, _ := testServer(t)
+	ctx := context.Background()
+	owner, _ := person(t, s, h, "host-codex@example.test", "admin", true)
+	// a machine of its own id and name: what is known of logins is kept per
+	// machine id, and another test's sign-in may still be looking at its own
+	if err := s.store.CreateHost(ctx, &store.Host{Name: "other", Target: "other.invalid"}); err != nil {
+		t.Fatal(err)
+	}
+	box := &store.Host{Name: "vm", Target: "codexvm.invalid"}
+	if err := s.store.CreateHost(ctx, box); err != nil {
+		t.Fatal(err)
+	}
+	calls := filepath.Join(t.TempDir(), "calls")
+	script := `#!/usr/bin/env python3
+import sys,base64,re
+args=sys.argv[1:]
+if args[args.index('--')-1]!='codexvm.invalid': sys.exit(3)
+cmd=base64.b64decode(re.search(r'echo ([A-Za-z0-9+/=]+)',args[-1]).group(1)).decode()
+open(` + "'" + calls + "'" + `,'a').write('x')
+assert 'codex_ask "$2"' in cmd and 'account/read' in cmd and 'app-server' in cmd, cmd
+print('home=/home/vmuser')
+print('claude_missing=1')
+print('codex_home=/home/vmuser/.codex')
+print('codex_status={"id":2,"result":{"account":null,"requiresOpenaiAuth":true}}')
+print('codex_home=/home/vmuser/.codex-pro')
+print('codex_status={"id":2,"result":{"account":{"type":"chatgpt","email":"pro@vm.test","planType":"pro"}}}')
+print('codex_home=/home/vmuser/.codex-bad')
+print('codex_error=\x1b[31mERROR\x1b[0m could not read auth.json ')
+print('codex_home=/home/vmuser/.codex-refused')
+print('codex_status={"id":2,"error":{"code":-32600,"message":"Not initialized"}}')
+print('codex_home=/home/vmuser/.codex-cut')
+`
+	fake := filepath.Join(t.TempDir(), "ssh")
+	if err := os.WriteFile(fake, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", filepath.Dir(fake)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var list []hostLoginView
+	owner.want("GET", "/api/v1/hosts/logins?refresh=1&host="+strconv.FormatInt(box.ID, 10), nil, 200, &list)
+	if len(list) != 6 || !list[0].Missing || list[0].Provider != "claude" {
+		t.Fatalf("list: %+v", list)
+	}
+	if l := list[1]; l.Provider != "codex" || l.SignedIn || l.Error != "" || l.Dir != "" || l.Home != "/home/vmuser/.codex" {
+		t.Fatalf("default: %+v", l)
+	}
+	if l := list[2]; !l.SignedIn || l.Email != "pro@vm.test" || l.Plan != "PRO" || l.Dir != "/home/vmuser/.codex-pro" || l.Label != "codex-pro" {
+		t.Fatalf("signed in: %+v", l)
+	}
+	if l := list[3]; l.SignedIn || l.Error != "ERROR could not read auth.json" {
+		t.Fatalf("failed: %+v", l)
+	}
+	if l := list[4]; l.SignedIn || l.Error != "Not initialized" {
+		t.Fatalf("refused: %+v", l)
+	}
+	if l := list[5]; l.SignedIn || l.Error != codexNoAnswer {
+		t.Fatalf("cut short: %+v", l)
+	}
+	if b, _ := os.ReadFile(calls); string(b) != "x" {
+		t.Fatalf("ssh connections for one list: %q", b)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -169,7 +170,9 @@ func ShareSetup(provider, defDir, dir string) {
 }
 
 // CodexAccount asks Codex who is signed in (env points it at an account
-// folder; on another machine when remote is given).
+// folder; on another machine when remote is given). When the app-server (or
+// the ssh it runs over) ends instead of answering, the error says why: its
+// last stderr lines.
 func CodexAccount(ctx context.Context, bin string, env []string, remote ...*Remote) (email, plan string, signedIn bool, err error) {
 	dir := os.TempDir()
 	if len(remote) > 0 && remote[0] != nil {
@@ -180,13 +183,25 @@ func CodexAccount(ctx context.Context, bin string, env []string, remote ...*Remo
 		return "", "", false, err
 	}
 	defer c.close()
+	why := func(err error) error {
+		if errors.Is(err, ErrClosed) {
+			return fmt.Errorf("%w%s", err, stderrHint(c.errb))
+		}
+		return err
+	}
 	if err := c.initialize(ctx, Version); err != nil {
-		return "", "", false, err
+		return "", "", false, why(err)
 	}
 	res, err := c.call(ctx, "account/read", map[string]any{})
 	if err != nil {
-		return "", "", false, err
+		return "", "", false, why(err)
 	}
+	return ParseCodexAccount(res)
+}
+
+// ParseCodexAccount reads the result of the app-server's account/read: who
+// is signed in (nobody: signedIn false).
+func ParseCodexAccount(res json.RawMessage) (email, plan string, signedIn bool, err error) {
 	var r struct {
 		Account *struct {
 			Type     string `json:"type"`

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -26,6 +27,65 @@ const RemoteHomesSh = `homes() {
   done
 }
 `
+
+// RemoteCodexSh defines, for remote scripts that have RemoteHomesSh too,
+// `codex_ask BIN` and `codex_tell`: who is signed in to each Codex login
+// folder there, asked of its app-server (account/read) inside the script's
+// own ssh connection. A connection per folder was six at once for someone
+// with five logins, and machines behind a NAT with few ports per destination
+// lost some of them ("Connection timed out", shown as a dead agent).
+//
+// codex_ask starts every folder's app-server at once and returns; codex_tell
+// waits (at most ~20 s) and prints, per folder, "codex_home=<dir>" and then
+// "codex_status=<the reply to account/read>" or "codex_error=<why not>".
+// On a Mac with pocket-gui the app-server starts in the GUI session, as an
+// agent's does (the keychain is unlocked there).
+func RemoteCodexSh() string {
+	q := func(v any) string {
+		b, _ := json.Marshal(v)
+		return shq(string(b))
+	}
+	ask := q(map[string]any{"id": 1, "method": "initialize", "params": map[string]any{
+		"clientInfo": map[string]any{"name": "pocket-ai", "title": "Pocket AI", "version": Version}}}) + " " +
+		q(map[string]any{"method": "initialized"}) + " " +
+		q(map[string]any{"id": 2, "method": "account/read", "params": map[string]any{}})
+	return guiBridge + `
+codex_ask() {
+  ct=$(mktemp -d 2>/dev/null) || { ct="${TMPDIR:-/tmp}/pocket-codex.$$"; mkdir -p "$ct"; }
+  homes codex >"$ct/list"
+  cn=0
+  while IFS= read -r d; do
+    cn=$((cn+1))
+    (
+      trap '' PIPE
+      f="$ct/$cn"
+      mkfifo "$f.in" || exit 1
+      if [ $cn = 1 ]; then set -- "$1" app-server; else set -- env "CODEX_HOME=$d" "$1" app-server; fi
+      ${g:+"$g" run --} "$@" <"$f.in" >"$f.out" 2>"$f.err" &
+      p=$!
+      exec 3>"$f.in"
+      printf '%s\n' ` + ask + ` >&3 2>/dev/null
+      i=0
+      while [ $i -lt 40 ] && ! grep -q '"id":2[,}].*}$' "$f.out" 2>/dev/null && kill -0 "$p" 2>/dev/null; do sleep 0.5; i=$((i+1)); done
+      exec 3>&-
+      kill "$p" 2>/dev/null
+      grep '"id":2[,}].*}$' "$f.out" 2>/dev/null | head -n 1 >"$f.res"
+    ) &
+  done <"$ct/list"
+}
+codex_tell() {
+  wait
+  cn=0
+  while IFS= read -r d; do
+    cn=$((cn+1))
+    echo "codex_home=$d"
+    if [ -s "$ct/$cn.res" ]; then printf 'codex_status='; cat "$ct/$cn.res"
+    else printf 'codex_error=%s\n' "$(tail -n 3 "$ct/$cn.err" 2>/dev/null | tr '\n' ' ')"; fi
+  done <"$ct/list"
+  rm -rf "$ct"
+}
+`
+}
 
 var homeBaseRe = map[string]*regexp.Regexp{
 	"claude": regexp.MustCompile(`^\.claude[-_][A-Za-z0-9._-]{1,60}$`),

@@ -383,7 +383,7 @@ func parseClaudeStatus(out []byte, err error) acctStatus {
 func (s *Server) codexStatus(ctx context.Context, env []string) acctStatus {
 	email, plan, signedIn, err := agent.CodexAccount(ctx, s.cfg.CodexBin, env)
 	if err != nil {
-		return acctStatus{Error: err.Error()}
+		return acctStatus{Error: oneLine(stripANSI(err.Error()), 300)}
 	}
 	st := acctStatus{SignedIn: signedIn, Email: email, Plan: plan}
 	if signedIn {
