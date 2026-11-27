@@ -590,7 +590,8 @@ func librarySums(dir string) map[string]string {
 type syncRun struct {
 	mu      sync.Mutex // one sync of a library at a time
 	running bool
-	queued  bool
+	queued  bool             // one more is waiting for its turn (never more than one)
+	busy    map[int64]string // machine → what is being done there right now
 }
 
 var (
@@ -602,7 +603,7 @@ func syncRunOf(sc *libScope) *syncRun {
 	syncRunsMu.Lock()
 	defer syncRunsMu.Unlock()
 	if syncRuns[sc.key] == nil {
-		syncRuns[sc.key] = &syncRun{}
+		syncRuns[sc.key] = &syncRun{busy: map[int64]string{}}
 	}
 	return syncRuns[sc.key]
 }
@@ -614,8 +615,34 @@ func syncRunning(sc *libScope) bool {
 	return run.running || run.queued
 }
 
+// syncBusy: what is being done on each machine right now ("checking",
+// "sending pocket-app" …), for the page.
+func syncBusy(sc *libScope) map[int64]string {
+	run := syncRunOf(sc)
+	syncRunsMu.Lock()
+	defer syncRunsMu.Unlock()
+	out := make(map[int64]string, len(run.busy))
+	for k, v := range run.busy {
+		out[k] = v
+	}
+	return out
+}
+
+// setBusy says what a machine is at ("" = done).
+func (run *syncRun) setBusy(id int64, what string) {
+	syncRunsMu.Lock()
+	if what == "" {
+		delete(run.busy, id)
+	} else {
+		run.busy[id] = what
+	}
+	syncRunsMu.Unlock()
+}
+
 // kickSkillSync syncs the machines in the background, soon (a moment later,
-// so several saves in a row make one sync). Safe to call with libMu held.
+// so several saves in a row make one sync). While one runs, one more waits
+// for its turn and further kicks join that one: a machine that takes long to
+// not answer must not make a queue. Safe to call with libMu held.
 func (s *Server) kickSkillSync(sc *libScope, _ bool) {
 	if !skillSyncAuto {
 		return
@@ -634,10 +661,7 @@ func (s *Server) kickSkillSync(sc *libScope, _ bool) {
 			return
 		case <-time.After(800 * time.Millisecond):
 		}
-		syncRunsMu.Lock()
-		run.queued = false
-		syncRunsMu.Unlock()
-		s.syncSkills(s.rt.ctx, sc)
+		s.syncSkillsQueued(s.rt.ctx, sc)
 	}()
 }
 
@@ -647,14 +671,28 @@ func (s *Server) kickSkillSync(sc *libScope, _ bool) {
 // does not answer holds nobody up. It reports whether every machine is as it
 // should be now (false: worth another try soon).
 func (s *Server) syncSkills(ctx context.Context, sc *libScope) bool {
+	return s.syncSkillsRun(ctx, sc, false)
+}
+
+// syncSkillsQueued is the sync a kick asked for: it stays "queued" until the
+// one before it is through.
+func (s *Server) syncSkillsQueued(ctx context.Context, sc *libScope) bool {
+	return s.syncSkillsRun(ctx, sc, true)
+}
+
+func (s *Server) syncSkillsRun(ctx context.Context, sc *libScope, queued bool) bool {
 	run := syncRunOf(sc)
 	run.mu.Lock()
 	syncRunsMu.Lock()
 	run.running = true
+	if queued {
+		run.queued = false
+	}
 	syncRunsMu.Unlock()
 	defer func() {
 		syncRunsMu.Lock()
 		run.running = false
+		run.busy = map[int64]string{}
 		syncRunsMu.Unlock()
 		run.mu.Unlock()
 		s.touch()
@@ -684,9 +722,14 @@ func (s *Server) syncSkills(ctx context.Context, sc *libScope) bool {
 		)
 		fine = true
 		for _, h := range hosts {
+			run.setBusy(h.ID, "checking")
+		}
+		s.touch()
+		for _, h := range hosts {
 			wg.Add(1)
 			go func(h *store.Host) {
 				defer wg.Done()
+				defer run.setBusy(h.ID, "")
 				ok, t := s.syncHost(ctx, sc, h, st, lib, &mu, &takeMu)
 				mu.Lock()
 				fine, took = fine && ok, took || t
@@ -708,6 +751,7 @@ func (s *Server) syncSkills(ctx context.Context, sc *libScope) bool {
 // as it should be, and whether the library took a change from it.
 func (s *Server) syncHost(ctx context.Context, sc *libScope, h *store.Host, st *syncState, lib map[string]string, mu, takeMu *sync.Mutex) (fine, took bool) {
 	now := func() string { return time.Now().UTC().Format(time.RFC3339) }
+	run := syncRunOf(sc)
 	cur := st.Hosts[h.ID]
 	hs := &hostSync{On: true, Pushed: map[string]string{}, At: cur.At, Skills: cur.Skills, Extra: cur.Extra}
 	for k, v := range cur.Pushed {
@@ -777,6 +821,7 @@ func (s *Server) syncHost(ctx context.Context, sc *libScope, h *store.Host, st *
 			takeMu.Unlock()
 			continue // another machine's change got in first: the person decides
 		}
+		run.setBusy(h.ID, "taking "+name)
 		sum, err := s.takeSkill(ctx, sc, h, name, "lib")
 		if err == nil {
 			mu.Lock()
@@ -796,6 +841,7 @@ func (s *Server) syncHost(ctx context.Context, sc *libScope, h *store.Host, st *
 	ops := 0
 	for name, keep := range p.push {
 		_, had := v.lib[name]
+		run.setBusy(h.ID, "sending "+name)
 		sum, err := s.pushSkill(ctx, sc, h, name, keep)
 		ops++
 		if err != nil {
@@ -812,6 +858,7 @@ func (s *Server) syncHost(ctx context.Context, sc *libScope, h *store.Host, st *
 	}
 	for name, keep := range p.remove {
 		ops++
+		run.setBusy(h.ID, "removing "+name)
 		if err := s.removeSkill(ctx, h, name, keep); err != nil {
 			failed[name] = err.Error()
 			continue
@@ -823,6 +870,7 @@ func (s *Server) syncHost(ctx context.Context, sc *libScope, h *store.Host, st *
 		delete(hs.Pushed, name)
 	}
 	if ops > 0 { // look again: the links are made, and what is there now is what counts
+		run.setBusy(h.ID, "checking")
 		if v, err = s.viewHost(ctx, h, want(mine)); err != nil {
 			hs.Error = err.Error()
 			save()
@@ -865,8 +913,8 @@ func (s *Server) syncHost(ctx context.Context, sc *libScope, h *store.Host, st *
 func (s *Server) skillSyncLoop(ctx context.Context) {
 	s.shareSkills(ctx) // every login of a CLI shares one skills folder first
 	var last map[string]string
-	var checked time.Time
-	again := true // the first tick checks the machines
+	var checked, retryAt time.Time
+	wait := 2 * time.Minute // until a machine that did not answer is tried again: 2, 4, 8 … 30 minutes
 	first := time.After(20 * time.Second)
 	t := time.NewTicker(2 * time.Minute)
 	defer t.Stop()
@@ -878,11 +926,23 @@ func (s *Server) skillSyncLoop(ctx context.Context) {
 		}
 		sums := librarySums(sc.dir)
 		libMu.Unlock()
-		if last != nil && (again || !sameSums(sums, last) || time.Since(checked) > 30*time.Minute) {
-			// a machine that did not answer or lacks something is tried again at the next tick
+		changed := last != nil && !sameSums(sums, last)
+		retry := !retryAt.IsZero() && time.Now().After(retryAt)
+		if last != nil && (checked.IsZero() || changed || retry || time.Since(checked) > 30*time.Minute) {
 			s.syncSkills(ctx, sc)
-			again = s.syncUnfinished(ctx, sc)
 			checked = time.Now()
+			switch {
+			case !s.syncUnfinished(ctx, sc):
+				retryAt, wait = time.Time{}, 2*time.Minute
+			default:
+				if changed {
+					wait = 2 * time.Minute
+				}
+				retryAt = time.Now().Add(wait - 10*time.Second)
+				if wait *= 2; wait > 30*time.Minute {
+					wait = 30 * time.Minute
+				}
+			}
 			libMu.Lock()
 			sums = librarySums(sc.dir)
 			libMu.Unlock()
@@ -928,7 +988,9 @@ func (s *Server) syncOneHost(ctx context.Context, sc *libScope, h *store.Host) {
 	lib := librarySums(sc.dir)
 	libMu.Unlock()
 	var mu, takeMu sync.Mutex
+	run.setBusy(h.ID, "checking")
 	s.syncHost(ctx, sc, h, s.loadSyncState(ctx, sc), lib, &mu, &takeMu)
+	run.setBusy(h.ID, "")
 	run.mu.Unlock()
 	s.kickSkillSync(sc, false)
 }
@@ -961,6 +1023,8 @@ type syncHostOut struct {
 	On    bool   `json:"on"`
 	At    string `json:"at,omitempty"`
 	Error string `json:"error,omitempty"`
+	// Busy: what is being done there right now ("checking", "sending x" …)
+	Busy string `json:"busy,omitempty"`
 	// Skills: how each library skill stands there (same | differs | off | failed)
 	Skills map[string]hostSkillState `json:"skills"`
 	Extra  []hostExtra               `json:"extra"`
@@ -968,9 +1032,10 @@ type syncHostOut struct {
 
 func (s *Server) syncStatus(ctx context.Context, sc *libScope) map[string]any {
 	st := s.loadSyncState(ctx, sc)
+	busy := syncBusy(sc)
 	hosts := []syncHostOut{}
 	for _, h := range s.scopeHosts(ctx, sc) {
-		o := syncHostOut{ID: h.ID, Name: h.Name, Skills: map[string]hostSkillState{}, Extra: []hostExtra{}}
+		o := syncHostOut{ID: h.ID, Name: h.Name, Busy: busy[h.ID], Skills: map[string]hostSkillState{}, Extra: []hostExtra{}}
 		if hs := st.Hosts[h.ID]; hs != nil {
 			o.On, o.At, o.Error = hs.On, hs.At, hs.Error
 			if hs.On && hs.Skills != nil {
@@ -989,7 +1054,7 @@ func (s *Server) syncStatus(ctx context.Context, sc *libScope) map[string]any {
 	return map[string]any{"asked": st.Asked, "running": syncRunning(sc), "at": st.At, "hosts": hosts, "log": log}
 }
 
-// handleSkillSync is how the machines stand. A look that is older than two
+// handleSkillSync is how the machines stand. A look that is older than five
 // minutes starts a new check in the background (check=1: always).
 func (s *Server) handleSkillSync(w http.ResponseWriter, r *http.Request) {
 	sc := s.scopeOf(w, r)
@@ -999,7 +1064,7 @@ func (s *Server) handleSkillSync(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	st := s.loadSyncState(ctx, sc)
 	at, _ := time.Parse(time.RFC3339, st.At)
-	if r.URL.Query().Get("check") == "1" || time.Since(at) > 2*time.Minute {
+	if r.URL.Query().Get("check") == "1" || (time.Since(at) > 5*time.Minute && !syncRunning(sc)) {
 		for _, hs := range st.Hosts {
 			if hs.On {
 				s.kickSkillSync(sc, true)

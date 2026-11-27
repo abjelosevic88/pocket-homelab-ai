@@ -795,6 +795,11 @@ button.privacy-badge:disabled { cursor: default; }
 .sk-sync-ico.look { background: var(--warning-soft); color: var(--warning); }
 .sk-sync-ico.busy { background: var(--accent-soft); color: var(--accent); }
 .sk-sync-title { font-size: 14.5px; font-weight: 650; }
+.sk-sync-ico.part { background: var(--success-soft); color: var(--success); }
+.sk-progress { height: 4px; margin: -4px 16px 12px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.sk-progress i { display: block; height: 100%; border-radius: 999px; background: var(--accent); transition: width .35s ease; }
+.sk-chip .spinner { margin: 0 -1px 0 0; }
+.sk-dot-spin { flex: none; display: inline-flex; width: 8px; margin-top: 4px; }
 .sk-sync-rows { border-top: 1px solid var(--hairline); padding: 10px 16px 12px; display: grid; gap: 8px; }
 .sk-sync-row { display: flex; align-items: baseline; gap: 12px; }
 .sk-sync-label { flex: none; width: 66px; font-size: 12px; font-weight: 600; color: var(--muted); }

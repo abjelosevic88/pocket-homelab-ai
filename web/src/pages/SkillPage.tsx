@@ -185,11 +185,11 @@ export default function SkillPage({ onMenu }: { onMenu?: () => void }) {
             {hosts.map(h => {
               const st = h.skills[name], kept = !skill.off.includes(h.id)
               const state = !h.on ? 'off' : !kept ? 'off' : h.error ? 'down' : !st ? 'wait' : st.state === 'same' ? 'ok' : st.state === 'off' ? 'off' : 'look'
-              const label = !h.on ? 'Does not follow the library' : !kept ? 'Kept off this machine' : h.error ? 'Did not answer' : !st ? (sync?.running ? 'Syncing…' : 'Not checked yet')
+              const label = !h.on ? 'Does not follow the library' : !kept ? 'Kept off this machine' : h.busy ? (h.error ? 'Did not answer. Trying again…' : `${h.busy[0].toUpperCase()}${h.busy.slice(1)}…`) : h.error ? 'Did not answer. It gets this when it is back.' : !st ? 'Not checked yet'
                 : st.state === 'same' ? 'The same' : st.state === 'off' ? 'Kept off this machine' : st.state === 'failed' ? st.error || 'Could not be sent'
                   : st.where && st.where !== 'lib' ? `${providerName(st.agent || 'claude')} has its own copy` : 'A different version'
               return <li key={h.id}>
-                <i className={`sk-dot ${state}`} />
+                {h.on && kept && h.busy ? <span className="sk-dot-spin"><Spinner size={9} /></span> : <i className={`sk-dot ${state}`} />}
                 <div className="grow">
                   <div>{h.name}</div>
                   <div className={`xsmall ${state === 'look' ? 'sk-warn' : 'muted'}`} title={h.error}>{label}</div>

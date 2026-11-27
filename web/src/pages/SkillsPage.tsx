@@ -1,11 +1,11 @@
 // Skills: one library for every agent on every machine. This page lists it,
 // shows how the machines stand, and settles the skills that differ somewhere.
 // One skill is edited on its own page (SkillPage.tsx).
-import { useRef, useState } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, ApiError, qs, upload, V1 } from '../lib/api'
 import { ago, fmtBytes, providerName } from '../lib/format'
-import { LIB, SYNC, skillSlug, standing, useSkillSync, validSkillName, type HostExtra, type Library, type LibSkill, type SyncHost, type SyncStatus } from '../lib/skills'
+import { LIB, SYNC, quietRetry, skillSlug, standing, syncProgress, useSkillSync, validSkillName, type HostExtra, type Library, type LibSkill, type SyncHost, type SyncStatus } from '../lib/skills'
 import type { CliId, Skill } from '../lib/types'
 import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
@@ -200,22 +200,40 @@ function SkillCard({ skill, sync, onOpen, onCopy }: { skill: LibSkill; sync: Syn
 function SyncCard({ lib, sync, looks, onMachines, onSync }: { lib: Library; sync: SyncStatus; looks: number; onMachines: () => void; onSync: () => void }) {
   const on = sync.hosts.filter(h => h.on)
   const down = on.filter(h => h.error)
-  let kind = 'ok', text = on.length === 0 ? 'Your library is on this server' : on.length === 1 ? `This server and ${on[0].name} have the same skills` : `This server and ${on.length} machines have the same skills`
-  if (sync.running) { kind = 'busy'; text = 'Syncing with your machines…' }
-  else if (looks) { kind = 'look'; text = looks === 1 ? '1 skill needs a look' : `${looks} skills need a look` }
-  else if (down.length) { kind = 'look'; text = down.length === 1 ? `${down[0].name} did not answer` : `${down.length} machines did not answer` }
+  const fine = on.length - down.length
+  const prog = syncProgress(sync)
+  const names = (l: SyncHost[]) => (l.length <= 2 ? l.map(h => h.name).join(' and ') : `${l.length} machines`)
+  let kind = 'ok', text = 'Your library is on this server'
+  let sub: ReactNode = sync.hosts.length ? 'No other machine follows it yet.' : 'Add a machine in Settings → Machines to share it.'
+  const checked = sync.at ? ` Checked ${ago(sync.at)}.` : ''
+  if (prog) {
+    kind = 'busy'
+    text = prog.done > 0 || prog.now.length > 0 ? `Syncing: ${prog.done} of ${prog.total} ${prog.total === 1 ? 'machine' : 'machines'} done` : 'Starting to sync…'
+    sub = prog.now.length ? cap(prog.now.slice(0, 3).join(', ')) + (prog.now.length > 3 ? ` and ${prog.now.length - 3} more` : '') : 'Looking at what each machine has.'
+  } else if (looks) {
+    kind = 'look'; text = looks === 1 ? '1 skill needs a look' : `${looks} skills need a look`
+    sub = `Pick which version to keep below.${checked}`
+  } else if (down.length && fine === 0) {
+    kind = 'look'; text = `No answer from ${names(down)}`
+    sub = `${down.length === 1 ? 'It gets' : 'They get'} your skills when ${down.length === 1 ? 'it is' : 'they are'} back. Nothing else to do.${checked}`
+  } else if (down.length) {
+    kind = 'part'; text = `Up to date on ${fine === 1 ? '1 machine' : `${fine} machines`}. No answer from ${names(down)}.`
+    sub = `${down.length === 1 ? 'It gets' : 'They get'} your skills when ${down.length === 1 ? 'it is' : 'they are'} back. Nothing else to do.${checked}`
+  } else if (on.length) {
+    text = on.length === 1 ? `This server and ${on[0].name} have the same skills` : `This server and all ${on.length} machines have the same skills`
+    sub = <><span className="sk-hide-sm">A change here goes to the machines, a change there comes back.</span>{checked}</>
+  }
   return <section className="sk-sync">
     <div className="sk-sync-top">
       <span className={`sk-sync-ico ${kind}`}>{kind === 'busy' ? <Spinner size={16} /> : <Icon name={kind === 'look' ? 'alert' : 'check'} size={17} />}</span>
       <div className="grow">
-        <div className="sk-sync-title">{text}</div>
-        <div className="muted small">{on.length === 0
-          ? (sync.hosts.length ? 'No other machine follows it yet.' : 'Add a machine in Settings → Machines to share it.')
-          : <><span className="sk-hide-sm">A change here goes to the machines, a change there comes back. </span>{sync.at && <>Checked {ago(sync.at)}.</>}</>}</div>
+        <div className="sk-sync-title" role="status">{text}</div>
+        <div className="muted small">{sub}</div>
       </div>
       {sync.hosts.length > 0 && <button type="button" className="btn sm" onClick={onMachines}><Icon name="server" size={13} />Machines</button>}
       {on.length > 0 && <button type="button" className="btn ghost icon-only sm" aria-label="Sync now" title="Check every machine now" disabled={sync.running} onClick={onSync}><Icon name="refresh" size={14} /></button>}
     </div>
+    {prog && <div className="sk-progress" role="progressbar" aria-valuemin={0} aria-valuemax={prog.total} aria-valuenow={prog.done} aria-label="Machines done"><i style={{ width: `${Math.max(4, Math.round((prog.done / prog.total) * 100))}%` }} /></div>}
     <div className="sk-sync-rows">
       <div className="sk-sync-row">
         <span className="sk-sync-label">Agents</span>
@@ -228,14 +246,18 @@ function SyncCard({ lib, sync, looks, onMachines, onSync }: { lib: Library; sync
           {sync.hosts.map(h => {
             const bad = Object.values(h.skills).filter(s => s.state === 'differs' || s.state === 'failed').length
             const state = !h.on ? 'off' : h.error ? 'down' : bad ? 'look' : h.at ? 'ok' : 'wait'
-            const title = !h.on ? `${h.name} does not follow the library. Click to change.` : h.error ? `${h.name}: ${h.error}` : bad ? `${bad} to look at` : h.at ? `Same as the library. Answered ${ago(h.at)}.` : 'Not checked yet'
-            return <button type="button" key={h.id} className={`sk-chip ${state}`} title={title} onClick={onMachines}><i className={`sk-dot ${state}`} />{h.name}{state === 'off' && <span className="muted"> · off</span>}{state === 'down' && <span className="muted"> · no answer</span>}</button>
+            const title = !h.on ? `${h.name} does not follow the library. Click to change.` : h.busy ? (quietRetry(h) ? 'Did not answer last time. Trying again…' : `${cap(h.busy)}…`)
+              : h.error ? `${h.name}: ${h.error}` : bad ? `${bad} to look at` : h.at ? `Same as the library. Answered ${ago(h.at)}.` : 'Not checked yet'
+            return <button type="button" key={h.id} className={`sk-chip ${state}`} title={title} onClick={onMachines}>{h.on && h.busy ? <Spinner size={9} /> : <i className={`sk-dot ${state}`} />}{h.name}
+              {state === 'off' && <span className="muted"> · off</span>}{state === 'down' && <span className="muted"> · no answer</span>}</button>
           })}
         </div>
       </div>}
     </div>
   </section>
 }
+
+const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
 
 /** Asked once: which machines should follow the library. Nothing is sent before. */
 function FirstTime({ hosts, onDone }: { hosts: SyncHost[]; onDone: (s: SyncStatus) => void }) {
@@ -277,7 +299,7 @@ function MachinesDialog({ sync, onClose, onChange }: { sync: SyncStatus; onClose
         <Icon name="server" size={15} />
         <div className="grow">
           <div className="sk-machine-name">{h.name}</div>
-          <div className={`small ${h.on && h.error ? 'danger-text' : 'muted'}`}>{!h.on ? 'Not following' : h.error ? `Did not answer: ${h.error}` : bad ? `${bad} to look at` : h.at ? `Same as the library · answered ${ago(h.at)}` : 'Checking…'}</div>
+          <div className={`small ${h.on && h.error && !h.busy ? 'danger-text' : 'muted'}`}>{!h.on ? 'Not following' : h.busy ? (quietRetry(h) ? 'Did not answer last time. Trying again…' : `${cap(h.busy)}…`) : h.error ? `Did not answer: ${h.error}` : bad ? `${bad} to look at` : h.at ? `Same as the library · answered ${ago(h.at)}` : 'Checking…'}</div>
         </div>
         {busy === h.id ? <Spinner /> : <Switch label={`Sync skills to ${h.name}`} checked={h.on} disabled={!!busy} onChange={v => toggle(h, v)} />}
       </li>
