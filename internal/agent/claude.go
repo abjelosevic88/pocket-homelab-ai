@@ -1436,3 +1436,4 @@ func loginEndedHint(msg string) string {
 func (s *claudeSession) Park() bool            { return s.l.Park() }
 func (s *claudeSession) Wake() bool            { return s.l.Wake() }
 func (s *claudeSession) Parked() (int64, bool) { return s.l.Parked() }
+func (s *claudeSession) Reroute() bool         { return s.l.Reroute() }

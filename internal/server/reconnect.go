@@ -205,7 +205,7 @@ exit 0
 // for it — Stop would end the wrong one.
 func (s *Server) probeClaude(ctx context.Context, t *store.Thread, h *store.Host, off int64, pid int) (claudeProbe, error) {
 	if h != nil {
-		out, errOut, err := remoteOf(h).Run(ctx, 45*time.Second, inLogin("claude", t.HostHome, probeSh),
+		out, errOut, err := remoteOf(h).Run(agent.Repeatable(ctx), 45*time.Second, inLogin("claude", t.HostHome, probeSh),
 			t.ProviderSessionID, strconv.FormatInt(off, 10), strconv.Itoa(reattachWindow), strconv.Itoa(pid))
 		if err != nil {
 			return claudeProbe{}, fmt.Errorf("%s: %s", h.Name, sshError(errOut, err))
@@ -553,7 +553,7 @@ func (s *Server) reconnect(id string) {
 
 // codexActive: the session's rollout on the machine changed in the last minute.
 func (s *Server) codexActive(ctx context.Context, t *store.Thread, h *store.Host) bool {
-	out, _, err := remoteOf(h).Run(ctx, 30*time.Second, inLogin("codex", t.HostHome,
+	out, _, err := remoteOf(h).Run(agent.Repeatable(ctx), 30*time.Second, inLogin("codex", t.HostHome,
 		`d="${CODEX_HOME:-$HOME/.codex}"; [ -d "$d/sessions" ] && find "$d/sessions" -type f -name "*$1.jsonl" -mmin -1 2>/dev/null | head -n 1; exit 0`), t.ProviderSessionID)
 	return err == nil && strings.TrimSpace(out) != ""
 }

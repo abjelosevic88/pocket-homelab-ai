@@ -129,7 +129,7 @@ func (s *Server) repairAllCostsOnce(ctx context.Context) {
 		wg.Add(1)
 		go func(host int64, h *store.Host) {
 			defer wg.Done()
-			out, errOut, err := remoteOf(h).Run(ctx, 45*time.Second, agent.RemoteClaudeRestoresSh, args...)
+			out, errOut, err := remoteOf(h).Run(agent.Repeatable(ctx), 45*time.Second, agent.RemoteClaudeRestoresSh, args...)
 			if err != nil {
 				s.log.Info("repairing turn costs: machine not reached, trying at the next start", "host", h.Name, "err", sshError(errOut, err))
 				return

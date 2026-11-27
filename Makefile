@@ -10,7 +10,7 @@ web:                       ## build the React UI into web/dist
 	cd web && npm ci --no-audit --no-fund && npm run build
 
 build:                     ## build the Go binary (embeds web/dist and pocket-hold)
-	go generate ./internal/hold
+	VERSION=$(VERSION) go generate ./internal/hold
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o pocket-ai ./cmd/pocket-ai
 
 run: build                 ## run locally on 127.0.0.1:8195 without a login (loopback only)

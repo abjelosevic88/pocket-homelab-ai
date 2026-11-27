@@ -324,7 +324,7 @@ type hostView struct {
 }
 
 func (s *Server) viewHost(ctx context.Context, h *store.Host, want []string) (*hostView, error) {
-	stdout, stderr, err := skillRunnerFor(h).RunInput(ctx, 60*time.Second, strings.NewReader(""), skillsViewSh, want...)
+	stdout, stderr, err := skillRunnerFor(h).RunInput(agent.Repeatable(ctx), 60*time.Second, strings.NewReader(""), skillsViewSh, want...)
 	if err != nil {
 		return nil, errors.New(firstNonEmpty(lastLine(stderr), "not reachable"))
 	}
@@ -517,7 +517,7 @@ func (s *Server) removeSkill(ctx context.Context, h *store.Host, name string, ke
 // "lib" or the login folder that has it). The library's own copy, if any,
 // goes to its trash. It returns the new sum.
 func (s *Server) takeSkill(ctx context.Context, sc *libScope, h *store.Host, name, where string) (string, error) {
-	stdout, stderr, err := skillRunnerFor(h).RunInput(ctx, 2*time.Minute, nil, skillsPullSh, name, where)
+	stdout, stderr, err := skillRunnerFor(h).RunInput(agent.Repeatable(ctx), 2*time.Minute, nil, skillsPullSh, name, where)
 	if err != nil {
 		return "", skillRemoteErr(stderr, err)
 	}

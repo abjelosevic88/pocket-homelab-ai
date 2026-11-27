@@ -335,7 +335,7 @@ func AntigravityLimits(ctx context.Context, remote *Remote, bin, dir string) ([]
 	var out, errOut string
 	var err error
 	if remote != nil {
-		out, errOut, err = remote.Run(ctx, 40*time.Second, antigravityUsageScript, bin, dir)
+		out, errOut, err = remote.Run(Repeatable(ctx), 40*time.Second, antigravityUsageScript, bin, dir)
 	} else {
 		cmd := exec.CommandContext(ctx, "sh", "-c", antigravityUsageScript, "sh", bin, dir)
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

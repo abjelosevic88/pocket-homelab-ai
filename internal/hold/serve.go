@@ -122,11 +122,15 @@ func Serve(slot string, o ServeOptions, argv []string) int {
 	// One on its way out holds it for a moment more; one that still serves
 	// keeps the slot.
 	for i := 0; syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil; i++ {
-		if c, err := dial(dir); err == nil || i == 100 {
-			if c != nil {
-				c.Close()
-			}
-			return 0
+		if c, err := dial(dir); err == nil {
+			c.Close()
+			return 0 // another holder serves the slot
+		}
+		if i == 100 {
+			// another start holds the slot and still does not listen: not a
+			// success, or the starter would take it for a holder
+			fmt.Fprintln(os.Stderr, "pocket-hold: slot busy: another start holds it and does not listen yet")
+			return ExitSlotBusy
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -364,7 +368,7 @@ func (h *holder) accept(l net.Listener) {
 }
 
 func (h *holder) header() Header {
-	hd := Header{Busy: h.busy, Exited: h.exited, Stopping: h.stopping, Meta: h.o.Meta, Stderr: string(h.errTail), In: h.inTotal}
+	hd := Header{Proto: Proto, Busy: h.busy, Exited: h.exited, Stopping: h.stopping, Meta: h.o.Meta, Stderr: string(h.errTail), In: h.inTotal}
 	if h.cmd != nil && h.cmd.Process != nil {
 		hd.PID = h.cmd.Process.Pid
 	}

@@ -2,10 +2,12 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -71,13 +73,65 @@ func heldSetup(t *testing.T) (bin, holdBin string) {
 	return bin, holdBin
 }
 
+// heldVia is how a test's held links reach their holder: pocket-hold attach
+// as a process (what runs today), or the holder spoken to in-process over
+// its socket (Hold.Dial; a start runs pocket-hold attach -start-only).
+type heldVia struct {
+	inproc bool
+	away   atomic.Bool // in-process: the socket cannot be reached
+}
+
+// eachHeldVia runs fn with each way to reach a holder.
+func eachHeldVia(t *testing.T, fn func(t *testing.T, v *heldVia)) {
+	for _, name := range []string{"attach", "inproc"} {
+		t.Run(name, func(t *testing.T) { fn(t, &heldVia{inproc: name == "inproc"}) })
+	}
+}
+
+// hold makes h reach its holder v's way.
+func (v *heldVia) hold(h *Hold) *Hold {
+	if v.inproc {
+		h.Dial = func(ctx context.Context, slot string) (net.Conn, error) {
+			if v.away.Load() {
+				return nil, errors.New("machine not reachable")
+			}
+			return hold.DialSlot(ctx, slot)
+		}
+	}
+	return h
+}
+
+// setAway cuts the holder off (the machine cannot be reached: pocket-hold
+// there cannot be run, its socket not reached) or brings it back.
+func (v *heldVia) setAway(t *testing.T, holdBin string, on bool) {
+	t.Helper()
+	from, to := holdBin, holdBin+".away"
+	if !on {
+		from, to = to, from
+	}
+	if err := os.Rename(from, to); err != nil {
+		t.Fatal(err)
+	}
+	v.away.Store(on)
+}
+
+// drop ends l's connection as a dropped network would.
+func drop(l *link) {
+	l.wmu.Lock()
+	c := l.c
+	l.wmu.Unlock()
+	c.End(true)
+}
+
 // A held Claude Code survives its connection dropping mid-turn and Pocket AI
 // letting go of it; the next start adopts the running turn and its sub-agents.
-func TestHeldClaude(t *testing.T) {
+func TestHeldClaude(t *testing.T) { eachHeldVia(t, testHeldClaude) }
+
+func testHeldClaude(t *testing.T, v *heldVia) {
 	bin, holdBin := heldSetup(t)
 	dir := t.TempDir()
 	leave := make(chan struct{})
-	o := Options{Bin: bin, Cwd: dir, Mode: "default", Hold: &Hold{Bin: holdBin, Slot: "thread-x", Leave: leave}}
+	o := Options{Bin: bin, Cwd: dir, Mode: "default", Hold: v.hold(&Hold{Bin: holdBin, Slot: "thread-x", Leave: leave})}
 
 	r := &heldRec{rec: newRec()}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -89,15 +143,15 @@ func TestHeldClaude(t *testing.T) {
 	if !cs.l.Header.Started {
 		t.Fatalf("first start did not start: %+v", cs.l.Header)
 	}
+	if _, ok := cs.l.c.(*holdConn); ok != v.inproc {
+		t.Fatalf("connection %T, in-process %v", cs.l.c, v.inproc)
+	}
 	if err := s.Send(Input{Text: "one"}); err != nil {
 		t.Fatal(err)
 	}
 	r.wait(t, func() bool { return r.has("first 1") })
 	// the connection drops mid-turn
-	cs.l.wmu.Lock()
-	pid := cs.l.cmd.Process.Pid
-	cs.l.wmu.Unlock()
-	_ = syscall.Kill(-pid, syscall.SIGKILL)
+	drop(cs.l)
 	r.wait(t, func() bool { return r.has("second 1") && len(r.turns) == 1 })
 	if len(r.links) != 0 {
 		t.Fatalf("a blip was reported: %v", r.links)
@@ -112,20 +166,13 @@ func TestHeldClaude(t *testing.T) {
 	// there cannot be run); what is sent meanwhile waits and goes out after
 	retryMax = time.Second
 	t.Cleanup(func() { retryMax = time.Minute })
-	if err := os.Rename(holdBin, holdBin+".away"); err != nil {
-		t.Fatal(err)
-	}
-	cs.l.wmu.Lock()
-	pid = cs.l.cmd.Process.Pid
-	cs.l.wmu.Unlock()
-	_ = syscall.Kill(-pid, syscall.SIGKILL)
+	v.setAway(t, holdBin, true)
+	drop(cs.l)
 	r.wait(t, func() bool { return len(r.links) == 1 })
 	if err := s.Send(Input{Text: "sent while away"}); err != nil {
 		t.Fatalf("send while away: %v", err)
 	}
-	if err := os.Rename(holdBin+".away", holdBin); err != nil {
-		t.Fatal(err)
-	}
+	v.setAway(t, holdBin, false)
 	r.wait(t, func() bool { return len(r.links) == 2 && r.links[1] && len(r.turns) == 3 && r.has("second 3") })
 
 	// a third turn is running when Pocket AI stops: it lets go
@@ -151,7 +198,7 @@ func TestHeldClaude(t *testing.T) {
 
 	// the next Pocket AI adopts it: the running turn, and every sub-agent
 	r2 := &heldRec{rec: newRec()}
-	o.Hold = &Hold{Bin: holdBin, Slot: "thread-x", Adopt: true}
+	o.Hold = v.hold(&Hold{Bin: holdBin, Slot: "thread-x", Adopt: true})
 	s2, err := StartClaude(context.Background(), o, r2)
 	if err != nil {
 		t.Fatal(err)

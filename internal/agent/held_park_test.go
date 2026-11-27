@@ -12,10 +12,12 @@ import (
 // by Wake when it spoke on its own meanwhile; nothing it said is lost or
 // read twice, nobody is told of a lost link, and closing it while parked
 // still ends the CLI.
-func TestHeldPark(t *testing.T) {
+func TestHeldPark(t *testing.T) { eachHeldVia(t, testHeldPark) }
+
+func testHeldPark(t *testing.T, v *heldVia) {
 	bin, holdBin := heldSetup(t)
 	const slot = "thread-park"
-	o := Options{Bin: bin, Cwd: t.TempDir(), Mode: "default", Hold: &Hold{Bin: holdBin, Slot: slot, Leave: make(chan struct{})}}
+	o := Options{Bin: bin, Cwd: t.TempDir(), Mode: "default", Hold: v.hold(&Hold{Bin: holdBin, Slot: slot, Leave: make(chan struct{})})}
 	r := &heldRec{rec: newRec()}
 	s, err := StartClaude(context.Background(), o, r)
 	if err != nil {
@@ -142,11 +144,13 @@ func TestHeldPark(t *testing.T) {
 
 // A parked agent is let go of like any other when Pocket AI stops: no exit
 // is reported, and it runs on for the next one.
-func TestHeldParkLeave(t *testing.T) {
+func TestHeldParkLeave(t *testing.T) { eachHeldVia(t, testHeldParkLeave) }
+
+func testHeldParkLeave(t *testing.T, v *heldVia) {
 	bin, holdBin := heldSetup(t)
 	const slot = "thread-park-leave"
 	leave := make(chan struct{})
-	o := Options{Bin: bin, Cwd: t.TempDir(), Mode: "default", Hold: &Hold{Bin: holdBin, Slot: slot, Leave: leave}}
+	o := Options{Bin: bin, Cwd: t.TempDir(), Mode: "default", Hold: v.hold(&Hold{Bin: holdBin, Slot: slot, Leave: leave})}
 	r := &heldRec{rec: newRec()}
 	s, err := StartClaude(context.Background(), o, r)
 	if err != nil {

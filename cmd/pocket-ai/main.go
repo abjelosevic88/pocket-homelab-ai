@@ -160,6 +160,7 @@ func serve() {
 	<-ctx.Done()
 	log.Info("shutting down")
 	srv.CloseTerminals()
+	srv.CloseLinks() // the machine links close and the controller lease goes to the next process at once
 	shutdownCtx, c2 := context.WithTimeout(context.Background(), 15*time.Second)
 	defer c2()
 	for _, hs := range servers {

@@ -124,7 +124,7 @@ export GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0 LC_ALL=C
 		}
 		b.WriteString(" 2>/dev/null </dev/null; printf '\\036%d\\036' $?\n")
 	}
-	out, _, err := remoteOf(h).Run(ctx, 20*time.Second, b.String(), dir)
+	out, _, err := remoteOf(h).Run(agent.Repeatable(ctx), 20*time.Second, b.String(), dir)
 	if err != nil {
 		return gitInfo{}
 	}

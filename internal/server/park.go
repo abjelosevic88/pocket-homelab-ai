@@ -12,12 +12,18 @@ package server
 // Why: a connection per live agent, kept for days, was 57 to one machine,
 // more than the NAT in front of this server allows to one destination (about
 // 64): new connections there timed out.
+//
+// Machines on the link (machine_link_agents.go) need none of this: all their
+// agents share one connection, and each tracked agent keeps its stream. Only
+// agents on the per-agent path (a machine not on the link, fallen back, or
+// an agent whose bind failed) are parked.
 
 import (
 	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -86,6 +92,10 @@ func (rt *engine) parkIdle() {
 		}
 	}
 	rt.mu.Unlock()
+	// a machine on the link keeps a stream per tracked agent (it costs a
+	// socket there and a few kilobytes here, not a connection): only agents
+	// on the per-agent path are parked
+	list = slices.DeleteFunc(list, func(r *run) bool { return rt.s.links.keepsStream(r.host, r.threadID) })
 	hosts := map[int64]bool{}
 	for _, r := range list {
 		p, ok := r.sess.(agent.Parkable)
@@ -218,6 +228,8 @@ func (rt *engine) watchOnce(hostID int64, slots map[string]*run) error {
 	for id := range slots {
 		args = append(args, id)
 	}
+	// Stream is always its own ssh connection, never the link (phase 3
+	// replaces this watch on machines that are on the link)
 	cmd, err := remoteOf(h).Stream(ctx, parkWatchScript, args...)
 	if err != nil {
 		return err

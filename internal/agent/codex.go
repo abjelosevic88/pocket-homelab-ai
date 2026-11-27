@@ -1100,3 +1100,4 @@ func codexPocketConfig(path string) (map[string]any, error) {
 func (s *codexSession) Park() bool            { return s.c.l.Park() }
 func (s *codexSession) Wake() bool            { return s.c.l.Wake() }
 func (s *codexSession) Parked() (int64, bool) { return s.c.l.Parked() }
+func (s *codexSession) Reroute() bool         { return s.c.l.Reroute() }

@@ -11,7 +11,9 @@
 // Pocket AI talks to attach exactly as it would to the CLI: stdout is the
 // CLI's stdout after one header line, stdin goes to the CLI. A stdin line
 // {"pocket_hold":"stop"} ends the CLI; anything else that ends the attach
-// client (a dropped link, a signal, stdin closing) only detaches.
+// client (a dropped link, a signal, stdin closing) only detaches. The same
+// client runs in-process over any connection to a holder (client.go:
+// Open, AttachStream), with attach -start-only to start the holder.
 package hold
 
 import (
@@ -64,8 +66,10 @@ type hello struct {
 // Type set) as the first stdout line.
 type Header struct {
 	Type     string `json:"type,omitempty"`
-	Started  bool   `json:"started,omitempty"` // attach started this holder and its CLI
-	Gone     bool   `json:"gone,omitempty"`    // no holder (attach -only)
+	Proto    int    `json:"proto,omitempty"`     // the holder's protocol (Proto); 0: from before it was sent
+	Started  bool   `json:"started,omitempty"`   // attach started this holder and its CLI
+	Gone     bool   `json:"gone,omitempty"`      // no holder (attach -only)
+	SlotBusy bool   `json:"slot_busy,omitempty"` // another start holds the slot and is not listening yet: nothing was started
 	PID      int    `json:"pid,omitempty"`
 	Busy     bool   `json:"busy,omitempty"`     // a turn is running
 	Offset   int64  `json:"offset"`             // stdout offset the stream starts at
@@ -191,7 +195,13 @@ func handshakeR(c net.Conn, r *bufio.Reader, h hello) (Header, error) {
 	if typ != fHeader {
 		return hd, fmt.Errorf("unexpected frame %q", typ)
 	}
-	return hd, json.Unmarshal(p, &hd)
+	if err := json.Unmarshal(p, &hd); err != nil {
+		return hd, err
+	}
+	if h.Stop {
+		return hd, nil // it was told already; nothing more is said to it
+	}
+	return hd, checkProto(hd)
 }
 
 // lines calls fn with each complete line written through it and the

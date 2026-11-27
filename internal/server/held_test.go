@@ -52,7 +52,24 @@ func TestRestartTakesBackUnmarkedAgent(t *testing.T) { restartTakeBack(t, false,
 // reply and its end (it replays the whole last turn).
 func TestRestartTakesBackFinishedTurn(t *testing.T) { restartTakeBack(t, true, false) }
 
+// restartTakeBack runs with holders reached through pocket-hold attach and
+// in-process.
 func restartTakeBack(t *testing.T, finishWhileDown, unmarked bool) {
+	for _, inproc := range []bool{false, true} {
+		name := "attach"
+		if inproc {
+			name = "inproc"
+		}
+		t.Run(name, func(t *testing.T) {
+			old := holdInProcess
+			holdInProcess = inproc
+			defer func() { holdInProcess = old }()
+			restartTakeBackVia(t, finishWhileDown, unmarked)
+		})
+	}
+}
+
+func restartTakeBackVia(t *testing.T, finishWhileDown, unmarked bool) {
 	if _, _, ok := hold.Binary(runtime.GOOS, runtime.GOARCH); !ok {
 		t.Skip("pocket-hold not built in (go generate ./internal/hold)")
 	}

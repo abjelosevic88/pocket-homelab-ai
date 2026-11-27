@@ -117,6 +117,8 @@ func installHolder(ctx context.Context, h *store.Host) (string, error) {
 		}
 		return path, os.Rename(tmp, path)
 	}
+	// the holder's upload is never over the link: the relay is part of it
+	ctx = agent.PlainSSH(ctx)
 	r := remoteOf(h)
 	out, errOut, err := r.Run(ctx, 30*time.Second, `uname -sm; printf '%s\n' "$HOME"`)
 	if err != nil {
@@ -174,12 +176,18 @@ func holderStatus(ctx context.Context, h *store.Host, bin, slot string) (hold.He
 		hd, ok, err := hold.Status(slot)
 		return hd, err == nil && ok && !hd.Exited && !hd.Stopping
 	}
-	out, _, err := remoteOf(h).Run(ctx, 30*time.Second, `"$1" status "$2"`, bin, slot)
+	out, _, err := remoteOf(h).Run(agent.Repeatable(ctx), 30*time.Second, `"$1" status "$2"`, bin, slot)
 	if err != nil || json.Unmarshal([]byte(strings.TrimSpace(out)), &hd) != nil {
 		return hd, false
 	}
 	return hd, !hd.Gone && !hd.Exited && !hd.Stopping
 }
+
+// holdInProcess: agents held on this server are spoken to in-process over
+// their holder's socket (agent.Hold.Dial) instead of through a pocket-hold
+// attach process each. Off for now (the machine link builds on it); the
+// held tests run both ways.
+var holdInProcess = false
 
 // holdFor runs thread t's agent under pocket-hold when its machine has it,
 // set to adopt the CLI still running there. pin is how that CLI reaches the
@@ -198,6 +206,9 @@ func (rt *engine) holdFor(ctx context.Context, t *store.Thread, h *store.Host, o
 	o.Hold = &agent.Hold{Bin: bin, Slot: t.ID, Leave: rt.ctx.Done()}
 	if h == nil {
 		o.Hold.Scope = serviceScope()
+		if holdInProcess {
+			o.Hold.Dial = hold.DialSlot
+		}
 	}
 	if agent.TakeUnstopped(t.ID) {
 		// it was stopped while its machine could not be reached: end it now

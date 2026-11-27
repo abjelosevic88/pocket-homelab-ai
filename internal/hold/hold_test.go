@@ -46,7 +46,14 @@ type attached struct {
 func attach(t *testing.T, home string, args ...string) *attached {
 	t.Helper()
 	self, _ := os.Executable()
-	cmd := exec.Command(self, append([]string{"attach", "-start-mark", `"type":"user"`, "-end-mark", `"type":"result"`}, args...)...)
+	return attachWith(t, self, home, args...)
+}
+
+// attachWith runs bin's attach (the test binary, or another build of
+// pocket-hold).
+func attachWith(t *testing.T, bin, home string, args ...string) *attached {
+	t.Helper()
+	cmd := exec.Command(bin, append([]string{"attach", "-start-mark", `"type":"user"`, "-end-mark", `"type":"result"`}, args...)...)
 	cmd.Env = append(os.Environ(), "HOME="+home, "POCKET_HOLD_TEST_MAIN=1")
 	in, _ := cmd.StdinPipe()
 	out, _ := cmd.StdoutPipe()
@@ -55,12 +62,20 @@ func attach(t *testing.T, home string, args ...string) *attached {
 		t.Fatal(err)
 	}
 	a := &attached{t: t, cmd: cmd, in: in, out: bufio.NewReader(out), lines: make(chan string, 100)}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	a.start()
+	return a
+}
+
+// start reads the header line, then hands out the lines after it.
+func (a *attached) start() {
+	a.t.Helper()
 	first, err := a.out.ReadString('\n')
 	if err != nil {
-		t.Fatalf("no header: %v", err)
+		a.t.Fatalf("no header: %v", err)
 	}
 	if err := json.Unmarshal([]byte(first), &a.hd); err != nil || a.hd.Type != HeaderType {
-		t.Fatalf("bad header %q", first)
+		a.t.Fatalf("bad header %q", first)
 	}
 	go func() {
 		for {
@@ -73,8 +88,6 @@ func attach(t *testing.T, home string, args ...string) *attached {
 			a.lines <- strings.TrimSpace(l)
 		}
 	}()
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
-	return a
 }
 
 func (a *attached) send(s string) {

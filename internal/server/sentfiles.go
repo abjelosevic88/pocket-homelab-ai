@@ -135,7 +135,7 @@ func (s *Server) readSent(ctx context.Context, t *store.Thread, path string) ([]
 		return nil, herr
 	}
 	if h != nil {
-		out, errOut, err = remoteOf(h).Run(ctx, 3*time.Minute, sentRead, path, max)
+		out, errOut, err = remoteOf(h).Run(agent.Repeatable(ctx), 3*time.Minute, sentRead, path, max)
 	} else {
 		dir := ""
 		if s.jailed(ctx, t.UserID) {

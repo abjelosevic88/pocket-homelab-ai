@@ -9,11 +9,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/hold"
@@ -37,6 +37,59 @@ type Hold struct {
 	// FromTurn: adopting, replay the whole last turn, ended or not (the
 	// thread never saw it end: Pocket AI was down when it did).
 	FromTurn bool
+
+	// Dial, when set, reaches the holder of a slot directly, and Pocket AI
+	// speaks the holder protocol in-process over it (hold.Open) instead of
+	// running pocket-hold attach for every connection: hold.DialSlot for a
+	// holder on this server; a relay stream for one on another machine. Its
+	// error wraps hold.ErrNoHolder when no holder listens there. A start
+	// (not Adopt) first runs pocket-hold attach -start-only, through
+	// StartOnly. Nil, the default: pocket-hold attach as a process.
+	Dial func(ctx context.Context, slot string) (net.Conn, error)
+	// StartOnly runs a holder start for Dial and returns the header it
+	// printed (SlotBusy set when another start has the slot). Nil: the
+	// start's Cmd is run as it is, here or over ssh.
+	StartOnly func(ctx context.Context, start HoldStart) (hold.Header, error)
+
+	// Route, when set, is asked before every connection to the CLI (its
+	// start, each reattach) which way that one goes: over Dial and
+	// StartOnly (a machine's link), or pocket-hold attach over the agent's
+	// own ssh connection with its forwards (the per-agent path). The answer
+	// may differ from one connection to the next: that is how an agent moves
+	// between the two (Reroute). An error means no connection now; it is
+	// tried again like a lost one. Nil: Dial decides, as always.
+	Route func(ctx context.Context, start bool) (HoldPath, error)
+	// CatchUp, when set, is asked before a reattach over Dial: release is
+	// called once the stream has caught up with what the holder had when it
+	// answered (its Live offset), or ends. It caps how many streams of one
+	// machine catch up at once after its link came back.
+	CatchUp func(ctx context.Context) (release func(), err error)
+}
+
+// HoldPath is the way one connection of a held CLI goes (Hold.Route).
+type HoldPath struct {
+	// Link: over Hold.Dial (and StartOnly for a start). Otherwise the
+	// per-agent ssh path: pocket-hold attach with Remote.Forwards.
+	Link bool
+	// NoForwards: the per-agent path without the tools forward (its port
+	// is not to be had; the thread was told why).
+	NoForwards bool
+	// Guard is sh run on the machine before the per-agent connection's
+	// command; a non-zero exit there ends it with exit 75 (the machine's
+	// fence refused: a newer link owns it).
+	Guard string
+	// Free frees the per-agent path's forwarded ports when ssh says one is
+	// still held (instead of Remote.FreeForwards; fenced on a machine with
+	// a fence).
+	Free func(ctx context.Context) error
+	// Done is told how the connection went: nil once it is up.
+	Done func(err error)
+}
+
+// Reroutable is a session whose connection can be made again at once, so
+// its next connection goes the way Hold.Route now says (link.Reroute).
+type Reroutable interface {
+	Reroute() bool
 }
 
 func (h *Hold) leaving() bool {
@@ -103,9 +156,10 @@ type ReplaySink interface {
 }
 
 // link is a CLI's stdio. Plain, it is the process itself. Held, it is
-// pocket-hold attach, and when the connection drops the link attaches again
-// where it stopped: no output read twice or lost, stdin the holder may not
-// have got sent again. The session using it notices nothing.
+// pocket-hold attach (or the holder spoken to in-process: Hold.Dial), and
+// when the connection drops the link attaches again where it stopped: no
+// output read twice or lost, stdin the holder may not have got sent again.
+// The session using it notices nothing.
 type link struct {
 	ctx  context.Context
 	o    Options
@@ -115,11 +169,12 @@ type link struct {
 	args []string
 	errb *tail
 	log  *slog.Logger
+	t    transport
 
 	Header hold.Header // what the first attach found
 
 	wmu     sync.Mutex
-	cmd     *exec.Cmd
+	c       conn // the current connection
 	stdin   io.WriteCloser
 	r       *bufio.Reader
 	down    bool   // reconnecting
@@ -141,8 +196,8 @@ type link struct {
 	// Parking (Park): a held CLI with nothing going on needs no connection.
 	// let: the current connection was ended on purpose; parked: nothing has
 	// asked for it back yet; parkOff: stdout read when it went (valid while
-	// resting); waited: the connection's process was collected, so its pid
-	// may belong to something else by now and is never signalled again.
+	// resting); waited: the connection was collected (a process's pid may
+	// belong to something else by now), so it is never ended again.
 	let, parked, resting, waited bool
 	parkOff                      int64
 	wake                         chan struct{}
@@ -176,15 +231,14 @@ func openLink(ctx context.Context, o Options, m marks, bin string, args []string
 	if l.h != nil && l.h.FromTurn {
 		from = hold.FromTurn
 	}
-	cmd, stdin, r, hd, err := l.connect(from, l.h != nil && l.h.Adopt)
+	c, hd, err := l.connect(from, l.h != nil && l.h.Adopt)
 	if err != nil {
 		return nil, err
 	}
 	if hd.Gone {
-		_ = cmd.Wait()
 		return nil, ErrNotHeld
 	}
-	l.cmd, l.stdin, l.r, l.Header, l.off = cmd, stdin, r, hd, hd.Offset
+	l.c, l.stdin, l.r, l.Header, l.off = c, c.Stdin(), c.Stdout(), hd, hd.Offset
 	return l, nil
 }
 
@@ -192,18 +246,30 @@ func openLink(ctx context.Context, o Options, m marks, bin string, args []string
 // held CLI on another machine is reached on the same forwarded port every
 // time (it was started with it); when a dropped connection the machine has
 // not noticed still holds that port, ssh refuses the forward (exit 255):
-// that connection is ended and this one tried once more.
-func (l *link) connect(from int64, only bool) (*exec.Cmd, io.WriteCloser, *bufio.Reader, hold.Header, error) {
-	cmd, stdin, r, hd, stderr, err := l.connectOnce(from, only)
+// that connection is ended (FreeForwards returns once the port is free) and
+// this one tried once more.
+func (l *link) connect(from int64, only bool) (conn, hold.Header, error) {
+	t, p, err := l.transport(!only)
+	if err != nil {
+		return nil, hold.Header{}, err
+	}
+	c, hd, stderr, err := t.open(from, only)
 	if err != nil && l.h != nil && l.o.Remote != nil && strings.Contains(stderr, "remote port forwarding failed") {
 		l.log.Warn("agent port still held by an old connection; ending it", "slot", l.h.Slot, "machine", l.o.Remote.Target)
 		ctx, cancel := context.WithTimeout(l.ctx, 30*time.Second)
-		ferr := l.o.Remote.FreeForwards(ctx)
+		free := l.o.Remote.FreeForwards
+		if p.Free != nil {
+			free = p.Free
+		}
+		ferr := free(ctx)
 		cancel()
 		if ferr != nil {
 			l.log.Warn("could not free the agent port", "slot", l.h.Slot, "err", ferr)
 		}
-		cmd, stdin, r, hd, _, err = l.connectOnce(from, only)
+		c, hd, stderr, err = t.open(from, only)
+		if err != nil && ferr != nil && strings.Contains(stderr, "remote port forwarding failed") {
+			err = fmt.Errorf("%w (%v)", err, ferr) // why the port is still held: another program on it
+		}
 	}
 	// ssh could not reach the machine at all (nothing started there): a
 	// network blip, usually gone in a few seconds — try again, 1 s then 3 s
@@ -211,94 +277,51 @@ func (l *link) connect(from int64, only bool) (*exec.Cmd, io.WriteCloser, *bufio
 		l.log.Info("machine not reachable; trying again", "machine", l.o.Remote.Target, "err", strings.TrimSpace(stderr))
 		select {
 		case <-l.ctx.Done():
-			return cmd, stdin, r, hd, err
+			if p.Done != nil {
+				p.Done(err)
+			}
+			return c, hd, err
 		case <-time.After(time.Duration(1+2*try) * time.Second):
 		}
-		cmd, stdin, r, hd, stderr, err = l.connectOnce(from, only)
+		c, hd, stderr, err = t.open(from, only)
 	}
-	return cmd, stdin, r, hd, err
+	if p.Done != nil {
+		p.Done(err)
+	}
+	return c, hd, err
 }
 
-func (l *link) connectOnce(from int64, only bool) (*exec.Cmd, io.WriteCloser, *bufio.Reader, hold.Header, string, error) {
-	cmd, stdin, r, hd, own, err := l.dial(from, only)
-	return cmd, stdin, r, hd, own.String(), err
-}
-
-func (l *link) dial(from int64, only bool) (*exec.Cmd, io.WriteCloser, *bufio.Reader, hold.Header, *tail, error) {
-	var hd hold.Header
-	own := &tail{n: 4096} // this connection's stderr, for why it failed
-	var wrap []string
-	if l.h != nil {
-		wrap = []string{l.h.Bin, "attach", "-from", strconv.FormatInt(from, 10), "-start-mark", l.m.start, "-end-mark", l.m.end}
-		if only {
-			wrap = append(wrap, "-only")
-		}
-		for _, k := range l.m.keep {
-			wrap = append(wrap, "-keep-mark", k)
-		}
-		if l.h.MetaFile != "" {
-			wrap = append(wrap, "-meta-file", l.h.MetaFile)
-		} else if l.h.Meta != "" {
-			wrap = append(wrap, "-meta", l.h.Meta)
-		}
-		if len(l.h.Scope) > 0 {
-			wrap = append(wrap, "-scope", strings.Join(l.h.Scope, " "))
-		}
-		wrap = append(wrap, l.h.Slot, "--")
-	}
-	cmd, err := cliCommand(l.o, wrap, l.bin, l.args)
-	if err != nil {
-		return nil, nil, nil, hd, own, err
-	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Stderr = own
-	if l.errb != nil {
-		cmd.Stderr = io.MultiWriter(l.errb, own)
-	}
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, nil, nil, hd, own, err
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, nil, nil, hd, own, err
-	}
-	if err := cmd.Start(); err != nil {
-		return nil, nil, nil, hd, own, fmt.Errorf("start %s: %w", l.bin, err)
-	}
-	r := bufio.NewReaderSize(stdout, 1<<20)
+// transport is the way the next connection goes: Hold.Route's answer when
+// it is set, else the in-process holder client when Hold.Dial is set, else
+// pocket-hold attach (or the plain CLI) as a process.
+func (l *link) transport(start bool) (transport, HoldPath, error) {
+	var p HoldPath
 	if l.h == nil {
-		return cmd, stdin, r, hd, own, nil
+		return procTransport{l: l}, p, nil
 	}
-	type res struct {
-		line []byte
-		err  error
-	}
-	got := make(chan res, 1)
-	go func() {
-		line, err := r.ReadBytes('\n')
-		got <- res{line, err}
-	}()
-	var x res
-	select {
-	case x = <-got:
-	case <-time.After(90 * time.Second):
-		x.err = errors.New("no answer from pocket-hold")
-	}
-	if x.err == nil && json.Unmarshal(x.line, &hd) == nil && hd.Type == hold.HeaderType {
-		return cmd, stdin, r, hd, own, nil
-	}
-	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	werr := cmd.Wait()
-	if x.err == nil {
-		x.err = fmt.Errorf("unexpected output from pocket-hold: %s", oneLine(string(x.line), 200))
-	} else if werr != nil {
-		x.err = werr
-		if msg := own.String(); msg != "" {
-			x.err = fmt.Errorf("%s (%w)", oneLine(msg, 200), werr) // not a bare "exit status 255"
+	if l.h.Route == nil {
+		if l.h.Dial != nil {
+			return holdTransport{l: l, dial: l.h.Dial, start: l.h.StartOnly, catchUp: l.h.CatchUp}, p, nil
 		}
+		return procTransport{l: l}, p, nil
 	}
-	return nil, nil, nil, hd, own, x.err
+	p, err := l.h.Route(l.ctx, start)
+	if err != nil {
+		return nil, p, err
+	}
+	if p.Link {
+		return holdTransport{l: l, dial: l.h.Dial, start: l.h.StartOnly, catchUp: l.h.CatchUp}, p, nil
+	}
+	t := procTransport{l: l}
+	if l.o.Remote != nil && (p.NoForwards || p.Guard != "") {
+		r := *l.o.Remote
+		if p.NoForwards {
+			r.Forwards = nil
+		}
+		r.Guard = p.Guard
+		t.remote = &r
+	}
+	return t, p, nil
 }
 
 // Lines calls fn with each line of the CLI's stdout (no newline) until it
@@ -333,9 +356,9 @@ func (l *link) Lines(fn func(line []byte)) error {
 			fn(line[:len(line)-1])
 		}
 		l.wmu.Lock()
-		cmd := l.cmd
+		c := l.c
 		l.wmu.Unlock()
-		err := cmd.Wait()
+		err := c.Wait()
 		if l.h == nil {
 			l.finish()
 			return err
@@ -436,9 +459,8 @@ func (l *link) reattach(now bool) (*bufio.Reader, bool) {
 			return nil, false
 		case <-time.After(delay):
 		}
-		cmd, stdin, r, hd, err := l.connect(l.off, true)
+		c, hd, err := l.connect(l.off, true)
 		if err == nil && hd.Gone {
-			_ = cmd.Wait()
 			l.log.Warn("agent gone on reattach", "slot", l.h.Slot)
 			return nil, false
 		}
@@ -447,7 +469,15 @@ func (l *link) reattach(now bool) (*bufio.Reader, bool) {
 				l.log.Warn("agent output skipped on reattach", "slot", l.h.Slot, "had", l.off, "from", hd.Offset)
 				l.off = hd.Offset
 			}
+			stdin := c.Stdin()
 			l.wmu.Lock()
+			if l.detached {
+				// let go of while this connection was being made: it goes too
+				l.wmu.Unlock()
+				c.End(false)
+				_ = c.Wait()
+				return nil, false
+			}
 			// what the holder did not get of what was written goes again
 			if sent := l.inBase + int64(len(l.inLog)); hd.In < sent {
 				if hd.In >= l.inBase {
@@ -464,15 +494,15 @@ func (l *link) reattach(now bool) (*bufio.Reader, bool) {
 				}
 			}
 			if err == nil {
-				l.cmd, l.stdin = cmd, stdin
+				l.c, l.stdin = c, stdin
 				l.down, l.waited, l.let = false, false, false
 				l.wmu.Unlock()
 				l.log.Info("agent reattached", "slot", l.h.Slot, "offset", l.off)
-				return r, true
+				return c.Stdout(), true
 			}
 			l.wmu.Unlock()
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			_ = cmd.Wait()
+			c.End(true)
+			_ = c.Wait()
 		}
 		delay = min(max(delay*2, time.Second), retryMax)
 	}
@@ -493,11 +523,35 @@ func (l *link) Park() bool {
 	}
 	l.wmu.Lock()
 	defer l.wmu.Unlock()
-	if l.ended || l.down || l.waited || l.detached || l.stopping || l.parked || len(l.pending) > 0 || l.cmd == nil || l.cmd.Process == nil {
+	if l.ended || l.down || l.waited || l.detached || l.stopping || l.parked || len(l.pending) > 0 || l.c == nil {
 		return false
 	}
 	l.parked, l.let = true, true
-	_ = syscall.Kill(-l.cmd.Process.Pid, syscall.SIGTERM) // not collected yet (waited): still ours
+	l.c.End(false) // not collected yet (waited): still ours
+	return true
+}
+
+// Reroute ends the current connection on purpose and makes the next one at
+// once, so it goes the way Hold.Route now says (a move between the machine's
+// link and the agent's own ssh connection). A parked link is woken; one that
+// is reconnecting asks the route anyway. False when it is not held, or ended.
+func (l *link) Reroute() bool {
+	if l.h == nil || l.h.leaving() {
+		return false
+	}
+	l.wmu.Lock()
+	defer l.wmu.Unlock()
+	if l.ended || l.detached || l.stopping {
+		return false
+	}
+	if l.parked {
+		return l.wakeLocked()
+	}
+	if l.down || l.waited || l.c == nil {
+		return true // between connections: the next one asks the route
+	}
+	l.let = true
+	l.c.End(false)
 	return true
 }
 
@@ -636,13 +690,12 @@ func (l *link) Close(done <-chan struct{}) {
 		}
 	}
 	l.wmu.Lock()
-	stdin, cmd, waited := l.stdin, l.cmd, l.waited
+	stdin, c, waited := l.stdin, l.c, l.waited
 	l.wmu.Unlock()
 	_ = stdin.Close()
-	if cmd.Process == nil || waited {
+	if waited {
 		return // nothing of ours runs any more (parked, or between connections)
 	}
-	pid := cmd.Process.Pid
 	grace := 3 * time.Second
 	if l.h != nil {
 		grace = 15 * time.Second // the holder escalates on its own; attach leaves after
@@ -651,11 +704,11 @@ func (l *link) Close(done <-chan struct{}) {
 		select {
 		case <-done:
 		case <-time.After(grace):
-			_ = syscall.Kill(-pid, syscall.SIGTERM)
+			c.End(false)
 			select {
 			case <-done:
 			case <-time.After(5 * time.Second):
-				_ = syscall.Kill(-pid, syscall.SIGKILL)
+				c.End(true)
 			}
 		}
 	}()
@@ -678,8 +731,8 @@ func (l *link) Detach() {
 	}
 	l.wmu.Lock()
 	l.detached = true
-	if l.cmd != nil && l.cmd.Process != nil && !l.waited {
-		_ = syscall.Kill(-l.cmd.Process.Pid, syscall.SIGTERM)
+	if l.c != nil && !l.waited {
+		l.c.End(false)
 	}
 	l.wmu.Unlock()
 	l.quitOnce.Do(func() { close(l.quit) })
@@ -702,7 +755,21 @@ func (l *link) stopHeld() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	var err error
-	if l.o.Remote != nil {
+	viaDial := l.h.Dial != nil
+	if viaDial {
+		var c net.Conn
+		if c, err = l.h.Dial(ctx, l.h.Slot); err == nil {
+			_, err = hold.StopVia(c)
+		} else if errors.Is(err, hold.ErrNoHolder) {
+			err = nil // nothing runs there to stop
+		} else if l.h.Route != nil && l.o.Remote != nil {
+			// the machine's link is not there (or not for this agent): ask
+			// pocket-hold there over ssh
+			viaDial = false
+		}
+	}
+	if viaDial {
+	} else if l.o.Remote != nil {
 		_, _, err = l.o.Remote.Run(ctx, 30*time.Second, `"$1" stop "$2"`, l.h.Bin, l.h.Slot)
 	} else {
 		err = exec.CommandContext(ctx, l.h.Bin, "stop", l.h.Slot).Run()

@@ -85,6 +85,10 @@ export interface Host {
     checked_at?: string
   }
   created_at: string
+  /** the machine link: off | status | agents (Settings → Machines → Use one connection) */
+  link_mode?: 'off' | 'status' | 'agents'
+  /** when and why it fell back to ssh per agent */
+  link_fallback?: { at: string; why: string }
 }
 
 export interface Account {

@@ -37,11 +37,24 @@ func (s *Server) hostRoutes(r chi.Router) {
 	r.Post("/hosts/{id}/update/{provider}", s.handleCLIUpdate) // id 0 = this server (cli_update.go)
 	r.Get("/cli/latest", s.handleCLILatest)
 	r.Get("/hosts/key", s.handleHostKey)
+	s.hostLinkRoutes(r) // one connection per machine: host_link_api.go
 	r.Post("/fs/mkdir", s.handleMkdir)
 	r.Post("/fs/clone", s.handleClone)
 }
 
+// remoteOf is how a machine is reached: ssh, and its link when it has one
+// (machine_link.go), which short commands use as their marks allow
+// (link_callsites.go).
 func remoteOf(h *store.Host) *agent.Remote {
+	r := plainRemoteOf(h)
+	if l := machineLinkOf(h.ID); l != nil {
+		r.Link = l
+	}
+	return r
+}
+
+// plainRemoteOf is a machine over ssh only, never its link.
+func plainRemoteOf(h *store.Host) *agent.Remote {
 	return &agent.Remote{Target: h.Target, Port: h.Port, Home: h.Home}
 }
 
@@ -223,6 +236,9 @@ func (s *Server) handleCreateHost(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "host")
 		return
 	}
+	if h.Info.OK {
+		s.links.setUpNew(h) // its first check passed: the link is the default for new machines
+	}
 	s.rt.publishHosts()
 	writeJSON(w, http.StatusCreated, h)
 }
@@ -251,6 +267,9 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "host")
 		return
 	}
+	if h.Target != before.Target || h.Port != before.Port {
+		s.links.reset(h.ID) // its link goes to the new address
+	}
 	s.rt.publishHosts()
 	writeJSON(w, http.StatusOK, h)
 }
@@ -262,6 +281,7 @@ func (s *Server) handleDeleteHost(w http.ResponseWriter, r *http.Request) {
 	}
 	id := h.ID
 	s.rt.stopHost(id)
+	s.links.forget(id)
 	s.forgetHostLogins(id)
 	forgetHolder(id)
 	if err := s.store.DeleteHost(r.Context(), id); err != nil {
@@ -285,12 +305,19 @@ func (s *Server) handleCheckHost(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "host")
 		return
 	}
+	// never checked before and nothing runs there: new to Pocket AI. A
+	// failed check stores an empty Info too, so OS alone would take a
+	// machine that was away last time (with agents on it) for a new one.
+	first := h.Info.CheckedAt == "" && !s.store.HostHasThreads(r.Context(), h.ID)
 	h.Info = s.checkHost(r.Context(), h)
 	s.dropHostStatus(h.ID) // Accounts asks the machine again too (a CLI may be new there)
 	forgetHolder(h.ID)     // Check: look for it again too
 	if err := s.store.UpdateHost(r.Context(), h); err != nil {
 		s.fail(w, err, "host")
 		return
+	}
+	if first && h.Info.OK {
+		s.links.setUpNew(h) // the link is the default for new machines
 	}
 	s.rt.publishAccounts()
 	writeJSON(w, http.StatusOK, h)
@@ -377,7 +404,7 @@ var keyNameRe = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 // checkHost connects and looks at the CLIs.
 func (s *Server) checkHost(ctx context.Context, h *store.Host) store.HostInfo {
 	info := store.HostInfo{CheckedAt: store.Now(), Versions: map[string]string{}, Missing: map[string]string{}}
-	out, errOut, err := remoteOf(h).Run(ctx, 40*time.Second, hostProbe, hostBin(h, "claude"), hostBin(h, "codex"), hostBin(h, "antigravity"))
+	out, errOut, err := remoteOf(h).Run(agent.StatusScript(ctx), 40*time.Second, hostProbe, hostBin(h, "claude"), hostBin(h, "codex"), hostBin(h, "antigravity"))
 	if err != nil && !strings.Contains(out, "home=") {
 		info.Error = sshError(errOut, err)
 		return info
@@ -494,7 +521,7 @@ func (s *Server) listRemoteDirs(ctx context.Context, h *store.Host, p string, hi
 	if hidden {
 		hiddenArg = "1"
 	}
-	out, errOut, err := remoteOf(h).Run(ctx, 20*time.Second, remoteDirs, p, hiddenArg)
+	out, errOut, err := remoteOf(h).Run(agent.Repeatable(ctx), 20*time.Second, remoteDirs, p, hiddenArg)
 	if err != nil {
 		return nil, badRequest(h.Name + ": " + sshError(errOut, err))
 	}

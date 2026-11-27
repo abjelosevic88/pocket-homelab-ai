@@ -69,6 +69,8 @@ type Server struct {
 
 	re reattachSet // agents still working from before a restart: reconnect.go
 
+	links *linkManager // one link per machine: machine_link.go
+
 	provMu   sync.Mutex
 	provList []agent.Provider
 	provAt   time.Time
@@ -90,6 +92,8 @@ func New(cfg *config.Config, st *store.Store, log *slog.Logger, webFS fs.FS) *Se
 		accts: accountState{status: map[string]acctStatus{}, logins: map[string]*loginRun{}}}
 	s.inferenceSlots = make(chan struct{}, 4)
 	s.rt = newRuntime(s)
+	s.links = newLinkManager(st, log)
+	s.links.hostOf = func(ctx context.Context, id int64) (*store.Host, error) { return s.host(ctx, id) }
 	s.apns = &notify.APNS{TeamID: cfg.APNSTeamID, KeyID: cfg.APNSKeyID, KeyFile: cfg.APNSKeyFile, Topic: cfg.APNSTopic}
 	agent.Version = Version
 	s.http = &http.Client{Timeout: 60 * time.Second}
@@ -153,6 +157,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		return err
 	}
 	s.rt.start(ctx)
+	s.links.start(ctx) // the controller lease, then the machines' links (machine_link.go)
 	// a turn cut off by a crash or a restart: take it back from its holder,
 	// else reconnect to the agent where it still works, continue it where it
 	// does not (reconnect.go, held.go)

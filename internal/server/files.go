@@ -212,7 +212,7 @@ fi
 `
 
 func (s *Server) listRemoteFiles(ctx context.Context, h *store.Host, want string) (*fileListing, error) {
-	stdout, stderr, err := remoteOf(h).Run(ctx, 40*time.Second, remoteFiles, want, strconv.Itoa(filesListMax+1))
+	stdout, stderr, err := remoteOf(h).Run(agent.Repeatable(ctx), 40*time.Second, remoteFiles, want, strconv.Itoa(filesListMax+1))
 	if err != nil {
 		return nil, badRequest(h.Name + ": " + remoteErr(stderr, err))
 	}
@@ -328,7 +328,7 @@ func (s *Server) readRemoteFile(ctx context.Context, h *store.Host, p string) ([
 	if !strings.HasPrefix(p, "/") {
 		return nil, badRequest("use an absolute path")
 	}
-	stdout, stderr, err := remoteOf(h).Run(ctx, 2*time.Minute, remoteRead, p, strconv.Itoa(filesRemoteMax))
+	stdout, stderr, err := remoteOf(h).Run(agent.Repeatable(ctx), 2*time.Minute, remoteRead, p, strconv.Itoa(filesRemoteMax))
 	if err != nil {
 		return nil, badRequest(remoteErr(stderr, err))
 	}

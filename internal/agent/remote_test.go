@@ -146,3 +146,66 @@ func TestFreePortsEndsTheSlotsOldConnection(t *testing.T) {
 		t.Fatalf("another slot's connection was ended: %v", err)
 	}
 }
+
+// The sshd a slot's connection recorded is ended only while it is still that
+// process (pid and start time), an sshd, and this account's; other slots'
+// records are left alone.
+func TestFreePortsEndsTheRecordedConnection(t *testing.T) {
+	if _, err := exec.LookPath("ps"); err != nil {
+		t.Skip("no ps")
+	}
+	home, dir := t.TempDir(), t.TempDir()
+	sshd := filepath.Join(dir, "sshd-session")
+	if err := os.WriteFile(sshd, []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	start := func(bin string, args ...string) *exec.Cmd {
+		c := exec.Command(bin, args...)
+		c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := c.Start(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = syscall.Kill(-c.Process.Pid, syscall.SIGKILL); _ = c.Wait() })
+		return c
+	}
+	started := func(pid int) string {
+		out, err := exec.Command("sh", "-c", `echo $(LC_ALL=C ps -o lstart= -p "$1")`, "sh", strconv.Itoa(pid)).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	run := filepath.Join(home, ".pocket-ai", "run")
+	if err := os.MkdirAll(run, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	record := func(slot string, pid int, when string) {
+		if err := os.WriteFile(filepath.Join(run, slot+".sshd"), []byte(strconv.Itoa(pid)+" "+when+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stale, reused, other, notSSHD := start(sshd), start(sshd), start(sshd), start("sleep", "30")
+	time.Sleep(300 * time.Millisecond)
+	record("slot-a", stale.Process.Pid, started(stale.Process.Pid))
+	record("slot-b", reused.Process.Pid, "Thu Jan  1 00:00:00 1970")
+	record("slot-c", notSSHD.Process.Pid, started(notSSHD.Process.Pid))
+	for _, slot := range []string{"slot-b", "slot-c", "slot-d", "slot-a"} {
+		cmd := exec.Command("sh", "-c", freePorts, "sh", slot)
+		cmd.Env = append(os.Environ(), "HOME="+home)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("freePorts %s: %v: %s", slot, err, out)
+		}
+	}
+	ended := make(chan error, 1)
+	go func() { ended <- stale.Wait() }()
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the recorded connection was not ended")
+	}
+	for name, c := range map[string]*exec.Cmd{"a pid recorded with another start time": reused, "an sshd nobody recorded": other, "a process that is not sshd": notSSHD} {
+		if err := syscall.Kill(c.Process.Pid, 0); err != nil {
+			t.Errorf("%s was ended: %v", name, err)
+		}
+	}
+}

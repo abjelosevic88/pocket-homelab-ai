@@ -22,6 +22,14 @@ type Host struct {
 	// Home is set by the server when the machine is reached from a
 	// person's own folder (their key, in their jail).
 	Home string `json:"-"`
+	// The machine link (machine_link.go): the mode asked for (off | status |
+	// agents), the last generation allocated, and the fallback to ssh per
+	// agent (nil when it did not fall back). Saved apart from the rest
+	// (SetHostLinkMode, SetHostLinkFallback, NextLinkGeneration), so an edit
+	// of the machine never overwrites them.
+	LinkMode       string        `json:"link_mode"`
+	LinkGeneration int64         `json:"-"`
+	LinkFallback   *LinkFallback `json:"link_fallback,omitempty"`
 }
 
 // HostInfo is what the last check found on the machine.
@@ -40,15 +48,23 @@ func scanHost(row interface{ Scan(...any) error }) (*Host, error) {
 	var h Host
 	var info string
 	var uid sql.NullInt64
-	if err := row.Scan(&h.ID, &h.Name, &h.Target, &h.Port, &h.ClaudeBin, &h.CodexBin, &info, &h.CreatedAt, &uid); err != nil {
+	var fallback string
+	if err := row.Scan(&h.ID, &h.Name, &h.Target, &h.Port, &h.ClaudeBin, &h.CodexBin, &info, &h.CreatedAt, &uid,
+		&h.LinkMode, &h.LinkGeneration, &fallback); err != nil {
 		return nil, notFound(err)
 	}
 	h.UserID = uid.Int64
 	_ = jsonUnmarshal(info, &h.Info)
+	if fallback != "" {
+		var fb LinkFallback
+		if jsonUnmarshal(fallback, &fb) == nil {
+			h.LinkFallback = &fb
+		}
+	}
 	return &h, nil
 }
 
-const hostCols = `id, name, target, port, claude_bin, codex_bin, info, created_at, user_id`
+const hostCols = `id, name, target, port, claude_bin, codex_bin, info, created_at, user_id, link_mode, link_generation, link_fallback`
 
 // ListHosts returns every host, oldest first.
 func (s *Store) ListHosts(ctx context.Context) ([]*Host, error) {
@@ -82,6 +98,9 @@ func (s *Store) CreateHost(ctx context.Context, h *Host) error {
 		return conflict(err)
 	}
 	h.ID, _ = res.LastInsertId()
+	if h.LinkMode == "" {
+		h.LinkMode = LinkOff
+	}
 	return nil
 }
 
@@ -92,8 +111,21 @@ func (s *Store) UpdateHost(ctx context.Context, h *Host) error {
 	return err
 }
 
+// HostHasThreads: some conversation runs (or ran) on host id. A machine
+// with conversations is not new, whatever its last check found.
+func (s *Store) HostHasThreads(ctx context.Context, id int64) bool {
+	var n int
+	if err := s.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM threads WHERE host_id = ?)`, id).Scan(&n); err != nil {
+		return true // unknown: treat it as in use
+	}
+	return n != 0
+}
+
 // DeleteHost removes a host. Its threads stay (read-only until it is added again).
 func (s *Store) DeleteHost(ctx context.Context, id int64) error {
 	_, err := s.DB.ExecContext(ctx, `DELETE FROM hosts WHERE id = ?`, id)
+	if err == nil {
+		_, err = s.DB.ExecContext(ctx, `DELETE FROM agent_routes WHERE host_id = ?`, id)
+	}
 	return err
 }

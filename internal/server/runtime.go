@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/agent"
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/relay"
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
 )
 
@@ -106,6 +107,8 @@ type run struct {
 	// parkedAt / wokeAt: when its idle connection was last let go and asked
 	// back (park.go)
 	parkedAt, wokeAt time.Time
+	// linkAgent is its place on its machine's link (machine_link_agents.go)
+	linkAgent *linkAgent
 }
 
 // taskHold caps how long background tasks keep an otherwise quiet agent
@@ -583,7 +586,7 @@ func (rt *engine) costBase(ctx context.Context, t *store.Thread, h *store.Host, 
 	}
 	read := func() (float64, bool) {
 		if h != nil {
-			out, _, err := remoteOf(h).Run(ctx, 20*time.Second, agent.RemoteClaudeCostSh, t.HostHome, o.ResumeID)
+			out, _, err := remoteOf(h).Run(agent.Repeatable(ctx), 20*time.Second, agent.RemoteClaudeCostSh, t.HostHome, o.ResumeID)
 			if err != nil {
 				return 0, false
 			}
@@ -638,7 +641,7 @@ func (rt *engine) startRemote(t *store.Thread, h *store.Host) (*run, error) {
 	// The folder may be gone there (moved, cleaned up): say so plainly
 	// instead of letting the CLI fail on "cd" every time.
 	if t.Cwd != "" {
-		out, errOut, err := remoteOf(h).Run(rt.ctx, 20*time.Second, remoteFolderCheck, t.Cwd)
+		out, errOut, err := remoteOf(h).Run(agent.Repeatable(rt.ctx), 20*time.Second, remoteFolderCheck, t.Cwd)
 		if err != nil {
 			return nil, badRequest(h.Name + ": " + sshError(errOut, err))
 		}
@@ -665,7 +668,7 @@ func (rt *engine) startRemote(t *store.Thread, h *store.Host) (*run, error) {
 		o.LoginDir = t.HostHome // told by a flag, not the environment
 		// the last check of the machine may be from before it was installed
 		// there (or from before Pocket AI knew the agent): look now
-		if out, errOut, err := remoteOf(h).Run(ctx, 30*time.Second, `command -v "$1" >/dev/null 2>&1 && echo there`, o.Bin); err != nil && strings.TrimSpace(out) != "there" {
+		if out, errOut, err := remoteOf(h).Run(agent.Repeatable(ctx), 30*time.Second, `command -v "$1" >/dev/null 2>&1 && echo there`, o.Bin); err != nil && strings.TrimSpace(out) != "there" {
 			cancel()
 			if strings.TrimSpace(errOut) != "" && !strings.Contains(errOut, "not found") {
 				return nil, badRequest(h.Name + ": " + sshError(errOut, err))
@@ -706,12 +709,25 @@ func (rt *engine) startRemote(t *store.Thread, h *store.Host) (*run, error) {
 	if !tools {
 		o.SystemPrompt += " Pocket app tools are not available here; for Pocket app data, the person can use a conversation on the Pocket AI server."
 	}
+	// held: each of its connections goes over the machine's link or its own
+	// ssh, as the link says (machine_link_agents.go)
+	if o.Hold != nil {
+		port, local := 0, ""
+		if tools {
+			port, local = forwardPorts(o.Remote.Forwards)
+		}
+		r.linkAgent = rt.s.links.wireAgent(ctx, h, t.ID, &o, port, local)
+	}
 	var err error
 	r.sess, err = startSession(ctx, t.Provider, threadLogin(t, h), o, sink)
 	if err != nil {
 		cancel()
+		rt.s.links.untrackAgent(h.ID, r.linkAgent, false)
 		return nil, err
 	}
+	rt.s.links.attachAgent(h.ID, r.linkAgent, r.sess, rt.catchUpPriority(r), func(text string) {
+		rt.saveItem(r.threadID, agent.Item{Key: "linktools-" + uuid.NewString()[:8], Kind: "notice", Level: "warn", Text: text})
+	})
 	r.held = o.Hold != nil
 	rt.s.log.Info("agent started", "thread", t.ID, "provider", t.Provider, "host", h.Name, "held", r.held, "adopted", pin != nil, "login", firstNonEmpty(t.HostHome, "default"), "model", t.Model, "mode", t.Mode, "resume", o.ResumeID != "", "cwd", t.Cwd, "pocket_tools", tools)
 	return r, nil
@@ -2224,6 +2240,9 @@ func (k *runSink) TurnDone(ti agent.TurnInfo) {
 }
 
 func (k *runSink) Exited(err error) {
+	// its machine's link lets go of it; when Pocket AI is not stopping, the
+	// CLI is gone too, and so is its route
+	k.rt.s.links.untrackAgent(k.r.host, k.r.linkAgent, k.rt.ctx.Err() == nil)
 	if !k.beginEvent() {
 		return
 	}
@@ -2428,6 +2447,41 @@ func (rt *engine) withMemory(r *run, in agent.Input, sender int64) agent.Input {
 	}
 	in.Text += rt.s.memoryContext(rt.ctx, r.userID, t.NoMemory)
 	return in
+}
+
+// forwardPorts reads the tools forward ("127.0.0.1:R:127.0.0.1:L"): the
+// port there and the endpoint here.
+func forwardPorts(forwards []string) (int, string) {
+	for _, f := range forwards {
+		p := strings.Split(f, ":")
+		if len(p) != 4 {
+			continue
+		}
+		if port, err := strconv.Atoi(p[1]); err == nil {
+			return port, p[2] + ":" + p[3]
+		}
+	}
+	return 0, ""
+}
+
+// catchUpPriority ranks r's stream when it catches up after its machine's
+// link came back: someone looking at it, then a turn running, then idle.
+func (rt *engine) catchUpPriority(r *run) func() relay.Priority {
+	return func() relay.Priority {
+		rt.mu.Lock()
+		viewed := len(rt.watchers[r.threadID]) > 0
+		rt.mu.Unlock()
+		if viewed {
+			return relay.Viewed
+		}
+		r.mu.Lock()
+		busy := r.working()
+		r.mu.Unlock()
+		if busy {
+			return relay.Busy
+		}
+		return relay.Idle
+	}
 }
 
 // remotePocketTools moves a conversation's Pocket tool connection to another

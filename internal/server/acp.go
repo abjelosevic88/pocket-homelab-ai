@@ -482,7 +482,7 @@ func (s *Server) handleACPCopyLogin(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, in.From.Dir+" is not a "+ag.Name+" login folder on "+fromHost.Name)
 			return
 		}
-		out, errOut, rerr := remoteOf(fromHost).Run(ctx, 30*time.Second, readTokenScript, in.From.Dir, ag.TokenFile, ag.LoginPrefix())
+		out, errOut, rerr := remoteOf(fromHost).Run(agent.Repeatable(ctx), 30*time.Second, readTokenScript, in.From.Dir, ag.TokenFile, ag.LoginPrefix())
 		if rerr != nil && strings.TrimSpace(out) == "" && !strings.Contains(errOut, "No such file") {
 			writeErr(w, http.StatusBadGateway, fromHost.Name+": "+sshError(errOut, rerr))
 			return

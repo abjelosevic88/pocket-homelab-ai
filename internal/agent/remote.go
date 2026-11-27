@@ -36,6 +36,14 @@ type Remote struct {
 	// (sshd without ClientAliveInterval keeps a dead connection for hours),
 	// and two CLIs on one session would both work on it.
 	Slot string
+	// Link is the machine's one connection (remote_link.go), when it has
+	// one: short commands go over it when it says so (UseFor) and the call
+	// is not marked PlainSSH. nil: ssh as always.
+	Link RemoteLink
+	// Guard is sh an agent's connection runs first (after the profile): when
+	// it fails, the connection ends with exit 75 before anything else
+	// happens there. The machine link's fence check (Hold.Route) goes here.
+	Guard string
 }
 
 // PersonKey is a person's ssh key, made by the server (SSHKey).
@@ -125,17 +133,56 @@ func remoteCommand(script string) string {
 // records this one: exec keeps the pid, and through pocket-gui it is the
 // run client, which passes the signal on. The args check skips a pid reused
 // since by something else.
+//
+// It also records the sshd session that carries this connection ($PPID: the
+// login shell execs /bin/sh, see remoteCommand) with its start time, in
+// $1.sshd: when the link drops unnoticed, that sshd keeps the agent's
+// forwarded port after the process here is gone (the holder let its attach
+// go), and only this record leads to it (freePorts).
 const slotTakeover = `f="$HOME/.pocket-ai/run/$1"; mkdir -p "${f%/*}"; ` +
 	`if p=$(cat "$f" 2>/dev/null) && [ -n "$p" ] && [ "$p" != $$ ] && ps -o args= -p "$p" 2>/dev/null | grep -qE 'stream-json|app-server'; then ` +
 	`kill -HUP "-$p" 2>/dev/null || kill -HUP "$p" 2>/dev/null; i=0; while kill -0 "$p" 2>/dev/null && [ $i -lt 10 ]; do sleep 1; i=$((i+1)); done; ` +
-	`kill -KILL "-$p" 2>/dev/null || kill -KILL "$p" 2>/dev/null; fi; echo $$ > "$f"; `
+	`kill -KILL "-$p" 2>/dev/null || kill -KILL "$p" 2>/dev/null; fi; echo $$ > "$f"; ` +
+	`case "$(ps -o comm= -p "$PPID" 2>/dev/null)" in *sshd*) echo "$PPID" $(LC_ALL=C ps -o lstart= -p "$PPID" 2>/dev/null) > "$f.sshd";; *) rm -f "$f.sshd";; esac; `
+
+// profile reads the login profile: the shell over ssh is not a login one.
+func profile() string {
+	p := `[ -r /etc/profile ] && . /etc/profile >/dev/null 2>&1 </dev/null; [ -r "$HOME/.profile" ] && . "$HOME/.profile" >/dev/null 2>&1 </dev/null; `
+	if testRemoteHome != "" {
+		p = "HOME=" + shq(testRemoteHome) + "; export HOME; " + p
+	}
+	return p
+}
+
+// testRemoteHome is the home tests give remote scripts (agents and Run):
+// a test against a real machine never writes into its ~/.pocket-ai.
+var testRemoteHome string
+
+// RemoteScriptForTest is the script an agent's connection runs there
+// (remoteScript): tests of other packages start one by hand.
+func RemoteScriptForTest(slot, dir string, env []string, wrap []string, bin string, args []string) string {
+	return remoteScript(slot, dir, env, wrap, bin, args)
+}
+
+// SetTestRemoteHome gives remote scripts home as their $HOME (tests of other
+// packages against a real machine); "" ends that.
+func SetTestRemoteHome(home string) { testRemoteHome = home }
 
 // script builds the remote sh script: profile, PATH, folder, slot, then exec
 // (behind wrap, pocket-hold attach, when given).
 func remoteScript(slot, dir string, env []string, wrap []string, bin string, args []string) string {
+	return guardedScript("", slot, dir, env, wrap, bin, args)
+}
+
+// guardedScript is remoteScript behind guard (Remote.Guard): when guard
+// fails, it exits 75 before the folder, the slot or anything else.
+func guardedScript(guard, slot, dir string, env []string, wrap []string, bin string, args []string) string {
 	var b strings.Builder
-	b.WriteString(`[ -r /etc/profile ] && . /etc/profile >/dev/null 2>&1 </dev/null; [ -r "$HOME/.profile" ] && . "$HOME/.profile" >/dev/null 2>&1 </dev/null; `)
+	b.WriteString(profile())
 	b.WriteString(remotePath + "; ")
+	if guard != "" {
+		b.WriteString("{ " + guard + "\n} || exit 75; ")
+	}
 	if dir != "" {
 		b.WriteString("cd -- " + shq(dir) + " || exit 1; ")
 	}
@@ -180,7 +227,7 @@ func (r *Remote) command(dir string, env []string, wrap []string, bin string, ar
 		}
 	}
 	argv = append(argv, r.sshArgs()...)
-	return r.ssh(nil, append(argv, remoteCommand(remoteScript(r.Slot, dir, env, wrap, bin, args))))
+	return r.ssh(nil, append(argv, remoteCommand(guardedScript(r.Guard, r.Slot, dir, env, wrap, bin, args))))
 }
 
 // Run runs a short sh script on the remote machine (the same profile and
@@ -201,14 +248,20 @@ func (r *Remote) Stream(ctx context.Context, script string, args ...string) (*ex
 }
 
 func (r *Remote) scriptArgv(script string, args []string) []string {
-	full := `[ -r /etc/profile ] && . /etc/profile >/dev/null 2>&1 </dev/null; [ -r "$HOME/.profile" ] && . "$HOME/.profile" >/dev/null 2>&1 </dev/null; ` +
+	argv := append(r.mux(), r.sshArgs()...)
+	return append(argv, remoteCommand(RemoteScriptText(script, args...)))
+}
+
+// RemoteScriptText is the whole script Run sends for script and its
+// arguments: profile, PATH, the arguments as $1…, then script. The link runs
+// the very same text, so a command finds the same environment either way.
+func RemoteScriptText(script string, args ...string) string {
+	full := profile() +
 		remotePath + "; set --"
 	for _, a := range args {
 		full += " " + shq(a)
 	}
-	full += "\n" + script
-	argv := append(r.mux(), r.sshArgs()...)
-	return append(argv, remoteCommand(full))
+	return full + "\n" + script
 }
 
 // RunInput is Run with stdin (an upload): never tried twice, the input is
@@ -216,6 +269,10 @@ func (r *Remote) scriptArgv(script string, args []string) []string {
 func (r *Remote) RunInput(ctx context.Context, timeout time.Duration, stdin io.Reader, script string, args ...string) (string, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	var lout, lerr bytes.Buffer
+	if done, err := r.overLink(ctx, RemoteScriptText(script, args...), stdin, &lout, &lerr); done {
+		return lout.String(), strings.TrimSpace(lerr.String()), err
+	}
 	argv := r.scriptArgv(script, args)
 	for try := 0; ; try++ {
 		cmd, err := r.ssh(ctx, argv)
@@ -279,27 +336,39 @@ func lostLink(r *Remote, err error, stderr string) string {
 	return msg + ". Send a message to continue."
 }
 
-// muxArgs share one connection per machine between short commands. The
-// shared link notices a dead network within ~15 s (agents: 2 min), and closes
-// 5 minutes after its last use. They come first: ssh keeps the first value.
-// freePorts ends this account's sshd processes still holding the forwards of
+// freePorts ends this account's sshd sessions still holding the forwards of
 // slot $1 on the ports given (the rest): connections that dropped without the
-// machine noticing. They are found by the slot's pocket-hold attach (its sshd
-// is the one up the tree) and, where the system shows it, by the port: sshd
-// makes itself non-dumpable, so lsof sees no sockets of it on Linux (OpenSSH
-// 10 on athena-box), and that alone left the port held for good. Then it
-// waits a few seconds for the ports to come free (ss sees every socket).
-const freePorts = `slot=$1; shift; ` +
-	`up() { c=$1; n=0; while [ -n "$c" ] && [ "$c" -gt 1 ] && [ $n -lt 4 ]; do ` +
-	`case "$(ps -o comm= -p "$c" 2>/dev/null)" in *sshd*) kill "$c" 2>/dev/null; return;; esac; ` +
-	`c=$(ps -o ppid= -p "$c" 2>/dev/null | tr -d ' '); n=$((n+1)); done; }; ` +
-	`if [ -n "$slot" ]; then for p in $(ps -eo pid=,args= 2>/dev/null | awk -v s=" $slot -- " 'index($0, s) && / attach / {print $1}'); do ` +
-	`case "$(ps -o comm= -p "$p" 2>/dev/null)" in *pocket-hold*) up "$p";; esac; done; fi; ` +
-	`for port; do for p in $(lsof -t -nP -iTCP@127.0.0.1:"$port" -sTCP:LISTEN 2>/dev/null); do up "$p"; done; done; ` +
+// machine noticing. Nothing is ended when none of the ports is held. An sshd
+// is found
+//   - by the record its connection's agent left (slotTakeover): the same pid
+//     and start time, so never a pid reused since;
+//   - as the parent of the slot's pocket-hold attach, while that still runs;
+//   - by the port, where the system shows sshd's sockets (macOS): sshd makes
+//     itself non-dumpable on Linux, so lsof and ss -p see nothing of it there.
+//
+// Only this account's sshd processes are ever signalled: another program on a
+// port (or the ssh session it was started from) is left alone, and the call
+// fails naming the port. Then it waits for the ports to come free (ss, or
+// netstat on macOS, see every socket; SIGKILL after 3 s), so the next
+// connection can make its forward.
+const freePorts = `slot=$1; shift; me=$(id -u); ` +
+	`ours() { case "$(ps -o comm= -p "$1" 2>/dev/null)" in *sshd*) [ "$(ps -o uid= -p "$1" 2>/dev/null | tr -d ' ')" = "$me" ];; *) return 1;; esac; }; ` +
 	`held() { if command -v ss >/dev/null 2>&1; then ss -Hltn "sport = :$1" 2>/dev/null | grep -q .; ` +
-	`else lsof -nP -iTCP@127.0.0.1:"$1" -sTCP:LISTEN >/dev/null 2>&1; fi; }; ` +
-	`i=0; while [ $i -lt 10 ]; do busy=; for port; do held "$port" && busy=1; done; ` +
-	`[ -z "$busy" ] && exit 0; sleep 0.5; i=$((i+1)); done; exit 1`
+	`elif command -v netstat >/dev/null 2>&1; then netstat -an 2>/dev/null | grep -E "^tcp.*[.:]$1[[:space:]].*LISTEN" >/dev/null; ` +
+	`else lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; fi; }; ` +
+	`busy() { b=; for q; do held "$q" && b="$b $q"; done; [ -n "$b" ]; }; ` +
+	`[ $# -gt 0 ] && ! busy "$@" && exit 0; ` +
+	`pids=; f="$HOME/.pocket-ai/run/$slot.sshd"; ` +
+	`if [ -n "$slot" ] && [ -r "$f" ] && read -r p t < "$f" && [ -n "$p" ] && ours "$p" && [ "$(echo $(LC_ALL=C ps -o lstart= -p "$p" 2>/dev/null))" = "$t" ]; then pids=$p; fi; ` +
+	`if [ -n "$slot" ]; then for a in $(ps -eo pid=,args= 2>/dev/null | awk -v s=" $slot -- " 'index($0, s) && / attach / {print $1}'); do ` +
+	`case "$(ps -o comm= -p "$a" 2>/dev/null)" in *pocket-hold*) c=$(ps -o ppid= -p "$a" 2>/dev/null | tr -d ' '); [ -n "$c" ] && ours "$c" && pids="$pids $c";; esac; done; fi; ` +
+	`for q; do for p in $(lsof -t -nP -iTCP@127.0.0.1:"$q" -sTCP:LISTEN 2>/dev/null); do ours "$p" && pids="$pids $p"; done; done; ` +
+	`[ -n "$pids" ] && kill $pids 2>/dev/null; ` +
+	`i=0; while busy "$@"; do [ $i -ge 12 ] && break; [ $i -eq 6 ] && for p in $pids; do ours "$p" && kill -KILL "$p" 2>/dev/null; done; sleep 0.5; i=$((i+1)); done; ` +
+	`busy "$@" || exit 0; ` +
+	`for q in $b; do who=$(lsof -nP -iTCP:"$q" -sTCP:LISTEN -Fc 2>/dev/null | sed -n 's/^c//p' | head -n 1); ` +
+	`if [ -n "$who" ]; then echo "port $q on $(hostname) is in use by $who, not by an agent's connection" >&2; ` +
+	`else echo "port $q on $(hostname) is still in use, and not by an agent connection Pocket AI could end" >&2; fi; done; exit 1`
 
 // FreeForwards ends the old connections on the remote machine that still
 // hold this connection's forwarded ports.
@@ -313,7 +382,9 @@ func (r *Remote) FreeForwards(ctx context.Context) error {
 	if len(ports) == 0 {
 		return nil
 	}
-	_, stderr, err := r.Run(ctx, 20*time.Second, freePorts, append([]string{r.Slot}, ports...)...)
+	// the per-agent path's cleanup: never over the link (on a machine with
+	// a fence, Hold.Route gives a fenced one instead: HoldPath.Free)
+	_, stderr, err := r.Run(PlainSSH(ctx), 20*time.Second, freePorts, append([]string{r.Slot}, ports...)...)
 	if err != nil && stderr != "" {
 		return errors.New(stderr)
 	}
@@ -326,6 +397,13 @@ func (r *Remote) Put(ctx context.Context, timeout time.Duration, path string, da
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	script := "set -e; umask 077; t=\"$1.part.$$\"; cat > \"$t\"; mv -f -- \"$t\" \"$1\""
+	var lout, lerr bytes.Buffer
+	if done, err := r.overLink(ctx, "set -- "+shq(path)+"\n"+script, bytes.NewReader(data), &lout, &lerr); done {
+		if msg := strings.TrimSpace(lerr.String()); err != nil && msg != "" {
+			return errors.New(msg)
+		}
+		return err
+	}
 	argv := append(r.mux(), r.sshArgs()...)
 	argv = append(argv, remoteCommand("set -- "+shq(path)+"\n"+script))
 	cmd, err := r.ssh(ctx, argv)
@@ -350,20 +428,29 @@ func (r *Remote) PutPrivate(ctx context.Context, timeout time.Duration, rel stri
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	script := `set -e; umask 077; f="$HOME/$1"; mkdir -p -- "${f%/*}"; t="$f.part.$$"; cat > "$t"; mv -f -- "$t" "$f"; printf '%s\n' "$f"`
-	argv := append(r.mux(), r.sshArgs()...)
-	argv = append(argv, remoteCommand("set -- "+shq(rel)+"\n"+script))
-	cmd, err := r.ssh(ctx, argv)
-	if err != nil {
-		return "", err
-	}
-	cmd.Stdin = bytes.NewReader(data)
 	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	if err := cmd.Run(); err != nil {
-		if msg := strings.TrimSpace(errb.String()); msg != "" {
-			return "", errors.New(msg)
+	if done, err := r.overLink(ctx, "set -- "+shq(rel)+"\n"+script, bytes.NewReader(data), &out, &errb); done {
+		if err != nil {
+			if msg := strings.TrimSpace(errb.String()); msg != "" {
+				return "", errors.New(msg)
+			}
+			return "", err
 		}
-		return "", err
+	} else {
+		argv := append(r.mux(), r.sshArgs()...)
+		argv = append(argv, remoteCommand("set -- "+shq(rel)+"\n"+script))
+		cmd, err := r.ssh(ctx, argv)
+		if err != nil {
+			return "", err
+		}
+		cmd.Stdin = bytes.NewReader(data)
+		cmd.Stdout, cmd.Stderr = &out, &errb
+		if err := cmd.Run(); err != nil {
+			if msg := strings.TrimSpace(errb.String()); msg != "" {
+				return "", errors.New(msg)
+			}
+			return "", err
+		}
 	}
 	path := strings.TrimSpace(out.String())
 	if i := strings.LastIndexByte(path, '\n'); i >= 0 {
@@ -375,6 +462,9 @@ func (r *Remote) PutPrivate(ctx context.Context, timeout time.Duration, rel stri
 	return path, nil
 }
 
+// muxArgs share one connection per machine between short commands. The
+// shared link notices a dead network within ~15 s (agents: 2 min), and closes
+// 5 minutes after its last use. They come first: ssh keeps the first value.
 func muxArgs() []string {
 	dir := muxDir()
 	if dir == "" {

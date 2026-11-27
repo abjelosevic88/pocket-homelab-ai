@@ -226,12 +226,12 @@ func (s *Server) rewindRemoteClaude(ctx context.Context, t *store.Thread, users 
 		return "", fmt.Errorf("the server this conversation runs on is gone")
 	}
 	rm := remoteOf(h)
-	out, errOut, err := rm.Run(ctx, 30*time.Second, inLogin("claude", t.HostHome, `for f in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/"$1".jsonl; do [ -f "$f" ] && { printf '%s\n' "$f"; exit 0; }; done; exit 3`), t.ProviderSessionID)
+	out, errOut, err := rm.Run(agent.Repeatable(ctx), 30*time.Second, inLogin("claude", t.HostHome, `for f in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/"$1".jsonl; do [ -f "$f" ] && { printf '%s\n' "$f"; exit 0; }; done; exit 3`), t.ProviderSessionID)
 	src := strings.TrimSpace(out)
 	if err != nil || src == "" {
 		return "", fmt.Errorf("the session file is not on %s (%s)", h.Name, sshError(errOut, err))
 	}
-	data, errOut, err := rm.Run(ctx, 2*time.Minute, `cat -- "$1"`, src)
+	data, errOut, err := rm.Run(agent.Repeatable(ctx), 2*time.Minute, `cat -- "$1"`, src)
 	if err != nil {
 		return "", fmt.Errorf("could not read the session on %s: %s", h.Name, sshError(errOut, err))
 	}

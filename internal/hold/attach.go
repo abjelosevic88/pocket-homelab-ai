@@ -2,7 +2,6 @@ package hold
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -12,20 +11,32 @@ import (
 	"os/exec"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 )
 
 // AttachOptions shape an attach.
 type AttachOptions struct {
-	From  int64 // FromReplay, or the stdout offset to continue from
-	Only  bool  // never start a CLI: attach to a running holder, or report Gone
-	Serve ServeOptions
+	From int64 // FromReplay, or the stdout offset to continue from
+	Only bool  // never start a CLI: attach to a running holder, or report Gone
+	// StartOnly: start the holder when there is none (exactly as an attach
+	// would, through the slot's lock), print its header and exit without
+	// attaching. The connection to it is made another way (in-process,
+	// hold.Open).
+	StartOnly bool
+	Serve     ServeOptions
 	// Scope is a command the holder is started under (systemd-run …) so it
 	// leaves the service that started attach; tried before a plain start.
 	Scope []string
 }
+
+// ExitSlotBusy is attach's (and serve's) exit code when another start holds
+// the slot and did not get to listening in time: nothing was started, and
+// the header says slot_busy. The starter asks the slot's status before
+// anything else.
+const ExitSlotBusy = 75
+
+var errSlotBusy = errors.New("slot busy: another start holds it and does not listen yet")
 
 // Attach connects stdin and stdout to slot's holder, starting the holder
 // with argv when there is none (or its CLI ended unseen). It prints the
@@ -41,10 +52,22 @@ func Attach(slot string, o AttachOptions, argv []string) int {
 		fmt.Fprintln(os.Stderr, "pocket-hold:", err)
 		return 125
 	}
+	if o.StartOnly && (o.Only || len(argv) == 0) {
+		fmt.Fprintln(os.Stderr, "pocket-hold: -start-only needs a command to start, and no -only")
+		return 2
+	}
 	start := len(argv) > 0 && !o.Only
+	refused := func(err error) bool {
+		var pe *ProtoError
+		if errors.As(err, &pe) {
+			fmt.Fprintln(os.Stderr, "pocket-hold:", err)
+			return true
+		}
+		return false
+	}
 	var (
 		c       net.Conn
-		r       *bufio.Reader
+		conn    *Conn
 		hd      Header
 		started bool
 	)
@@ -61,6 +84,12 @@ func Attach(slot string, o AttachOptions, argv []string) int {
 			}
 			if err = spawn(dir, slot, o, argv); err != nil {
 				fmt.Fprintln(os.Stderr, "pocket-hold:", err)
+				if errors.Is(err, errSlotBusy) {
+					if code := printHeader(Header{SlotBusy: true}); code != 0 {
+						return code
+					}
+					return ExitSlotBusy
+				}
 				return 125
 			}
 			started = true
@@ -70,6 +99,9 @@ func Attach(slot string, o AttachOptions, argv []string) int {
 			// look before attaching: attaching takes the holder from whoever has it
 			peek, err := handshake(c, hello{Peek: true})
 			c.Close()
+			if refused(err) {
+				return 125
+			}
 			if err == nil && (peek.Exited || peek.Stopping) {
 				// the last CLI ended with nobody there, or is ending: let its
 				// holder go, then start anew
@@ -82,82 +114,35 @@ func Attach(slot string, o AttachOptions, argv []string) int {
 				continue
 			}
 		}
-		r = bufio.NewReader(c)
-		hd, err = handshakeR(c, r, hello{From: o.From})
+		if o.StartOnly {
+			hd, err = Peek(c)
+			if refused(err) {
+				return 125
+			}
+			if err != nil {
+				time.Sleep(300 * time.Millisecond) // a holder on its way out
+				continue
+			}
+			hd.Started = started
+			return printHeader(hd)
+		}
+		conn, hd, err = Open(c, o.From)
+		if refused(err) {
+			return 125
+		}
 		if err != nil {
-			c.Close()
 			time.Sleep(300 * time.Millisecond) // a holder on its way out
 			continue
 		}
 		break
 	}
-	defer c.Close()
+	defer conn.Close()
 	hd.Started = started
-	if code := printHeader(hd); code != 0 {
-		return code
+	code, lost := stream(conn, hd, os.Stdout, os.Stdin, os.Stderr)
+	if lost != nil {
+		fmt.Fprintln(os.Stderr, "pocket-hold: lost the holder:", lost)
 	}
-	if hd.Stderr != "" && !started {
-		fmt.Fprint(os.Stderr, hd.Stderr)
-	}
-
-	var wmu sync.Mutex
-	send := func(typ byte, p []byte) error {
-		wmu.Lock()
-		defer wmu.Unlock()
-		return writeFrame(c, typ, p)
-	}
-	go func() {
-		in := bufio.NewReaderSize(os.Stdin, 1<<20)
-		for {
-			line, err := in.ReadBytes('\n')
-			if err == nil { // a line cut off by stdin closing is not sent: its writer sends it again
-				if bytes.Equal(bytes.TrimSpace(line), []byte(StopLine)) {
-					if send(fStop, nil) != nil {
-						return
-					}
-				} else {
-					for len(line) > 0 {
-						n := min(len(line), 16<<20)
-						if send(fIn, line[:n]) != nil {
-							return
-						}
-						line = line[n:]
-					}
-				}
-			}
-			if err != nil {
-				return // stdin closed: detach, keep relaying until we are ended
-			}
-		}
-	}()
-	for {
-		typ, p, err := readFrame(r)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "pocket-hold: lost the holder:", err)
-			return 254
-		}
-		switch typ {
-		case fOut:
-			if _, err := os.Stdout.Write(p); err != nil {
-				return 141
-			}
-		case fErr:
-			_, _ = os.Stderr.Write(p)
-		case fExit:
-			var x exitInfo
-			_ = json.Unmarshal(p, &x)
-			x.Type = ExitType
-			b, _ := json.Marshal(x)
-			if _, err := os.Stdout.Write(append(b, '\n')); err != nil {
-				return 141 // not delivered: the holder keeps it for the next one
-			}
-			_ = send(fAck, nil)
-			if x.Code < 0 || x.Code > 255 {
-				return 255
-			}
-			return x.Code
-		}
-	}
+	return code
 }
 
 func printHeader(hd Header) int {
@@ -224,6 +209,10 @@ func spawn(dir, slot string, o AttachOptions, argv []string) error {
 					c.Close()
 					return nil
 				}
+				var ee *exec.ExitError
+				if errors.As(err, &ee) && ee.ExitCode() == ExitSlotBusy {
+					return errSlotBusy // another start has the slot: no point in a second try
+				}
 				if err == nil {
 					err = errors.New("the holder ended at once")
 				}
@@ -282,7 +271,7 @@ const MetaEnv = "POCKET_HOLD_META"
 
 // Main is pocket-hold's command line:
 //
-//	pocket-hold attach [-from N] [-only] [-start-mark S] [-end-mark E] [-meta M | -meta-file F] [-scope CMD] SLOT -- ARGV…
+//	pocket-hold attach [-from N] [-only | -start-only] [-start-mark S] [-end-mark E] [-meta M | -meta-file F] [-scope CMD] SLOT -- ARGV…
 //	pocket-hold serve [-start-mark S] [-end-mark E] [-meta M] SLOT -- ARGV…   (meta also from $POCKET_HOLD_META)
 //	pocket-hold status SLOT     the header as JSON ({"gone":true} without a holder)
 //	pocket-hold stop SLOT       end the CLI
@@ -294,6 +283,7 @@ func Main(args []string) int {
 	fs := flag.NewFlagSet("pocket-hold "+args[0], flag.ContinueOnError)
 	from := fs.Int64("from", FromReplay, "stdout offset to continue from (-1: the running turn)")
 	only := fs.Bool("only", false, "attach only; never start the CLI")
+	startOnly := fs.Bool("start-only", false, "start the holder if there is none, print its header, do not attach")
 	startMark := fs.String("start-mark", "", "a stdin line with this starts a turn")
 	endMark := fs.String("end-mark", "", "a stdout line with this ends a turn")
 	var keep multi
@@ -331,7 +321,7 @@ func Main(args []string) int {
 	so := ServeOptions{StartMark: *startMark, EndMark: *endMark, KeepMarks: keep, Meta: *meta, IdleDetached: *idle, MaxDetached: *maxd, Linger: *linger}
 	switch args[0] {
 	case "attach":
-		return Attach(slot, AttachOptions{From: *from, Only: *only, Serve: so, Scope: strings.Fields(*scope)}, argv)
+		return Attach(slot, AttachOptions{From: *from, Only: *only, StartOnly: *startOnly, Serve: so, Scope: strings.Fields(*scope)}, argv)
 	case "serve":
 		return Serve(slot, so, argv)
 	case "status":

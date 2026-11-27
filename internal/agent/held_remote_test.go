@@ -6,7 +6,6 @@ import (
 	"math/rand/v2"
 	"os"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -74,10 +73,7 @@ func TestHeldClaudeRemote(t *testing.T) {
 		t.Fatalf("holder meta: %q", cs.l.Header.Meta)
 	}
 	// the network drops: the ssh client dies
-	cs.l.wmu.Lock()
-	pid := cs.l.cmd.Process.Pid
-	cs.l.wmu.Unlock()
-	_ = syscall.Kill(-pid, syscall.SIGKILL)
+	drop(cs.l)
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		rec.mu.Lock()

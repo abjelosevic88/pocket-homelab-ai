@@ -158,7 +158,7 @@ func (s *Server) hostLogins(ctx context.Context, h *store.Host, refresh bool) []
 		return hostLoginView{HostID: h.ID, Host: h.Name, Target: h.Target, Provider: provider, Home: home}
 	}
 	agy, _ := agent.ACPAgentByID("antigravity")
-	res, errOut, err := remoteOf(h).Run(ctx, 45*time.Second, hostStatusScript(), hostBin(h, "claude"), hostBin(h, "codex"), agy.Bin, agy.TokenFile)
+	res, errOut, err := remoteOf(h).Run(agent.StatusScript(ctx), 45*time.Second, hostStatusScript(), hostBin(h, "claude"), hostBin(h, "codex"), agy.Bin, agy.TokenFile)
 	if err != nil && !strings.Contains(res, "home=") {
 		msg := sshError(errOut, err)
 		out := []hostLoginView{base("claude", "~/.claude"), base("codex", "~/.codex")}
@@ -366,7 +366,7 @@ func (s *Server) handleHostLoginStart(w http.ResponseWriter, r *http.Request) {
 		if ag, isACP := agent.ACPAgentByID(provider); ok && isACP && ag.TokenFile != "" {
 			// the CLI may keep it somewhere a run over ssh does not look
 			// (agy on a Mac: the Keychain)
-			if _, _, err := remoteOf(h).Run(s.rt.ctx, 30*time.Second, `d=${1:-$HOME/$3}; [ -s "$d/$2" ]`, dir, ag.TokenFile, ag.LoginPrefix()); err != nil {
+			if _, _, err := remoteOf(h).Run(agent.Repeatable(s.rt.ctx), 30*time.Second, `d=${1:-$HOME/$3}; [ -s "$d/$2" ]`, dir, ag.TokenFile, ag.LoginPrefix()); err != nil {
 				return fmt.Errorf("%s signed in, but kept the sign-in where Pocket AI cannot use it over ssh. Use \"Copy sign-in from…\" in its ⋯ menu instead.", h.Name)
 			}
 		}

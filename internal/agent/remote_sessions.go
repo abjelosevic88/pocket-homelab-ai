@@ -75,7 +75,8 @@ type remoteFile struct {
 // MirrorSessions brings dir up to date with the machine's session files
 // (only, if `only` is set: the ones whose path contains it).
 func MirrorSessions(ctx context.Context, r *Remote, dir, only string) error {
-	return mirrorSessions(ctx, r.Run, dir, only)
+	// listing and reading session files: safe to repeat (remote_link.go)
+	return mirrorSessions(Repeatable(ctx), r.Run, dir, only)
 }
 
 type runFn func(ctx context.Context, timeout time.Duration, script string, args ...string) (string, string, error)

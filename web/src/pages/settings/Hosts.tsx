@@ -18,6 +18,7 @@ import { SignInDialog, type SignInTarget } from './Accounts'
 import { ago } from './common'
 import { copyLogin, CopyLoginDialog, type LoginDest, loginSources, type LoginSource, SignInHow, sourceKey } from './AgentLogins'
 import { LoginList, MachineCard, osIcon, provName, tilde, type CliChip, useCLIUpdate, useLatestCLIs } from './MachineParts'
+import { MachineLink } from './MachineLink'
 
 
 /** Settings → Machines after "This server": a card per machine (status,
@@ -89,6 +90,7 @@ export function HostsSection({ logins, only, onAdded, onRemoved }: { logins: Hos
               {isAdmin && <MenuButton label={`More for ${h.name}`} align="right" items={more}><Icon name="more" size={16} /></MenuButton>}
             </>}>
             {h.info.error && <p className="mc-note bad" title={h.info.error}><Icon name="wifi-off" size={14} /><span>{h.info.error}</span></p>}
+            <MachineLink host={h} canEdit={isAdmin} />
             <HostLogins host={h} logins={list}
               onAdd={p => setAddLogin({ host: h, provider: p })} onSignIn={l => setSignIn(signInTarget(l))} onSignOut={signOut} onRemove={setRmLogin}
               onCopy={l => setCopyTo(l)} />
