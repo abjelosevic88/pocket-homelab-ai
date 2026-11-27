@@ -272,7 +272,7 @@ Scheduled prompts get an instruction appended: finish with a first line `OK: …
 |---|---|
 | `GET /panels` | the person's panels, newest first (participants, state, cost; no answers) |
 | `GET /panels/options` | what the start sheet offers: `kinds` (with their steps), `depths`, `roles`, `lineups`, `own_kinds`, `logins` (every login a participant can run on, with `used` 0..1 of its plan limit, -1 = unknown), `suggested` participants |
-| `POST /panels` | start one: `kind` (`ask`, `brainstorm`, `council`, `debate`, `review`, `build`) or `recipe_id`, `question`, `material`, `depth` (`quick`, `standard`, `deep`), `seats` (`provider`, `model`, `effort`, `account_id` or `host_id` + `host_home`, `role`), `chair`, `cwd`, `host_id`, `from_thread_id`, `report`, `mode` (build: ``, `edit`, `auto`). Without `seats`: the default line-up |
+| `POST /panels` | start one: `kind` (`ask`, `brainstorm`, `council`, `debate`, `review`, `build`) or `recipe_id`, `question`, `material`, `depth` (`quick`, `standard`, `deep`), `seats` (`provider`, `model`, `effort`, `account_id` or `host_id` + `host_home`, `role`), `chair`, `cwd`, `host_id`, `from_thread_id`, `report`, `mode` (build: ``, `edit`, `auto`). `items` (`app`, `id`, `title`, `url`, `attachable`: things picked from other Pocket apps; a note's, document's or text file's text is read once and joins the material, the rest go in by title and link). Without `seats`: the default line-up |
 | `GET /panels/{id}` | everything: `seats` (state, `activity`, `live` = what it is writing), `answers` per step, `result` |
 | `POST /panels/{id}/stop` · `/again` | stop it; run it once more with the same settings |
 | `POST /panels/{id}/continue` | start an ordinary conversation that carries the outcome (`text`, `provider`, `model`) |

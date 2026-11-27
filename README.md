@@ -91,7 +91,8 @@ Personal app assistance: [Briefing, workflows, memory, sources and document uplo
   Pocket AI runs the rounds itself: everyone answers alone first, later rounds show the others' answers by
   letter only, and the summary writer gets them without the models' names. Quick, Standard or Deep; your own
   kinds of panel (your steps, your instructions); saved line-ups; a model that does not answer is named, and
-  too few answers end the panel honestly instead of faking a consensus. Start one on the Panels page or with
+  too few answers end the panel honestly instead of faking a consensus. Add a note, a document, a task or
+  anything else from your Pocket apps as context: the button under the question, or `@` in it. Start one on the Panels page or with
   `/council`, `/brainstorm`, `/debate`, `/ask-all`, `/second-opinion` in a conversation; agents start them with
   `pocket_panel_start` (with your OK).
 - **Other machines**, like Paseo's hosts: add a server in Settings → Agents → Servers (any machine this server

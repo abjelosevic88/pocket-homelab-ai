@@ -239,3 +239,33 @@ func TestAgentStartsPanel(t *testing.T) {
 		t.Fatal("a participant has the agent tools")
 	}
 }
+
+// Items picked from other Pocket apps join the material: the ones that cannot
+// be read whole go in by title and link; nonsense is refused.
+func TestPanelItemsBecomeMaterial(t *testing.T) {
+	s, h, _ := testServer(t)
+	_, u := person(t, s, h, "items@example.test", "admin", true)
+	ctx := context.Background()
+	got, err := s.panelItemsText(ctx, u, []panelItem{
+		{App: "tasks", ID: "82", Title: "Check the\ncontracts", Subtitle: "Athena · due Friday"},
+		{App: "projects", ID: "ATH-1", Title: "Panels", URL: "https://projects.test/i/ATH-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"## Also from the person's apps", "- Pocket Tasks: Check the contracts — Athena · due Friday", "- Pocket Projects: Panels (https://projects.test/i/ATH-1)"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in %q", want, got)
+		}
+	}
+	if _, err := s.panelItemsText(ctx, u, []panelItem{{App: "No Such/App", ID: "1"}}); err == nil {
+		t.Fatal("a made-up app was accepted")
+	}
+	if _, err := s.panelItemsText(ctx, u, make([]panelItem, panelItemsMax+1)); err == nil || !strings.Contains(err.Error(), "At most") {
+		t.Fatalf("too many items: %v", err)
+	}
+	// a note that cannot be read (no app connection here) stops the start with its name
+	if _, err := s.panelItemsText(ctx, u, []panelItem{{App: "notes", ID: "7", Title: "My plan", Attachable: true}}); err == nil || !strings.Contains(err.Error(), "“My plan” from Pocket Notes") {
+		t.Fatalf("unreadable note: %v", err)
+	}
+}

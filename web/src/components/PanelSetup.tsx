@@ -11,6 +11,7 @@ import { effortLabel, effortOptions } from './AgentPicker'
 import { FolderButton } from './FolderPicker'
 import { HostPicker } from './HostPicker'
 import { Icon } from './icons'
+import { PickedChips, PocketPicker, type PickedItem } from './PocketPicker'
 import { type Option, Select } from './Select'
 import { Confirm, errMsg, Field, Loading, MenuButton, Modal, Segmented, Spinner, Switch, useToast, type MenuItem, noGrammarly } from './ui'
 
@@ -168,6 +169,9 @@ export function PanelSetup({ draft, onClose }: { draft: PanelDraft; onClose: () 
   const [hostId, setHostId] = useState(draft.hostId || 0)
   const [report, setReport] = useState(!!draft.fromThreadId)
   const [mode, setMode] = useState<'' | 'edit' | 'auto'>('edit')
+  // things picked from the person's other Pocket apps; picking: which box "@" was typed in (to take it out again)
+  const [picks, setPicks] = useState<PickedItem[]>([])
+  const [picking, setPicking] = useState<'' | 'button' | 'question' | 'material'>('')
   const [busy, setBusy] = useState(false)
   const [saveAs, setSaveAs] = useState<string | null>(null)
   const [editKind, setEditKind] = useState<Partial<OwnKind> | null>(null)
@@ -215,7 +219,7 @@ export function PanelSetup({ draft, onClose }: { draft: PanelDraft; onClose: () 
     : debate && seats.length % 2 === 1 && seats.length > 2 ? 'A debate needs the same number on both sides: 2 or 4'
     : building && !(cwd || from?.cwd) ? 'Pick the project folder'
     : ''
-  const canStart = !!opts && !busy && !problem && (!!question.trim() || !!material.trim())
+  const canStart = !!opts && !busy && !problem && (!!question.trim() || !!material.trim() || picks.length > 0)
 
   const addSeat = () => {
     if (!opts) return
@@ -239,10 +243,23 @@ export function PanelSetup({ draft, onClose }: { draft: PanelDraft; onClose: () 
         cwd: cwd || undefined, host_id: cwd ? hostId : undefined,
         from_thread_id: draft.fromThreadId || undefined, report: !!draft.fromThreadId && report,
         mode: building ? mode : undefined,
+        items: picks.length ? picks : undefined,
       })
       onClose()
       navigate(`/panels/${p.id}`)
     } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
+  }
+  // "@" typed at the start or after a space opens the picker, like in a conversation
+  const typed = (box: 'question' | 'material', v: string, el: HTMLTextAreaElement) => {
+    (box === 'question' ? setQuestion : setMaterial)(v)
+    const at = el.selectionStart
+    if (v[at - 1] === '@' && (at === 1 || /\s/.test(v[at - 2])) && v.length > (box === 'question' ? question : material).length) setPicking(box)
+  }
+  const togglePick = (it: PickedItem) => {
+    // the "@" that opened the picker has done its job
+    if (picking === 'question') setQuestion(v => v.replace(/(^|\s)@(?=\s|$)/, '$1'))
+    if (picking === 'material') setMaterial(v => v.replace(/(^|\s)@(?=\s|$)/, '$1'))
+    setPicks(l => l.some(p => p.app === it.app && p.id === it.id) ? l.filter(p => !(p.app === it.app && p.id === it.id)) : [...l, { app: it.app, id: it.id, title: it.title, subtitle: it.subtitle, url: it.url, attachable: it.attachable }])
   }
   const saveLineup = async (name: string, asDefault: boolean, id = 0) => {
     try {
@@ -286,11 +303,18 @@ export function PanelSetup({ draft, onClose }: { draft: PanelDraft; onClose: () 
           </div>
 
           <Field label={ownKind ? 'What do you want to ask?' : (k?.ask || 'The question')}>
-            <textarea {...noGrammarly} autoFocus rows={3} value={question} onChange={e => setQuestion(e.target.value)} placeholder={building ? 'Add a dark mode switch to the settings page…' : 'Write it so that someone without the background understands it'} />
+            <textarea {...noGrammarly} autoFocus rows={3} value={question} onChange={e => typed('question', e.target.value, e.target)} placeholder={building ? 'Add a dark mode switch to the settings page…' : 'Write it so that someone without the background understands it'} />
           </Field>
           {(ownKind || k?.material || material) && <Field label={ownKind ? 'Background or material (optional)' : (k?.material || 'Material')} help={from ? 'They do not see the conversation you came from: put what they need here. They can read files in its folder.' : undefined}>
-            <textarea {...noGrammarly} rows={material.length > 400 ? 8 : 3} value={material} onChange={e => setMaterial(e.target.value)} />
+            <textarea {...noGrammarly} rows={material.length > 400 ? 8 : 3} value={material} onChange={e => typed('material', e.target.value, e.target)} />
           </Field>}
+          <div className="stack tight pn-context">
+            <div className="row wrap">
+              <button type="button" className="btn sm" onClick={() => setPicking('button')}><Icon name="grid" size={13} />Add from your apps</button>
+              <span className="muted xsmall">A note, a document, a task… — or type <kbd>@</kbd> in a box above</span>
+            </div>
+            <PickedChips items={picks} onRemove={it => setPicks(l => l.filter(p => !(p.app === it.app && p.id === it.id)))} />
+          </div>
 
           <div className="stack tight">
             <div className="row">
@@ -335,6 +359,7 @@ export function PanelSetup({ draft, onClose }: { draft: PanelDraft; onClose: () 
           {problem && <div className="muted small">{problem}</div>}
         </div>
       )}
+      {picking && <PocketPicker picked={picks} onToggle={togglePick} onClose={() => setPicking('')} />}
       {saveAs !== null && <Modal title="Save this line-up" onClose={() => setSaveAs(null)} size="sm" footer={<>
         <button type="button" className="btn" onClick={() => setSaveAs(null)}>Cancel</button>
         <button type="button" className="btn" disabled={!saveAs.trim()} onClick={() => void saveLineup(saveAs.trim(), false)}>Save</button>

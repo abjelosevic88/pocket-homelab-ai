@@ -107,7 +107,7 @@ function useSkills(scope: SkillScope | undefined, wanted: boolean, open = false)
 }
 
 /** A Pocket app the person can @-mention: the agent is pointed at its tools for that message. */
-interface MentionApp { slug: string; name: string; tools: string[]; reads: number }
+export interface MentionApp { slug: string; name: string; tools: string[]; reads: number }
 let mentionApps: { at: number; apps: MentionApp[] } | null = null
 
 /** Why there are no apps to mention: the Ask connection (which lists them) is off or has ended;
@@ -116,7 +116,7 @@ interface MentionOff { url?: string }
 
 /** The person's Pocket apps, fetched when the @ menu first opens (cached 2 minutes; a failure is
  *  asked again on the next @, so turning Ask back on shows the apps at once). */
-function useMentionApps(wanted: boolean): { apps: MentionApp[] | null; off: MentionOff | null } {
+export function useMentionApps(wanted: boolean): { apps: MentionApp[] | null; off: MentionOff | null } {
   const [apps, setApps] = useState<MentionApp[] | null>(() => mentionApps?.apps ?? null)
   const [off, setOff] = useState<MentionOff | null>(null)
   useEffect(() => {
@@ -138,7 +138,7 @@ function useMentionApps(wanted: boolean): { apps: MentionApp[] | null; off: Ment
 }
 
 /** One item found in a Pocket app ("@documents #tax"); see server pocket_items.go. */
-interface PocketItem { app: string; id: string; title: string; subtitle?: string; url?: string; thumb?: string; attachable: boolean }
+export interface PocketItem { app: string; id: string; title: string; subtitle?: string; url?: string; thumb?: string; attachable: boolean }
 const itemCache = new Map<string, { at: number; items: PocketItem[] }>()
 
 /** Searches one app as the person types after "#" (debounced, cached a minute); null while looking. */
@@ -167,7 +167,7 @@ function itemRef(it: PocketItem): string {
 }
 
 /** The app's own icon (web/public/app-icons, from the Pocket icon set); a plain grid for an app without one. */
-function AppIcon({ slug }: { slug: string }) {
+export function AppIcon({ slug }: { slug: string }) {
   const [missing, setMissing] = useState(false)
   if (missing) return <span className="slash-ico at-ico app-mention"><Icon name="grid" size={14} /></span>
   return <span className="slash-ico app-icon"><img src={`/app-icons/${slug}.svg`} alt="" width={22} height={22} loading="lazy" onError={() => setMissing(true)} /></span>
@@ -175,7 +175,7 @@ function AppIcon({ slug }: { slug: string }) {
 
 /** A picture's own small image in the "#" list (Pocket Photos); the app icon when it does not load
  *  (signed out of that app in this browser). */
-function ItemThumb({ src, app }: { src: string; app: string }) {
+export function ItemThumb({ src, app }: { src: string; app: string }) {
   const [failed, setFailed] = useState(false)
   if (failed) return <AppIcon slug={app} />
   return <span className="slash-ico item-thumb"><img src={src} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} /></span>
