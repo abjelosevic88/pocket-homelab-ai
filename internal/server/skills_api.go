@@ -46,8 +46,13 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(ctx)
 	q := r.URL.Query()
 	provider := q.Get("provider")
+	if agent.IsACP(provider) {
+		// these agents are not asked: what they can use is the library (skills_library.go)
+		writeJSON(w, http.StatusOK, map[string]any{"skills": s.librarySkillsAt(ctx, u, queryInt64(r, "host")), "commands": []agent.Skill{}})
+		return
+	}
 	if provider != "claude" && provider != "codex" {
-		writeErr(w, http.StatusBadRequest, "provider must be claude or codex")
+		writeErr(w, http.StatusBadRequest, "provider must be claude, codex or an agent from Settings → Agents")
 		return
 	}
 	var probe func(context.Context) ([]agent.Skill, []agent.Skill, error)

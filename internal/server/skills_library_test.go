@@ -599,3 +599,61 @@ func TestLibraryOfAPersonStaysInTheirFolder(t *testing.T) {
 		t.Fatalf("a linked skill would be sent to the guest's machines: %v", sums)
 	}
 }
+
+// The agents that are not asked for their skills get the library in the "/"
+// menu, and "/name …" reaches them as an instruction to read that skill.
+func TestLibrarySkillsForOtherAgents(t *testing.T) {
+	skillSyncAuto = false
+	t.Cleanup(func() { skillSyncAuto = true })
+	s, h, root := testServer(t)
+	owner, ou := person(t, s, h, "owner@example.com", "admin", true)
+	ctx := context.Background()
+	lib := filepath.Join(root, ".agents", "skills")
+	mkSkill(t, lib, "deploy-app", "ship it")
+	mkSkill(t, lib, "lint", "check it")
+	var got struct {
+		Skills []struct {
+			Name, Description, Invoke string
+		} `json:"skills"`
+	}
+	owner.want("GET", "/api/v1/skills?provider=antigravity", nil, 200, &got)
+	if len(got.Skills) != 2 || got.Skills[0].Name != "deploy-app" || got.Skills[0].Invoke != "/deploy-app" || got.Skills[0].Description != "About deploy-app" {
+		t.Fatalf("bad list: %#v", got.Skills)
+	}
+	owner.want("GET", "/api/v1/skills?provider=nonsense", nil, 400, nil)
+
+	// on another machine: only what the last sync saw there
+	host := &store.Host{Name: "mac", Target: "mac"}
+	if err := s.store.CreateHost(ctx, host); err != nil {
+		t.Fatal(err)
+	}
+	sc := s.libScopeFor(ctx, nil)
+	s.updateSyncState(ctx, sc, func(st *syncState) {
+		st.Hosts[host.ID] = &hostSync{On: true, Skills: map[string]hostSkillState{"deploy-app": {State: "same"}, "lint": {State: "off"}},
+			Extra: []hostExtra{{Name: "only-there", Description: "x", Where: "lib"}, {Name: "claude-only", Where: "/h/.claude", Agent: "claude"}}}
+	})
+	got.Skills = nil
+	owner.want("GET", "/api/v1/skills?provider=opencode&host="+strconv.FormatInt(host.ID, 10), nil, 200, &got)
+	if len(got.Skills) != 2 || got.Skills[0].Name != "deploy-app" || got.Skills[1].Name != "only-there" {
+		t.Fatalf("bad list for the machine: %#v", got.Skills)
+	}
+
+	here := &store.Thread{UserID: ou.ID, Provider: "antigravity"}
+	out := s.expandLibrarySkill(ctx, here, "/deploy-app the blog, today")
+	if !strings.Contains(out, filepath.Join(lib, "deploy-app", "SKILL.md")) || !strings.HasSuffix(out, "What to do with it: the blog, today") {
+		t.Fatalf("bad expansion: %s", out)
+	}
+	there := &store.Thread{UserID: ou.ID, Provider: "antigravity", HostID: host.ID}
+	if out := s.expandLibrarySkill(ctx, there, "/deploy-app"); !strings.Contains(out, "~/.agents/skills/deploy-app/SKILL.md") || !strings.Contains(out, "nothing more was said") {
+		t.Fatalf("bad expansion on a machine: %s", out)
+	}
+	for _, same := range []string{"/lint this", "/missing x", "/usr/bin/env is a path", "plain text", "/Deploy-App x"} {
+		th := there
+		if same == "/missing x" || same == "/Deploy-App x" {
+			th = here
+		}
+		if out := s.expandLibrarySkill(ctx, th, same); out != same {
+			t.Fatalf("%q was changed: %s", same, out)
+		}
+	}
+}

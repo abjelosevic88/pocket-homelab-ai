@@ -463,6 +463,9 @@ func (s *Server) postMessage(ctx context.Context, u *store.User, t *store.Thread
 	if agentToolsOn(t) {
 		in.Text = expandAgentCommand(t.Provider, text) // /handoff, /advisor, /committee
 	}
+	if agent.IsACP(t.Provider) {
+		in.Text = s.expandLibrarySkill(ctx, t, in.Text) // "/name …" of a library skill
+	}
 	it := agent.Item{Key: "u-" + uuid.NewString(), Kind: "user", Text: text}
 	if _, shared := s.rt.sharesOf(t.ID); shared || u.ID != t.UserID {
 		it.ByID, it.By = u.ID, displayName(u)

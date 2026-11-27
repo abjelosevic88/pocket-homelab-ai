@@ -1154,3 +1154,83 @@ func newestIn(folder string) time.Time {
 	})
 	return t
 }
+
+// ---------- the library in the "/" menu of the other agents ----------
+
+// Claude Code and Codex list their skills themselves (skills_api.go). The
+// agents that speak ACP (Antigravity, Gemini CLI, OpenCode, Qwen Code) read
+// ~/.agents/skills too, but not all of them run "/name" as a skill. For them
+// the menu lists the library, and "/name …" is sent as an instruction to
+// read that skill's SKILL.md and follow it (expandLibrarySkill).
+
+// librarySkillsAt lists the library's skills where a chat runs: all of them
+// on this server (hostID 0), on another machine the ones the last sync saw
+// there.
+func (s *Server) librarySkillsAt(ctx context.Context, u *store.User, hostID int64) []agent.Skill {
+	out := []agent.Skill{}
+	sc := s.libScopeFor(ctx, u)
+	if !agent.Confined(sc.dir) {
+		return out
+	}
+	lib := readLibrary(sc.dir)
+	add := func(name, desc string) {
+		out = append(out, agent.Skill{Name: name, Description: desc, Scope: "library", Invoke: "/" + name})
+	}
+	if hostID == 0 {
+		for _, sk := range lib {
+			add(sk.Name, sk.Description)
+		}
+		return out
+	}
+	hs := s.loadSyncState(ctx, sc).Hosts[hostID]
+	if hs == nil || !hs.On {
+		return out
+	}
+	for _, sk := range lib {
+		if st := hs.Skills[sk.Name].State; st == "same" || st == "differs" {
+			add(sk.Name, sk.Description)
+		}
+	}
+	for _, e := range hs.Extra {
+		if e.Where == "lib" { // in ~/.agents/skills over there, though not in the library
+			add(e.Name, e.Description)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// expandLibrarySkill turns "/name what to do" for an ACP agent into the
+// instruction to use that skill; anything else is returned as it is. The
+// message the person sees keeps "/name …".
+func (s *Server) expandLibrarySkill(ctx context.Context, t *store.Thread, text string) string {
+	trim := strings.TrimLeft(text, " \t")
+	if !strings.HasPrefix(trim, "/") {
+		return text
+	}
+	name, arg, _ := strings.Cut(trim[1:], " ")
+	if i := strings.IndexAny(name, "\n\t"); i >= 0 {
+		name, arg = name[:i], name[i+1:]+" "+arg
+	}
+	if !validSkill(name) {
+		return text
+	}
+	u, err := s.store.GetUser(ctx, t.UserID)
+	if err != nil {
+		return text
+	}
+	file := "~/.agents/skills/" + name + "/SKILL.md"
+	found := false
+	for _, sk := range s.librarySkillsAt(ctx, u, t.HostID) {
+		found = found || sk.Name == name
+	}
+	if !found {
+		return text
+	}
+	if t.HostID == 0 {
+		file = filepath.Join(s.libScopeFor(ctx, u).dir, name, "SKILL.md")
+	}
+	return "[Skill /" + name + "] Use the skill \"" + name + "\" for this. Its instructions are in " + file +
+		": read that file first, then follow it (it may point to more files next to it; read those when it says so).\n\n" +
+		"What to do with it: " + firstNonEmpty(strings.TrimSpace(arg), "(nothing more was said: apply the skill to what we are working on)")
+}
