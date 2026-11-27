@@ -88,6 +88,16 @@ var ACPAgents = []ACPAgent{
 		InstallScript: "https://antigravity.google/cli/install.sh", Site: "https://antigravity.google/docs/cli/acp",
 		GoogleLogin: true, LoginArgs: []string{"acp", "--login"},
 		Logins: true, LoginFlag: "--gemini-dir", TokenFile: "antigravity-cli/antigravity-oauth-token",
+		// agy's own modes, plus Full access: agy asks (accept-edits: about
+		// everything but edits) and Pocket AI says yes for the person. Its
+		// Auto still asks before what it thinks cannot be undone.
+		Modes: []ACPMode{
+			{Mode: Mode{ID: "default", Name: "Default", Description: "Asks before edits and commands."}, ACP: "default"},
+			{Mode: Mode{ID: "accept-edits", Name: "Accept edits", Description: "Edits files in the folder without asking; asks before commands."}, ACP: "accept-edits"},
+			{Mode: Mode{ID: "auto", Name: "Auto", Description: "Edits and runs safe commands without asking; asks before what cannot be undone."}, ACP: "auto"},
+			{Mode: Mode{ID: "full-access", Name: "Full access", Description: "Never asks: edits files and runs any command as the server user."}, ACP: "accept-edits", AutoAllow: true},
+			{Mode: Mode{ID: "plan", Name: "Plan", Description: "Looks and plans before it does anything."}, ACP: "plan"},
+		},
 		// agy starts in auto, which needs its terminal sandbox: ask first instead
 		DefaultMode: "default",
 		Note:        "Google's agent on your Google AI plan (Free, Pro or Ultra): Gemini 4 Neon and more. Sign in with Google; it updates itself.",

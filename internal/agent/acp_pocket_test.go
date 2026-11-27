@@ -17,3 +17,15 @@ func TestIsPocketToolCall(t *testing.T) {
 		}
 	}
 }
+
+func TestAntigravityFullAccess(t *testing.T) {
+	ag, _ := ACPAgentByID("antigravity")
+	if acp, auto := ag.mode("full-access"); acp != "accept-edits" || !auto {
+		t.Fatalf("full-access = %q, %v", acp, auto)
+	}
+	for _, id := range []string{"default", "accept-edits", "auto", "plan"} {
+		if acp, auto := ag.mode(id); acp != id || auto {
+			t.Fatalf("%s = %q, %v", id, acp, auto)
+		}
+	}
+}
