@@ -215,7 +215,10 @@ function SeatTile({ seat, text, live, current, on, onPick }: { seat: PanelSeat; 
   const working = current && seat.state === 'working'
   const asks = seat.activity === 'waiting_for_person'
   return (
-    <button type="button" role="tab" aria-selected={on} className={`pn-tile ${on ? 'on' : ''} ${failed ? 'failed' : ''} ${working ? 'working' : ''}`} onClick={onPick}>
+    // a div, not a <button>: WebKit (Pocket Hub, Safari) wraps a button's children in its own centered box,
+    // so this column of rows was centered and long names spilled out of the card on both sides
+    <div role="tab" tabIndex={0} aria-selected={on} className={`pn-tile ${on ? 'on' : ''} ${failed ? 'failed' : ''} ${working ? 'working' : ''}`} onClick={onPick}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onPick() } }}>
       <span className="pn-tile-h">
         <span className="pn-letter">{seat.label}</span>
         <Icon name={seat.provider} size={14} className={`prov-glyph ${seat.provider}`} />
@@ -233,7 +236,7 @@ function SeatTile({ seat, text, live, current, on, onPick }: { seat: PanelSeat; 
         {working ? <><Elapsed since={seat.since} />{!!seat.steps && <span>{seat.steps} {seat.steps === 1 ? 'step' : 'steps'}</span>}{live && text ? <span>{words(text)} words so far</span> : null}</>
           : text ? <span>{words(text)} words</span> : <span>&nbsp;</span>}
       </span>
-    </button>
+    </div>
   )
 }
 

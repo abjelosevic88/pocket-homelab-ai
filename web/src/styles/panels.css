@@ -118,7 +118,9 @@
 .pn-tile:hover { background: var(--surface-2); }
 .pn-tile.on { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); background: var(--surface); }
 .pn-tile.failed { border-style: dashed; }
+.pn-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .pn-tile-h { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.pn-tile-h > .spinner, .pn-tile-h > .icon { flex: none; }
 .pn-tile-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 650; }
 .pn-tile-ok { color: var(--success); } .pn-tile-bad { color: var(--danger); } .pn-tile-warn { color: var(--warning); }
 .pn-tile-role { font-size: 11.5px; color: var(--muted); margin-top: -2px; padding-left: 29px; }
