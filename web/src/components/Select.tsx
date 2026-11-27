@@ -72,6 +72,17 @@ export function OptionList<T extends string | number>({ trigger, lid, label, opt
   const inTab = useMemo(() => tabbed ? options.filter(o => o.group === tab) : options, [tabbed, tab, options])
   const [hi, setHi] = useState(() => Math.max(0, inTab.findIndex(o => o.value === value && !o.disabled)))
   const [pos, setPos] = useState<{ left: number; top: number; maxH: number; width: number } | null>(null)
+  // Tabs that do not fit in a row (three agents' names in a narrow menu): the
+  // chosen one keeps its name, the others show their icon alone.
+  const tabRow = useRef<HTMLDivElement>(null)
+  const [tight, setTight] = useState(false)
+  const groupKey = groups.join('|')
+  useLayoutEffect(() => { setTight(false) }, [groupKey, pos?.width])
+  useLayoutEffect(() => {
+    const el = tabRow.current
+    if (el && !tight && groupIcon && el.scrollWidth > el.clientWidth + 1) setTight(true)
+  }, [tight, groupKey, pos?.width, groupIcon])
+  useLayoutEffect(() => { tabRow.current?.querySelector('button.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }) }, [tab, tight])
   const input = useRef<HTMLInputElement>(null)
   const close = useRef(onClose)
   close.current = onClose
@@ -156,8 +167,13 @@ export function OptionList<T extends string | number>({ trigger, lid, label, opt
   return createPortal(
     <div ref={ref} className="select-pop" tabIndex={-1} style={{ width: pos?.width ?? width, maxHeight: pos?.maxH ?? 360, left: pos?.left ?? -9999, top: pos?.top ?? -9999 }} onKeyDown={key} data-keep-open>
       {search && <div className="select-search"><Icon name="search" size={14} /><input ref={input} value={q} onChange={e => setQ(e.target.value)} placeholder="Type to filter…" aria-label={label ? `Filter ${label}` : 'Filter options'} autoComplete="off" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-activedescendant={shown[hi] ? `${lid}-${hi}` : undefined} aria-controls={lid} /></div>}
-      {tabbed && <div className={`select-tabs ${q.trim() ? 'searching' : ''}`} role="tablist" aria-label={label}>
-        {groups.map(g => <button key={g} type="button" role="tab" aria-selected={g === tab} className={g === tab ? 'active' : ''} onMouseDown={e => e.preventDefault()} onClick={() => { setTab(g); setQ('') }}>{groupIcon?.(g)}{g}</button>)}
+      {tabbed && <div ref={tabRow} className={`select-tabs ${q.trim() ? 'searching' : ''} ${tight ? 'tight' : ''}`} role="tablist" aria-label={label}>
+        {groups.map(g => {
+          const icon = groupIcon?.(g)
+          const bare = tight && g !== tab && !!icon // its icon says who; the name is a tap or a hover away
+          return <button key={g} type="button" role="tab" aria-selected={g === tab} aria-label={g} title={bare ? g : undefined} className={`${g === tab ? 'active' : ''} ${bare ? 'bare' : ''}`}
+            onMouseDown={e => e.preventDefault()} onClick={() => { setTab(g); setQ('') }}>{icon}{!bare && g}</button>
+        })}
       </div>}
       <div ref={list} className="select-list" role="listbox" aria-label={label || 'Options'} id={lid} style={{ maxHeight: Math.max(0, (pos?.maxH ?? 360) - (search ? 44 : 0) - tabsH) }}>
         {shown.length === 0 && <div className="select-empty" role="status">{emptyText}</div>}
