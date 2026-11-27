@@ -303,6 +303,9 @@ type Provider struct {
 	DefaultEffort string   `json:"default_effort"`
 	DefaultMode   string   `json:"default_mode"`
 	Account       string   `json:"account"`
+	// Plan: the plan of the account, when the agent says (Antigravity:
+	// "Google AI Pro").
+	Plan string `json:"plan,omitempty"`
 }
 
 // Model is one model a provider offers.

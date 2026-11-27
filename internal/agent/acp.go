@@ -77,6 +77,14 @@ type acpSessionInfo struct {
 		} `json:"availableModels"`
 	} `json:"models"`
 	ConfigOptions []acpConfigOption `json:"configOptions"`
+	// Antigravity says the plan of the account ("Google AI Pro")
+	Meta struct {
+		Antigravity struct {
+			Tier struct {
+				Name string `json:"name"`
+			} `json:"tier"`
+		} `json:"antigravity"`
+	} `json:"_meta"`
 }
 
 type acpConfigOption struct {

@@ -3,8 +3,8 @@
 // which limits it shows).
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '../lib/app-context'
-import { resetsIn } from '../lib/format'
-import type { LimitWindow, Limits, ProviderId } from '../lib/types'
+import { resetsIn, shortProviderName } from '../lib/format'
+import { LOGIN_PROVIDERS, type LimitWindow, type Limits, type ProviderId } from '../lib/types'
 
 /** Pin key of a window; src is the limits key ("claude", "codex:3", "claude@2" for a login on another machine). */
 export const limitKey = (src: string, w: LimitWindow) => `${src}:${w.id || w.name}`
@@ -28,7 +28,7 @@ export function limitSources(limits: Limits, naming?: UsageNaming | null) {
   const rank = (k: string) => limits[k]?.server_login ? -1 : limits[k]?.host_id ? 1e9 + limits[k]!.host_id! : id(k)
   const loginName = (k: string) => limits[k]?.label || 'Server login'
   const login = (k: string, key?: string): Login => ({ name: loginName(k), kind: limits[k]?.host_id ? 'machine' : limits[k]?.label ? 'account' : 'server', key })
-  return (['claude', 'codex'] as ProviderId[]).flatMap(p => {
+  return LOGIN_PROVIDERS.flatMap(p => {
     const keys = Object.keys(limits).filter(k => k === p || k.startsWith(p + ':') || k.startsWith(p + '@'))
     const byGroup = new Map(keys.filter(k => limits[k]?.group).map(k => [limits[k]!.group!, k]))
     const joined = new Map<string, string[]>() // card key → logins put with it
@@ -93,7 +93,7 @@ export function UsageWidget({ onNavigate }: { onNavigate?: () => void }) {
         return (
           <span key={key} className="uw-row">
             <span className="uw-h">
-              <span className="ellipsis"><b>{p === 'claude' ? 'Claude' : 'Codex'}</b>{label && <> {label}</>} {shortWindow(w.name)}</span>
+              <span className="ellipsis"><b>{shortProviderName(p)}</b>{label && <> {label}</>} {shortWindow(w.name)}</span>
               <span className="tnum uw-num">{Math.round(f * 100)}%{w.resets_at && <span className="muted" title={resetsIn(w.resets_at)}> · ↻ {resetsIn(w.resets_at, Date.now(), '')}</span>}</span>
             </span>
             <span className={`limit-bar thin ${limitTone(f)}`}><span style={{ width: `${Math.max(1, f * 100)}%` }} /></span>

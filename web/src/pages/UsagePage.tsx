@@ -109,6 +109,8 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
   const max = Math.max(1e-9, ...series.map(val))
   const total = series.reduce((a, x) => a + val(x), 0)
   const providers = (['claude', 'codex'] as ProviderId[])
+  // the agents with turns in this range: Claude Code and Codex always, the others once used
+  const used = [...providers, ...(Object.keys(d?.providers || {}) as ProviderId[]).filter(p => !providers.includes(p) && (d?.providers?.[p]?.turns || 0) > 0)]
   // Outside Pocket AI: only money (the CLIs' files have no turn count to match)
   const away = d?.elsewhere || []
   const awayTotal = away.reduce((a, x) => a + x.cost_usd, 0)
@@ -137,7 +139,7 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
       <div className="page-scroll">
         <div className="page-inner stack loose">
           <section className="card">
-            <div className="card-head"><div className="grow"><h2>Plan limits</h2><p className="muted small">Read from every Claude Code and Codex login on the server and on your other machines, including per-model limits. Logins signed in to the same account share their limits and show once.</p></div>
+            <div className="card-head"><div className="grow"><h2>Plan limits</h2><p className="muted small">Read from every Claude Code, Codex and Antigravity login on the server and on your other machines, including per-model limits. Logins signed in to the same account share their limits and show once.</p></div>
               <button type="button" className="btn sm ghost icon-only" aria-label="Refresh limits" title="Refresh" disabled={refreshing}
                 onClick={async () => { setRefreshing(true); try { r.setData(await api.get<UsageReport>(`${V1}/usage${qs({ days, refresh: 1 })}`)) } finally { setRefreshing(false) } }}>
                 <Icon name="refresh" size={15} className={refreshing ? 'spin' : ''} /></button></div>
@@ -188,7 +190,7 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
               )}
               {d && (
                 <div className="set-stats mt">
-                  {providers.map(p => (
+                  {used.map(p => (
                     <div key={p} className="set-stat"><span className={`prov-dot prov-${p}`} /><span className="set-stat-n tnum">{fmtCost(d.providers?.[p]?.cost_usd || 0)}</span><span className="set-stat-l">{providerName(p)} · {d.providers?.[p]?.turns || 0} turns</span></div>
                   ))}
                   {awayTotal > 0 && (
@@ -197,7 +199,7 @@ export default function UsagePage({ onMenu }: { onMenu?: () => void }) {
                   )}
                 </div>
               )}
-              <p className="muted xsmall mt-s">Costs are what the same tokens would cost on the API; on a Claude or ChatGPT subscription you pay the plan, and the limits above are what matters.
+              <p className="muted xsmall mt-s">Costs are what the same tokens would cost on the API; on a Claude, ChatGPT or Google AI subscription you pay the plan, and the limits above are what matters. Agents that name no price (Antigravity, free models) count as $0.
                 {metric === 'cost' && ' Outside Pocket AI (the faint part of each bar) is what your logins here and on your other machines spent in Paseo, the terminal and agents your agents started, read from the CLIs\' own files; a Claude session counts once its process ends.'}</p>
             </div>
           </section>

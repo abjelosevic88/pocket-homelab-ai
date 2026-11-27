@@ -307,3 +307,126 @@ func codexWindowID(bucket string, mins int64) string {
 	}
 	return fmt.Sprintf("%s:%d", bucket, mins)
 }
+
+// antigravityUsageScript prints `agy -p /usage` as JSON: $1 the CLI, $2 a
+// login folder ("" = its default). The print mode knows no --gemini-dir, so
+// another login folder is shown to it as ~/.gemini of a throwaway home.
+const antigravityUsageScript = `p=$(command -v "$1" 2>/dev/null) || { echo "$1 is not on the PATH" >&2; exit 127; }
+if [ -n "$2" ]; then
+  t=$(mktemp -d) || exit 3
+  trap 'rm -rf "$t"' EXIT
+  ln -s "$2" "$t/.gemini" || exit 3
+  HOME="$t"; export HOME
+fi
+cd "${TMPDIR:-/tmp}" 2>/dev/null
+"$p" -p "/usage" --output-format json </dev/null`
+
+// AntigravityLimits asks Antigravity CLI for the plan limits of a login: the
+// numbers of its /usage panel (a 5-hour and a weekly limit per model group),
+// from its print mode. No prompt reaches a model and no conversation is
+// written. remote is another machine's login (nil = here); dir its login
+// folder ("" = the default).
+func AntigravityLimits(ctx context.Context, remote *Remote, bin, dir string) ([]Window, error) {
+	if bin == "" {
+		bin = "agy"
+	}
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	var out, errOut string
+	var err error
+	if remote != nil {
+		out, errOut, err = remote.Run(ctx, 40*time.Second, antigravityUsageScript, bin, dir)
+	} else {
+		cmd := exec.CommandContext(ctx, "sh", "-c", antigravityUsageScript, "sh", bin, dir)
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
+		var eb strings.Builder
+		cmd.Stderr = &eb
+		var b []byte
+		b, err = cmd.Output()
+		out, errOut = string(b), eb.String()
+	}
+	w, perr := parseAntigravityUsage(out)
+	if perr == nil {
+		return w, nil
+	}
+	if strings.Contains(out+errOut, "Authentication required") {
+		return nil, errors.New("not signed in")
+	}
+	if err != nil {
+		return nil, errors.New(oneLine(firstNonEmpty(lastLines(errOut, 2), lastLines(out, 2), err.Error()), 200))
+	}
+	return nil, perr
+}
+
+// parseAntigravityUsage turns `agy -p /usage --output-format json` into
+// windows: used = what is gone of each limit. The first group (Gemini
+// models) always shows; other groups (Claude and GPT models) only once
+// something of them is used.
+func parseAntigravityUsage(raw string) ([]Window, error) {
+	i := strings.IndexByte(raw, '{')
+	if i < 0 {
+		return nil, errors.New("it did not say")
+	}
+	var r struct {
+		Status  string `json:"status"`
+		Command struct {
+			Data struct {
+				Groups []struct {
+					Name    string `json:"name"`
+					Buckets []struct {
+						ID        string   `json:"id"`
+						Window    string   `json:"window"`
+						Remaining *float64 `json:"remaining_fraction"`
+						ResetTime string   `json:"reset_time"`
+					} `json:"buckets"`
+				} `json:"groups"`
+			} `json:"data"`
+		} `json:"command"`
+	}
+	if err := json.Unmarshal([]byte(raw[i:]), &r); err != nil || len(r.Command.Data.Groups) == 0 {
+		return nil, errors.New("it did not say")
+	}
+	var out []Window
+	for gi, g := range r.Command.Data.Groups {
+		var ws []Window
+		used := false
+		for _, b := range g.Buckets {
+			if b.Remaining == nil {
+				continue
+			}
+			w := Window{ID: b.ID, Used: 1 - *b.Remaining}
+			if w.Used < 0 {
+				w.Used = 0
+			}
+			switch b.Window {
+			case "5h":
+				w.Name = "5 hours"
+			case "weekly":
+				w.Name = "7 days"
+			default:
+				w.Name = firstNonEmpty(b.Window, "limit")
+			}
+			if gi > 0 { // "Claude and GPT models" → "7 days · Claude and GPT"
+				w.Name += " · " + strings.TrimSuffix(strings.TrimSuffix(g.Name, " models"), " Models")
+			}
+			if t, err := time.Parse(time.RFC3339, b.ResetTime); err == nil && t.Year() > 2000 {
+				w.ResetsAt = t.UTC().Format(time.RFC3339)
+			}
+			used = used || w.Used > 0.0005
+			ws = append(ws, w)
+		}
+		if gi > 0 && !used {
+			continue
+		}
+		// the short window first, like the other CLIs' cards
+		sort.SliceStable(ws, func(a, b int) bool {
+			return strings.HasPrefix(ws[a].Name, "5 hours") && !strings.HasPrefix(ws[b].Name, "5 hours")
+		})
+		out = append(out, ws...)
+	}
+	if len(out) == 0 {
+		return nil, errors.New("it named no limits")
+	}
+	return out, nil
+}

@@ -288,7 +288,7 @@ func (s *Server) accountStatus(ctx context.Context, provider string, id int64, h
 			dir = ""
 		}
 		email, signedIn := ag.LoginStatus(dir)
-		st := acctStatus{SignedIn: signedIn, Email: email, at: time.Now()}
+		st := acctStatus{SignedIn: signedIn, Email: email, Plan: agent.ACPPlan(provider, email), at: time.Now()}
 		if signedIn && email != "" {
 			st.ident = loginIdent(provider, email, "")
 		}

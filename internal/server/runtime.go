@@ -10,6 +10,7 @@ import (
 	mathrand "math/rand/v2"
 	"net/url"
 	"os"
+	"os/exec"
 	"slices"
 	"sort"
 	"strconv"
@@ -124,8 +125,13 @@ func newRuntime(s *Server) *engine {
 
 func (rt *engine) start(ctx context.Context) {
 	rt.ctx = ctx
-	keys := []string{"claude", "codex"}
+	keys := []string{"claude", "codex", "antigravity"}
 	if list, err := rt.s.store.ListAccounts(ctx); err == nil {
+		for _, a := range list {
+			keys = append(keys, limitsKey(a.Provider, a.ID))
+		}
+	}
+	if list, err := rt.s.store.ListAgentAccounts(ctx); err == nil {
 		for _, a := range list {
 			keys = append(keys, limitsKey(a.Provider, a.ID))
 		}
@@ -133,7 +139,7 @@ func (rt *engine) start(ctx context.Context) {
 	// other machines' default logins (their other folders come with the next read)
 	if list, err := rt.s.store.ListHosts(ctx); err == nil {
 		for _, h := range list {
-			keys = append(keys, hostLimitsKey("claude", h.ID, ""), hostLimitsKey("codex", h.ID, ""))
+			keys = append(keys, hostLimitsKey("claude", h.ID, ""), hostLimitsKey("codex", h.ID, ""), hostLimitsKey("antigravity", h.ID, ""))
 		}
 	}
 	for _, p := range keys {
@@ -1614,11 +1620,26 @@ func (rt *engine) refreshLimits(wait bool) {
 			st       acctStatus
 			remote   *agent.Remote // a login on another machine (its status comes with hostLogins)
 			bin      string
+			dir      string // an ACP agent's login folder ("" = its default)
 		}
 		logins := []*login{{provider: "claude", home: rt.s.defaultHome("claude")}, {provider: "codex", home: rt.s.defaultHome("codex")}}
 		if list, err := rt.s.store.ListAccounts(ctx); err == nil {
 			for _, a := range list {
 				logins = append(logins, &login{provider: a.Provider, id: a.ID, home: a.Home, env: agent.AccountEnv(a.Provider, a.Home)})
+			}
+		}
+		// Antigravity CLI, once installed here: its default login and the others
+		for _, ag := range agent.ACPAgents {
+			if _, err := exec.LookPath(ag.Command()); !ag.Logins || err != nil {
+				continue
+			}
+			logins = append(logins, &login{provider: ag.ID, home: ag.LoginHome("")})
+			if list, err := rt.s.store.ListAgentAccounts(ctx); err == nil {
+				for _, a := range list {
+					if a.Provider == ag.ID {
+						logins = append(logins, &login{provider: a.Provider, id: a.ID, home: a.Home, dir: a.Home})
+					}
+				}
 			}
 		}
 		// Who each login is first (cached 10 minutes; the refresh button asks
@@ -1660,7 +1681,7 @@ func (rt *engine) refreshLimits(wait bool) {
 						}
 						hostMu.Lock()
 						logins = append(logins, &login{provider: v.Provider, key: key, st: v.acctStatus, remote: remoteOf(h),
-							bin: hostBin(h, v.Provider), env: agent.HomeEnv(v.Provider, v.Dir)})
+							bin: hostBin(h, v.Provider), env: agent.HomeEnv(v.Provider, v.Dir), dir: v.Dir})
 						hostMu.Unlock()
 					}
 				}()
@@ -1670,6 +1691,15 @@ func (rt *engine) refreshLimits(wait bool) {
 		groups := map[string][]*login{}
 		var order []string
 		for _, l := range logins {
+			if agent.IsACP(l.provider) && !l.st.SignedIn {
+				rt.mu.Lock()
+				_, known := rt.limits[l.key]
+				rt.mu.Unlock()
+				if known {
+					rt.dropLimits(l.key) // signed out: nothing to show
+				}
+				continue
+			}
 			if l.id != 0 && !rt.s.signedIn(l.provider, l.id) {
 				rt.setWho(l.key, acctStatus{})
 				rt.setLimits(l.key, nil, nil, false, "Not signed in")
@@ -1707,6 +1737,19 @@ func (rt *engine) refreshLimits(wait bool) {
 				}
 			}
 			wg.Add(1)
+			if ag, ok := agent.ACPAgentByID(l.provider); ok {
+				go func() {
+					defer wg.Done()
+					bin := ag.Command()
+					if l.remote != nil {
+						bin = l.bin
+					}
+					w, err := agent.AntigravityLimits(ctx, l.remote, bin, l.dir)
+					none := ""
+					set(w, &none, nil, err)
+				}()
+				continue
+			}
 			if l.provider == "claude" {
 				go func() {
 					defer wg.Done()
@@ -1795,6 +1838,13 @@ func (rt *engine) limitsSnapshot(uid int64) map[string]any {
 	srcs := map[string]src{}
 	if rt.s.mayUseServerLogin(rt.ctx, u) {
 		srcs["claude"], srcs["codex"] = src{"", admin}, src{"", admin}
+		// Antigravity's logins here are the owner's alone
+		srcs["antigravity"] = src{"", admin}
+		if list, err := rt.s.store.ListAgentAccounts(rt.ctx); err == nil {
+			for _, a := range list {
+				srcs[limitsKey(a.Provider, a.ID)] = src{a.Label, admin}
+			}
+		}
 	}
 	if list, err := rt.s.store.ListAccounts(rt.ctx); err == nil {
 		for _, a := range list {

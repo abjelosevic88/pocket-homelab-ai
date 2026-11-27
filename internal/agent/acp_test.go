@@ -256,3 +256,27 @@ func TestAntigravityAuthMethod(t *testing.T) {
 		t.Fatalf("auth method %q", id)
 	}
 }
+
+func TestParseAntigravityUsage(t *testing.T) {
+	raw := `{"conversation_id":"","status":"SUCCESS","response":"…","command":{"name":"usage","data":{"groups":[
+	{"name":"Gemini Models","buckets":[{"id":"gemini-weekly","window":"weekly","remaining_fraction":0.75,"reset_time":"2026-12-04T10:14:27Z"},{"id":"gemini-5h","window":"5h","remaining_fraction":0.9,"reset_time":"2026-11-27T15:14:27Z"}]},
+	{"name":"Claude and GPT models","buckets":[{"id":"3p-weekly","window":"weekly","remaining_fraction":1,"reset_time":"1970-01-01T00:00:00Z"},{"id":"3p-5h","window":"5h","remaining_fraction":1,"reset_time":"1970-01-01T00:00:00Z"}]}]}}}`
+	w, err := parseAntigravityUsage(raw)
+	if err != nil || len(w) != 2 {
+		t.Fatalf("%v %+v", err, w)
+	}
+	if w[0].ID != "gemini-5h" || w[0].Name != "5 hours" || w[0].Used < 0.099 || w[0].Used > 0.101 || w[0].ResetsAt != "2026-11-27T15:14:27Z" {
+		t.Fatalf("5h %+v", w[0])
+	}
+	if w[1].ID != "gemini-weekly" || w[1].Name != "7 days" || w[1].Used != 0.25 {
+		t.Fatalf("weekly %+v", w[1])
+	}
+	// the other models' limits show once used, without a made-up reset time
+	w, _ = parseAntigravityUsage(strings.Replace(raw, `"id":"3p-weekly","window":"weekly","remaining_fraction":1`, `"id":"3p-weekly","window":"weekly","remaining_fraction":0.5`, 1))
+	if len(w) != 4 || w[3].Name != "7 days · Claude and GPT" || w[3].ResetsAt != "" || w[2].Name != "5 hours · Claude and GPT" {
+		t.Fatalf("with third-party models: %+v", w)
+	}
+	if _, err := parseAntigravityUsage("Authentication required. Please visit the URL"); err == nil {
+		t.Fatal("no limits is an error")
+	}
+}

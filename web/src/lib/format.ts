@@ -118,5 +118,5 @@ export function promptVars(prompt: string): string[] {
 
 export const isTouch = () => window.matchMedia('(hover: none) and (pointer: coarse)').matches
 
-/** "team" → "Team", "PRO" → "Pro" */
-export const planName = (p: string) => p.length > 1 ? p[0].toUpperCase() + p.slice(1).toLowerCase() : p
+/** "team" → "Team", "PRO" → "Pro"; a plan's full name ("Google AI Pro") stays as it is */
+export const planName = (p: string) => p.includes(' ') ? p : p.length > 1 ? p[0].toUpperCase() + p.slice(1).toLowerCase() : p

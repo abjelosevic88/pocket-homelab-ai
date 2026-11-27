@@ -396,6 +396,15 @@ func fileExists(p string) bool {
 	return err == nil
 }
 
+// ACPPlan is the plan of the account email is, when the agent's last probe
+// was signed in as it and said its plan: logins of one account share it.
+func ACPPlan(id, email string) string {
+	if p, ok := ACPProbed(id); ok && email != "" && p.Account == email {
+		return p.Plan
+	}
+	return ""
+}
+
 // probed keeps the last probe of each ACP agent (its modes check threads).
 var probed sync.Map // id → Provider
 
@@ -477,6 +486,7 @@ func ProbeACP(ctx context.Context, ag ACPAgent, bin, dir string, env []string, l
 		email, _ := ag.LoginStatus(login)
 		p.Account = firstNonEmpty(email, "Google account")
 	}
+	p.Plan = info.Meta.Antigravity.Tier.Name
 	if a.caps.Session.Close != nil && info.SessionID != "" {
 		cctx, ccancel := context.WithTimeout(ctx, 5*time.Second)
 		_, _ = a.c.call(cctx, "session/close", map[string]any{"sessionId": info.SessionID})

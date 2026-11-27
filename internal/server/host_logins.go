@@ -156,7 +156,7 @@ func (s *Server) hostLogins(ctx context.Context, h *store.Host, refresh bool) []
 			antigravity = append(antigravity, base("antigravity", v))
 		case "antigravity_email":
 			if n := len(antigravity); n > 0 {
-				antigravity[n-1].acctStatus = acctStatus{SignedIn: true, Email: v}
+				antigravity[n-1].acctStatus = acctStatus{SignedIn: true, Email: v, Plan: agent.ACPPlan("antigravity", v)}
 				if v != "" {
 					antigravity[n-1].ident = loginIdent("antigravity", v, "")
 				}
