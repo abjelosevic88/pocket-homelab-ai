@@ -17,7 +17,7 @@ import (
 // (panels.go) the way the person does from the Panels page. Starting one
 // asks the person first, like starting another agent.
 
-const panelToolsInstructions = ` Panels: with pocket_panel_start you put one question to several AI models at once (the person's other agents and models), run by Pocket AI in rounds: "ask" (same question, answers compared and merged), "brainstorm", "council" (they judge a plan or idea and criticise each other blind), "debate" (two sides, a judge) and "review" (a second opinion on an answer, plan or change). Use it when the person asks for other models' views, a council, a debate or a second opinion, or on their "/council"-style commands; not on your own for ordinary work, since it uses several models' quota. The participants do not see this conversation: write the question and the material out in full. It asks the person first unless they always allow it; then wait for the outcome with pocket_panel_wait.`
+const panelToolsInstructions = ` Panels: with pocket_panel_start you put one question to several AI models at once (the person's other agents and models), run by Pocket AI in rounds: "ask" (same question, answers compared and merged), "brainstorm", "council" (they judge a plan or idea and criticise each other blind), "debate" (two sides, a judge) and "review" (a second opinion on an answer, plan or change). Use it when the person asks for other models' views, a council, a debate or a second opinion, or on their "/council"-style commands; not on your own for ordinary work, since it uses several models' quota. The participants do not see this conversation: write the question and the material out in full. It asks the person first unless they always allow it; then wait for the outcome with pocket_panel_wait. A plan the person refined in a panel lives there with its versions: when they refer to it by name ("implement phase 1 of the machine link plan"), read its current version with pocket_panel_read (query = words from its name); a link to a panel in their message already comes with that text.`
 
 func panelToolDefs() []struct {
 	name, description, schema string
@@ -36,7 +36,7 @@ func panelToolDefs() []struct {
 "report":{"type":"boolean","description":"Send the outcome to this conversation as a message when it finishes (default true)."}
 },"required":["kind","question"]}`, false},
 		{"pocket_panel_wait", "Wait until a panel started from this conversation has finished, up to timeout_seconds (default 300, at most 600). Returns its state, who took part and, when finished, the outcome. Call again to wait longer: a standard panel takes a few minutes.", `{"type":"object","properties":{"panel_id":{"type":"string"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":600}},"required":["panel_id"]}`, true},
-		{"pocket_panel_read", "Read a panel started from this conversation: its state, the summary, and each participant's latest answer.", `{"type":"object","properties":{"panel_id":{"type":"string"}},"required":["panel_id"]}`, true},
+		{"pocket_panel_read", "Read one of the person's panels by its id or by words from its name: its state and outcome. For a plan or text they refined in a panel it returns the current version in full (or an earlier one with version), which is what they mean by \"the plan\" they worked on in Panels.", `{"type":"object","properties":{"panel_id":{"type":"string"},"query":{"type":"string","maxLength":120,"description":"Words from the panel's name, instead of its id."},"version":{"type":"integer","minimum":1,"description":"An earlier version instead of the current one."}}}`, true},
 	}
 }
 
@@ -241,16 +241,52 @@ func (s *Server) callPanelTool(ctx, session context.Context, owner *store.User, 
 		}
 	case "pocket_panel_read":
 		var in struct {
-			ID string `json:"panel_id"`
+			ID      string `json:"panel_id"`
+			Query   string `json:"query"`
+			Version int    `json:"version"`
 		}
-		if json.Unmarshal(raw, &in) != nil {
-			return toolFailure("Give panel_id")
+		if json.Unmarshal(raw, &in) != nil || strings.TrimSpace(in.ID) == "" && strings.TrimSpace(in.Query) == "" {
+			return toolFailure("Give panel_id, or query (words from its name)")
 		}
-		p, err := mine(in.ID)
-		if err != nil {
-			return toolFailure(err.Error())
+		// any of the person's panels: a plan they refined is theirs to use anywhere
+		var p *store.Panel
+		if id := strings.TrimSpace(in.ID); id != "" {
+			got, err := s.store.GetPanel(ctx, owner.ID, id)
+			if err != nil {
+				return toolFailure("The person has no panel with that id")
+			}
+			p = got
+		} else {
+			list, _ := s.store.PanelsByTitle(ctx, owner.ID, strings.TrimSpace(in.Query), 8)
+			switch len(list) {
+			case 0:
+				return toolFailure("No panel of the person's has a name like that")
+			case 1:
+				p = list[0]
+			default:
+				found := []map[string]any{}
+				for _, x := range list {
+					found = append(found, map[string]any{"panel_id": x.ID, "title": x.Title, "kind": x.Kind, "state": x.Status, "updated_at": x.UpdatedAt})
+				}
+				return toolResult(map[string]any{"several": found, "note": "Several match: read the one meant with its panel_id, or ask the person which."}, false)
+			}
 		}
-		return toolResult(s.panelState(ctx, p, true), false)
+		out := s.panelState(ctx, p, !hasVersions(p))
+		if list := s.panelVersions(ctx, p); len(list) > 0 {
+			v := list[len(list)-1]
+			for _, x := range list {
+				if x.N == in.Version {
+					v = x
+				}
+			}
+			delete(out, "outcome")
+			out["version"], out["versions"], out["current_version"] = v.N, len(list), list[len(list)-1].N
+			out["text"] = tailHead(v.Text, 120000)
+			if v.Note != "" {
+				out["what_changed"] = tailHead(v.Note, 6000)
+			}
+		}
+		return toolResult(out, false)
 	}
 	return toolFailure("Unknown panel tool")
 }

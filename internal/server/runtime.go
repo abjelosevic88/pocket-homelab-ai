@@ -2413,6 +2413,7 @@ func (rt *engine) takeTurnNote(threadID string) string {
 func (rt *engine) withMemory(r *run, in agent.Input, sender int64) agent.Input {
 	in.Text += rt.takeTurnNote(r.threadID)
 	in.Text += rt.s.appMentionNote(rt.ctxOrBackground(), sender, in.Text)
+	in.Text += rt.s.panelRefNote(rt.ctxOrBackground(), sender, in.Text) // a linked panel: its current version (panel_versions.go)
 	if rt.s.isAway(rt.ctxOrBackground(), sender) {
 		in.Text += awayNote
 	}

@@ -109,7 +109,7 @@ var panelKinds = []panelKind{
 const (
 	panelRefineJudge   = "Judge it from your point of view. Give: your verdict in one line (Go / Go with changes / Don't); what has to change, as a numbered list of concrete changes (what, where, why); the risks, most serious first; and what is good and has to stay as it is."
 	panelRefineAgain   = "This is the version as the editor rewrote it. Judge it again from the start: your verdict (Go / Go with changes / Don't), what still has to change (numbered, concrete), and anything the rewrite made worse or lost. If it is ready, say Go and stop there — do not invent objections."
-	panelRefineRewrite = "Rewrite it in full. Take in what the participants agree has to change and whatever they call a serious risk. Where they disagree with each other, or where you think a point is wrong, leave it as it is. Do not shrink it into a summary and do not drop parts nobody criticised: the result must be able to replace the original. Write the complete new version first. Then, under the heading \"What changed\", a short list with who asked for it (\"Participant A\" …); and under \"Not taken\", what you left as it was and why."
+	panelRefineRewrite = "Rewrite it in full. Take in what the participants agree has to change and whatever they call a serious risk. Where they disagree with each other, or where you think a point is wrong, leave it as it is. Do not shrink it into a summary and do not drop parts nobody criticised: the result must be able to replace the original. Write the complete new version first, then a line that says exactly `--- end of the version ---`. After that line, under the heading \"What changed\", a short list with who asked for it (\"Participant A\" …); and under \"Not taken\", what you left as it was and why."
 )
 
 func panelKindByID(id string) (panelKind, bool) {
@@ -282,7 +282,7 @@ func panelIntro(p *store.Panel, st *store.PanelSeat, readOnly bool) string {
 }
 
 // panelSeen is the earlier answers a step hands over.
-func panelSeen(p *store.Panel, seats []*store.PanelSeat, answers []*store.PanelAnswer, st *store.PanelSeat, stage int) string {
+func panelSeen(p *store.Panel, seats []*store.PanelSeat, answers []*store.PanelAnswer, st *store.PanelSeat, stage int, current string) string {
 	sees := p.Spec.Stages[stage].Sees
 	if sees == "" {
 		return ""
@@ -302,6 +302,10 @@ func panelSeen(p *store.Panel, seats []*store.PanelSeat, answers []*store.PanelA
 		return h
 	}
 	var b strings.Builder
+	if sees == "revision" && strings.TrimSpace(current) != "" {
+		// the current version of what the panel works on
+		return "\n" + tailHead(strings.TrimSpace(current), panelSeenMax) + "\n"
+	}
 	if sees == "revision" {
 		// what the summary writer (the editor) wrote last
 		var last *store.PanelAnswer
@@ -359,7 +363,7 @@ func panelSeen(p *store.Panel, seats []*store.PanelSeat, answers []*store.PanelA
 }
 
 // panelMessage is what a participant is sent for a step.
-func panelMessage(p *store.Panel, seats []*store.PanelSeat, answers []*store.PanelAnswer, st *store.PanelSeat, stage int, extra string) string {
+func panelMessage(p *store.Panel, seats []*store.PanelSeat, answers []*store.PanelAnswer, st *store.PanelSeat, stage int, extra, current string) string {
 	sg := p.Spec.Stages[stage]
 	first := st.Asked < 0
 	var b strings.Builder
@@ -368,11 +372,11 @@ func panelMessage(p *store.Panel, seats []*store.PanelSeat, answers []*store.Pan
 	} else {
 		fmt.Fprintf(&b, "Next step of the panel: %s.\n", sg.Name)
 	}
-	if seen := panelSeen(p, seats, answers, st, stage); seen != "" {
+	if seen := panelSeen(p, seats, answers, st, stage, current); seen != "" {
 		what := "What the other participants wrote"
 		switch sg.Sees {
 		case "revision":
-			what = "The version as it was rewritten from the verdicts"
+			what = "The current version"
 		case "all", "everything":
 			what = "What the participants wrote"
 		}

@@ -30,7 +30,9 @@ for line in sys.stdin:
     if 'FAIL-SCEPTIC' in text and 'Sceptic' in text and 'You write the summary' not in text:
         print(json.dumps({'type':'result','subtype':'error_during_execution','is_error':True,'result':'boom'}), flush=True)
         continue
-    if 'You write the summary' in text:
+    if 'PROPOSE' in text and 'in the panel\'s chat' in text:
+        answer = 'I made it shorter.\n--- new version ---\nShort plan.\n--- end of the version ---'
+    elif 'You write the summary' in text:
         seen = 'saw-critique' if 'Step 2: Critique' in text else 'no-critique'
         answer = 'Participant A and Participant B agree. ' + seen
     else:
@@ -393,7 +395,7 @@ func TestRefineRewritesBetweenVerdicts(t *testing.T) {
 	}
 	// a participant's second step: the rewrite itself, not the others' verdicts
 	second := said(seats[0].ThreadID)[1]
-	if !strings.Contains(second, "ANSWER 1 [Rewrite]") || !strings.Contains(second, "rewritten from the verdicts") || strings.Contains(second, "## Participant") {
+	if !strings.Contains(second, "ANSWER 1 [Rewrite]") || !strings.Contains(second, "The current version") || strings.Contains(second, "## Participant") {
 		t.Fatalf("verdict on the rewrite was handed %q", second)
 	}
 	// the editor: told it is one, no word limit, the verdicts by letter; then only the new ones
@@ -403,5 +405,160 @@ func TestRefineRewritesBetweenVerdicts(t *testing.T) {
 	}
 	if !strings.Contains(editor[1], "ANSWER 2 [Verdicts on the rewrite]") || strings.Contains(editor[1], "ANSWER 1 [Verdicts]") {
 		t.Fatalf("editor's second step %q", editor[1])
+	}
+}
+
+func TestSplitRewrite(t *testing.T) {
+	v, note := splitRewrite("# Plan\n\nDo it.\n\n--- end of the version ---\n\n## What changed\n\n- shorter")
+	if v != "# Plan\n\nDo it." || !strings.HasPrefix(note, "## What changed") {
+		t.Fatalf("%q / %q", v, note)
+	}
+	// an answer from before the marker was asked for: the heading parts it
+	v, note = splitRewrite("# Plan\n\nDo it.\n\n## What changed\n\n- shorter\n\n## Not taken\n\n- x")
+	if v != "# Plan\n\nDo it." || !strings.Contains(note, "Not taken") {
+		t.Fatalf("%q / %q", v, note)
+	}
+	if v, note = splitRewrite("Just the plan."); v != "Just the plan." || note != "" {
+		t.Fatalf("%q / %q", v, note)
+	}
+	said, prop := splitProposal("I cut phase 3.\n\n--- new version ---\n# Plan\n1. a\n--- end of the version ---\nAnything else?")
+	if said != "I cut phase 3.\n\nAnything else?" || prop != "# Plan\n1. a" {
+		t.Fatalf("%q / %q", said, prop)
+	}
+	if said, prop = splitProposal("It is fine as it is."); prop != "" || said != "It is fine as it is." {
+		t.Fatalf("%q / %q", said, prop)
+	}
+}
+
+// A Refine panel keeps the versions of its plan and goes on from the current
+// one: another round, an edit by hand, going back, a word with the editor.
+// A conversation that links to the panel is handed the current version.
+func TestPanelKeepsVersionsAndGoesOn(t *testing.T) {
+	fastPanels(t)
+	s, h, root := testServer(t)
+	c, u := person(t, s, h, "versions@example.test", "admin", true)
+	fakeClaude(t, s, root)
+	if err := os.WriteFile(s.cfg.ClaudeBin, []byte(panelClaude), 0700); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	type view struct {
+		ID       string `json:"id"`
+		Status   string `json:"status"`
+		Result   string `json:"result"`
+		Versions []struct {
+			N      int    `json:"n"`
+			Text   string `json:"text"`
+			Source string `json:"source"`
+			Note   string `json:"note"`
+		} `json:"versions"`
+		Chat []struct {
+			ID       int64  `json:"id"`
+			Role     string `json:"role"`
+			Text     string `json:"text"`
+			Proposal string `json:"proposal"`
+			VersionN int    `json:"version_n"`
+			State    string `json:"state"`
+		} `json:"chat"`
+	}
+	var v view
+	c.want("POST", "/api/v1/panels", map[string]any{"kind": "refine", "material": "The plan: do it in one go.", "depth": "quick", "cwd": root, "title": "One go plan",
+		"seats": []map[string]any{{"provider": "claude", "model": "default"}, {"provider": "claude", "model": "default"}},
+		"chair": map[string]any{"provider": "claude", "model": "default"}}, 201, &v)
+	id := v.ID
+	panelDone(t, s, id)
+	get := func() view {
+		var x view
+		c.want("GET", "/api/v1/panels/"+id, nil, 200, &x)
+		return x
+	}
+	v = get()
+	if len(v.Versions) != 2 || v.Versions[0].Source != "original" || v.Versions[0].Text != "The plan: do it in one go." || v.Versions[1].Text != "ANSWER 1 [Rewrite]" || v.Result != "ANSWER 1 [Rewrite]" {
+		t.Fatalf("versions after the first round: %+v", v.Versions)
+	}
+	said := func(threadID string) []string {
+		items, _ := s.store.ListItems(ctx, threadID)
+		out := []string{}
+		for _, it := range items {
+			if it.Kind == "user" {
+				out = append(out, it.Body)
+			}
+		}
+		return out
+	}
+	seats, _ := s.store.PanelSeats(ctx, id)
+
+	// another round, with a wish: they judge version 2, the editor writes version 3
+	c.want("POST", "/api/v1/panels/"+id+"/rounds", map[string]string{"note": "tighten phase two"}, 200, nil)
+	panelDone(t, s, id)
+	v = get()
+	if len(v.Versions) != 3 || v.Versions[2].Text != "ANSWER 2 [Version 3]" || v.Status != "done" {
+		t.Fatalf("after another round: %+v %s", v.Versions, v.Status)
+	}
+	if judge := said(seats[0].ThreadID)[1]; !strings.Contains(judge, "ANSWER 1 [Rewrite]") || !strings.Contains(judge, "tighten phase two") || !strings.Contains(judge, "Verdicts on version 2") {
+		t.Fatalf("the round's judges were told %q", judge)
+	}
+
+	// an edit by hand is version 4; the editor is told about it in the next round
+	c.want("POST", "/api/v1/panels/"+id+"/versions", map[string]string{"text": "My own edit of the plan.", "note": "cut phase three"}, 200, nil)
+	c.want("POST", "/api/v1/panels/"+id+"/rounds", map[string]string{}, 200, nil)
+	panelDone(t, s, id)
+	v = get()
+	if len(v.Versions) != 5 || v.Versions[3].Source != "edit" || v.Versions[4].Source != "rewrite" {
+		t.Fatalf("after an edit and a round: %+v", v.Versions)
+	}
+	editor := said(seats[2].ThreadID)
+	if last := editor[len(editor)-1]; !strings.Contains(last, "It is not the last one you wrote") || !strings.Contains(last, "My own edit of the plan.") {
+		t.Fatalf("the editor was not told of the edit: %q", last)
+	}
+
+	// back to the original: a new version with its text
+	c.want("POST", "/api/v1/panels/"+id+"/versions/1/restore", nil, 200, nil)
+	if v = get(); len(v.Versions) != 6 || v.Versions[5].Text != "The plan: do it in one go." || v.Versions[5].Source != "restore" {
+		t.Fatalf("after going back: %+v", v.Versions)
+	}
+
+	// a word with the editor: it proposes a version, which is taken
+	c.want("POST", "/api/v1/panels/"+id+"/chat", map[string]string{"text": "PROPOSE make it shorter"}, 200, nil)
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		v = get()
+		if n := len(v.Chat); n == 2 && v.Chat[1].State != "working" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the editor never answered: %+v", v.Chat)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if v.Chat[1].Text != "I made it shorter." || v.Chat[1].Proposal != "Short plan." || len(v.Versions) != 6 {
+		t.Fatalf("chat %+v, versions %d", v.Chat, len(v.Versions))
+	}
+	if told := said(seats[2].ThreadID); !strings.Contains(told[len(told)-1], "The current version is version 6") || !strings.Contains(told[len(told)-1], "The plan: do it in one go.") {
+		t.Fatalf("the editor was asked %q", told[len(told)-1])
+	}
+	c.want("POST", "/api/v1/panels/"+id+"/chat/"+itoa(v.Chat[1].ID)+"/accept", nil, 200, nil)
+	if v = get(); len(v.Versions) != 7 || v.Versions[6].Text != "Short plan." || v.Versions[6].Source != "chat" || v.Chat[1].VersionN != 7 || v.Result != "Short plan." {
+		t.Fatalf("after taking the proposal: %+v / %+v", v.Versions[len(v.Versions)-1], v.Chat[1])
+	}
+
+	// a conversation that links to the panel gets the current version; someone else's link gets nothing
+	note := s.panelRefNote(ctx, u.ID, "implement phase one of [One go plan](https://ai.example/panels/"+id+")")
+	if !strings.Contains(note, "Short plan.") || !strings.Contains(note, "version 7 of 7") || !strings.Contains(note, "One go plan") {
+		t.Fatalf("link note %q", note)
+	}
+	if s.panelRefNote(ctx, u.ID+99, "see /panels/"+id) != "" || s.panelRefNote(ctx, u.ID, "no link here") != "" {
+		t.Fatal("a panel was handed to someone it does not belong to, or without a link")
+	}
+	// found by name for the @ picker, and saved as a file
+	if items := s.panelItems(ctx, u.ID, "one go", 5); len(items) != 1 || items[0].Subtitle != "Refine · version 7" || !strings.HasSuffix(items[0].URL, "/panels/"+id) {
+		t.Fatalf("picker items %+v", items)
+	}
+	var saved struct {
+		Path string `json:"path"`
+	}
+	c.want("POST", "/api/v1/panels/"+id+"/save", map[string]string{}, 200, &saved)
+	if got, err := os.ReadFile(saved.Path); err != nil || string(got) != "Short plan.\n" || !strings.HasSuffix(saved.Path, "/one-go-plan.md") {
+		t.Fatalf("saved %q %q %v", saved.Path, got, err)
 	}
 }

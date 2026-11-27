@@ -35,6 +35,7 @@ func (s *Server) panelRoutes(r chi.Router) {
 	r.Post("/panels/{id}/continue", s.handlePanelContinue)
 	r.Get("/panels/{id}/export.md", s.handlePanelExport)
 	r.Get("/threads/{id}/panels", s.handleThreadPanels)
+	s.panelVersionRoutes(r) // versions, another round, the editor chat: panel_versions.go
 }
 
 // panelSeatView is a participant as the web app shows it.
@@ -62,12 +63,20 @@ type panelView struct {
 	Answers   []*store.PanelAnswer `json:"answers,omitempty"`
 	CostUSD   float64              `json:"cost_usd"`
 	FromTitle string               `json:"from_title,omitempty"`
+	// A panel that keeps versions of what it works on: all of them, and the
+	// person's chat with its editor (ChatLive: what the editor is writing).
+	Versions []*store.PanelVersion     `json:"versions,omitempty"`
+	Chat     []*store.PanelChatMessage `json:"chat,omitempty"`
+	ChatLive string                    `json:"chat_live,omitempty"`
+	Editor   bool                      `json:"editor"` // there is an editor to talk to
+	URL      string                    `json:"url"`
 }
 
 // viewPanel builds a panel for the web app; full adds the answers and what
 // the participants are writing right now.
 func (s *Server) viewPanel(ctx context.Context, p *store.Panel, full bool) panelView {
 	v := panelView{Panel: p, Depth: panelDepthNames[min(max(p.Spec.Depth, 0), panelDeep)], Seats: []panelSeatView{}}
+	v.URL = firstNonEmpty(s.publicURL("/panels/"+p.ID), "/panels/"+p.ID)
 	seats, _ := s.store.PanelSeats(ctx, p.ID)
 	for _, st := range seats {
 		sv := panelSeatView{PanelSeat: st, Name: providerName(st.Provider), Who: seatWho(st), Activity: st.State}
@@ -100,6 +109,21 @@ func (s *Server) viewPanel(ctx context.Context, p *store.Panel, full bool) panel
 		v.Answers, _ = s.store.PanelAnswers(ctx, p.ID)
 		if v.Answers == nil {
 			v.Answers = []*store.PanelAnswer{}
+		}
+		if hasVersions(p) {
+			v.Versions = s.panelVersions(ctx, p)
+			v.Chat, _ = s.store.PanelChat(ctx, p.ID)
+			if ed := panelEditor(seats); ed != nil {
+				v.Editor = true
+				for _, m := range v.Chat {
+					if m.Role == "editor" && m.State == "working" {
+						v.ChatLive, _, _ = s.store.LastReply(ctx, ed.ThreadID)
+						if said, _ := splitProposal(v.ChatLive); said != "" || v.ChatLive != "" {
+							v.ChatLive = said
+						}
+					}
+				}
+			}
 		}
 		// what the summary writer wrote says "Participant A": shown with who that was
 		chairs := map[int64]bool{}
@@ -320,9 +344,32 @@ func (s *Server) handlePanelContinue(w http.ResponseWriter, r *http.Request) {
 		Text     string `json:"text"`
 		Provider string `json:"provider"`
 		Model    string `json:"model"`
+		Cwd      string `json:"cwd"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	if hasVersions(p) {
+		// a plan the panel keeps: the conversation links to it and is handed its
+		// current version (panelRefNote), now and whenever it is linked again
+		if s.currentVersion(r.Context(), p) == nil {
+			writeErr(w, http.StatusBadRequest, "There is nothing to continue from yet")
+			return
+		}
+		link := "[" + strings.NewReplacer("[", "(", "]", ")").Replace(oneLine(p.Title, 120)) + "](" + firstNonEmpty(s.publicURL("/panels/"+p.ID), "/panels/"+p.ID) + ")"
+		nt := newThread{Provider: in.Provider, Model: in.Model, Title: oneLine(firstNonEmpty(strings.TrimSpace(in.Text), "From the plan")+" · "+p.Title, 140),
+			Text: firstNonEmpty(strings.TrimSpace(in.Text), "Read this plan and tell me briefly how you would go about it.") + "\n\nThe plan: " + link}
+		nt.Cwd = strings.TrimSpace(in.Cwd)
+		if nt.Cwd == "" && p.Spec.HostID == 0 {
+			nt.Cwd = p.Spec.Cwd
+		}
+		t, err := s.createThread(r.Context(), userFrom(r.Context()), nt, "web", "")
+		if err != nil && t == nil {
+			s.fail(w, err, "continue from panel")
+			return
+		}
+		writeJSON(w, http.StatusCreated, t)
 		return
 	}
 	seats, _ := s.store.PanelSeats(r.Context(), p.ID)

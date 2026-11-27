@@ -282,6 +282,16 @@ Scheduled prompts get an instruction appended: finish with a first line `OK: …
 | `POST·PUT·DELETE /panels/lineups[/{id}]` | saved line-ups (`name`, `seats`, `chair`, `default`) |
 | `POST·PUT·DELETE /panels/kinds[/{id}]` | the person's own kinds (`name`, `description`, `stages`) |
 | `GET /threads/{id}/panels` | the panels started from a conversation |
+| `POST /panels/{id}/versions` | a Refine panel: the person's own edit as the next version (`text`, `note`) |
+| `POST /panels/{id}/versions/{n}/restore` | make version n the current one again (as a new version) |
+| `POST /panels/{id}/rounds` | another round on the current version: verdicts, then a rewrite (`note`) |
+| `POST /panels/{id}/chat` | say something to the panel's editor (`text`); its answer, with the version it proposes, comes in `chat` |
+| `POST /panels/{id}/chat/{mid}/accept` | take a proposed version |
+| `POST /panels/{id}/save` | write the current version as a Markdown file (`dir`, `name`, `replace`); 409 with `exists` when a different file is there |
+
+A Refine panel's view has `versions` (oldest first; the last is the current one), `chat`, `chat_live` and `editor`. A message
+that contains a link to `/panels/{id}` is handed that panel's current version (or outcome) for the agent; `GET /pocket/items?app=panels&q=`
+finds panels by name for the composer's `@panels #…`.
 
 Other Pocket apps, with a Core link token that has `panels:write`: `POST /api/v1/link/panels` (`kind`, `question`,
 `material`, `depth`, `title`; the person's default line-up, no folder) and `GET /api/v1/link/panels/{id}` (`status`,

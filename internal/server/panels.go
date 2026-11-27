@@ -251,6 +251,11 @@ func (s *Server) startPanel(ctx context.Context, u *store.User, in panelStart) (
 		}
 		p.Kind, p.Spec.KindName, all, quorum = k.ID, k.Name, k.Stages, k.Quorum
 	}
+	if p.Kind == "refine" && in.Material == "" {
+		// only a question: that is the text to refine
+		in.Material, p.Material = in.Question, in.Question
+		in.Question, p.Question = "", ""
+	}
 	p.Spec.Stages = stagesFor(all, depth)
 	if len(p.Spec.Stages) == 0 {
 		return nil, badRequest("This kind of panel has no steps at that depth")
@@ -406,6 +411,9 @@ func (s *Server) startPanel(ctx context.Context, u *store.User, in panelStart) (
 	if err := s.store.CreatePanel(ctx, p, seats); err != nil {
 		return nil, err
 	}
+	if hasVersions(p) && p.Material != "" {
+		_ = s.store.AddPanelVersion(ctx, &store.PanelVersion{PanelID: p.ID, Text: p.Material, Source: "original", Stage: -1})
+	}
 	s.log.Info("panel started", "panel", p.ID, "kind", p.Kind, "seats", len(specs), "depth", panelDepthNames[depth], "from", p.FromThreadID)
 	s.panelChanged(p)
 	s.goPanel(p.ID)
@@ -446,6 +454,15 @@ func (s *Server) panelItemsText(ctx context.Context, u *store.User, items []pane
 			return "", badRequest("Unknown app")
 		}
 		title := firstNonEmpty(attr(it.Title), it.App+" "+attr(it.ID))
+		if it.App == "panels" { // one of their own panels: its current version or outcome
+			if other, err := s.store.GetPanel(ctx, u.ID, it.ID); err == nil {
+				if text := s.panelText(ctx, other); strings.TrimSpace(text) != "" {
+					fmt.Fprintf(&b, "## From the panel \"%s\"\n\n%s\n\n", title, tailHead(strings.TrimSpace(text), panelItemTextMax))
+					continue
+				}
+			}
+			return "", badRequest("The panel “" + title + "” has nothing to hand over yet")
+		}
 		if it.Attachable {
 			text, _, err := s.pocketText(ctx, u.ID, it.App, it.ID, panelItemTextMax)
 			if err != nil {
@@ -534,6 +551,7 @@ func (s *Server) goPanel(id string) {
 
 // resumePanels takes up the panels that were at work when the server stopped.
 func (s *Server) resumePanels(ctx context.Context) {
+	s.resumePanelChats(ctx)
 	list, err := s.store.RunningPanels(ctx)
 	if err != nil {
 		return
@@ -753,8 +771,22 @@ func (s *Server) panelStage(ctx context.Context, p *store.Panel) bool {
 			return false
 		}
 	}
+	// in a panel that keeps versions, what the editor wrote is the next one
+	if sg.Who == "chair" && hasVersions(p) {
+		if fresh, err := s.store.PanelAnswers(ctx, p.ID); err == nil {
+			for _, a := range fresh {
+				if a.Stage == p.Stage && a.SeatID == parts[0].ID {
+					text, note := splitRewrite(revealNames(a.Text, seats))
+					v := &store.PanelVersion{Text: text, Source: "rewrite", Note: note, Stage: p.Stage}
+					if err := s.addVersion(ctx, p, v); err == nil {
+						p.Spec.EditorKnows = v.N
+					}
+				}
+			}
+		}
+	}
 	// the last summary is the panel's result
-	if sg.Who == "chair" {
+	if sg.Who == "chair" && !hasVersions(p) {
 		last := true
 		for i := p.Stage + 1; i < len(p.Spec.Stages); i++ {
 			if p.Spec.Stages[i].Who == "chair" {
@@ -823,7 +855,15 @@ func (s *Server) askSeat(ctx context.Context, owner *store.User, p *store.Panel,
 	if p.Kind == "build" && st.Chair {
 		extra = s.panelWorktrees(ctx, p, seats)
 	}
-	msg := panelMessage(p, seats, answers, st, p.Stage, extra)
+	current := ""
+	if cur := s.currentVersion(ctx, p); cur != nil {
+		current = cur.Text
+		// the editor works from the current version: told when that is not the one it wrote last
+		if st.Chair && p.Spec.EditorKnows != cur.N && !(st.Asked < 0 && cur.N == 1) {
+			extra = fmt.Sprintf("The current version of the text is version %d. It is not the last one you wrote (the person changed it, went back to an earlier one, or you are new here). Rewrite from this:\n\n%s\n\n%s\n", cur.N, cur.Text, panelVersionEnd)
+		}
+	}
+	msg := panelMessage(p, seats, answers, st, p.Stage, extra, current)
 	bg := context.WithValue(context.WithoutCancel(ctx), startInBackground{}, true)
 	if st.ThreadID == "" {
 		building := p.Kind == "build" && !st.Chair

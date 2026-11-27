@@ -47,8 +47,11 @@ type PanelSpec struct {
 	App      string       `json:"app,omitempty"`  // the Pocket app that started it over a Core link
 	// Access: what the participants may do without asking: "" only look, "auto"
 	// each agent's own automatic mode, "full" never asks.
-	Access    string `json:"access,omitempty"`
-	ChairSwap bool   `json:"chair_swap,omitempty"` // the summary writer was replaced once already
+	Access string `json:"access,omitempty"`
+	// EditorKnows: the version the editor (the summary writer) last wrote or was
+	// handed; when the current one is another, it is told before it goes on.
+	EditorKnows int  `json:"editor_knows,omitempty"`
+	ChairSwap   bool `json:"chair_swap,omitempty"` // the summary writer was replaced once already
 }
 
 // Panel is one run.
@@ -227,6 +230,8 @@ func (s *Store) DeletePanel(ctx context.Context, userID int64, id string) error 
 	}
 	_, _ = s.DB.ExecContext(ctx, `DELETE FROM panel_seats WHERE panel_id = ?`, id)
 	_, _ = s.DB.ExecContext(ctx, `DELETE FROM panel_answers WHERE panel_id = ?`, id)
+	_, _ = s.DB.ExecContext(ctx, `DELETE FROM panel_versions WHERE panel_id = ?`, id)
+	_, _ = s.DB.ExecContext(ctx, `DELETE FROM panel_chat WHERE panel_id = ?`, id)
 	return nil
 }
 
@@ -456,4 +461,109 @@ func (s *Store) DeletePanelRecipe(ctx context.Context, userID, id int64) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// ---------- versions of what a panel works on ----------
+
+// PanelVersion is one version of the plan or text a panel works on.
+type PanelVersion struct {
+	ID        int64  `json:"id"`
+	PanelID   string `json:"-"`
+	N         int    `json:"n"`
+	Text      string `json:"text"`
+	Source    string `json:"source"` // original | rewrite | chat | edit | restore
+	Note      string `json:"note"`
+	Stage     int    `json:"stage"`
+	CreatedAt string `json:"created_at"`
+}
+
+func (s *Store) PanelVersions(ctx context.Context, panelID string) ([]*PanelVersion, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id, panel_id, n, text, source, note, stage, created_at FROM panel_versions WHERE panel_id = ? ORDER BY n`, panelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*PanelVersion{}
+	for rows.Next() {
+		var v PanelVersion
+		if err := rows.Scan(&v.ID, &v.PanelID, &v.N, &v.Text, &v.Source, &v.Note, &v.Stage, &v.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &v)
+	}
+	return out, rows.Err()
+}
+
+// AddPanelVersion appends a version (its number is the next one). A step
+// that already wrote a version does not write a second one.
+func (s *Store) AddPanelVersion(ctx context.Context, v *PanelVersion) error {
+	if v.Stage >= 0 {
+		var n int
+		if err := s.DB.QueryRowContext(ctx, `SELECT n FROM panel_versions WHERE panel_id = ? AND stage = ? LIMIT 1`, v.PanelID, v.Stage).Scan(&n); err == nil {
+			v.N = n
+			return nil
+		}
+	}
+	v.CreatedAt = Now()
+	res, err := s.DB.ExecContext(ctx, `INSERT INTO panel_versions (panel_id, n, text, source, note, stage, created_at)
+		VALUES (?, (SELECT COALESCE(MAX(n), 0) + 1 FROM panel_versions WHERE panel_id = ?), ?, ?, ?, ?, ?)`,
+		v.PanelID, v.PanelID, v.Text, v.Source, v.Note, v.Stage, v.CreatedAt)
+	if err != nil {
+		return err
+	}
+	v.ID, _ = res.LastInsertId()
+	return s.DB.QueryRowContext(ctx, `SELECT n FROM panel_versions WHERE id = ?`, v.ID).Scan(&v.N)
+}
+
+// PanelChatMessage is one message of the person's chat with a panel's editor.
+type PanelChatMessage struct {
+	ID        int64  `json:"id"`
+	PanelID   string `json:"-"`
+	Role      string `json:"role"` // person | editor
+	Text      string `json:"text"`
+	Proposal  string `json:"proposal,omitempty"`
+	VersionN  int    `json:"version_n,omitempty"`
+	State     string `json:"state,omitempty"` // editor: working | done | failed
+	CreatedAt string `json:"created_at"`
+}
+
+func (s *Store) PanelChat(ctx context.Context, panelID string) ([]*PanelChatMessage, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id, panel_id, role, text, proposal, version_n, state, created_at FROM panel_chat WHERE panel_id = ? ORDER BY id`, panelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*PanelChatMessage{}
+	for rows.Next() {
+		var m PanelChatMessage
+		if err := rows.Scan(&m.ID, &m.PanelID, &m.Role, &m.Text, &m.Proposal, &m.VersionN, &m.State, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &m)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) AddPanelChat(ctx context.Context, m *PanelChatMessage) error {
+	m.CreatedAt = Now()
+	res, err := s.DB.ExecContext(ctx, `INSERT INTO panel_chat (panel_id, role, text, proposal, version_n, state, created_at) VALUES (?,?,?,?,?,?,?)`,
+		m.PanelID, m.Role, m.Text, m.Proposal, m.VersionN, m.State, m.CreatedAt)
+	if err != nil {
+		return err
+	}
+	m.ID, _ = res.LastInsertId()
+	return nil
+}
+
+func (s *Store) SavePanelChat(ctx context.Context, m *PanelChatMessage) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE panel_chat SET text = ?, proposal = ?, version_n = ?, state = ? WHERE id = ?`, m.Text, m.Proposal, m.VersionN, m.State, m.ID)
+	return err
+}
+
+// PanelsByTitle finds a person's panels whose title contains q, newest first.
+func (s *Store) PanelsByTitle(ctx context.Context, userID int64, q string, limit int) ([]*Panel, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	return s.panels(ctx, `SELECT `+panelCols+` FROM panels WHERE user_id = ? AND title LIKE ? ESCAPE '\' ORDER BY updated_at DESC LIMIT ?`, userID, "%"+likeEscape(q)+"%", limit)
 }

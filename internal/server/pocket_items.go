@@ -56,8 +56,21 @@ func (s *Server) handlePocketItems(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "Write a search query up to 200 characters")
 		return
 	}
+	// the person's own panels (plans they refined, outcomes) are found here, not in an app
+	if app == "panels" {
+		writeJSON(w, 200, map[string]any{"items": s.panelItems(r.Context(), me(r), q, pocketItemsOneApp)})
+		return
+	}
+	var own []pocketItem
+	if app == "" {
+		own = s.panelItems(r.Context(), me(r), q, 4)
+	}
 	cat, err := s.catalog(r.Context(), me(r))
 	if err != nil {
+		if len(own) > 0 {
+			writeJSON(w, 200, map[string]any{"items": own})
+			return
+		}
 		writeErr(w, 409, err.Error())
 		return
 	}
@@ -67,7 +80,7 @@ func (s *Server) handlePocketItems(w http.ResponseWriter, r *http.Request) {
 	}
 	res, _ := s.appSearch(r.Context(), me(r), "", cat, searchInput{Query: q, Apps: apps}).(map[string]any)
 	sections, _ := res["sections"].([]appSection)
-	writeJSON(w, 200, map[string]any{"items": pocketItems(sections, apps, per)})
+	writeJSON(w, 200, map[string]any{"items": append(own, pocketItems(sections, apps, per)...)})
 }
 
 func pocketItems(sections []appSection, order []string, per int) []pocketItem {

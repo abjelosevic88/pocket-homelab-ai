@@ -14,6 +14,7 @@ import { Markdown } from '../components/Markdown'
 import { PageHead } from '../components/PageHead'
 import { Select } from '../components/Select'
 import { PanelDefaults } from '../components/PanelSetup'
+import { EditorChat, PanelPlan } from '../components/PanelPlan'
 import { Confirm, copyText, download, Empty, errMsg, Loading, MenuButton, Modal, Spinner, useContextMenu, useToast, type MenuItem, noGrammarly } from '../components/ui'
 
 const STATUS: Record<string, { label: string; cls: string; icon: string }> = {
@@ -256,13 +257,14 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
   useEffect(() => { setP(null); setTab(null); void load() }, [load])
   usePanelEvents(d => { if (d.id === id) void load() })
   const running = p?.status === 'running'
+  const chatting = !!p?.chat?.some(m => m.state === 'working') // the editor is answering in the panel's chat
   // its tab: named after the question, a spinner while it runs
   useEffect(() => { if (p) rememberTab(panelTab(p.id), { title: p.title, kind: p.kind, status: p.status }) }, [p?.id, p?.title, p?.kind, p?.status]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (!running) return
+    if (!running && !chatting) return
     const t = setInterval(() => { if (!document.hidden) void load() }, 1500)
     return () => clearInterval(t)
-  }, [running, load])
+  }, [running, chatting, load])
 
   if (err && !p) return <div className="page"><PageHead title="Panel" icon="panel" onMenu={onMenu} /><div className="page-scroll"><div className="page-inner"><div className="callout danger"><Icon name="alert" size={15} /><span>{err === 'not found' ? 'This panel is gone.' : err}</span></div></div></div></div>
   if (!p) return <div className="page"><PageHead title="Panel" icon="panel" onMenu={onMenu} /><div className="page-scroll"><Loading /></div></div>
@@ -274,7 +276,9 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
   const chair = chairs.find(s => s.state !== 'failed') || chairs[chairs.length - 1]
   // the last step, when the summary writer has it, is the outcome on top; every other step is a tab
   // (also a rewrite in between, in a Refine panel)
-  const finalStage = stages.length > 0 && stages[stages.length - 1].who === 'chair' ? stages.length - 1 : -1
+  // a panel that keeps versions shows the text itself on top, so each of its steps is a tab
+  const versioned = !!p.versions?.length
+  const finalStage = !versioned && stages.length > 0 && stages[stages.length - 1].who === 'chair' ? stages.length - 1 : -1
   const rounds = stages.map((s, i) => ({ ...s, i })).filter(s => s.i !== finalStage)
   // the step shown: the one picked, else the one being answered, else the last one answered
   const lastAnswered = [...rounds].reverse().find(r => answers.some(a => a.stage === r.i))
@@ -343,6 +347,8 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
               {p.from_thread_id && p.from_title && <> · from <button type="button" className="link-btn" onClick={() => openThread(p.from_thread_id)}>{p.from_title}</button></>}</div>
           </div>}
 
+          {versioned && <PanelPlan p={p} onChange={setP} />}
+          {versioned && <EditorChat p={p} onChange={setP} />}
           {(outcome || writing) && finalStage >= 0 && (
             <section className={`pn-outcome ${writing ? 'writing' : ''}`}>
               <header className="pn-outcome-h">
@@ -363,6 +369,7 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
           {!p.result && !running && answers.length > 0 && finalStage < 0 && <div className="row"><button type="button" className="btn primary sm" onClick={() => setCont({ text: '', provider: '' })}><Icon name="arrow-right" size={13} />Continue with these answers</button></div>}
 
           {rounds.length > 0 && <section className="pn-rounds">
+            {versioned && <h3 className="srv-h pn-rounds-h">The rounds<span className="muted">what each model said, step by step</span></h3>}
             <div className="pn-tabs" role="tablist">
               {rounds.map(r => {
                 const n = answers.filter(a => a.stage === r.i).length

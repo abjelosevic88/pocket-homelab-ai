@@ -126,7 +126,8 @@ export function useMentionApps(wanted: boolean): { apps: MentionApp[] | null; of
     let live = true
     api.get<{ apps: MentionApp[]; error?: string; connect_url?: string }>(`${V1}/pocket-tools/apps`).then(r => {
       if (r.error) {
-        if (live) { setApps(mentionApps?.apps ?? []); setOff({ url: r.connect_url }) }
+        // Ask is off: what Pocket AI offers itself (its panels) is still there
+        if (live) { setApps(r.apps?.length ? r.apps : mentionApps?.apps ?? []); setOff({ url: r.connect_url }) }
         return
       }
       mentionApps = { at: Date.now(), apps: r.apps || [] }
@@ -169,6 +170,7 @@ function itemRef(it: PocketItem): string {
 /** The app's own icon (web/public/app-icons, from the Pocket icon set); a plain grid for an app without one. */
 export function AppIcon({ slug }: { slug: string }) {
   const [missing, setMissing] = useState(false)
+  if (slug === 'panels') return <span className="slash-ico at-ico app-mention"><Icon name="panel" size={14} /></span> // Pocket AI's own
   if (missing) return <span className="slash-ico at-ico app-mention"><Icon name="grid" size={14} /></span>
   return <span className="slash-ico app-icon"><img src={`/app-icons/${slug}.svg`} alt="" width={22} height={22} loading="lazy" onError={() => setMissing(true)} /></span>
 }
@@ -545,7 +547,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
   }
 
   // no apps because the Ask connection is off or has ended: the menu says so instead of staying shut
-  const askOff = !!appsOff && !hashMatch && atQ !== null && appList.length === 0
+  const askOff = !!appsOff && !hashMatch && atQ !== null && appList.every(a => a.slug === 'panels')
   const atOpen = hashMatch ? !!hashApp || atLoading : atQ !== null && (atList.length > 0 || atLoading || askOff)
   const menuOpen = slashList.length > 0 || atOpen
   useLayoutEffect(() => {
@@ -711,7 +713,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
               : 'app' in p
               ? <>
                 <AppIcon slug={p.app.slug} />
-                <span className="grow"><span className="slash-name">{p.app.name}</span><span className="slash-sub">@{p.app.slug} · {p.app.tools.length} {p.app.tools.length === 1 ? 'operation' : 'operations'}</span></span>
+                <span className="grow"><span className="slash-name">{p.app.name}</span><span className="slash-sub">@{p.app.slug} · {p.app.slug === 'panels' ? 'a plan you refined, or a panel’s outcome' : `${p.app.tools.length} ${p.app.tools.length === 1 ? 'operation' : 'operations'}`}</span></span>
               </>
               : <>
                 <span className={`slash-ico at-ico ${p.item.kind}`}><Icon name={p.item.kind === 'note' ? 'note' : p.item.kind === 'file' ? 'paperclip' : p.item.kind === 'page' ? 'file' : 'link'} size={14} /></span>

@@ -87,7 +87,9 @@ Personal app assistance: [Briefing, workflows, memory, sources and document uplo
   **Ask all** (answers side by side and one merged answer), **Brainstorm** (ideas, then built on each other),
   **Council** (they judge a plan from different points of view and criticise each other without seeing who
   wrote what), **Refine** (they judge a plan, an editor model rewrites it from their verdicts, they judge the
-  rewrite again; you get the improved version), **Debate** (two sides, a judge), **Second opinion** (other models review an answer or a change;
+  rewrite again; you get the improved version, and the panel stays the plan's home: every version kept,
+  compared, edited and gone back to, another round on the current one, a chat with the editor that
+  proposes versions you take or leave), **Debate** (two sides, a judge), **Second opinion** (other models review an answer or a change;
   the button under every reply) and **Best of N** (the same coding task in a worktree each, a judge picks).
   Pocket AI runs the rounds itself: everyone answers alone first, later rounds show the others' answers by
   letter only, and the summary writer gets them without the models' names. Quick, Standard or Deep; your own
@@ -95,7 +97,9 @@ Personal app assistance: [Briefing, workflows, memory, sources and document uplo
   too few answers end the panel honestly instead of faking a consensus. Add a note, a document, a task or
   anything else from your Pocket apps as context: the button under the question, or `@` in it. Start one on the Panels page or with
   `/council`, `/brainstorm`, `/debate`, `/ask-all`, `/second-opinion` in a conversation; `/refine` has the
-  conversation's agent run council rounds on its plan and revise it until the council says Go; every
+  conversation's agent run council rounds on its plan and revise it until the council says Go; a refined plan is used in any
+  conversation — `@panels #name` in the composer, a pasted link to the panel, or just its name hand the agent
+  the current version, and **Implement…** on the panel starts a coding conversation with it; every
   reply and every text file an agent sends has a menu that starts a panel on it at once (nothing is written
   into the conversation; the panel opens in its own tab); **Default models**
   on the Panels page sets who takes part when you do not pick (switch agents off there) and what they may do without

@@ -47,7 +47,17 @@ export interface Panel {
   from_thread_id: string; report: boolean; from_title?: string
   created_at: string; finished_at: string
   depth: Depth; seats: PanelSeat[]; answers?: PanelAnswer[]; cost_usd: number
+  /** a panel that keeps the versions of what it works on (Refine): all of them, oldest first */
+  versions?: PanelVersion[]
+  /** the person's chat with the panel's editor; chat_live: what it is writing right now */
+  chat?: PanelChatMessage[]; chat_live?: string
+  /** there is an editor to talk to */
+  editor?: boolean
+  url?: string
 }
+export interface PanelVersion { id: number; n: number; text: string; source: 'original' | 'rewrite' | 'chat' | 'edit' | 'restore'; note: string; stage: number; created_at: string }
+export interface PanelChatMessage { id: number; role: 'person' | 'editor'; text: string; proposal?: string; version_n?: number; state?: 'working' | 'done' | 'failed' | ''; created_at: string }
+export const VERSION_SOURCE: Record<string, string> = { original: 'Original', rewrite: 'Rewrite', chat: 'From the chat', edit: 'Your edit', restore: 'Went back' }
 
 /** What a new panel starts with (the start sheet fills in the rest). */
 export interface PanelDraft { kind?: string; question?: string; material?: string; fromThreadId?: string; cwd?: string; hostId?: number }

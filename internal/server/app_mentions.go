@@ -89,10 +89,12 @@ func mentionName(slug string) string {
 
 // GET /pocket-tools/apps: the apps you can @-mention in a message.
 func (s *Server) handleMentionApps(w http.ResponseWriter, r *http.Request) {
+	// Pocket AI's own panels come first: "@panels #name" picks a plan or an outcome (panel_versions.go)
+	own := []mentionApp{{Slug: "panels", Name: "Panels", Tools: []string{}, Reads: 1}}
 	apps, err := s.mentionApps(r.Context(), me(r))
 	if err != nil {
 		// the apps come through the Ask connection: say so, with where to turn it (back) on
-		out := map[string]any{"apps": []mentionApp{}, "error": err.Error()}
+		out := map[string]any{"apps": own, "error": err.Error()}
 		if s.core.Configured() {
 			if iss := strings.TrimRight(s.core.OIDC().Issuer, "/"); iss != "" {
 				out["connect_url"] = iss + "/ask"
@@ -101,7 +103,7 @@ func (s *Server) handleMentionApps(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, out)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"apps": apps})
+	writeJSON(w, 200, map[string]any{"apps": append(own, apps...)})
 }
 
 var appMentionRe = regexp.MustCompile(`(?:^|\s)@([A-Za-z][A-Za-z0-9-]{0,40})`)

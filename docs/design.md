@@ -251,6 +251,19 @@ The app shows a chat in its own page with `<BASE_URL>/t/<id>?embed=1&links=1` in
   rounds of verdicts; a step with `sees: revision` hands the participants the
   editor's latest text. Every step but the last one of the summary writer is
   a tab on the panel's page.
+- Versions (`panel_versions.go`, migration 0039): a Refine panel keeps every
+  version of its text in `panel_versions` (original, rewrite, chat, edit,
+  restore); the newest is the current one and the panel's `result`. An
+  editor's answer is split at `--- end of the version ---` into the version
+  and its notes. Another round appends two steps to the panel's own steps and
+  runs it again; the chat with the editor posts to the editor's thread and a
+  watcher files the reply, a proposed version waiting to be taken.
+  `EditorKnows` says which version the editor last wrote or was handed, so it
+  is told the current one when that differs.
+- Referring to a plan elsewhere: a message with a link to `/panels/{id}` gets
+  the current version appended for the agent (`panelRefNote`, in
+  `withMemory`), `@panels #name` in the composer inserts such a link, and
+  `pocket_panel_read` finds a panel by words from its name.
 - Blindness: participants are labelled A, B, C. Later steps and the summary
   writer get the answers as "Participant A" and so on; `revealNames` puts the
   models' names into the summary afterwards.
