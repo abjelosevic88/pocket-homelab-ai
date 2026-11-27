@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, V1 } from '../../lib/api'
 import { useApp } from '../../lib/app-context'
-import type { Account, HostLogin, LoginState, ProviderId, User } from '../../lib/types'
+import { type Account, type HostLogin, type LoginState, type ProviderId, type User, isAcp } from '../../lib/types'
 
 /** How people are kept apart (GET /settings → people; server people.go). */
 interface PeopleInfo { jailed: boolean; sandbox: boolean; sandbox_off: boolean; sandbox_error?: string; folder?: string; projects?: string; owner?: string }
@@ -22,7 +22,9 @@ import { LoginList, MachineCard, osIcon, useCLIUpdate, useLatestCLIs } from './M
 /** "max" → "Max", "PRO" → "Pro". */
 
 export function AccountsSection() {
-  const { user, reloadAccounts, providers, reloadProviders } = useApp()
+  const { user, reloadAccounts, providers: all, reloadProviders } = useApp()
+  // the CLIs with logins; ACP agents (Gemini CLI, OpenCode, …) live in Settings → Agents
+  const providers = all.filter(p => !isAcp(p.id))
   const { toast } = useToast()
   const isAdmin = user?.role === 'admin'
   const [cliCheck, setCliCheck] = useState(false)

@@ -5,13 +5,16 @@
 // choice (0 = this server, a machine's id, new).
 import { useSearchParams } from 'react-router-dom'
 import { useApp } from '../../lib/app-context'
+import { isAcp } from '../../lib/types'
 import { Icon } from '../../components/icons'
 import { AccountsSection } from './Accounts'
 import { HostsSection, useHostLogins } from './Hosts'
 import { osIcon, type Health } from './MachineParts'
 
 export function MachinesTab() {
-  const { user, hosts, accounts, providers } = useApp()
+  const { user, hosts, accounts, providers: all } = useApp()
+  // the CLIs with logins; ACP agents (Gemini CLI, OpenCode, …) live in Settings → Agents
+  const providers = all.filter(p => !isAcp(p.id))
   const logins = useHostLogins(hosts)
   const [params, setParams] = useSearchParams()
   const raw = params.get('m')

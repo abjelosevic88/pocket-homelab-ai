@@ -4,14 +4,14 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
 import { api, V1 } from '../../lib/api'
-import { planName } from '../../lib/format'
+import { planName, providerName } from '../../lib/format'
 import type { ProviderId } from '../../lib/types'
 import { Icon } from '../../components/icons'
 import { errMsg, MenuButton, type MenuItem, Spinner, useToast } from '../../components/ui'
 import { StatusDot } from './common'
 
 export type Health = 'ok' | 'warn' | 'error' | 'off'
-export const provName = (p: string) => p === 'codex' ? 'Codex' : 'Claude Code'
+export const provName = (p: string) => providerName(p)
 /** "2.1.310 (Claude Code)" → "2.1.310", "codex-cli 0.163.0" → "0.163.0" */
 export const shortVersion = (v: string) => v.replace(/\s*\((Claude Code|Codex)\)$/, '').replace(/^codex-cli /, '')
 export const tilde = (p: string) => p.replace(/^\/(home|Users)\/[^/]+/, '~')
