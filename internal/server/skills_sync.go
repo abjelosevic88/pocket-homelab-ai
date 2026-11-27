@@ -870,6 +870,7 @@ func (s *Server) syncHost(ctx context.Context, sc *libScope, h *store.Host, st *
 		delete(hs.Pushed, name)
 	}
 	if ops > 0 { // look again: the links are made, and what is there now is what counts
+		forgetSkills() // the "/" menu of a chat on that machine asks its CLI again
 		run.setBusy(h.ID, "checking")
 		if v, err = s.viewHost(ctx, h, want(mine)); err != nil {
 			hs.Error = err.Error()

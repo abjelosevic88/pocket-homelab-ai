@@ -85,15 +85,15 @@ type SkillList = { skills: Skill[]; commands: Skill[] }
 const noSkills: SkillList = { skills: [], commands: [] }
 const skillCache = new Map<string, { at: number } & SkillList>()
 
-/** The skills and built-in commands for a scope, fetched when the box gets the focus, so they are there when "/" is typed (cached a minute; the server answers from its own cache and refreshes behind it). */
-function useSkills(scope: SkillScope | undefined, wanted: boolean): SkillList {
+/** The skills and built-in commands for a scope, fetched when the box gets the focus, so they are there when "/" is typed. The last list shows at once; the server answers from its own cache (dropped when a skill is added, changed or synced to a machine) and refreshes behind it. */
+function useSkills(scope: SkillScope | undefined, wanted: boolean, open = false): SkillList {
   const key = scope ? `${scope.provider}|${scope.cwd || ''}|${scope.account_id || 0}|${scope.host_id || 0}|${scope.host_home || ''}` : ''
   const [skills, setSkills] = useState<SkillList>(() => skillCache.get(key) || noSkills)
   useEffect(() => {
     if (!scope || !wanted) return
     const hit = skillCache.get(key)
     if (hit) setSkills(hit)
-    if (hit && Date.now() - hit.at < 60_000) return
+    if (hit && Date.now() - hit.at < 5_000) return // the server keeps its own list and drops it when a skill changes: asking again is cheap
     let live = true
     const q = new URLSearchParams({ provider: scope.provider, cwd: scope.cwd || '', account: String(scope.account_id || 0), host: String(scope.host_id || 0), host_home: scope.host_home || '' })
     api.get<{ skills: Skill[]; commands?: Skill[] }>(`${V1}/skills?${q}`).then(r => {
@@ -102,7 +102,7 @@ function useSkills(scope: SkillScope | undefined, wanted: boolean): SkillList {
       if (live) setSkills(got)
     }).catch(() => {})
     return () => { live = false }
-  }, [key, wanted]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [key, wanted, open]) // eslint-disable-line react-hooks/exhaustive-deps -- open: each time the "/" menu opens, the list is asked for again
   return scope ? skills : noSkills
 }
 
@@ -447,7 +447,7 @@ export const Composer = React.forwardRef<ComposerHandle, {
   const lead = text[0]
   const trigger = lead === '/' || (lead === '$' && skillScope?.provider === 'codex')
   const slash = trigger && !/\s/.test(text) && text !== slashShut ? text.slice(1).toLowerCase() : null
-  const { skills: allSkills, commands: allCommands } = useSkills(skillScope, slash !== null || primed)
+  const { skills: allSkills, commands: allCommands } = useSkills(skillScope, slash !== null || primed, slash !== null)
   const byName = (list: Skill[], max: number) => slash === null ? [] : list
     .filter(k => k.name.toLowerCase().includes(slash) || (slash.length > 2 && k.description.toLowerCase().includes(slash)))
     .sort((a, b) => Number(!a.name.toLowerCase().startsWith(slash)) - Number(!b.name.toLowerCase().startsWith(slash)))
