@@ -117,6 +117,13 @@ Personal app assistance: [Briefing, workflows, memory, sources and document uplo
 - Type while it works: messages queue and go out when the turn ends. Stop any time.
 - `/` in the message box lists the agent's commands and skills, as in the terminal: Claude Code's own
   (`/compact`, `/context`, `/code-review`, `/usage`, …) and for Codex `/compact`, `/review`, `/init`. `#` lists recipes.
+- **Skills: one library for every agent and machine.** Your skills live in `~/.agents/skills`, the folder Codex,
+  Gemini CLI, OpenCode, Qwen Code and Antigravity read themselves; Claude Code gets a link per skill in
+  `~/.claude/skills`. Skills found in Claude Code's or Codex's own folder move into the library. The Skills page
+  lists them, edits a skill and its other files (references, scripts), imports and downloads a skill as a zip,
+  and keeps the machines you pick in step over ssh: a change here goes there, a change made there comes back, a
+  skill changed on both sides waits for your choice (the other version goes to a trash folder, never deleted).
+  A skill can be kept off single machines.
 - `/mcp` (or thread menu → MCP servers) shows the conversation's MCP servers and claude.ai connectors: reconnect,
   turn off/on, sign in or out — e.g. after switching an account. Thread menu → Restart session starts the agent
   again on the same conversation, with every connection fresh.

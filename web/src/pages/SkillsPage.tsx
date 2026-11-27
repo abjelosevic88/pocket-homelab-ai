@@ -1,228 +1,144 @@
-// Skills: every skill the agents can use, which agent has each, and your own
-// skills to add, edit, remove and copy between Claude Code and Codex, and to
-// the other machines (a chat on a machine only sees that machine's skills).
-import { useState, type ReactNode } from 'react'
-import { api, qs, V1 } from '../lib/api'
-import { providerName } from '../lib/format'
+// Skills: one library for every agent on every machine. This page lists it,
+// shows how the machines stand, and settles the skills that differ somewhere.
+// One skill is edited on its own page (SkillPage.tsx).
+import { useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { api, ApiError, qs, upload, V1 } from '../lib/api'
+import { ago, fmtBytes, providerName } from '../lib/format'
+import { LIB, SYNC, skillSlug, standing, useSkillSync, validSkillName, type HostExtra, type Library, type LibSkill, type SyncHost, type SyncStatus } from '../lib/skills'
 import type { CliId, Skill } from '../lib/types'
 import { Icon } from '../components/icons'
 import { PageHead } from '../components/PageHead'
-import { Confirm, copyText, Empty, errMsg, Field, Loading, MenuButton, Modal, Segmented, Spinner, Switch, noGrammarly, useAsync, useToast, type MenuItem } from '../components/ui'
+import { Confirm, copyText, Empty, errMsg, Field, Loading, Modal, Spinner, Switch, noGrammarly, useAsync, useToast } from '../components/ui'
 
-type OwnSkill = { name: string; description: string; body?: string; files: number; path: string; sum: string }
-type HostCopy = { home: string; sum: string }
-type HostSkills = { id: number; name: string; error?: string; homes: Partial<Record<CliId, string[]>>; skills: Record<CliId, Record<string, HostCopy[]>> }
-/** How a skill stands on one machine: per CLI it has here and there, all its login folders hold this copy, some do not, or none. */
-type OnHost = { state: 'on' | 'differs' | 'missing' | 'none' | 'error'; todo: CliId[]; title: string }
-type OwnList = { dir: string; skills: OwnSkill[]; error?: string }
-type Row = { name: string; claude?: OwnSkill; codex?: OwnSkill }
-type Draft = { name: string; description: string; body: string; files: number; provider?: CliId; to: Record<CliId, boolean> }
-type Show = 'all' | 'both' | CliId
-
-const PROVIDERS: CliId[] = ['claude', 'codex']
-const other = (p: CliId): CliId => (p === 'claude' ? 'codex' : 'claude')
-const invoke = (p: CliId, name: string) => (p === 'codex' ? '$' : '/') + name
-const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+/, '').slice(0, 64)
-const both = (v: boolean) => ({ claude: v, codex: v }) as Record<CliId, boolean>
+const CLIS: CliId[] = ['claude', 'codex']
+type Look = { host: SyncHost; name: string; state: 'differs' | 'failed'; where?: string; agent?: string; error?: string }
 
 export default function SkillsPage({ onMenu }: { onMenu?: () => void }) {
   const { toast } = useToast()
-  const [show, setShow] = useState<Show>('all')
+  const navigate = useNavigate()
   const [q, setQ] = useState('')
   const [refresh, setRefresh] = useState(0)
-  const [edit, setEdit] = useState<Draft | null>(null)
-  const [del, setDel] = useState<{ name: string; provider: CliId } | null>(null)
-  const [busy, setBusy] = useState(false)
-  // every login shares one skills folder (server: skills_share.go), so no login to pick
-  const scope = (p: CliId) => qs({ provider: p })
-  const own = useAsync(async () => {
-    const [claude, codex] = await Promise.all(PROVIDERS.map(p => api.get<OwnList>(`${V1}/skills/own${scope(p)}`)
-      .catch((e: unknown): OwnList => ({ dir: '', skills: [], error: errMsg(e) }))))
-    return { claude, codex } as Record<CliId, OwnList>
-  }, [refresh])
-  const cli = useAsync(() => Promise.all(PROVIDERS.map(p => api.get<{ skills: Skill[]; error?: string }>(`${V1}/skills${qs({ provider: p, refresh: refresh ? 1 : undefined })}`)
+  const [creating, setCreating] = useState(false)
+  const [machines, setMachines] = useState(false)
+  const [busy, setBusy] = useState('')
+  const [replace, setReplace] = useState<{ file: File; names: string[] } | null>(null)
+  const fileInput = useRef<HTMLInputElement>(null)
+  const lib = useAsync(() => api.get<Library>(LIB), [refresh])
+  const cli = useAsync(() => Promise.all(CLIS.map(p => api.get<{ skills: Skill[]; error?: string }>(`${V1}/skills${qs({ provider: p, refresh: refresh ? 1 : undefined })}`)
     .then(r => ({ provider: p, skills: r.skills || [], error: r.error })).catch((e: unknown) => ({ provider: p, skills: [] as Skill[], error: errMsg(e) })))), [refresh])
+  const { sync, setSync, reload: reloadSync, soon } = useSkillSync()
 
-  const machines = useAsync(() => api.get<{ hosts: HostSkills[] }>(`${V1}/skills/hosts`).then(r => r.hosts || []), [refresh])
-  const [copying, setCopying] = useState('')
-
-  const rows: Row[] = []
-  for (const p of PROVIDERS) for (const s of own.data?.[p].skills || []) {
-    let r = rows.find(x => x.name === s.name)
-    if (!r) rows.push(r = { name: s.name })
-    r[p] = s
-  }
-  rows.sort((a, b) => a.name.localeCompare(b.name))
+  const skills = lib.data?.skills || []
   const match = (name: string, desc = '') => !q.trim() || `${name} ${desc}`.toLowerCase().includes(q.trim().toLowerCase())
-  const inShow = (r: Row) => show === 'all' || (show === 'both' ? !!(r.claude && r.codex) : !!r[show])
-  const shownRows = rows.filter(r => inShow(r) && match(r.name, (r.claude || r.codex)?.description))
-  const mine = new Set(rows.map(r => r.name))
-  const others = (cli.data || []).filter(l => show === 'all' || show === 'both' || l.provider === show)
-    .flatMap(l => l.skills.filter(s => !mine.has(s.name) && match(s.name, s.description)).map(s => ({ ...s, provider: l.provider })))
+  const shown = skills.filter(s => match(s.name, s.description))
+  const mine = new Set(skills.map(s => s.name))
+  const others = (cli.data || []).flatMap(l => l.skills.filter(s => !mine.has(s.name) && match(s.name, s.description)).map(s => ({ ...s, provider: l.provider })))
+  const hosts = sync?.hosts || []
+  const on = hosts.filter(h => h.on)
+  const looks: Look[] = on.flatMap(h => Object.entries(h.skills).filter(([name, st]) => mine.has(name) && (st.state === 'differs' || st.state === 'failed'))
+    .map(([name, st]) => ({ host: h, name, state: st.state as Look['state'], where: st.where, agent: st.agent, error: st.error })))
+    .sort((a, b) => a.name.localeCompare(b.name) || a.host.name.localeCompare(b.host.name))
+  const extras = new Map<string, { extra: HostExtra; hosts: SyncHost[] }>()
+  for (const h of on) for (const e of h.extra) {
+    const cur = extras.get(e.name)
+    if (cur) cur.hosts.push(h); else extras.set(e.name, { extra: e, hosts: [h] })
+  }
+  const extraList = [...extras.values()].filter(x => match(x.extra.name, x.extra.description)).sort((a, b) => a.extra.name.localeCompare(b.extra.name))
 
-  const reload = () => setRefresh(n => n + 1)
+  const reload = () => { setRefresh(n => n + 1); soon() }
   const copy = async (text: string) => { if (await copyText(text)) toast(`Copied ${text}`); else toast('Could not copy', 'err') }
-  const open = async (name: string, p: CliId) => {
-    try {
-      const full = await api.get<OwnSkill>(`${V1}/skills/own/${name}${scope(p)}`)
-      setEdit({ name: full.name, description: full.description, body: full.body || '', files: full.files, provider: p, to: both(false) })
-    } catch (e) { toast(errMsg(e), 'err') }
-  }
-  const send = async (name: string, from: CliId, opts: { move?: boolean; replace?: boolean }) => {
+  const settle = async (l: Look, use: 'library' | 'machine') => {
     if (busy) return
-    const to = other(from)
-    setBusy(true)
+    setBusy(`${l.name}|${l.host.id}`)
     try {
-      await api.post(`${V1}/skills/own/${name}/copy${scope(from)}`, { to, ...opts })
-      toast(`${opts.move ? 'Moved' : 'Copied'} ${name} to ${providerName(to)}`)
-      reload()
-    } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
+      setSync(await api.post<SyncStatus>(`${SYNC}/resolve`, { host_id: l.host.id, name: l.name, use }))
+      toast(use === 'library' ? `${l.host.name} now has this server's ${l.name}` : `${l.name} from ${l.host.name} is now in your library`)
+      setRefresh(n => n + 1)
+    } catch (e) { toast(errMsg(e), 'err') } finally { setBusy('') }
   }
-  const onHost = (r: Row, h: HostSkills): OnHost => {
-    if (h.error) return { state: 'error', todo: [], title: `${h.name}: ${h.error}` }
-    const todo: CliId[] = []
-    const lines: string[] = []
-    let have = 0, wanted = 0
-    for (const p of PROVIDERS) {
-      const mine = r[p], homes = h.homes[p] || []
-      if (!mine || homes.length === 0) continue
-      wanted++
-      const copies = h.skills[p]?.[r.name] || []
-      const same = copies.filter(c => c.sum === mine.sum)
-      if (copies.length) have++
-      if (same.length < homes.length) todo.push(p)
-      for (const home of homes) {
-        const c = copies.find(x => x.home === home)
-        lines.push(`${providerName(p)} ${home}: ${!c ? 'not there' : c.sum === mine.sum ? 'same as here' : 'a different version'}`)
-      }
-    }
-    if (wanted === 0) return { state: 'none', todo, title: `${h.name} has neither of these agents` }
-    const title = lines.join('\n')
-    if (todo.length === 0) return { state: 'on', todo, title }
-    return { state: have ? 'differs' : 'missing', todo, title }
-  }
-  const toHost = async (r: Row, h: HostSkills, todo: CliId[], update: boolean) => {
-    if (copying) return
-    setCopying(`${r.name}|${h.id}`)
+  const adopt = async (name: string, h: SyncHost) => {
+    if (busy) return
+    setBusy(`${name}|${h.id}`)
     try {
-      for (const p of todo) await api.post(`${V1}/skills/own/${r.name}/to-host${scope(p)}`, { host_id: h.id })
-      toast(`${update ? 'Updated' : 'Copied'} ${r.name} on ${h.name}`)
-      reload()
-    } catch (e) { toast(errMsg(e), 'err') } finally { setCopying('') }
+      setSync(await api.post<SyncStatus>(`${SYNC}/adopt`, { host_id: h.id, name }))
+      toast(`Added ${name} to your library`)
+      setRefresh(n => n + 1)
+    } catch (e) { toast(errMsg(e), 'err') } finally { setBusy('') }
   }
-  const remove = async () => {
-    if (!del || busy) return
-    setBusy(true)
+  const importFile = async (file: File, force = false) => {
+    setBusy('import')
     try {
-      await api.del(`${V1}/skills/own/${del.name}${scope(del.provider)}`)
-      toast(`Removed ${del.name} from ${providerName(del.provider)} (kept in the trash folder)`)
-      setDel(null); reload()
-    } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
+      const r = await upload<{ added: string[] }>(`${LIB}/import${force ? '?replace=1' : ''}`, 'file', file)
+      toast(r.added.length === 1 ? `Added ${r.added[0]}` : `Added ${r.added.length} skills`)
+      setReplace(null); reload()
+      if (r.added.length === 1) navigate(`/skills/${r.added[0]}`)
+    } catch (e) {
+      const exists = e instanceof ApiError && e.status === 409 ? (e.data.exists as string[] | undefined) : undefined
+      if (exists?.length && !force) setReplace({ file, names: exists }); else toast(errMsg(e), 'err')
+    } finally { setBusy('') }
   }
-  const menu = (r: Row): MenuItem[] => {
-    const items: MenuItem[] = []
-    for (const p of PROVIDERS) if (r[p]) items.push({ label: `Edit in ${providerName(p)}`, icon: 'edit', onSelect: () => open(r.name, p) })
-    items.push('sep')
-    for (const p of PROVIDERS) if (r[p]) items.push({ label: `Copy ${invoke(p, r.name)}`, icon: 'copy', onSelect: () => copy(invoke(p, r.name)) })
-    items.push('sep')
-    for (const p of PROVIDERS) {
-      if (!r[p]) continue
-      const to = other(p)
-      if (!r[to]) {
-        items.push({ label: `Copy to ${providerName(to)}`, icon: 'copy', onSelect: () => send(r.name, p, {}) })
-        items.push({ label: `Move to ${providerName(to)}`, icon: 'move', onSelect: () => send(r.name, p, { move: true }) })
-      } else {
-        items.push({ label: `Replace ${providerName(to)}'s copy with ${providerName(p)}'s`, icon: 'refresh', onSelect: () => send(r.name, p, { replace: true }) })
-      }
-    }
-    const hostItems: MenuItem[] = []
-    for (const h of machines.data || []) {
-      const o = onHost(r, h)
-      if (o.state === 'missing') hostItems.push({ label: `Copy to ${h.name}`, icon: 'server', onSelect: () => toHost(r, h, o.todo, false) })
-      if (o.state === 'differs') hostItems.push({ label: `Update on ${h.name}`, icon: 'refresh', onSelect: () => toHost(r, h, o.todo, true) })
-    }
-    if (hostItems.length) items.push('sep', ...hostItems)
-    items.push('sep')
-    for (const p of PROVIDERS) if (r[p]) items.push({ label: `Remove from ${providerName(p)}`, icon: 'trash', danger: true, onSelect: () => setDel({ name: r.name, provider: p }) })
-    return items
-  }
-
-  const hosts = machines.data || []
-  const where = (p: CliId) => own.data?.[p].dir
-  const legend = <span className="skills-legend muted xsmall">
-    <span><Icon name="check" size={12} /> there</span><span><Icon name="plus" size={12} /> copy there</span><span className="warn"><Icon name="refresh" size={12} /> different copy, click to update</span>
-  </span>
 
   return <div className="page skills-page">
-    <PageHead title="Skills" icon="sparkles" onMenu={onMenu} sub={<>Type <code>/name</code> in a message to use one. All your logins on a machine share the same skills.</>}
-      actions={<button type="button" className="btn primary" onClick={() => setEdit({ name: '', description: '', body: '', files: 0, to: both(true) })}><Icon name="plus" size={14} />New skill</button>} />
+    <PageHead title="Skills" icon="sparkles" onMenu={onMenu} sub={<>One library for all your agents and machines. Type <code>/name</code> in a message to use a skill.</>}
+      actions={<>
+        <input ref={fileInput} type="file" accept=".zip,.skill,.md" hidden onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void importFile(f) }} />
+        <button type="button" className="btn" disabled={busy === 'import'} title="Add skills from a .zip, .skill or SKILL.md file" onClick={() => fileInput.current?.click()}>
+          {busy === 'import' ? <Spinner /> : <Icon name="upload" size={14} />}<span className="sk-hide-sm">Import</span></button>
+        <button type="button" className="btn primary" onClick={() => setCreating(true)}><Icon name="plus" size={14} />New skill</button>
+      </>} />
     <div className="page-scroll"><div className="page-inner stack">
-      <div className="skills-bar">
-        <div className="sb-search">
-          <Icon name="search" size={14} />
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Find a skill" aria-label="Find a skill" onKeyDown={e => { if (e.key === 'Escape') setQ('') }} />
-        </div>
-        <Segmented label="Agent" size="sm" value={show} onChange={setShow} options={[
-          { value: 'all', label: 'All' }, { value: 'claude', label: 'Claude Code' }, { value: 'codex', label: 'Codex' }]} />
-        <span className="grow" />
-        <button type="button" className="btn ghost icon-only" aria-label="Refresh" title="Check again" onClick={reload} disabled={cli.loading || own.loading || machines.loading}>
-          {machines.loading || own.loading ? <Spinner /> : <Icon name="refresh" size={15} />}</button>
-      </div>
+      {lib.error && <div className="callout danger" role="alert">{lib.error}</div>}
+      {sync && lib.data && <SyncCard lib={lib.data} sync={sync} looks={looks.length} onMachines={() => setMachines(true)} onSync={() => { void reloadSync(true); setRefresh(n => n + 1) }} />}
+      {sync && !sync.asked && hosts.length > 0 && <FirstTime hosts={hosts} onDone={s => { setSync(s); soon() }} />}
 
-      {PROVIDERS.map(p => own.data?.[p].error && <div key={p} className="callout warn" role="alert">{providerName(p)}: {own.data[p].error}</div>)}
-      {own.loading && !own.data && <Loading />}
-      {own.data && rows.length === 0 && <Empty icon="sparkles" title="No skills of your own yet">A skill is a set of instructions the agent loads when a task needs it, e.g. how you deploy, review or write.</Empty>}
-      {own.data && rows.length > 0 && <>
-        <div className="skills-table-wrap">
-          <table className="skills-table">
-            <thead><tr>
-              <th className="sk-name-h">Your skills <span className="muted">{rows.length}</span></th>
-              <th className="sk-agents-h">Agents</th>
-              <th className="sk-host-h" title={PROVIDERS.map(p => where(p) && `${providerName(p)}: ${where(p)}`).filter(Boolean).join('\n')}>This server</th>
-              {hosts.map(h => <th key={h.id} className={`sk-host-h ${h.error ? 'off' : ''}`} title={h.error ? `${h.name}: ${h.error}` : h.name}>
-                <span className="sk-host-name">{h.error && <Icon name="wifi-off" size={12} />}{h.name}</span></th>)}
-              {machines.loading && !machines.data && <th className="sk-host-h"><Spinner /></th>}
-              <th aria-label="Actions" />
-            </tr></thead>
-            <tbody>
-              {shownRows.length === 0 && <tr><td colSpan={4 + hosts.length} className="muted small sk-none">No skill matches.</td></tr>}
-              {shownRows.map(r => {
-                const lead = (r.claude || r.codex)!
-                return <tr key={r.name}>
-                  <td className="sk-name">
-                    <button type="button" className="sk-title" onClick={() => open(r.name, r.claude ? 'claude' : 'codex')} title="Edit">{r.name}</button>
-                    <div className="sk-desc" title={lead.description}>{lead.description || <span className="muted">No description</span>}</div>
-                  </td>
-                  <td className="sk-agents">{PROVIDERS.map(p => r[p]
-                    ? <span key={p} className={`sk-agent on prov-glyph ${p}`} title={`In ${providerName(p)}\n${r[p]!.path}`}><Icon name={p} size={15} /></span>
-                    : <button key={p} type="button" className="sk-agent" disabled={busy} title={`Not in ${providerName(p)}. Click to copy it there.`} aria-label={`Copy ${r.name} to ${providerName(p)}`} onClick={() => send(r.name, other(p), {})}><Icon name={p} size={15} /></button>)}
-                  </td>
-                  <td className="sk-cell"><span className="sk-mark on" title={PROVIDERS.filter(p => r[p]).map(p => r[p]!.path).join('\n')}><Icon name="check" size={14} /></span></td>
-                  {hosts.map(h => {
-                    const o = onHost(r, h)
-                    const label = `${r.name} on ${h.name}`
-                    let mark: ReactNode
-                    if (copying === `${r.name}|${h.id}`) mark = <span className="sk-mark"><Spinner /></span>
-                    else if (o.state === 'on') mark = <span className="sk-mark on" title={o.title} aria-label={`${label}: there`}><Icon name="check" size={14} /></span>
-                    else if (o.state === 'none' || o.state === 'error') mark = <span className="sk-mark none" title={o.title}>–</span>
-                    else {
-                      const update = o.state === 'differs'
-                      mark = <button type="button" className={`sk-mark btn-mark ${update ? 'differs' : 'add'}`} disabled={!!copying} aria-label={update ? `Update ${label}` : `Copy ${r.name} to ${h.name}`}
-                        title={`${o.title}\n\n${update ? `Click to replace it with this server's copy` : `Click to copy it to ${h.name}`}`} onClick={() => toHost(r, h, o.todo, update)}>
-                        <Icon name={update ? 'refresh' : 'plus'} size={14} /></button>
-                    }
-                    return <td key={h.id} className="sk-cell">{mark}</td>
-                  })}
-                  {machines.loading && !machines.data && <td />}
-                  <td className="sk-more"><MenuButton label={`More for ${r.name}`} align="right" width={290} items={() => menu(r)}><Icon name="more" size={16} /></MenuButton></td>
-                </tr>
-              })}
-            </tbody>
-          </table>
+      {looks.length > 0 && <section className="sk-looks" aria-label="Skills that need a look">
+        <h2 className="sk-h"><Icon name="alert" size={15} />Needs a look <span className="muted">{looks.length}</span></h2>
+        <ul>{looks.map(l => {
+          const key = `${l.name}|${l.host.id}`
+          return <li key={key}>
+            <div className="grow">
+              <div><button type="button" className="sk-link" onClick={() => navigate(`/skills/${l.name}`)}>{l.name}</button>{' '}
+                {l.state === 'failed' ? <>could not be sent to <b>{l.host.name}</b></> : <>is different on <b>{l.host.name}</b></>}</div>
+              <div className="muted small">{l.state === 'failed' ? l.error
+                : l.where && l.where !== 'lib' ? `${providerName(l.agent || 'claude')} there has its own copy (in ~/${l.where.slice(l.where.lastIndexOf('/') + 1)}/skills). Which one should every machine use?`
+                  : 'It was changed here and there since the last sync. Which one should every machine use? The other one is kept in the trash folder.'}</div>
+            </div>
+            {busy === key ? <Spinner /> : <div className="row wrap sk-look-actions">
+              <button type="button" className="btn sm" disabled={!!busy} onClick={() => settle(l, 'library')}>{l.state === 'failed' ? 'Send again' : 'Use this server’s'}</button>
+              {l.state === 'differs' && <button type="button" className="btn sm" disabled={!!busy} onClick={() => settle(l, 'machine')}>Use {l.host.name}’s</button>}
+            </div>}
+          </li>
+        })}</ul>
+      </section>}
+
+      {lib.loading && !lib.data && <Loading />}
+      {lib.data && skills.length === 0 && <Empty icon="sparkles" title="No skills yet">A skill is a set of instructions an agent loads when a task needs it, e.g. how you deploy, review or write. Make one here and every agent on every machine gets it.</Empty>}
+      {skills.length > 0 && <>
+        <div className="skills-bar">
+          <div className="sb-search">
+            <Icon name="search" size={14} />
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Find a skill" aria-label="Find a skill" onKeyDown={e => { if (e.key === 'Escape') setQ('') }} />
+          </div>
+          <span className="muted small">{shown.length === skills.length ? `${skills.length} in your library` : `${shown.length} of ${skills.length}`}</span>
         </div>
-        {hosts.length > 0 && <span className="muted xsmall sk-scroll-hint">Swipe the table sideways to see every machine.</span>}
-        {legend}
+        {shown.length === 0 && <p className="muted small">No skill matches.</p>}
+        <div className="sk-grid">{shown.map(s => <SkillCard key={s.name} skill={s} sync={sync} onOpen={() => navigate(`/skills/${s.name}`)} onCopy={() => copy(`/${s.name}`)} />)}</div>
       </>}
+
+      {extraList.length > 0 && <details className="skills-more">
+        <summary><Icon name="chevron-right" size={14} />Only on another machine<span className="muted"> · {extraList.length}</span><span className="muted xsmall sk-more-from">not in your library</span></summary>
+        <ul className="skills-more-list">{extraList.map(x => {
+          const h = x.hosts[0], key = `${x.extra.name}|${h.id}`
+          return <li key={x.extra.name}>
+            <span className="prov-glyph"><Icon name="server" size={14} /></span>
+            <span className="sk-title static">{x.extra.name}</span>
+            <span className="sk-desc grow" title={x.extra.description}>{x.extra.description}</span>
+            <span className="spec-chip" title={x.hosts.map(m => m.name).join(', ')}>{x.hosts.length === 1 ? h.name : `${x.hosts.length} machines`}</span>
+            <button type="button" className="btn sm" disabled={!!busy} title={`Copy it from ${h.name} into your library. Every machine gets it then.`} onClick={() => adopt(x.extra.name, h)}>{busy === key ? <Spinner /> : <Icon name="plus" size={13} />}Add</button>
+          </li>
+        })}</ul>
+      </details>}
 
       <details className="skills-more">
         <summary><Icon name="chevron-right" size={14} />Also available{cli.data && <span className="muted"> · {others.length}</span>}<span className="muted xsmall sk-more-from">from plugins, projects and claude.ai</span></summary>
@@ -237,10 +153,23 @@ export default function SkillsPage({ onMenu }: { onMenu?: () => void }) {
           <button type="button" className="btn ghost icon-only sm" aria-label={`Copy ${s.invoke}`} title={`Copy ${s.invoke}`} onClick={() => copy(s.invoke)}><Icon name="copy" size={14} /></button>
         </li>)}</ul>
       </details>
+
+      {sync && sync.log.length > 0 && <details className="skills-more">
+        <summary><Icon name="chevron-right" size={14} />Recent changes<span className="muted"> · {sync.log.length}</span></summary>
+        <ul className="skills-more-list sk-log">{sync.log.map((e, i) => <li key={i}>
+          <span className="prov-glyph"><Icon name={e.what === 'taken' ? 'download' : e.what === 'removed' ? 'trash' : 'upload'} size={14} /></span>
+          <span className="grow">{e.what === 'taken' ? <><b>{e.skill}</b> changed on {e.host}: taken into your library</>
+            : e.what === 'removed' ? <><b>{e.skill}</b> removed from {e.host}</>
+              : e.what === 'added' ? <><b>{e.skill}</b> put on {e.host}</> : <><b>{e.skill}</b> updated on {e.host}</>}</span>
+          <span className="muted xsmall">{ago(e.at)}</span>
+        </li>)}</ul>
+      </details>}
     </div></div>
-    {edit && <SkillEditor draft={edit} scope={scope} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); reload() }} />}
-    {del && <Confirm title={`Remove “${del.name}” from ${providerName(del.provider)}?`} confirmLabel="Remove" message={busy ? 'Removing…' : `${providerName(del.provider)} stops using it. Its folder moves to .pocket-ai-trash next to the skills folder, so you can bring it back.`}
-      onCancel={() => { if (!busy) setDel(null) }} onConfirm={remove} />}
+    {creating && <NewSkill onClose={() => setCreating(false)} onSaved={name => { setCreating(false); soon(); navigate(`/skills/${name}`) }} />}
+    {machines && sync && <MachinesDialog sync={sync} onClose={() => setMachines(false)} onChange={s => { setSync(s); soon() }} />}
+    {replace && <Confirm title={replace.names.length === 1 ? `Replace “${replace.names[0]}”?` : `Replace ${replace.names.length} skills?`} confirmLabel="Replace"
+      message={`${replace.names.join(', ')} ${replace.names.length === 1 ? 'is' : 'are'} already in your library. The current ${replace.names.length === 1 ? 'one moves' : 'ones move'} to the trash folder.`}
+      onCancel={() => setReplace(null)} onConfirm={() => importFile(replace.file, true)} />}
   </div>
 }
 
@@ -250,44 +179,139 @@ function origin(s: Skill): string {
   return i > 0 ? s.name.slice(0, i) : ''
 }
 
-function SkillEditor({ draft, scope, onClose, onSaved }: { draft: Draft; scope: (p: CliId) => string; onClose: () => void; onSaved: () => void }) {
-  const [value, setValue] = useState(draft)
+function SkillCard({ skill, sync, onOpen, onCopy }: { skill: LibSkill; sync: SyncStatus | null; onOpen: () => void; onCopy: () => void }) {
+  const st = standing(skill.name, sync)
+  return <article className="sk-card">
+    <button type="button" className="sk-card-main" onClick={onOpen} aria-label={`Open ${skill.name}`}>
+      <span className="sk-card-name">{skill.name}</span>
+      <span className="sk-card-desc">{skill.description || 'No description'}</span>
+    </button>
+    <footer>
+      <span className={`sk-standing ${st.kind}`} title={st.title}>
+        {st.kind === 'busy' ? <Spinner size={11} /> : <Icon name={st.kind === 'look' ? 'alert' : st.kind === 'local' ? 'server' : 'check'} size={12} />}{st.label}</span>
+      <span className="grow" />
+      <span className="muted xsmall" title={skill.path}>{skill.file_count > 0 && `${skill.file_count + 1} files · `}{fmtBytes(skill.size)} · {ago(skill.modified)}</span>
+      <button type="button" className="btn ghost icon-only sm" aria-label={`Copy /${skill.name}`} title={`Copy /${skill.name}`} onClick={onCopy}><Icon name="copy" size={13} /></button>
+    </footer>
+  </article>
+}
+
+/** The strip on top: which agents use the library, and how the machines stand. */
+function SyncCard({ lib, sync, looks, onMachines, onSync }: { lib: Library; sync: SyncStatus; looks: number; onMachines: () => void; onSync: () => void }) {
+  const on = sync.hosts.filter(h => h.on)
+  const down = on.filter(h => h.error)
+  let kind = 'ok', text = on.length === 0 ? 'Your library is on this server' : on.length === 1 ? `This server and ${on[0].name} have the same skills` : `This server and ${on.length} machines have the same skills`
+  if (sync.running) { kind = 'busy'; text = 'Syncing with your machines…' }
+  else if (looks) { kind = 'look'; text = looks === 1 ? '1 skill needs a look' : `${looks} skills need a look` }
+  else if (down.length) { kind = 'look'; text = down.length === 1 ? `${down[0].name} did not answer` : `${down.length} machines did not answer` }
+  return <section className="sk-sync">
+    <div className="sk-sync-top">
+      <span className={`sk-sync-ico ${kind}`}>{kind === 'busy' ? <Spinner size={16} /> : <Icon name={kind === 'look' ? 'alert' : 'check'} size={17} />}</span>
+      <div className="grow">
+        <div className="sk-sync-title">{text}</div>
+        <div className="muted small">{on.length === 0
+          ? (sync.hosts.length ? 'No other machine follows it yet.' : 'Add a machine in Settings → Machines to share it.')
+          : <><span className="sk-hide-sm">A change here goes to the machines, a change there comes back. </span>{sync.at && <>Checked {ago(sync.at)}.</>}</>}</div>
+      </div>
+      {sync.hosts.length > 0 && <button type="button" className="btn sm" onClick={onMachines}><Icon name="server" size={13} />Machines</button>}
+      {on.length > 0 && <button type="button" className="btn ghost icon-only sm" aria-label="Sync now" title="Check every machine now" disabled={sync.running} onClick={onSync}><Icon name="refresh" size={14} /></button>}
+    </div>
+    <div className="sk-sync-rows">
+      <div className="sk-sync-row">
+        <span className="sk-sync-label">Agents</span>
+        <div className="sk-chips">{lib.agents.map(a => <span key={a.id} className="sk-chip" title={`${a.name}: ${a.how}`}><span className={`prov-glyph ${a.id}`}><Icon name={a.id} size={13} /></span>{a.name}</span>)}</div>
+      </div>
+      {sync.hosts.length > 0 && <div className="sk-sync-row">
+        <span className="sk-sync-label">Machines</span>
+        <div className="sk-chips">
+          <span className="sk-chip" title={lib.dir}><i className="sk-dot ok" />This server</span>
+          {sync.hosts.map(h => {
+            const bad = Object.values(h.skills).filter(s => s.state === 'differs' || s.state === 'failed').length
+            const state = !h.on ? 'off' : h.error ? 'down' : bad ? 'look' : h.at ? 'ok' : 'wait'
+            const title = !h.on ? `${h.name} does not follow the library. Click to change.` : h.error ? `${h.name}: ${h.error}` : bad ? `${bad} to look at` : h.at ? `Same as the library. Answered ${ago(h.at)}.` : 'Not checked yet'
+            return <button type="button" key={h.id} className={`sk-chip ${state}`} title={title} onClick={onMachines}><i className={`sk-dot ${state}`} />{h.name}{state === 'off' && <span className="muted"> · off</span>}{state === 'down' && <span className="muted"> · no answer</span>}</button>
+          })}
+        </div>
+      </div>}
+    </div>
+  </section>
+}
+
+/** Asked once: which machines should follow the library. Nothing is sent before. */
+function FirstTime({ hosts, onDone }: { hosts: SyncHost[]; onDone: (s: SyncStatus) => void }) {
+  const { toast } = useToast()
+  const [pick, setPick] = useState<Record<number, boolean>>(() => Object.fromEntries(hosts.map(h => [h.id, true])))
+  const [busy, setBusy] = useState(false)
+  const save = async (ids: number[]) => {
+    setBusy(true)
+    try { onDone(await api.put<SyncStatus>(`${SYNC}/machines`, { on: ids })) } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
+  }
+  const ids = hosts.filter(h => pick[h.id]).map(h => h.id)
+  return <section className="sk-first">
+    <h2>Use these skills on your other machines too?</h2>
+    <p className="muted small">Pocket AI copies the library to the machines you pick and keeps them the same from then on. Skills a machine already has stay; one that differs from yours waits for your choice.</p>
+    <div className="sk-first-list">{hosts.map(h => <label key={h.id} className="sk-first-item">
+      <input type="checkbox" checked={!!pick[h.id]} disabled={busy} onChange={e => setPick({ ...pick, [h.id]: e.target.checked })} /><Icon name="server" size={14} />{h.name}</label>)}</div>
+    <div className="row">
+      <button type="button" className="btn primary" disabled={busy || ids.length === 0} onClick={() => save(ids)}>{busy && <Spinner />}{ids.length === hosts.length ? 'Sync all of them' : ids.length === 1 ? 'Sync 1 machine' : `Sync ${ids.length} machines`}</button>
+      <button type="button" className="btn ghost" disabled={busy} onClick={() => save([])}>Not now</button>
+    </div>
+  </section>
+}
+
+function MachinesDialog({ sync, onClose, onChange }: { sync: SyncStatus; onClose: () => void; onChange: (s: SyncStatus) => void }) {
+  const { toast } = useToast()
+  const [busy, setBusy] = useState(0)
+  const toggle = async (h: SyncHost, v: boolean) => {
+    setBusy(h.id)
+    try {
+      const ids = sync.hosts.filter(x => (x.id === h.id ? v : x.on)).map(x => x.id)
+      onChange(await api.put<SyncStatus>(`${SYNC}/machines`, { on: ids }))
+    } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(0) }
+  }
+  return <Modal title="Machines that follow your library" onClose={onClose} footer={<button type="button" className="btn primary" onClick={onClose}>Done</button>}>
+    <p className="muted small" style={{ marginTop: 0 }}>A machine that is on gets every skill (in <code>~/.agents/skills</code>, linked for Claude Code) and its changes come back here. Switching one off leaves the skills it has.</p>
+    <ul className="sk-machines">{sync.hosts.map(h => {
+      const bad = Object.values(h.skills).filter(s => s.state === 'differs' || s.state === 'failed').length
+      return <li key={h.id}>
+        <Icon name="server" size={15} />
+        <div className="grow">
+          <div className="sk-machine-name">{h.name}</div>
+          <div className={`small ${h.on && h.error ? 'danger-text' : 'muted'}`}>{!h.on ? 'Not following' : h.error ? `Did not answer: ${h.error}` : bad ? `${bad} to look at` : h.at ? `Same as the library · answered ${ago(h.at)}` : 'Checking…'}</div>
+        </div>
+        {busy === h.id ? <Spinner /> : <Switch label={`Sync skills to ${h.name}`} checked={h.on} disabled={!!busy} onChange={v => toggle(h, v)} />}
+      </li>
+    })}</ul>
+  </Modal>
+}
+
+function NewSkill({ onClose, onSaved }: { onClose: () => void; onSaved: (name: string) => void }) {
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [body, setBody] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const creating = !value.provider
-  const targets = PROVIDERS.filter(p => value.to[p])
-  const valid = /^[a-z0-9][a-z0-9-]{0,63}$/.test(value.name) && !!value.description.trim() && !!value.body.trim() && (!creating || targets.length > 0)
+  const valid = validSkillName(name) && !!description.trim() && !!body.trim()
   const save = async () => {
     if (!valid || busy) return
     setBusy(true); setError('')
-    const body = { name: value.name, description: value.description, body: value.body }
-    try {
-      if (value.provider) await api.put(`${V1}/skills/own/${value.name}${scope(value.provider)}`, body)
-      else for (const p of targets) await api.post(`${V1}/skills/own${scope(p)}`, body)
-      onSaved()
-    } catch (e) { setError(errMsg(e)) } finally { setBusy(false) }
+    try { await api.post(LIB, { name, description, body }); onSaved(name) } catch (e) { setError(errMsg(e)) } finally { setBusy(false) }
   }
-  return <Modal size="lg" title={creating ? 'New skill' : `Edit ${value.name} in ${providerName(value.provider!)}`} onClose={() => { if (!busy) onClose() }} footer={<>
+  return <Modal size="lg" title="New skill" onClose={() => { if (!busy) onClose() }} footer={<>
     <button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button>
-    <button type="button" className="btn primary" disabled={!valid || busy} onClick={save}>{busy && <Spinner />}Save skill</button>
+    <button type="button" className="btn primary" disabled={!valid || busy} onClick={save}>{busy && <Spinner />}Create skill</button>
   </>}>
     <div className="stack">
-      {creating && <>
-        <Field label="Name" help={<>Lowercase letters, digits and dashes. Run it with <code>/{value.name || 'name'}</code> in Claude Code or <code>${value.name || 'name'}</code> in Codex.</>}>
-          <input autoFocus aria-label="Skill name" disabled={busy} value={value.name} placeholder="deploy-app" onChange={e => setValue({ ...value, name: slug(e.target.value) })} />
-        </Field>
-        <Field label="Add to">
-          <div className="row wrap" style={{ gap: 16 }}>{PROVIDERS.map(p => <span key={p} className="row" style={{ gap: 8 }}>
-            <Switch size="sm" label={providerName(p)} checked={value.to[p]} disabled={busy} onChange={v => setValue({ ...value, to: { ...value.to, [p]: v } })} />{providerName(p)}</span>)}</div>
-        </Field>
-      </>}
+      <Field label="Name" help={<>Lowercase letters, digits and dashes. You run it with <code>/{name || 'name'}</code>.</>}>
+        <input autoFocus aria-label="Skill name" disabled={busy} value={name} placeholder="deploy-app" onChange={e => setName(skillSlug(e.target.value))} />
+      </Field>
       <Field label="When to use it" help="The agent reads this to decide when the skill applies. Say what it does and when to use it.">
-        <textarea {...noGrammarly} autoFocus={!creating} aria-label="Skill description" rows={3} disabled={busy} value={value.description} onChange={e => setValue({ ...value, description: e.target.value })} />
+        <textarea {...noGrammarly} aria-label="Skill description" rows={3} disabled={busy} value={description} onChange={e => setDescription(e.target.value)} />
       </Field>
-      <Field label="Instructions" help={`Markdown. Loaded when the skill is used.${value.files === 1 ? " The skill's other file stays as it is." : value.files > 1 ? ` The skill's other ${value.files} files stay as they are.` : ''}${creating ? '' : ` Saves to ${providerName(value.provider!)} only; use “Replace … copy” in the ⋯ menu to sync the other agent.`}`}>
-        <textarea {...noGrammarly} className="mono" aria-label="Skill instructions" rows={16} disabled={busy} value={value.body} placeholder={'# Deploying\n\n1. …'} onChange={e => setValue({ ...value, body: e.target.value })} />
+      <Field label="Instructions" help="Markdown. Loaded when the skill is used. You can add more files to the skill afterwards.">
+        <textarea {...noGrammarly} className="mono" aria-label="Skill instructions" rows={12} disabled={busy} value={body} placeholder={'# Deploying\n\n1. …'} onChange={e => setBody(e.target.value)} />
       </Field>
-      {error && <p className="callout error" role="alert">{error}</p>}
+      {error && <p className="callout danger" role="alert">{error}</p>}
     </div>
   </Modal>
 }

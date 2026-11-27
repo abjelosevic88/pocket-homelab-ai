@@ -25,6 +25,7 @@ import TodayPage from './TodayPage'
 import UsagePage from './UsagePage'
 import SnippetsPage from './SnippetsPage'
 import SkillsPage from './SkillsPage'
+import SkillPage from './SkillPage'
 import AwayPage, { AwayBanner } from './AwayPage'
 import WorktreesPage from './WorktreesPage'
 import FilesPage from './FilesPage'
@@ -219,6 +220,7 @@ function ShellInner() {
             <Route path="/workflows" element={<WorkflowsPage onMenu={onMenu} />} />
             <Route path="/usage" element={<UsagePage onMenu={onMenu} />} />
             <Route path="/skills" element={<SkillsPage onMenu={onMenu} />} />
+            <Route path="/skills/:name" element={<SkillPage onMenu={onMenu} />} />
             <Route path="/snippets" element={<SnippetsPage onMenu={onMenu} />} />
             <Route path="/away" element={<AwayPage onMenu={onMenu} />} />
             <Route path="/worktrees" element={<WorktreesPage onMenu={onMenu} />} />
