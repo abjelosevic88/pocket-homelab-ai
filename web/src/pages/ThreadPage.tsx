@@ -404,7 +404,9 @@ export default function ThreadPage({ onMenu, threadId, embedded, reading }: { on
       const kind = PANEL_COMMANDS[name]
       const lastTurn = [...(items || [])].reverse().find(i => i.kind === 'turn')
       openPanelSheet({ kind: kind || undefined, fromThreadId: t.id, hostId: t.host_id, question: args,
-        material: kind === 'review' && lastTurn ? reviewMaterial(items || [], lastTurn.key) : undefined })
+        // what they judge is the last answer here (the plan, the idea); the box can be changed before the start
+        material: !lastTurn ? undefined : kind === 'review' ? reviewMaterial(items || [], lastTurn.key)
+          : kind === 'council' || kind === 'debate' ? reviewMaterial(items || [], lastTurn.key, 'The latest answer in the conversation') : undefined })
       return true
     }
     if (name !== 'mcp') return false

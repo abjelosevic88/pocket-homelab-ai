@@ -44,12 +44,12 @@ export function PanelsChip({ t }: { t: Thread }) {
 }
 
 /** What a second opinion on a reply is handed: what was asked, and the answer. */
-export function reviewMaterial(items: Item[], turnKey: string): string {
+export function reviewMaterial(items: Item[], turnKey: string, label = 'The answer under review'): string {
   const end = items.findIndex(i => i.key === turnKey)
   if (end < 0) return ''
   let start = end
   while (start > 0 && items[start - 1].kind !== 'user') start--
   const asked = start > 0 ? (items[start - 1].text || '').trim() : ''
   const said = items.slice(start, end).filter(i => i.kind === 'assistant' && i.text).map(i => i.text!.trim()).join('\n\n')
-  return (asked && !asked.startsWith('<') ? `What was asked:\n\n${asked}\n\n---\n\n` : '') + `The answer under review:\n\n${said}`
+  return (asked && !asked.startsWith('<') ? `What was asked:\n\n${asked}\n\n---\n\n` : '') + `${label}:\n\n${said}`
 }

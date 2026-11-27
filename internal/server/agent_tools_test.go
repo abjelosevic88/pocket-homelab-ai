@@ -340,7 +340,10 @@ func TestAgentCommandsExpand(t *testing.T) {
 			t.Fatal("expanded", keep)
 		}
 	}
-	if l := agentCommandSkills([]agent.Skill{{Name: "handoff"}}); len(l) != 5 { // the panel commands
+	if got := expandAgentCommand("claude", "/refine keep it short"); !strings.Contains(got, "three rounds") || !strings.Contains(got, "pocket_call_tool") || !strings.HasSuffix(got, "keep it short") {
+		t.Fatal(got)
+	}
+	if l := agentCommandSkills([]agent.Skill{{Name: "handoff"}}); len(l) != 6 { // the panel commands and /refine
 		t.Fatal(l)
 	}
 }
