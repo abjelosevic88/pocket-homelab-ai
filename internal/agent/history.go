@@ -205,6 +205,27 @@ type ClaudeLog struct {
 
 	promptKey string    // the message that started the current turn
 	promptAt  time.Time // and when
+	// A turn the agent starts by itself (a sub-agent handing back, a
+	// background task finishing) has no prompt of its own: it is keyed by the
+	// first line after the previous turn's end that woke the agent, so each
+	// such turn gets its own footer (and fork point).
+	selfTurn bool      // the current turn started that way
+	ended    bool      // the current turn's reply ended; nothing new since
+	endMsg   string    // the API message that ended it (its other blocks follow on their own lines)
+	wakeKey  string    // first line after the end that woke the agent
+	wakeAt   time.Time // and when
+	// The footer of a reply whose ending line held only thinking: its text
+	// comes on the next line (one line per block), and the footer goes after it.
+	pending *Item
+}
+
+// woke notes a line after a finished turn that the agent goes on from by
+// itself (a hand-back, a task notification, a peer message): the next reply
+// is a new turn, keyed by the first such line.
+func (l *ClaudeLog) woke(uuid string, at time.Time) {
+	if l.ended && l.wakeKey == "" && uuid != "" {
+		l.wakeKey, l.wakeAt = uuid, at
+	}
 }
 
 // LogOp is one change a session-file line makes to the timeline.
@@ -242,6 +263,7 @@ func (l *ClaudeLog) Feed(line []byte) []LogOp {
 		// Compaction writes its summary as a user row; nobody sent it.
 		IsCompactSummary bool `json:"isCompactSummary"`
 		Message          struct {
+			ID         string          `json:"id"`
 			Content    json.RawMessage `json:"content"`
 			StopReason string          `json:"stop_reason"`
 		} `json:"message"`
@@ -254,10 +276,17 @@ func (l *ClaudeLog) Feed(line []byte) []LogOp {
 		l.Cwd = m.Cwd
 	}
 	var ops []LogOp
+	if l.pending != nil && (m.Type != "assistant" || m.Message.ID == "" || m.Message.ID != l.endMsg) {
+		ops = l.Flush()
+	}
 	switch m.Type {
 	case "user":
-		if m.IsMeta || m.IsCompactSummary {
-			return nil
+		if m.IsCompactSummary {
+			return ops
+		}
+		if m.IsMeta {
+			l.woke(m.UUID, m.Timestamp) // e.g. another session's message to this one
+			return ops
 		}
 		var blocks []struct {
 			Type      string          `json:"type"`
@@ -283,13 +312,20 @@ func (l *ClaudeLog) Feed(line []byte) []LogOp {
 		if t != "" || n > 0 {
 			ops = append(ops, LogOp{Item: &Item{Key: "u-" + m.UUID, Kind: "user", Text: t, LogImages: n}, TurnStarted: true})
 			l.promptKey, l.promptAt = m.UUID, m.Timestamp
+			l.selfTurn, l.ended, l.wakeKey = false, false, ""
+		} else {
+			l.woke(m.UUID, m.Timestamp) // a task notification and the like
 		}
 	case "attachment":
 		// A message sent while the agent was working: Claude Code hands it to
 		// the running turn as a queued command instead of a new prompt.
 		a := m.Attachment
-		if a.Type != "queued_command" || (a.CommandMode != "" && a.CommandMode != "prompt") {
-			return nil
+		if a.Type != "queued_command" {
+			return ops
+		}
+		l.woke(m.UUID, m.Timestamp) // after the end, it starts the agent's next turn
+		if a.CommandMode != "" && a.CommandMode != "prompt" {
+			return ops
 		}
 		if t, n := userText(a.Prompt), countImages(a.Prompt); t != "" || n > 0 {
 			ops = append(ops, LogOp{Item: &Item{Key: "u-" + m.UUID, Kind: "user", Text: t, LogImages: n}})
@@ -303,9 +339,20 @@ func (l *ClaudeLog) Feed(line []byte) []LogOp {
 			Input json.RawMessage `json:"input"`
 		}
 		if json.Unmarshal(m.Message.Content, &blocks) != nil {
-			return nil
+			return ops
 		}
+		// After the end of a turn, a reply that is not the rest of the ending
+		// message is a turn the agent started by itself.
+		if l.ended && (l.wakeKey != "" || (m.Message.ID != "" && m.Message.ID != l.endMsg)) {
+			l.promptKey, l.promptAt = firstNonEmpty(l.wakeKey, m.UUID), m.Timestamp
+			if l.wakeKey != "" {
+				l.promptAt = l.wakeAt
+			}
+			l.selfTurn, l.ended, l.wakeKey = true, false, ""
+		}
+		thinking := len(blocks) > 0
 		for i, b := range blocks {
+			thinking = thinking && (b.Type == "thinking" || b.Type == "redacted_thinking")
 			switch b.Type {
 			case "text":
 				if strings.TrimSpace(b.Text) != "" {
@@ -321,15 +368,33 @@ func (l *ClaudeLog) Feed(line []byte) []LogOp {
 		}
 		if m.Message.StopReason == "end_turn" || m.Message.StopReason == "stop_sequence" {
 			ops = append(ops, LogOp{TurnEnded: true})
+			l.ended, l.endMsg, l.wakeKey = true, m.Message.ID, ""
 			// The log has no turn summary, only timestamps: the footer shows how
-			// long the turn took (a later end of the same turn replaces it).
-			if l.promptKey != "" && !l.promptAt.IsZero() && m.Timestamp.After(l.promptAt) {
-				ops = append(ops, LogOp{Item: &Item{Key: "turn-" + l.promptKey, Kind: "turn",
-					Turn: &TurnInfo{OK: true, DurationMS: m.Timestamp.Sub(l.promptAt).Milliseconds()}}})
+			// long the turn took (a later end of the same turn replaces it). A
+			// turn the agent started by itself can end at once (a limit notice).
+			if l.promptKey != "" && !l.promptAt.IsZero() && (m.Timestamp.After(l.promptAt) || (l.selfTurn && m.Timestamp.Equal(l.promptAt))) {
+				foot := &Item{Key: "turn-" + l.promptKey, Kind: "turn", Turn: &TurnInfo{OK: true, DurationMS: m.Timestamp.Sub(l.promptAt).Milliseconds()}}
+				if thinking {
+					l.pending = foot // after the text of this message, on its next line
+				} else {
+					l.pending = nil
+					ops = append(ops, LogOp{Item: foot})
+				}
 			}
 		}
 	}
 	return ops
+}
+
+// Flush gives out a footer still waiting for the rest of its message (at
+// the end of a file that stops right after the thinking of the last reply).
+func (l *ClaudeLog) Flush() []LogOp {
+	if l.pending == nil {
+		return nil
+	}
+	op := LogOp{Item: l.pending}
+	l.pending = nil
+	return []LogOp{op}
 }
 
 // Apply adds a tool result to the tool item it belongs to.
@@ -371,31 +436,36 @@ func readClaude(path string, sidechain bool) (items []Item, cwd string, size int
 	log := ClaudeLog{Sidechain: sidechain}
 	for {
 		line, rerr := r.ReadBytes('\n')
+		var ops []LogOp
 		if len(line) > 0 && line[len(line)-1] == '\n' {
 			size += int64(len(line))
-			for _, op := range log.Feed(line) {
-				switch {
-				case op.Item != nil:
-					it := *op.Item
-					if it.Tool != nil {
-						t := *it.Tool
-						t.Status = "done"
-						it.Tool = &t
-					}
-					// one entry per key: a later version (a turn that ended
-					// twice) replaces the earlier one in place
-					if i, ok := index[it.Key]; ok {
-						items[i] = it
-					} else {
-						index[it.Key] = len(items)
-						items = append(items, it)
-					}
-				case op.Result != nil:
-					if i, ok := index[op.Result.ToolUseID]; ok && items[i].Tool != nil {
-						t := *items[i].Tool
-						op.Result.Apply(&t)
-						items[i].Tool = &t
-					}
+			ops = log.Feed(line)
+		}
+		if rerr != nil {
+			ops = append(ops, log.Flush()...)
+		}
+		for _, op := range ops {
+			switch {
+			case op.Item != nil:
+				it := *op.Item
+				if it.Tool != nil {
+					t := *it.Tool
+					t.Status = "done"
+					it.Tool = &t
+				}
+				// one entry per key: a later version (a turn that ended
+				// twice) replaces the earlier one in place
+				if i, ok := index[it.Key]; ok {
+					items[i] = it
+				} else {
+					index[it.Key] = len(items)
+					items = append(items, it)
+				}
+			case op.Result != nil:
+				if i, ok := index[op.Result.ToolUseID]; ok && items[i].Tool != nil {
+					t := *items[i].Tool
+					op.Result.Apply(&t)
+					items[i].Tool = &t
 				}
 			}
 		}
