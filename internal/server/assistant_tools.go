@@ -242,7 +242,7 @@ func (s *Server) callPocketTool(ctx, session context.Context, t *store.Thread, s
 		}
 		call.Name, call.Arguments = nested.Name, nested.Arguments
 	}
-	if strings.HasPrefix(call.Name, "pocket_agent_") {
+	if strings.HasPrefix(call.Name, "pocket_agent_") || strings.HasPrefix(call.Name, "pocket_panel_") {
 		return s.callAgentTool(ctx, session, t, sink, call.Name, call.Arguments)
 	}
 	undoID := ""

@@ -2156,8 +2156,9 @@ func (k *runSink) TurnDone(ti agent.TurnInfo) {
 	}
 	if !dup {
 		viewing := rt.viewing(t)
-		t.CompletedUnread = ti.OK && !viewing
-		if !viewing {
+		// a panel's participants answer the panel, which tells the person once
+		t.CompletedUnread = ti.OK && !viewing && t.Source != "panel"
+		if !viewing && t.Source != "panel" {
 			t.Unread = true
 		}
 		t.ActivityAt = store.Now()
@@ -2179,6 +2180,7 @@ func (k *runSink) TurnDone(ti agent.TurnInfo) {
 	if !dup && !scheduled && queuedN == 0 {
 		switch {
 		case reports && ti.OK:
+		case t.Source == "panel": // the panel reports, not each participant
 		case !ti.OK && !ti.Interrupted:
 			rt.notify(t, "failed", providerName(t.Provider)+" stopped with an error", oneLine(t.Title+"\n"+ti.Error, 200))
 		case ti.OK && rt.s.isAway(rt.ctx, t.UserID):

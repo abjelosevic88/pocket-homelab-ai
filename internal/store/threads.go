@@ -70,7 +70,8 @@ type ThreadFilter struct {
 
 // ListThreads lists a person's threads, pinned first, newest activity first.
 func (s *Store) ListThreads(ctx context.Context, userID int64, f ThreadFilter) ([]*Thread, error) {
-	q := `SELECT ` + threadCols + ` FROM threads WHERE user_id = ? AND archived = ?`
+	// a panel's participants are opened from their panel, not from the list
+	q := `SELECT ` + threadCols + ` FROM threads WHERE user_id = ? AND archived = ? AND source != 'panel'`
 	args := []any{userID, boolInt(f.Archived)}
 	if f.Favorites {
 		q = `SELECT ` + threadCols + ` FROM threads WHERE user_id = ? AND pinned = 1`

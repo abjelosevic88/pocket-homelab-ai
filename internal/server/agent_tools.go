@@ -34,7 +34,7 @@ const (
 	agentWaitMax     = 600 // seconds; Codex gives a tool call 660 s
 )
 
-const agentToolsInstructions = `Other agents: with pocket_agent_start you can hand work to another coding agent (Claude Code or Codex, on this or another of the person's machines, optionally in its own git worktree). It runs as its own Pocket AI conversation, which the person can open and join. Use it when the person asks (hand off, a second opinion, several agents at once) or when independent parallel work clearly pays off; do small things yourself. An agent does not see this conversation: give it a complete, self-contained task. Starting one asks the person first unless they always allow it. When it finishes, its answer comes back to you as a message (or directly, if you wait with pocket_agent_wait); continue it with pocket_agent_send. Agents that change code at the same time as you or each other need their own worktree (worktree: true). You can also message the person's other conversations (pocket_agent_list scope all; that asks the person first), and set a heartbeat (pocket_agent_heartbeat_create) to be reminded here on a schedule or once later, e.g. to check on something long-running. To run a prompt later as its own new conversation — once ("tomorrow 09:00", "in 2h") or repeating — use pocket_agent_schedule_create; it shows on the person's Schedules page and can report back here.`
+const agentToolsInstructions = `Other agents: with pocket_agent_start you can hand work to another coding agent (Claude Code or Codex, on this or another of the person's machines, optionally in its own git worktree). It runs as its own Pocket AI conversation, which the person can open and join. Use it when the person asks (hand off, a second opinion, several agents at once) or when independent parallel work clearly pays off; do small things yourself. An agent does not see this conversation: give it a complete, self-contained task. Starting one asks the person first unless they always allow it. When it finishes, its answer comes back to you as a message (or directly, if you wait with pocket_agent_wait); continue it with pocket_agent_send. Agents that change code at the same time as you or each other need their own worktree (worktree: true). You can also message the person's other conversations (pocket_agent_list scope all; that asks the person first), and set a heartbeat (pocket_agent_heartbeat_create) to be reminded here on a schedule or once later, e.g. to check on something long-running. To run a prompt later as its own new conversation — once ("tomorrow 09:00", "in 2h") or repeating — use pocket_agent_schedule_create; it shows on the person's Schedules page and can report back here.` + panelToolsInstructions
 
 // agentTools are the pocket_agent_* tool definitions.
 func agentTools() []askTool {
@@ -98,7 +98,7 @@ func agentTools() []askTool {
 		}
 		out = append(out, t)
 	}
-	return out
+	return append(out, panelToolList()...) // pocket_panel_*: panels_tools.go
 }
 
 // agentTool is one of the agent tool definitions.
@@ -112,7 +112,7 @@ func agentTool(name string) askTool {
 }
 
 // agentToolsOn: coding conversations get the agent tools (Ask chats don't).
-func agentToolsOn(t *store.Thread) bool { return t.Source != "ask" }
+func agentToolsOn(t *store.Thread) bool { return t.Source != "ask" && t.Source != "panel" }
 
 // withAgentTools adds the agent tools to a tools/list result.
 func withAgentTools(result any, t *store.Thread) any {
@@ -340,6 +340,9 @@ func (s *Server) callAgentTool(ctx, session context.Context, t *store.Thread, si
 	owner, err := s.store.GetUser(ctx, t.UserID)
 	if err != nil || !owner.MayRun() {
 		return toolFailure("An admin has not allowed this conversation's owner to run agents")
+	}
+	if strings.HasPrefix(name, "pocket_panel_") {
+		return s.callPanelTool(ctx, session, owner, t, sink, name, raw)
 	}
 	switch name {
 	case "pocket_agent_options":

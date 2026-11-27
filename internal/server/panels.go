@@ -1,0 +1,927 @@
+package server
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/agent"
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
+	"github.com/google/uuid"
+)
+
+// Panels: one question put to several models at once. The server runs the
+// steps itself (it does not ask an agent to): every participant is a thread
+// of its own (source "panel"), read-only, on the login the person picked;
+// each step sends the participants their instructions, waits for all of
+// them, keeps what they wrote, and the last step has one model write the
+// summary from answers labelled Participant A, B, C … A panel survives a
+// restart: where it stands is in the database, and runPanel picks it up.
+
+const panelMaxSeats = 6
+
+// panelPollEvery is how often a running step looks at its participants.
+var panelPollEvery = 700 * time.Millisecond
+
+// panelRun is a panel at work in this process.
+type panelRun struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+var (
+	panelRunsMu sync.Mutex
+	panelRuns   = map[panelKey]*panelRun{}
+	// panelWaiters counts the pocket_panel_wait calls on a panel: its result
+	// goes to them instead of coming back as a message.
+	panelWaiters sync.Map // panelKey → *atomic.Int32
+)
+
+type panelKey struct {
+	S  *Server
+	ID string
+}
+
+func (s *Server) panelWaitOn(id string) func() {
+	v, _ := panelWaiters.LoadOrStore(panelKey{s, id}, new(atomic.Int32))
+	n := v.(*atomic.Int32)
+	n.Add(1)
+	return func() { n.Add(-1) }
+}
+
+func (s *Server) panelAwaited(id string) bool {
+	v, ok := panelWaiters.Load(panelKey{s, id})
+	return ok && v.(*atomic.Int32).Load() > 0
+}
+
+// panelStart is what starting a panel takes.
+type panelStart struct {
+	Kind     string                `json:"kind"`
+	RecipeID int64                 `json:"recipe_id"`
+	Question string                `json:"question"`
+	Material string                `json:"material"`
+	Title    string                `json:"title"`
+	Depth    string                `json:"depth"` // quick | standard | deep
+	Seats    []store.PanelSeatSpec `json:"seats"`
+	Chair    *store.PanelSeatSpec  `json:"chair"`
+	LineupID int64                 `json:"lineup_id"`
+	Cwd      string                `json:"cwd"`
+	HostID   *int64                `json:"host_id"`
+	// FromThreadID: the conversation it is started from (its folder is the
+	// default); Report: the result goes back there as a message.
+	FromThreadID string `json:"from_thread_id"`
+	Report       bool   `json:"report"`
+	LimitMin     int    `json:"limit_min"`
+	Mode         string `json:"mode"` // build: the participants' permission mode
+}
+
+func panelDepth(name string) int {
+	for i, n := range panelDepthNames {
+		if n == strings.ToLower(strings.TrimSpace(name)) {
+			return i
+		}
+	}
+	return panelStandard
+}
+
+// checkSeat says why a participant cannot run ("" = it can).
+func (s *Server) checkSeat(ctx context.Context, u *store.User, sp store.PanelSeatSpec) error {
+	if !agent.KnownProvider(sp.Provider) {
+		return badRequest("unknown agent " + sp.Provider)
+	}
+	if sp.HostID != 0 {
+		h, err := s.checkHostUse(ctx, u, sp.HostID)
+		if err != nil {
+			return err
+		}
+		if ag, ok := agent.ACPAgentByID(sp.Provider); ok && !ag.Logins {
+			return badRequest(ag.Name + " runs on this server only")
+		}
+		if why := hostMissing(h, sp.Provider, sp.HostHome); why != "" && h.Info.OK {
+			return badRequest(h.Name + ": " + why)
+		}
+		return nil
+	}
+	if p, ok := s.agentProvider(ctx, sp.Provider); !ok {
+		return badRequest(firstNonEmpty(p.Error, providerName(sp.Provider)+" is not available on this server"))
+	}
+	return s.checkAccount(ctx, u, sp.Provider, sp.AccountID)
+}
+
+// seatLimitsKey names the plan limits a participant runs on.
+func seatLimitsKey(sp store.PanelSeatSpec) string {
+	if sp.HostID != 0 {
+		return hostLimitsKey(sp.Provider, sp.HostID, sp.HostHome)
+	}
+	return limitsKey(sp.Provider, sp.AccountID)
+}
+
+// loginUsed is how much of a login's plan limit is used (the fullest window,
+// 0..1) and when that window resets; ok false = not known.
+func (rt *engine) loginUsed(key string) (used float64, resets string, ok bool) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	l := rt.limits[key]
+	if l == nil {
+		return 0, "", false
+	}
+	wins := l.Windows
+	if len(wins) == 0 && l.Ident != "" { // another login of the same account knows
+		for _, o := range rt.limits {
+			if o.Ident == l.Ident && len(o.Windows) > 0 {
+				wins = o.Windows
+				break
+			}
+		}
+	}
+	for _, w := range wins {
+		if !ok || w.Used > used {
+			used, resets, ok = w.Used, w.ResetsAt, true
+		}
+	}
+	return used, resets, ok
+}
+
+// defaultSeats is who takes part when the person names nobody: their default
+// line-up, else one participant per agent that works on this server.
+func (s *Server) defaultSeats(ctx context.Context, u *store.User) (seats []store.PanelSeatSpec, chair *store.PanelSeatSpec) {
+	if list, err := s.store.ListPanelLineups(ctx, u.ID); err == nil {
+		for _, l := range list {
+			if !l.Default {
+				continue
+			}
+			for _, sp := range l.Seats {
+				if s.checkSeat(ctx, u, sp) == nil {
+					seats = append(seats, sp)
+				}
+			}
+			if l.Chair != nil && s.checkSeat(ctx, u, *l.Chair) == nil {
+				chair = l.Chair
+			}
+			break
+		}
+	}
+	st, _ := s.store.GetSettings(ctx, u.ID)
+	auto := []store.PanelSeatSpec{}
+	for _, id := range agent.ProviderIDs() {
+		p, ok := s.agentProvider(ctx, id)
+		if !ok {
+			continue
+		}
+		def := st.For(id)
+		acct, err := s.usableAccount(ctx, u, id, def.Account)
+		if err != nil {
+			continue
+		}
+		auto = append(auto, store.PanelSeatSpec{Provider: id, Model: firstNonEmpty(def.Model, p.DefaultModel), Effort: def.Effort, AccountID: acct})
+	}
+	if len(seats) == 0 {
+		seats = auto
+		if len(seats) > 4 {
+			seats = seats[:4]
+		}
+	}
+	if chair == nil && len(auto) > 0 {
+		c := auto[0] // Claude Code when it is there (ProviderIDs lists it first)
+		chair = &c
+	}
+	if chair == nil && len(seats) > 0 {
+		c := seats[0]
+		c.Role = ""
+		chair = &c
+	}
+	return seats, chair
+}
+
+// startPanel validates, stores and starts a panel.
+func (s *Server) startPanel(ctx context.Context, u *store.User, in panelStart) (*store.Panel, error) {
+	if !u.MayRun() {
+		return nil, errForbidden("an admin has not allowed you to run agents on this server")
+	}
+	in.Question, in.Material = strings.TrimSpace(in.Question), strings.TrimSpace(in.Material)
+	if in.Question == "" && in.Material == "" {
+		return nil, badRequest("Write the question first")
+	}
+	if len(in.Question) > 100000 || len(in.Material) > 300000 {
+		return nil, badRequest("That is too long for a panel")
+	}
+	depth := panelDepth(in.Depth)
+	p := &store.Panel{ID: uuid.NewString(), UserID: u.ID, Kind: in.Kind, Question: in.Question, Material: in.Material, Status: "running", Report: in.Report}
+	p.Spec.Depth = depth
+	var all []store.PanelStage
+	quorum := 2
+	if in.RecipeID != 0 {
+		r, err := s.store.GetPanelRecipe(ctx, u.ID, in.RecipeID)
+		if err != nil {
+			return nil, badRequest("That kind of panel is gone")
+		}
+		p.Kind, p.Spec.KindName, p.Spec.RecipeID, all = "recipe", r.Name, r.ID, r.Stages
+	} else {
+		k, ok := panelKindByID(in.Kind)
+		if !ok {
+			return nil, badRequest("Unknown kind of panel: " + in.Kind)
+		}
+		p.Kind, p.Spec.KindName, all, quorum = k.ID, k.Name, k.Stages, k.Quorum
+	}
+	p.Spec.Stages = stagesFor(all, depth)
+	if len(p.Spec.Stages) == 0 {
+		return nil, badRequest("This kind of panel has no steps at that depth")
+	}
+	p.Title = firstNonEmpty(strings.TrimSpace(in.Title), titleFrom(firstNonEmpty(in.Question, in.Material)))
+
+	// where it looks: the conversation it comes from, or the folder given
+	if in.FromThreadID != "" {
+		from, err := s.store.GetThread(ctx, u.ID, in.FromThreadID)
+		if err != nil {
+			return nil, badRequest("The conversation this was started from is gone")
+		}
+		p.FromThreadID = from.ID
+		if in.Cwd == "" && in.HostID == nil {
+			p.Spec.Cwd, p.Spec.HostID = from.Cwd, from.HostID
+			if from.WorktreeID != 0 && p.Kind == "build" {
+				// a worktree of a worktree: build from the repository it belongs to
+				if wt, err := s.store.GetWorktree(ctx, u.ID, from.WorktreeID); err == nil && wt.Repo != "" {
+					p.Spec.Cwd = wt.Repo
+				}
+			}
+		}
+	} else {
+		p.Report = false
+	}
+	if in.Cwd != "" || in.HostID != nil {
+		p.Spec.Cwd = strings.TrimSpace(in.Cwd)
+		if in.HostID != nil {
+			p.Spec.HostID = *in.HostID
+		}
+	}
+	if p.Spec.HostID == 0 && p.Spec.Cwd != "" {
+		clean, err := s.checkDirFor(ctx, u, p.Spec.Cwd)
+		if err != nil {
+			return nil, err
+		}
+		p.Spec.Cwd = clean
+	}
+	if p.Kind == "build" && p.Spec.Cwd == "" {
+		return nil, badRequest("Pick the project folder: every participant gets its own git worktree of it")
+	}
+
+	// who takes part
+	specs, chair := in.Seats, in.Chair
+	if in.LineupID != 0 && len(specs) == 0 {
+		list, _ := s.store.ListPanelLineups(ctx, u.ID)
+		for _, l := range list {
+			if l.ID == in.LineupID {
+				specs = l.Seats
+				if chair == nil {
+					chair = l.Chair
+				}
+			}
+		}
+	}
+	if len(specs) == 0 {
+		var defChair *store.PanelSeatSpec
+		specs, defChair = s.defaultSeats(ctx, u)
+		if chair == nil {
+			chair = defChair
+		}
+	}
+	if len(specs) > panelMaxSeats {
+		return nil, badRequest(fmt.Sprintf("At most %d participants", panelMaxSeats))
+	}
+	min := 2
+	if p.Kind == "review" {
+		min = 1
+	}
+	if len(specs) < min {
+		if min == 1 {
+			return nil, badRequest("Pick at least one participant")
+		}
+		return nil, badRequest("A panel needs at least two participants. Add another agent or a second model.")
+	}
+	if p.Kind == "debate" && len(specs)%2 == 1 && len(specs) > 2 {
+		return nil, badRequest("A debate needs the same number on both sides: pick 2 or 4 participants")
+	}
+	seats := []*store.PanelSeat{}
+	full := []string{}
+	for i, sp := range specs {
+		sp.Role = strings.TrimSpace(sp.Role)
+		if len(sp.Role) > 80 {
+			sp.Role = sp.Role[:80]
+		}
+		if p.Kind == "debate" {
+			sp.Role = []string{"For", "Against"}[i%2]
+		}
+		if p.Kind == "build" && sp.HostID != p.Spec.HostID {
+			return nil, badRequest("For Best of N every participant has to run on the machine the project folder is on")
+		}
+		if err := s.checkSeat(ctx, u, sp); err != nil {
+			return nil, badRequest(providerName(sp.Provider) + ": " + err.Error())
+		}
+		st := &store.PanelSeat{Idx: i, Label: string(rune('A' + i)), PanelSeatSpec: sp, Asked: -1, State: "waiting"}
+		if used, _, ok := s.rt.loginUsed(seatLimitsKey(sp)); ok && used >= 0.999 {
+			st.State, st.Error = "skipped", "Its plan limit is used up"
+			full = append(full, providerName(sp.Provider))
+		}
+		seats = append(seats, st)
+	}
+	if quorum > len(specs) {
+		quorum = len(specs)
+	}
+	if left := len(specs) - len(full); left < quorum || left == 0 {
+		return nil, badRequest("Too few participants can answer right now: the plan limit of " + strings.Join(full, ", ") + " is used up")
+	}
+	p.Spec.Quorum = quorum
+	if hasChairStage(p.Spec.Stages) {
+		if chair == nil {
+			c := specs[0]
+			chair = &c
+		}
+		c := *chair
+		c.Role = ""
+		if p.Kind == "build" && c.HostID != p.Spec.HostID {
+			return nil, badRequest("The judge has to run on the machine the project folder is on, to read the results")
+		}
+		if err := s.checkSeat(ctx, u, c); err != nil {
+			return nil, badRequest("The summary writer (" + providerName(c.Provider) + "): " + err.Error())
+		}
+		seats = append(seats, &store.PanelSeat{Idx: len(seats), Chair: true, PanelSeatSpec: c, Asked: -1, State: "waiting"})
+	}
+	p.Spec.LimitMin = in.LimitMin
+	if p.Spec.LimitMin <= 0 {
+		p.Spec.LimitMin = []int{8, 12, 20}[depth]
+		if p.Kind == "build" {
+			p.Spec.LimitMin = 60
+		}
+	}
+	if p.Spec.LimitMin > 240 {
+		p.Spec.LimitMin = 240
+	}
+	if p.Kind == "build" {
+		p.Spec.Mode = strings.TrimSpace(in.Mode)
+	}
+	if err := s.store.CreatePanel(ctx, p, seats); err != nil {
+		return nil, err
+	}
+	s.log.Info("panel started", "panel", p.ID, "kind", p.Kind, "seats", len(specs), "depth", panelDepthNames[depth], "from", p.FromThreadID)
+	s.panelChanged(p)
+	s.goPanel(p.ID)
+	return p, nil
+}
+
+// goPanel runs a panel in the background (once).
+func (s *Server) goPanel(id string) {
+	panelRunsMu.Lock()
+	defer panelRunsMu.Unlock()
+	key := panelKey{s, id}
+	if _, on := panelRuns[key]; on {
+		return
+	}
+	ctx, cancel := context.WithCancel(s.rt.ctx)
+	run := &panelRun{cancel: cancel, done: make(chan struct{})}
+	panelRuns[key] = run
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s.log.Error("panel crashed", "panel", id, "panic", r)
+			}
+			panelRunsMu.Lock()
+			delete(panelRuns, key)
+			panelRunsMu.Unlock()
+			cancel()
+			close(run.done)
+		}()
+		s.runPanel(ctx, id)
+	}()
+}
+
+// resumePanels takes up the panels that were at work when the server stopped.
+func (s *Server) resumePanels(ctx context.Context) {
+	list, err := s.store.RunningPanels(ctx)
+	if err != nil {
+		return
+	}
+	for _, p := range list {
+		s.log.Info("panel resumed", "panel", p.ID, "stage", p.Stage)
+		s.goPanel(p.ID)
+	}
+}
+
+// panelChanged tells the person's open pages that a panel moved on.
+func (s *Server) panelChanged(p *store.Panel) {
+	s.rt.toUser(p.UserID, sseEvent{Name: "panel", Data: map[string]any{"id": p.ID, "status": p.Status, "stage": p.Stage, "from_thread_id": p.FromThreadID}})
+}
+
+func (s *Server) runPanel(ctx context.Context, id string) {
+	for ctx.Err() == nil {
+		p, err := s.store.GetPanelAny(ctx, id)
+		if err != nil || p.Status != "running" {
+			return
+		}
+		if p.Stage >= len(p.Spec.Stages) {
+			s.finishPanel(ctx, p, "done", "")
+			return
+		}
+		if !s.panelStage(ctx, p) {
+			return
+		}
+	}
+}
+
+// failSeat takes a participant out of the panel.
+func (s *Server) failSeat(ctx context.Context, p *store.Panel, st *store.PanelSeat, why string) {
+	st.State, st.Error = "failed", why
+	_ = s.store.SavePanelSeat(ctx, st)
+	s.log.Info("panel participant out", "panel", p.ID, "seat", st.Label, "provider", st.Provider, "why", why)
+}
+
+// panelStage runs the step a panel is at; false = it does not go on (it
+// ended, was stopped, or the server is shutting down).
+func (s *Server) panelStage(ctx context.Context, p *store.Panel) bool {
+	owner, err := s.store.GetUser(ctx, p.UserID)
+	if err != nil || !owner.MayRun() {
+		s.finishPanel(ctx, p, "failed", "You may no longer run agents on this server")
+		return false
+	}
+	seats, err := s.store.PanelSeats(ctx, p.ID)
+	if err != nil {
+		return false
+	}
+	answers, err := s.store.PanelAnswers(ctx, p.ID)
+	if err != nil {
+		return false
+	}
+	sg := p.Spec.Stages[p.Stage]
+	has := map[int64]bool{}
+	for _, a := range answers {
+		if a.Stage == p.Stage {
+			has[a.SeatID] = true
+		}
+	}
+	parts := []*store.PanelSeat{}
+	for _, st := range seats {
+		if st.State == "failed" || st.State == "skipped" || st.Chair != (sg.Who == "chair") {
+			continue
+		}
+		parts = append(parts, st)
+	}
+	if len(parts) == 0 {
+		s.finishPanel(ctx, p, "failed", "Nobody is left to answer: "+panelFailures(seats))
+		return false
+	}
+
+	// send the step to whoever has not got it yet
+	var wg sync.WaitGroup
+	for _, st := range parts {
+		if has[st.ID] || st.Asked >= p.Stage {
+			continue
+		}
+		wg.Add(1)
+		go func(st *store.PanelSeat) {
+			defer wg.Done()
+			s.askSeat(ctx, owner, p, seats, answers, st)
+		}(st)
+	}
+	wg.Wait()
+	s.panelChanged(p)
+	if ctx.Err() != nil {
+		return false
+	}
+
+	// wait for them
+	began, _ := time.Parse(time.RFC3339Nano, p.StageAt)
+	if began.IsZero() {
+		began = time.Now()
+	}
+	limit := time.Duration(p.Spec.LimitMin) * time.Minute
+	tick := time.NewTicker(panelPollEvery)
+	defer tick.Stop()
+	for {
+		pending := 0
+		for _, st := range parts {
+			if has[st.ID] || st.State == "failed" {
+				continue
+			}
+			th, err := s.store.GetThreadAny(ctx, st.ThreadID)
+			if err != nil {
+				if ctx.Err() != nil {
+					return false
+				}
+				s.failSeat(ctx, p, st, "Its conversation was deleted")
+				s.panelChanged(p)
+				continue
+			}
+			info := s.agentState(ctx, th, false)
+			switch {
+			case info.Finished:
+				text, _, _ := s.store.LastReply(ctx, th.ID)
+				text = strings.TrimSpace(text)
+				switch {
+				case info.State == "done" && text != "":
+					if err := s.store.AddPanelAnswer(ctx, p.ID, st.ID, p.Stage, text); err != nil {
+						s.failSeat(ctx, p, st, "Its answer could not be kept: "+err.Error())
+					} else {
+						has[st.ID] = true
+						st.State = "done"
+						_ = s.store.SavePanelSeat(ctx, st)
+					}
+				case info.State == "failed":
+					s.failSeat(ctx, p, st, firstNonEmpty(oneLine(info.Error, 300), "It stopped with an error"))
+				case info.State == "stopped":
+					s.failSeat(ctx, p, st, "It was stopped before it answered")
+				default:
+					s.failSeat(ctx, p, st, "It finished without writing an answer")
+				}
+				s.panelChanged(p)
+			default:
+				pending++
+				over := time.Since(began)
+				// one waiting for the person (an approval) gets three times as long
+				if over > limit && (info.State != "waiting_for_person" || over > 3*limit) {
+					if !s.stopReattached(th.ID) {
+						_ = s.rt.interrupt(th.ID)
+					}
+					why := fmt.Sprintf("It did not answer within %d minutes", p.Spec.LimitMin)
+					if info.State == "waiting_for_person" {
+						why = "It waited for your answer for too long"
+					}
+					s.failSeat(ctx, p, st, why)
+					s.panelChanged(p)
+					pending--
+				}
+			}
+		}
+		if pending == 0 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-tick.C:
+		}
+	}
+	if ctx.Err() != nil {
+		return false
+	}
+
+	answered := 0
+	for _, st := range parts {
+		if has[st.ID] {
+			answered++
+		}
+	}
+	if sg.Who == "chair" {
+		if answered == 0 {
+			old := parts[0]
+			if !p.Spec.ChairSwap {
+				// once more, with another model of the panel writing it
+				if sub := panelSubstitute(seats, old); sub != nil {
+					p.Spec.ChairSwap = true
+					p.StageAt = store.Now()
+					nc := &store.PanelSeat{PanelID: p.ID, Idx: len(seats), Chair: true, PanelSeatSpec: *sub, Asked: -1, State: "waiting"}
+					nc.Role = ""
+					if s.store.AddPanelSeat(ctx, nc) == nil && s.store.SavePanel(ctx, p) == nil {
+						s.log.Info("panel summary writer replaced", "panel", p.ID, "was", old.Provider, "now", nc.Provider)
+						s.panelChanged(p)
+						return true
+					}
+				}
+			}
+			s.finishPanel(ctx, p, "failed", "The summary could not be written ("+firstNonEmpty(old.Error, "no answer")+"). The participants' answers are below.")
+			return false
+		}
+	} else {
+		need := 1
+		first := true
+		for i := 0; i < p.Stage; i++ {
+			if p.Spec.Stages[i].Who != "chair" {
+				first = false
+			}
+		}
+		if first {
+			need = p.Spec.Quorum
+		}
+		if answered < need {
+			total := 0
+			for _, st := range seats {
+				if !st.Chair {
+					total++
+				}
+			}
+			s.finishPanel(ctx, p, "failed", fmt.Sprintf("Only %d of %d answered, too few to go on. %s", answered, total, panelFailures(seats)))
+			return false
+		}
+	}
+	// the last summary is the panel's result
+	if sg.Who == "chair" {
+		last := true
+		for i := p.Stage + 1; i < len(p.Spec.Stages); i++ {
+			if p.Spec.Stages[i].Who == "chair" {
+				last = false
+			}
+		}
+		if last {
+			if fresh, err := s.store.PanelAnswers(ctx, p.ID); err == nil {
+				for _, a := range fresh {
+					if a.Stage == p.Stage && a.SeatID == parts[0].ID {
+						p.Result = revealNames(a.Text, seats)
+					}
+				}
+			}
+		}
+	}
+	p.Stage++
+	p.StageAt = store.Now()
+	if err := s.store.SavePanel(ctx, p); err != nil {
+		return false
+	}
+	s.panelChanged(p)
+	return true
+}
+
+// panelSubstitute picks who writes the summary when the one chosen failed:
+// a participant that answered, preferably another agent than the one that failed.
+func panelSubstitute(seats []*store.PanelSeat, failed *store.PanelSeat) *store.PanelSeatSpec {
+	var pick *store.PanelSeat
+	for _, st := range seats {
+		if st.Chair || st.State == "failed" || st.State == "skipped" {
+			continue
+		}
+		if st.Provider != failed.Provider || st.AccountID != failed.AccountID || st.HostID != failed.HostID {
+			sp := st.PanelSeatSpec
+			return &sp
+		}
+		if pick == nil {
+			pick = st
+		}
+	}
+	if pick == nil || (pick.Provider == failed.Provider && pick.Model == failed.Model && pick.AccountID == failed.AccountID && pick.HostID == failed.HostID && pick.HostHome == failed.HostHome) {
+		return nil // the very same model on the very same login would fail the same way
+	}
+	sp := pick.PanelSeatSpec
+	return &sp
+}
+
+// panelFailures says who dropped out and why, in one line.
+func panelFailures(seats []*store.PanelSeat) string {
+	out := []string{}
+	for _, st := range seats {
+		if (st.State == "failed" || st.State == "skipped") && st.Error != "" {
+			out = append(out, seatWho(st)+": "+strings.TrimSuffix(st.Error, "."))
+		}
+	}
+	if len(out) == 0 {
+		return ""
+	}
+	return strings.Join(out, "; ") + "."
+}
+
+// askSeat sends a participant the step: its first one starts its thread.
+func (s *Server) askSeat(ctx context.Context, owner *store.User, p *store.Panel, seats []*store.PanelSeat, answers []*store.PanelAnswer, st *store.PanelSeat) {
+	extra := ""
+	if p.Kind == "build" && st.Chair {
+		extra = s.panelWorktrees(ctx, p, seats)
+	}
+	msg := panelMessage(p, seats, answers, st, p.Stage, extra)
+	bg := context.WithValue(context.WithoutCancel(ctx), startInBackground{}, true)
+	if st.ThreadID == "" {
+		building := p.Kind == "build" && !st.Chair
+		nt := newThread{Provider: st.Provider, HostID: st.HostID, HostHome: st.HostHome, Model: st.Model, Effort: st.Effort, Text: msg, Title: panelSeatTitle(p, st)}
+		if st.HostID == 0 {
+			acct := st.AccountID
+			nt.AccountID = &acct
+		}
+		if st.HostID == p.Spec.HostID {
+			nt.Cwd = p.Spec.Cwd
+		}
+		if building {
+			nt.Mode = p.Spec.Mode
+			nt.Worktree = &newWorktree{Mode: "new", Name: "panel-" + p.ID[:6] + "-" + strings.ToLower(st.Label)}
+		} else {
+			nt.Mode = panelReadOnlyMode(st.Provider)
+		}
+		th, err := s.createThread(bg, owner, nt, "panel", p.ID)
+		if th != nil {
+			st.ThreadID, st.Model = th.ID, th.Model
+		}
+		if err != nil {
+			if th != nil {
+				s.rt.saveItem(th.ID, agent.Item{Key: "err-" + uuid.NewString()[:8], Kind: "notice", Level: "error", Text: err.Error()})
+				s.rt.setStatus(th.ID, "error", err.Error())
+			}
+			st.Asked = p.Stage
+			s.failSeat(ctx, p, st, "It did not start: "+err.Error())
+			return
+		}
+	} else {
+		th, err := s.store.GetThreadAny(ctx, st.ThreadID)
+		if err == nil {
+			_, err = s.postMessage(bg, owner, th, msg, nil)
+		}
+		if err != nil {
+			st.Asked = p.Stage
+			s.failSeat(ctx, p, st, "It could not be asked: "+err.Error())
+			return
+		}
+	}
+	st.Asked, st.State, st.Error = p.Stage, "working", ""
+	_ = s.store.SavePanelSeat(ctx, st)
+}
+
+func panelSeatTitle(p *store.Panel, st *store.PanelSeat) string {
+	who := "Participant " + st.Label
+	if st.Chair {
+		who = "summary"
+	} else if st.Role != "" {
+		who = st.Role + " (" + st.Label + ")"
+	}
+	return oneLine(p.Spec.KindName+" · "+who+": "+p.Title, 140)
+}
+
+// panelWorktrees tells the judge of a Best of N where each result is.
+func (s *Server) panelWorktrees(ctx context.Context, p *store.Panel, seats []*store.PanelSeat) string {
+	var b strings.Builder
+	b.WriteString("Where each participant's result is:\n")
+	for _, st := range seats {
+		if st.Chair || st.ThreadID == "" {
+			continue
+		}
+		th, err := s.store.GetThreadAny(ctx, st.ThreadID)
+		if err != nil || th.WorktreeID == 0 {
+			continue
+		}
+		wt, err := s.store.GetWorktree(ctx, p.UserID, th.WorktreeID)
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(&b, "- Participant %s: folder %s, branch %s, started from %s\n", st.Label, wt.Path, wt.Branch, firstNonEmpty(wt.BaseSHA, wt.Base, "the repository's main branch"))
+	}
+	return b.String()
+}
+
+// finishPanel ends a panel and tells whoever is waiting for it.
+func (s *Server) finishPanel(ctx context.Context, p *store.Panel, status, why string) {
+	ctx = context.WithoutCancel(ctx)
+	p.Status, p.Error, p.FinishedAt = status, why, store.Now()
+	if err := s.store.SavePanel(ctx, p); err != nil {
+		s.log.Error("panel not saved", "panel", p.ID, "err", err)
+		return
+	}
+	s.log.Info("panel ended", "panel", p.ID, "kind", p.Kind, "status", status, "why", why)
+	s.panelChanged(p)
+	if status == "stopped" {
+		return
+	}
+	title, body := p.Spec.KindName+" finished", oneLine(firstNonEmpty(p.Result, p.Title), 240)
+	if status == "failed" {
+		title, body = p.Spec.KindName+" did not finish", oneLine(p.Title+"\n"+why, 240)
+	}
+	s.notifyUser(ctx, p.UserID, map[bool]string{true: "finished", false: "failed"}[status == "done"], title, body, s.publicURL("/panels/"+p.ID))
+	s.panelReport(ctx, p)
+}
+
+// panelReport sends a panel's result back to the conversation it was started
+// from, unless something there is waiting for it already.
+func (s *Server) panelReport(ctx context.Context, p *store.Panel) {
+	if !p.Report || p.FromThreadID == "" || s.panelAwaited(p.ID) {
+		return
+	}
+	parent, err := s.store.GetThreadAny(ctx, p.FromThreadID)
+	if err != nil || parent.Archived || parent.UserID != p.UserID || s.rt.isExternal(parent.ID) {
+		return
+	}
+	owner, err := s.store.GetUser(ctx, p.UserID)
+	if err != nil || !owner.MayRun() {
+		return
+	}
+	seats, _ := s.store.PanelSeats(ctx, p.ID)
+	answers, _ := s.store.PanelAnswers(ctx, p.ID)
+	if _, err := s.postMessage(ctx, owner, parent, s.panelReportText(p, seats, answers), nil); err != nil {
+		s.log.Warn("panel report not delivered", "panel", p.ID, "parent", parent.ID, "err", err)
+	}
+}
+
+// panelOutcome is a panel's result as text: the summary, or the answers
+// themselves when there is none.
+func panelOutcome(p *store.Panel, seats []*store.PanelSeat, answers []*store.PanelAnswer, max int) string {
+	if strings.TrimSpace(p.Result) != "" {
+		return tailHead(p.Result, max)
+	}
+	latest := map[int64]*store.PanelAnswer{}
+	for _, a := range answers {
+		if cur := latest[a.SeatID]; cur == nil || a.Stage > cur.Stage {
+			latest[a.SeatID] = a
+		}
+	}
+	var b strings.Builder
+	n := 0
+	for _, st := range seats {
+		if latest[st.ID] != nil && !st.Chair {
+			n++
+		}
+	}
+	for _, st := range seats {
+		a := latest[st.ID]
+		if a == nil || st.Chair {
+			continue
+		}
+		fmt.Fprintf(&b, "## %s\n\n%s\n\n", seatWho(st), tailHead(strings.TrimSpace(a.Text), max/n))
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func (s *Server) panelReportText(p *store.Panel, seats []*store.PanelSeat, answers []*store.PanelAnswer) string {
+	attr := func(v string) string {
+		return strings.NewReplacer(`"`, "'", "<", "‹", ">", "›", "\n", " ").Replace(v)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "<pocket-panel-report kind=\"%s\" title=\"%s\" panel-id=\"%s\" state=\"%s\">\n", attr(p.Spec.KindName), attr(p.Title), p.ID, p.Status)
+	who := []string{}
+	for _, st := range seats {
+		if !st.Chair {
+			who = append(who, seatWho(st))
+		}
+	}
+	switch p.Status {
+	case "done":
+		fmt.Fprintf(&b, "The panel (%s) started from this conversation has finished. Who took part: %s.\n\n", p.Spec.KindName, strings.Join(who, "; "))
+		if strings.TrimSpace(p.Result) == "" {
+			b.WriteString("There is no summary; their answers:\n\n")
+		}
+		b.WriteString(panelOutcome(p, seats, answers, 24000) + "\n")
+	default:
+		fmt.Fprintf(&b, "The panel (%s) started from this conversation did not finish: %s\n", p.Spec.KindName, firstNonEmpty(p.Error, "it was stopped"))
+		if out := panelOutcome(p, seats, answers, 12000); out != "" {
+			b.WriteString("\nWhat was answered before that:\n\n" + out + "\n")
+		}
+	}
+	if drop := panelFailures(seats); drop != "" && p.Status == "done" {
+		b.WriteString("\nDid not answer: " + drop + "\n")
+	}
+	fmt.Fprintf(&b, "\n(The person sees every answer at %s. Tell them the outcome briefly and carry on with what they asked for; do not repeat the whole text.)\n</pocket-panel-report>", firstNonEmpty(s.publicURL("/panels/"+p.ID), "/panels/"+p.ID))
+	return b.String()
+}
+
+// stopPanel ends a running panel and its participants' turns.
+func (s *Server) stopPanel(ctx context.Context, p *store.Panel) error {
+	panelRunsMu.Lock()
+	run := panelRuns[panelKey{s, p.ID}]
+	panelRunsMu.Unlock()
+	if run != nil {
+		run.cancel()
+		select {
+		case <-run.done:
+		case <-time.After(10 * time.Second):
+			return errors.New("the panel did not stop in time; try again")
+		}
+	}
+	fresh, err := s.store.GetPanelAny(ctx, p.ID)
+	if err != nil {
+		return err
+	}
+	seats, _ := s.store.PanelSeats(ctx, p.ID)
+	for _, st := range seats {
+		if st.ThreadID == "" || st.State != "working" {
+			continue
+		}
+		if !s.stopReattached(st.ThreadID) {
+			_ = s.rt.interrupt(st.ThreadID)
+		}
+		st.State, st.Error = "failed", "Stopped"
+		_ = s.store.SavePanelSeat(ctx, st)
+	}
+	if fresh.Status == "running" {
+		s.finishPanel(ctx, fresh, "stopped", "")
+	}
+	return nil
+}
+
+// deletePanel removes a panel with its participants' conversations.
+func (s *Server) deletePanel(ctx context.Context, p *store.Panel) error {
+	if p.Status == "running" {
+		if err := s.stopPanel(ctx, p); err != nil {
+			return err
+		}
+	}
+	seats, _ := s.store.PanelSeats(ctx, p.ID)
+	for _, st := range seats {
+		if st.ThreadID == "" {
+			continue
+		}
+		if th, err := s.store.GetThreadAny(ctx, st.ThreadID); err == nil && th.UserID == p.UserID && th.Source == "panel" && th.WorktreeID == 0 {
+			_ = s.deleteThread(ctx, th)
+		} else if err == nil && th.UserID == p.UserID && th.Source == "panel" {
+			// one with a worktree stays, its work is there: an ordinary conversation from now on
+			_, _ = s.store.DB.ExecContext(ctx, `UPDATE threads SET source = 'web', source_ref = '' WHERE id = ?`, th.ID)
+			s.rt.publishThread(th)
+		}
+	}
+	if err := s.store.DeletePanel(ctx, p.UserID, p.ID); err != nil {
+		return err
+	}
+	s.rt.toUser(p.UserID, sseEvent{Name: "panel", Data: map[string]any{"id": p.ID, "status": "deleted", "from_thread_id": p.FromThreadID}})
+	return nil
+}

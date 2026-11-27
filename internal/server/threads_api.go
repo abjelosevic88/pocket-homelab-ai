@@ -58,6 +58,7 @@ func (s *Server) threadRoutes(r chi.Router) {
 	r.Get("/threads/{id}/heartbeats", s.handleThreadHeartbeats) // heartbeats.go
 	r.Delete("/threads/{id}/heartbeats/{hid}", s.handleDeleteHeartbeat)
 	s.shareRoutes(r)
+	s.panelRoutes(r) // panels_api.go
 	r.Get("/running", s.handleRunning)
 	r.Get("/search", s.handleSearch)
 	r.Get("/usage", s.handleUsage)
