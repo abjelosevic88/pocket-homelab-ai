@@ -245,3 +245,10 @@ func TestGeminiPrepare(t *testing.T) {
 		t.Fatalf("auth method %q", id)
 	}
 }
+
+func TestAntigravityAuthMethod(t *testing.T) {
+	ag, _ := ACPAgentByID("antigravity")
+	if id := ag.authMethod(nil, []acpAuthMethod{{ID: "oauth-personal"}, {ID: "gemini-api-key"}}); id != "oauth-personal" {
+		t.Fatalf("auth method %q", id)
+	}
+}

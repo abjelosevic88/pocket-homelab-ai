@@ -287,6 +287,11 @@ func (a ACPAgent) authMethod(env []string, methods []acpAuthMethod) string {
 		}
 		return ""
 	}
+	if a.LoginArgs != nil && has("oauth-personal") {
+		// Antigravity: its Google sign-in is in its own store; asking for it
+		// answers at once (an error naming what to do when there is none)
+		return "oauth-personal"
+	}
 	if a.ID == "qwen" && envHas(env, "OPENAI_API_KEY") && has("openai") {
 		return "openai"
 	}
