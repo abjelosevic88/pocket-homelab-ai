@@ -260,6 +260,18 @@ type Session interface {
 	Done() <-chan struct{}
 }
 
+// Parkable is a session whose connection can be let go while its CLI idles
+// under a holder on another machine (link.Park): Park is false when there is
+// nothing to let go or something to deliver; Wake asks it back (any message
+// to the CLI does too) and is false when it was not parked; Parked says
+// whether it is and how much of the CLI's stdout it has read, to compare
+// with the holder's offset (-1: not known for a moment).
+type Parkable interface {
+	Park() bool
+	Wake() bool
+	Parked() (off int64, ok bool)
+}
+
 // RemoteInfo is where a session with Claude Remote Control on can be opened.
 type RemoteInfo struct {
 	SessionURL      string // https://claude.ai/code/session_…

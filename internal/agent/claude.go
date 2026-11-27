@@ -1432,3 +1432,7 @@ func loginEndedHint(msg string) string {
 	}
 	return "This Claude login has ended. Sign in again in Settings → Machines: open the login's menu and choose Sign in again…. (" + msg + ")"
 }
+
+func (s *claudeSession) Park() bool            { return s.l.Park() }
+func (s *claudeSession) Wake() bool            { return s.l.Wake() }
+func (s *claudeSession) Parked() (int64, bool) { return s.l.Parked() }

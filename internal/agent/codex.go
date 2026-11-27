@@ -1096,3 +1096,7 @@ func codexPocketConfig(path string) (map[string]any, error) {
 		"default_tools_approval_mode": "approve",
 	}}, nil
 }
+
+func (s *codexSession) Park() bool            { return s.c.l.Park() }
+func (s *codexSession) Wake() bool            { return s.c.l.Wake() }
+func (s *codexSession) Parked() (int64, bool) { return s.c.l.Parked() }

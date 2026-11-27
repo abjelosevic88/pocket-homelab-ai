@@ -194,11 +194,13 @@ func (r *Remote) Run(ctx context.Context, timeout time.Duration, script string, 
 	return r.RunInput(ctx, timeout, nil, script, args...)
 }
 
-// RunInput is Run with stdin (an upload): never tried twice, the input is
-// read once.
-func (r *Remote) RunInput(ctx context.Context, timeout time.Duration, stdin io.Reader, script string, args ...string) (string, string, error) {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+// Stream is the command of a script that runs on (Run's profile, PATH and
+// arguments; ended with ctx): the caller reads what it prints as it comes.
+func (r *Remote) Stream(ctx context.Context, script string, args ...string) (*exec.Cmd, error) {
+	return r.ssh(ctx, r.scriptArgv(script, args))
+}
+
+func (r *Remote) scriptArgv(script string, args []string) []string {
 	full := `[ -r /etc/profile ] && . /etc/profile >/dev/null 2>&1 </dev/null; [ -r "$HOME/.profile" ] && . "$HOME/.profile" >/dev/null 2>&1 </dev/null; ` +
 		remotePath + "; set --"
 	for _, a := range args {
@@ -206,7 +208,15 @@ func (r *Remote) RunInput(ctx context.Context, timeout time.Duration, stdin io.R
 	}
 	full += "\n" + script
 	argv := append(r.mux(), r.sshArgs()...)
-	argv = append(argv, remoteCommand(full))
+	return append(argv, remoteCommand(full))
+}
+
+// RunInput is Run with stdin (an upload): never tried twice, the input is
+// read once.
+func (r *Remote) RunInput(ctx context.Context, timeout time.Duration, stdin io.Reader, script string, args ...string) (string, string, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	argv := r.scriptArgv(script, args)
 	for try := 0; ; try++ {
 		cmd, err := r.ssh(ctx, argv)
 		if err != nil {

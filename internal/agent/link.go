@@ -137,12 +137,21 @@ type link struct {
 	quit     chan struct{} // closed by Detach or Close: stop reconnecting
 	quitOnce sync.Once
 	detached bool
+
+	// Parking (Park): a held CLI with nothing going on needs no connection.
+	// let: the current connection was ended on purpose; parked: nothing has
+	// asked for it back yet; parkOff: stdout read when it went (valid while
+	// resting); waited: the connection's process was collected, so its pid
+	// may belong to something else by now and is never signalled again.
+	let, parked, resting, waited bool
+	parkOff                      int64
+	wake                         chan struct{}
 }
 
 const inLogMax = 32 << 20
 
 func openLink(ctx context.Context, o Options, m marks, bin string, args []string, errb *tail, sink Sink) (*link, error) {
-	l := &link{ctx: ctx, o: o, h: o.Hold, m: m, bin: bin, args: args, errb: errb, log: o.Log, quit: make(chan struct{})}
+	l := &link{ctx: ctx, o: o, h: o.Hold, m: m, bin: bin, args: args, errb: errb, log: o.Log, quit: make(chan struct{}), wake: make(chan struct{}, 1)}
 	if ls, ok := sink.(LinkSink); ok {
 		l.onLink = ls.Link
 	}
@@ -331,6 +340,9 @@ func (l *link) Lines(fn func(line []byte)) error {
 			l.finish()
 			return err
 		}
+		l.wmu.Lock()
+		l.waited = true
+		l.wmu.Unlock()
 		if l.exit != nil {
 			l.finish()
 			if *l.exit == 0 {
@@ -343,14 +355,24 @@ func (l *link) Lines(fn func(line []byte)) error {
 			return errDetached
 		}
 		l.markDown()
+		let := l.rest()
+		if l.isDetached() {
+			// Pocket AI is stopping (or let go of it) while it was parked
+			l.finish()
+			return errDetached
+		}
 		if l.isStopping() {
 			// the stop may not have arrived: say it again on a fresh connection
 			l.stopHeld()
 			l.finish()
 			return nil
 		}
-		l.log.Warn("agent connection lost, reattaching", "slot", l.h.Slot, "err", err, "stderr", oneLine(l.errb.String(), 300))
-		nr, ok := l.reattach()
+		if let {
+			l.log.Info("agent connection taken back", "slot", l.h.Slot)
+		} else {
+			l.log.Warn("agent connection lost, reattaching", "slot", l.h.Slot, "err", err, "stderr", oneLine(l.errb.String(), 300))
+		}
+		nr, ok := l.reattach(let)
 		if !ok {
 			l.finish()
 			if l.isDetached() {
@@ -383,8 +405,13 @@ type heldExit struct{ code int }
 
 func (e *heldExit) Error() string { return "exit status " + strconv.Itoa(e.code) }
 
-func (l *link) reattach() (*bufio.Reader, bool) {
+// reattach connects to the holder again where the output stopped; now: at
+// once (a parked connection asked back), not after the pause a lost one gets.
+func (l *link) reattach(now bool) (*bufio.Reader, bool) {
 	delay := time.Second
+	if now {
+		delay = 0
+	}
 	told := false // the sink knows it is down (not for a blip)
 	defer func() {
 		if told && l.onLink != nil {
@@ -438,7 +465,7 @@ func (l *link) reattach() (*bufio.Reader, bool) {
 			}
 			if err == nil {
 				l.cmd, l.stdin = cmd, stdin
-				l.down = false
+				l.down, l.waited, l.let = false, false, false
 				l.wmu.Unlock()
 				l.log.Info("agent reattached", "slot", l.h.Slot, "offset", l.off)
 				return r, true
@@ -447,8 +474,95 @@ func (l *link) reattach() (*bufio.Reader, bool) {
 			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			_ = cmd.Wait()
 		}
-		delay = min(delay*2, retryMax)
+		delay = min(max(delay*2, time.Second), retryMax)
 	}
+}
+
+// Park ends a held CLI's connection while nothing happens on it: the CLI
+// stays under its holder, and the link takes it back where the output
+// stopped as soon as something is written to it or Wake is called. False
+// when it is not held, not connected, or has something to deliver.
+//
+// A connection per idle agent is what filled a NAT's ports to one machine
+// (57 open for days, new ones timing out); whoever parks must watch the
+// holder for output (Parked) and wake the link, since the CLI can start
+// working on its own (Remote Control, a background task ending).
+func (l *link) Park() bool {
+	if l.h == nil || l.h.leaving() {
+		return false
+	}
+	l.wmu.Lock()
+	defer l.wmu.Unlock()
+	if l.ended || l.down || l.waited || l.detached || l.stopping || l.parked || len(l.pending) > 0 || l.cmd == nil || l.cmd.Process == nil {
+		return false
+	}
+	l.parked, l.let = true, true
+	_ = syscall.Kill(-l.cmd.Process.Pid, syscall.SIGTERM) // not collected yet (waited): still ours
+	return true
+}
+
+// Wake asks a parked link's connection back; false when it was not parked.
+func (l *link) Wake() bool {
+	l.wmu.Lock()
+	defer l.wmu.Unlock()
+	return l.wakeLocked()
+}
+
+func (l *link) wakeLocked() bool {
+	if !l.parked {
+		return false
+	}
+	l.parked = false
+	select {
+	case l.wake <- struct{}{}:
+	default:
+	}
+	return true
+}
+
+// Parked: the link is parked, and how much of the CLI's stdout it had read
+// when its connection went (the holder's offset is past it once the CLI has
+// said something); -1 for the moment the connection takes to end.
+func (l *link) Parked() (off int64, ok bool) {
+	l.wmu.Lock()
+	defer l.wmu.Unlock()
+	if !l.parked {
+		return 0, false
+	}
+	if !l.resting {
+		return -1, true
+	}
+	return l.parkOff, true
+}
+
+// rest waits, the connection gone, while the link is parked: until it is
+// woken, closed or let go of. It reports whether the connection was ended on
+// purpose (Park) rather than lost.
+func (l *link) rest() bool {
+	for {
+		l.wmu.Lock()
+		let := l.let
+		if !l.parked {
+			l.resting = false
+			l.wmu.Unlock()
+			return let
+		}
+		l.parkOff, l.resting = l.off, true
+		l.wmu.Unlock()
+		select {
+		case <-l.wake: // or one left from an earlier time: looked at again
+		case <-l.quit:
+			l.unpark()
+		case <-l.h.Leave:
+			l.unpark()
+		}
+	}
+}
+
+func (l *link) unpark() {
+	l.wmu.Lock()
+	l.parked = false
+	l.wmu.Unlock()
 }
 
 func (l *link) markDown() {
@@ -476,6 +590,7 @@ func (l *link) Write(p []byte) error {
 	if l.ended {
 		return ErrClosed
 	}
+	l.wakeLocked() // parked: it comes back for this
 	if l.down {
 		l.pending = append(l.pending, p...)
 		return nil
@@ -521,11 +636,11 @@ func (l *link) Close(done <-chan struct{}) {
 		}
 	}
 	l.wmu.Lock()
-	stdin, cmd := l.stdin, l.cmd
+	stdin, cmd, waited := l.stdin, l.cmd, l.waited
 	l.wmu.Unlock()
 	_ = stdin.Close()
-	if cmd.Process == nil {
-		return
+	if cmd.Process == nil || waited {
+		return // nothing of ours runs any more (parked, or between connections)
 	}
 	pid := cmd.Process.Pid
 	grace := 3 * time.Second
@@ -563,12 +678,11 @@ func (l *link) Detach() {
 	}
 	l.wmu.Lock()
 	l.detached = true
-	cmd := l.cmd
+	if l.cmd != nil && l.cmd.Process != nil && !l.waited {
+		_ = syscall.Kill(-l.cmd.Process.Pid, syscall.SIGTERM)
+	}
 	l.wmu.Unlock()
 	l.quitOnce.Do(func() { close(l.quit) })
-	if cmd != nil && cmd.Process != nil {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-	}
 }
 
 func (l *link) isDetached() bool {

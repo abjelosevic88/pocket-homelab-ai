@@ -67,6 +67,7 @@ type Config struct {
 	CodexHome   string        // ~/.codex (rollout files, for "Running now")
 	PaseoHome   string        // ~/.paseo (to name sessions Paseo drives); "" = off
 	IdleTimeout time.Duration // stop a CLI process after this long without a turn
+	ParkAfter   time.Duration // let go of an idle held agent's ssh connection after this long (0: never)
 	MaxLive     int           // most CLI processes alive at once (oldest idle ones are stopped)
 	UploadMax   int64         // bytes per uploaded image
 	// Collabora Online (or CODE) base URL; its convert-to API turns old
@@ -185,6 +186,7 @@ func Load() (*Config, error) {
 		ClaudeBin:   env("CLAUDE_BIN", "claude"),
 		CodexBin:    env("CODEX_BIN", "codex"),
 		IdleTimeout: envDuration("IDLE_TIMEOUT", 60*time.Minute),
+		ParkAfter:   envDuration("PARK_AFTER", 10*time.Minute),
 		MaxLive:     envInt("MAX_LIVE", 12),
 		UploadMax:   int64(envInt("UPLOAD_MAX_MB", 20)) << 20,
 

@@ -58,6 +58,9 @@ type engine struct {
 	rcMu sync.Mutex
 	rc   map[string]*rcState // thread id → Remote Control turned on (remote_control.go)
 
+	parkMu    sync.Mutex
+	parkWatch map[int64]bool // host id → its parked agents are being watched (park.go)
+
 	sharesMu sync.RWMutex
 	shares   map[string]store.SharedThread // thread id → owner and shares (shares.go); nil = not loaded yet
 }
@@ -99,6 +102,9 @@ type run struct {
 	linkDown   bool
 	linkDownAt time.Time
 	linkNotice string // the thread's "Lost the connection" notice
+	// parkedAt / wokeAt: when its idle connection was last let go and asked
+	// back (park.go)
+	parkedAt, wokeAt time.Time
 }
 
 // taskHold caps how long background tasks keep an otherwise quiet agent
@@ -120,7 +126,7 @@ type queued struct {
 func newRuntime(s *Server) *engine {
 	return &engine{s: s, runs: map[string]*run{}, watchers: map[string]map[chan sseEvent]int64{},
 		userSubs: map[int64]map[chan sseEvent]struct{}{}, limits: map[string]*provLimits{}, starting: map[string]chan struct{}{},
-		followers: map[string]*follower{}, turnBy: map[string]int64{}, external: map[string]bool{}, extSubs: map[string][]agent.Subagent{}, extSubsAt: map[string]time.Time{}, rc: map[string]*rcState{}}
+		followers: map[string]*follower{}, turnBy: map[string]int64{}, external: map[string]bool{}, extSubs: map[string][]agent.Subagent{}, extSubsAt: map[string]time.Time{}, rc: map[string]*rcState{}, parkWatch: map[int64]bool{}}
 }
 
 func (rt *engine) start(ctx context.Context) {
@@ -228,7 +234,11 @@ func (rt *engine) subscribeThread(threadID string, uid int64) chan sseEvent {
 		rt.watchers[threadID] = map[chan sseEvent]int64{}
 	}
 	rt.watchers[threadID][ch] = uid
+	r := rt.runs[threadID]
 	rt.mu.Unlock()
+	if r != nil {
+		rt.wake(r, "the thread was opened") // a parked agent: ready before the first message
+	}
 	return ch
 }
 
@@ -742,6 +752,7 @@ func (rt *engine) reaper(ctx context.Context) {
 			rt.s.log.Info("agent idle, stopping", "thread", id)
 			rt.stop(id)
 		}
+		rt.parkIdle()
 	}
 }
 
