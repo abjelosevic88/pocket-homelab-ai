@@ -162,7 +162,7 @@ export function PanelPlan({ p, onChange }: { p: Panel; onChange: (p: Panel) => v
 }
 
 /** The person's chat with the panel's editor about the current version. */
-export function EditorChat({ p, onChange, onOpenThread }: { p: Panel; onChange: (p: Panel) => void; onOpenThread?: (tid: string) => void }) {
+export function EditorChat({ p, onChange, onOpenThread, onHide }: { p: Panel; onChange: (p: Panel) => void; onOpenThread?: (tid: string) => void; onHide?: () => void }) {
   const { toast } = useToast()
   const navigate = useNavigate()
   const [text, setText] = useState('')
@@ -204,6 +204,7 @@ export function EditorChat({ p, onChange, onOpenThread }: { p: Panel; onChange: 
         {editor && <span className="muted xsmall pc-who"><Icon name={editor.provider} size={12} className={`prov-glyph ${editor.provider}`} />{providerName(editor.provider)}{editor.model ? ` · ${editor.model}` : ''}</span>}
         <span className="grow" />
         {editor?.thread_id && <button type="button" className="btn ghost icon-only xs" title="Open the editor’s conversation" aria-label="Open the editor’s conversation" onClick={openEditor}><Icon name="external" size={14} /></button>}
+        {onHide && <button type="button" className="btn ghost icon-only xs" title="Hide the chat (it comes back as the Editor tab, or with the button at the right of the tab row)" aria-label="Hide the chat" onClick={onHide}><Icon name="x" size={14} /></button>}
       </header>
       {chat.length === 0 && <div className="pc-empty muted small">It knows the text and every verdict. Say what to change, or ask about the plan; you decide whether to take what it proposes.</div>}
       {chat.length > 0 && <div className="pc-list" ref={list}>

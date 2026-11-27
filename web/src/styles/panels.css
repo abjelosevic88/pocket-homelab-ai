@@ -97,12 +97,25 @@
 .pn-step.now { color: var(--accent-ink); }
 .pn-step .pn-prog-n { width: auto; min-width: 14px; height: 16px; padding: 0 3px; border-radius: 5px; background: var(--surface-2); }
 .pn-panes { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); }
-.pn-panes.with-side { grid-template-columns: minmax(0, 1fr) clamp(340px, 30vw, 440px); }
+.pn-panes.with-side { grid-template-columns: minmax(0, 1fr) 10px 400px; }
+/* the handle between the plan and the chat: drag (or arrow keys) to set the chat's width */
+.pn-resize { position: relative; cursor: col-resize; touch-action: none; z-index: 2; }
+.pn-resize::before { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px; background: var(--hairline); }
+.pn-resize::after { content: ''; position: absolute; top: 50%; left: 3px; width: 4px; height: 40px; border-radius: 2px; background: var(--border-strong, var(--border)); transform: translateY(-50%); opacity: 0; transition: height .15s, background .15s, opacity .15s; }
+.pn-resize:hover::after, .pn-resize:focus-visible::after, body.pn-dragging .pn-resize::after { opacity: 1; height: 72px; background: var(--accent); }
+.pn-resize:focus-visible { outline: none; }
+body.pn-dragging { cursor: col-resize; user-select: none; }
+.pn-dock .pc-head { flex-wrap: nowrap; min-width: 0; }
+.pn-dock .pc-head > b { flex: none; }
+.pn-dock .pc-who { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* a narrow plan pane (a wide chat beside it): the plan's buttons keep one row, secondary ones as icons */
+.pn-main { container-type: inline-size; }
+@container (max-width: 620px) { .pv-bar .pv-lbl { display: none; } }
 .pn-main { min-height: 0; overflow-y: auto; padding: 18px 24px 60px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-content: start; }
 .pn-main > * { width: 100%; max-width: 1240px; justify-self: center; }
 .pn-main.fill { display: flex; flex-direction: column; padding-bottom: 14px; }
 .pn-main.fill > .pc { flex: 1; min-height: 0; }
-.pn-dock { min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--hairline); background: color-mix(in srgb, var(--surface-2) 40%, var(--bg)); }
+.pn-dock { min-height: 0; display: flex; flex-direction: column; background: color-mix(in srgb, var(--surface-2) 40%, var(--bg)); }
 /* the result on its own tab: no box around it any more */
 .pn-main > .pn-outcome { border: 0; box-shadow: none; background: none; padding: 0; border-radius: 0; }
 /* the plan's versions and buttons stay on top while the text scrolls under them */

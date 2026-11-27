@@ -7,6 +7,7 @@ import { useApp } from '../lib/app-context'
 import { ago, fmtCost, providerName } from '../lib/format'
 import { ACCESS, forgetPanelTab, KIND_ICON, openPanelSheet, PANEL_EVENT, panelTab, rememberTab, type Panel, type PanelSeat } from '../lib/panels'
 import { pathAfterDelete } from '../components/TabBar'
+import { setFocusMode } from '../lib/sidebar'
 import type { ProviderId, Thread } from '../lib/types'
 import { offeredProviders } from '../components/AgentPicker'
 import { Icon } from '../components/icons'
@@ -15,7 +16,7 @@ import { PageHead } from '../components/PageHead'
 import { Select } from '../components/Select'
 import { PanelDefaults } from '../components/PanelSetup'
 import { EditorChat, PanelPlan } from '../components/PanelPlan'
-import { Confirm, copyText, download, Empty, errMsg, Loading, MenuButton, Modal, Spinner, useContextMenu, useMediaQuery, useToast, type MenuItem, noGrammarly } from '../components/ui'
+import { Confirm, copyText, download, Empty, errMsg, Loading, MenuButton, Modal, Spinner, useContextMenu, useIsMobile, useMediaQuery, useToast, type MenuItem, noGrammarly } from '../components/ui'
 
 const STATUS: Record<string, { label: string; cls: string; icon: string }> = {
   running: { label: 'Running', cls: 'accent-soft', icon: 'refresh' },
@@ -249,7 +250,30 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
   const [err, setErr] = useState('')
   // what the page shows: the result ('out'), the editor chat on narrow screens, the question, or a step by number
   const [tab, setTab] = useState<'out' | 'chat' | 'asked' | number | null>(null)
-  const wide = useMediaQuery('(min-width: 1100px)') // room for the editor chat beside the plan
+  // full screen: the app sidebar folds away and the page head goes, only the tab row stays
+  const [full, setFull] = useState(() => localStorage.getItem('pai-panel-full') === '1')
+  const mobile = useIsMobile()
+  useEffect(() => { setFocusMode(full && !mobile); localStorage.setItem('pai-panel-full', full ? '1' : '0') }, [full, mobile])
+  useEffect(() => () => { setFocusMode(false) }, [])
+  // the editor chat beside the plan: when there is room and it is not hidden; its width is dragged
+  const roomy = useMediaQuery(full ? '(min-width: 860px)' : '(min-width: 1100px)')
+  const [dockOn, setDockOn] = useState(() => localStorage.getItem('pai-panel-chat') !== '0')
+  const showDock = (v: boolean) => { setDockOn(v); localStorage.setItem('pai-panel-chat', v ? '1' : '0') }
+  const [dockW, setDockW] = useState(() => Math.min(900, Math.max(300, Number(localStorage.getItem('pai-panel-chat-w')) || 400)))
+  const wide = roomy && dockOn
+  const panes = useRef<HTMLDivElement>(null)
+  const drag = (e: React.PointerEvent) => {
+    e.preventDefault()
+    const x0 = e.clientX, w0 = dockW
+    const max = Math.min(900, (panes.current?.clientWidth || window.innerWidth) - 360) // the plan keeps 360px
+    let w = w0
+    const move = (ev: PointerEvent) => { w = Math.round(Math.min(Math.max(300, w0 - (ev.clientX - x0)), Math.max(300, max))); setDockW(w) }
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); document.body.classList.remove('pn-dragging'); localStorage.setItem('pai-panel-chat-w', String(w)) }
+    document.body.classList.add('pn-dragging')
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+  const nudge = (by: number) => setDockW(w => { const n = Math.min(900, Math.max(300, w + by)); localStorage.setItem('pai-panel-chat-w', String(n)); return n })
   // how the answers of a step are read: one at a time in a wide pane, or all side by side
   const [view, setView] = useState<'read' | 'side'>(() => localStorage.getItem('pai-panel-view') === 'side' ? 'side' : 'read')
   const [sel, setSel] = useState(0) // the participant in the reading pane (its seat id; 0 = pick for me)
@@ -333,13 +357,14 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
 
   return (
     <div className="page">
-      <PageHead title={p.spec.kind_name} icon={KIND_ICON[p.kind] || 'users'} onMenu={onMenu} sub={<button type="button" className="pn-head-sub" title="Rename" onClick={() => setRen(true)}>{p.title}</button>}
+      {!full && <PageHead title={p.spec.kind_name} icon={KIND_ICON[p.kind] || 'users'} onMenu={onMenu} sub={<button type="button" className="pn-head-sub" title="Rename" onClick={() => setRen(true)}>{p.title}</button>}
         actions={<>
           <button type="button" className="btn ghost sm pn-back" onClick={() => navigate('/panels')}><Icon name="chevron-left" size={14} />All panels</button>
           {running ? <button type="button" className="btn" disabled={busy === 'stop'} onClick={stop}>{busy === 'stop' ? <Spinner size={11} /> : <Icon name="x" size={13} />}Stop</button>
             : <button type="button" className="btn" disabled={busy === 'again'} onClick={again}>{busy === 'again' ? <Spinner size={11} /> : <Icon name="refresh" size={13} />}Run again</button>}
+          {!mobile && <button type="button" className="btn ghost icon-only" title="Full screen: fold the app sidebar and this header away" aria-label="Full screen" onClick={() => setFull(true)}><Icon name="maximize" size={15} /></button>}
           <MenuButton label="More" align="right" items={more}><Icon name="more" size={16} /></MenuButton>
-        </>} />
+        </>} />}
       <div className="pn-body">
         {(p.error || (p.status === 'done' && failedSeats.length > 0)) && <div className="pn-notes">
           {p.error && <div className={`callout ${p.status === 'failed' ? 'danger' : 'warn'}`}><Icon name="alert" size={15} /><span>{p.error}</span></div>}
@@ -375,10 +400,15 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
             {/* done needs no badge: every step in the row has its tick */}
             {p.status !== 'done' && <span className={`badge ${st.cls}`}><Icon name={st.icon} size={10} />{st.label}</span>}
             {p.cost_usd > 0 && <span className="faint xsmall tnum pn-cost" title="What the participants’ runs cost so far">{fmtCost(p.cost_usd)}</span>}
+            {versioned && roomy && <button type="button" className={`btn ghost icon-only xs ${dockOn ? 'on' : ''}`} aria-pressed={dockOn} title={dockOn ? 'Hide the editor chat' : 'Show the editor chat beside the plan'} aria-label={dockOn ? 'Hide the editor chat' : 'Show the editor chat'} onClick={() => { showDock(!dockOn); if (!dockOn && tab === 'chat') setTab('out') }}><Icon name="sidebar-right" size={15} /></button>}
+            {full && <>
+              <MenuButton label="More" align="right" items={more}><Icon name="more" size={15} /></MenuButton>
+              <button type="button" className="btn sm" title="Leave full screen" onClick={() => setFull(false)}><Icon name="minimize" size={13} />Exit full screen</button>
+            </>}
           </span>
         </div>
 
-        <div className={`pn-panes ${versioned && wide ? 'with-side' : ''}`}>
+        <div ref={panes} className={`pn-panes ${versioned && wide ? 'with-side' : ''}`} style={versioned && wide ? { gridTemplateColumns: `minmax(0, 1fr) 10px ${dockW}px` } : undefined}>
           <div className={`pn-main ${pane === 'chat' ? 'fill' : ''}`} key={String(pane)}>
             {pane === 'asked' ? (
               <div className="pn-asked-body">
@@ -438,7 +468,10 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
               )
             })()}
           </div>
-          {versioned && wide && <aside className="pn-dock" aria-label="Talk to the editor"><EditorChat p={p} onChange={setP} onOpenThread={openThread} /></aside>}
+          {versioned && wide && <div className="pn-resize" role="separator" aria-orientation="vertical" aria-label="Chat width" tabIndex={0} title="Drag to change the chat’s width (double-click: back to normal)"
+            onPointerDown={drag} onDoubleClick={() => { setDockW(400); localStorage.setItem('pai-panel-chat-w', '400') }}
+            onKeyDown={e => { if (e.key === 'ArrowLeft') { e.preventDefault(); nudge(24) } else if (e.key === 'ArrowRight') { e.preventDefault(); nudge(-24) } }} />}
+          {versioned && wide && <aside className="pn-dock" aria-label="Talk to the editor"><EditorChat p={p} onChange={setP} onOpenThread={openThread} onHide={() => showDock(false)} /></aside>}
         </div>
       </div>
       {ren && <RenamePanel panel={p} onClose={() => setRen(false)} onDone={np => { setRen(false); setP(np) }} />}
