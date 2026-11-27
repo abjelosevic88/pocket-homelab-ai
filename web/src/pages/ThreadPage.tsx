@@ -29,7 +29,7 @@ import { projectsPaused, projectsRef, refKey, reloadProjectsLink, useProjectsLin
 import { AttachIssueDialog } from '../components/AttachIssueDialog'
 import { Timeline } from '../components/Timeline'
 import { PanelParentChip, PanelsChip, reviewMaterial } from '../components/PanelChips'
-import { openPanelSheet, PANEL_COMMANDS, rememberTab } from '../lib/panels'
+import { openPanelSheet, PANEL_COMMANDS, rememberTab, SEND_EVENT } from '../lib/panels'
 import { FileLinkContext } from '../components/Markdown'
 import { NotebookPane, withReading, type Reading } from '../components/Notebook'
 import { PrivacyBadge, ShareDialog } from '../components/ShareDialog'
@@ -390,6 +390,14 @@ export default function ThreadPage({ onMenu, threadId, embedded, reading }: { on
       toast(errMsg(e), 'err'); return false
     }
   }
+  // "/refine" picked on a file the agent sent (Timeline): it goes in as a message here
+  const sendRef = useRef(send)
+  sendRef.current = send
+  useEffect(() => {
+    const on = (e: Event) => { const d = (e as CustomEvent<{ threadId: string; text: string }>).detail; if (d?.threadId === id && d.text) void sendRef.current(d.text, []) }
+    window.addEventListener(SEND_EVENT, on)
+    return () => window.removeEventListener(SEND_EVENT, on)
+  }, [id])
   // a fresh session with the chat history attached; Claude Code or Codex is picked in the copy's model menu
   const fork = async () => {
     try {
@@ -577,7 +585,10 @@ export default function ThreadPage({ onMenu, threadId, embedded, reading }: { on
               <FileLinkContext.Provider value={filePlace}>
               <Timeline key={id} threadId={t.provider === 'claude' ? id : undefined} items={visible} onResend={canSend ? resend : undefined} onDropUnsent={canSend ? dropUnsent : undefined} showThinking={!!settings?.show_thinking} streamingKey={streamingKey}
                 onFork={owner && t.source !== 'ask' && t.provider_session_id && canRun ? forkNewTab : undefined}
-                onReview={owner && canRun && t.source !== 'ask' && t.source !== 'panel' ? (_text, key) => openPanelSheet({ kind: 'review', fromThreadId: t.id, hostId: t.host_id, material: reviewMaterial(items || [], key) }) : undefined}
+                onReview={owner && canRun && t.source !== 'ask' && t.source !== 'panel' ? (kind, key) => {
+                  if (kind === 'refine') { void send('/refine', []); return }
+                  openPanelSheet({ kind, fromThreadId: t.id, hostId: t.host_id, material: reviewMaterial(items || [], key, kind === 'review' ? undefined : 'The answer in the conversation') })
+                } : undefined}
                 onEdit={owner && canRun ? item => setRewindTarget({ item, keepText: true }) : undefined}
                 onRewind={owner && canRun ? (item, keepText = true) => setRewindTarget({ item, keepText }) : undefined} rewindDisabled={rewindDisabled}
                 owner={sharedOwner} onMoveFolder={owner && canRun ? () => setMoving(true) : undefined} />

@@ -13,6 +13,7 @@ import { Icon } from '../components/icons'
 import { Markdown } from '../components/Markdown'
 import { PageHead } from '../components/PageHead'
 import { Select } from '../components/Select'
+import { PanelDefaults } from '../components/PanelSetup'
 import { Confirm, copyText, download, Empty, errMsg, Loading, MenuButton, Modal, Spinner, useContextMenu, useToast, type MenuItem, noGrammarly } from '../components/ui'
 
 const STATUS: Record<string, { label: string; cls: string; icon: string }> = {
@@ -45,6 +46,7 @@ export default function PanelsPage({ onMenu }: { onMenu?: () => void }) {
   const [err, setErr] = useState('')
   const [del, setDel] = useState<Panel | null>(null)
   const [ren, setRen] = useState<Panel | null>(null)
+  const [defaults, setDefaults] = useState(false)
   const ctx = useContextMenu()
   const canRun = !!user && (user.role === 'admin' || user.can_run)
   const load = useCallback(() => api.get<Panel[]>(`${V1}/panels`).then(l => { setList(l || []); setErr('') }).catch(e => setErr(errMsg(e))), [])
@@ -68,7 +70,10 @@ export default function PanelsPage({ onMenu }: { onMenu?: () => void }) {
   return (
     <div className="page">
       <PageHead title="Panels" icon="panel" onMenu={onMenu} sub="One question, several models at once: they answer alone, see each other’s answers without names, and one writes the summary."
-        actions={<button type="button" className="btn primary" disabled={!canRun} onClick={() => openPanelSheet()}><Icon name="plus" size={14} />New panel</button>} />
+        actions={<>
+          <button type="button" className="btn" disabled={!canRun} onClick={() => setDefaults(true)} title="Which models take part when you do not pick: /refine, /council, panels an agent starts"><Icon name="settings" size={14} /><span className="pn-defaults-label">Default models</span></button>
+          <button type="button" className="btn primary" disabled={!canRun} onClick={() => openPanelSheet()}><Icon name="plus" size={14} />New panel</button>
+        </>} />
       <div className="page-scroll">
         <div className="page-inner">
           {err && <div className="callout danger"><Icon name="alert" size={15} /><span>{err}</span></div>}
@@ -118,6 +123,7 @@ export default function PanelsPage({ onMenu }: { onMenu?: () => void }) {
           </div>
         </div>
       </div>
+      {defaults && <PanelDefaults onClose={() => setDefaults(false)} />}
       {ren && <RenamePanel panel={ren} onClose={() => setRen(null)} onDone={() => { setRen(null); void load() }} />}
       {del && <Confirm title={`Delete “${del.title}”?`} message="The participants’ conversations are deleted with it." onCancel={() => setDel(null)}
         onConfirm={async () => { const d = del; setDel(null); try { await api.del(`${V1}/panels/${d.id}`); forgetPanelTab(d.id); void load(); toast('Panel deleted') } catch (e) { toast(errMsg(e), 'err') } }} />}

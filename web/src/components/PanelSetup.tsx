@@ -151,6 +151,88 @@ function OwnKindDialog({ kind, onClose, onSaved }: { kind: Partial<OwnKind>; onC
   )
 }
 
+/** Who takes part when nobody is picked: a "/" command, a panel an agent starts (/refine),
+ *  and what a new panel's sheet starts with. Every agent that works on the server is listed;
+ *  switch off the ones that should stay out. Saved as the person's default line-up. */
+export function PanelDefaults({ onClose }: { onClose: () => void }) {
+  const { toast } = useToast()
+  const { providers } = useApp()
+  const [opts, setOpts] = useState<PanelOptions | null>(null)
+  const [err, setErr] = useState('')
+  const [rows, setRows] = useState<{ seat: SeatSpec; on: boolean }[]>([])
+  const [chair, setChair] = useState<SeatSpec | null>(null)
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    api.get<PanelOptions>(`${V1}/panels/options`).then(o => {
+      setOpts(o)
+      const def = o.lineups.find(l => l.default)
+      const on = (def ? def.seats : o.suggested.seats).map(s => ({ seat: { ...s, role: '' }, on: true }))
+      // the agents that are left out today: listed, switched off
+      const off = (o.automatic || []).filter(a => !on.some(r => r.seat.provider === a.provider)).map(s => ({ seat: { ...s, role: '' }, on: false }))
+      setRows([...on, ...off])
+      setChair(def?.chair || o.suggested.chair)
+    }).catch(e => setErr(errMsg(e)))
+  }, [])
+  const def = opts?.lineups.find(l => l.default)
+  const picked = rows.filter(r => r.on)
+  const max = opts?.max_seats || 6
+  const add = () => {
+    if (!opts) return
+    const pool = opts.logins.filter(l => l.signed_in)
+    const fresh = pool.find(l => !rows.some(r => r.seat.provider === l.provider)) || pool[0]
+    if (!fresh) return
+    const p = providers.find(x => x.id === fresh.provider)
+    const used = rows.filter(r => r.seat.provider === fresh.provider).map(r => r.seat.model)
+    const model = (p?.models || []).map(m => m.id).find(m => !used.includes(m)) || p?.default_model || ''
+    setRows(l => [...l, { seat: { provider: fresh.provider, model, effort: '', account_id: fresh.account_id, host_id: fresh.host_id, host_home: fresh.host_home, role: '' }, on: true }])
+  }
+  const save = async () => {
+    setBusy(true)
+    try {
+      const body = { name: def?.name || 'My default', seats: picked.map(r => r.seat), chair, default: true }
+      if (def) await api.put(`${V1}/panels/lineups/${def.id}`, body); else await api.post(`${V1}/panels/lineups`, body)
+      toast('Saved — used for every panel you start without picking')
+      onClose()
+    } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
+  }
+  const reset = async () => {
+    if (!def) return
+    setBusy(true)
+    try { await api.put(`${V1}/panels/lineups/${def.id}`, { name: def.name, seats: def.seats, chair: def.chair, default: false }); toast('Back to one model per agent'); onClose() } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
+  }
+  return (
+    <Modal title="Who takes part by default" onClose={onClose} size="lg" className="pn-setup" footer={<>
+      {def && <button type="button" className="btn ghost" disabled={busy} onClick={reset} title="One model per agent that works on the server, as before you chose">Reset</button>}
+      <span className="grow" />
+      <button type="button" className="btn" onClick={onClose}>Cancel</button>
+      <button type="button" className="btn primary" disabled={busy || !opts || picked.length < 1 || picked.length > max} onClick={save}>{busy && <Spinner />}Save</button>
+    </>}>
+      {err ? <div className="callout danger"><Icon name="alert" size={15} /><span>{err}</span></div> : !opts ? <Loading /> : (
+        <div className="stack">
+          <p className="muted small" style={{ margin: 0 }}>These models take part whenever you do not pick: <code>/refine</code>, <code>/council</code> and the other commands outside the web app, panels an agent starts for you, and what a new panel starts with. Switch off the ones that should stay out.</p>
+          <div className="pn-seats">
+            {rows.map((r, i) => (
+              <div key={i} className={`pn-default-row ${r.on ? '' : 'off'}`}>
+                <Switch checked={r.on} onChange={v => setRows(l => l.map((x, j) => j === i ? { ...x, on: v } : x))} label={`${shortProviderName(r.seat.provider)} takes part`} />
+                <SeatRow seat={r.seat} label={r.on ? String.fromCharCode(65 + rows.slice(0, i).filter(x => x.on).length) : '–'} opts={opts} providers={providers} roles={[]}
+                  onChange={ns => setRows(l => l.map((x, j) => j === i ? { ...x, seat: ns } : x))} onRemove={rows.length > 1 ? () => setRows(l => l.filter((_, j) => j !== i)) : undefined} />
+              </div>
+            ))}
+          </div>
+          <div className="row wrap">
+            <button type="button" className="btn sm" onClick={add}><Icon name="plus" size={13} />Add a model</button>
+            <span className="muted xsmall">{picked.length} take part{picked.length < 2 ? ' — most panels need at least two' : picked.length > max ? ` — at most ${max}` : ''}</span>
+          </div>
+          {chair && <div className="stack tight">
+            <span className="label">Who writes the summary</span>
+            <SeatRow seat={chair} label="" opts={opts} providers={providers} roles={[]} onChange={setChair} />
+          </div>}
+        </div>
+      )}
+    </Modal>
+  )
+}
+
 export function PanelSetup({ draft, onClose }: { draft: PanelDraft; onClose: () => void }) {
   const { toast } = useToast()
   const navigate = useNavigate()

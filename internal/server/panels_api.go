@@ -513,6 +513,8 @@ func (s *Server) handlePanelOptions(w http.ResponseWriter, r *http.Request) {
 		"own_kinds": recipes,
 		"logins":    s.panelLogins(ctx, u),
 		"suggested": map[string]any{"seats": seats, "chair": chair},
+		"automatic": s.autoSeats(ctx, u), // every agent that works here, before the person chose
+
 		"max_seats": panelMaxSeats,
 	})
 }

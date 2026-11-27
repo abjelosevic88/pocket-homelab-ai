@@ -169,20 +169,7 @@ func (s *Server) defaultSeats(ctx context.Context, u *store.User) (seats []store
 			break
 		}
 	}
-	st, _ := s.store.GetSettings(ctx, u.ID)
-	auto := []store.PanelSeatSpec{}
-	for _, id := range agent.ProviderIDs() {
-		p, ok := s.agentProvider(ctx, id)
-		if !ok {
-			continue
-		}
-		def := st.For(id)
-		acct, err := s.usableAccount(ctx, u, id, def.Account)
-		if err != nil {
-			continue
-		}
-		auto = append(auto, store.PanelSeatSpec{Provider: id, Model: firstNonEmpty(def.Model, p.DefaultModel), Effort: def.Effort, AccountID: acct})
-	}
+	auto := s.autoSeats(ctx, u)
 	if len(seats) == 0 {
 		seats = auto
 		if len(seats) > 4 {
@@ -199,6 +186,26 @@ func (s *Server) defaultSeats(ctx context.Context, u *store.User) (seats []store
 		chair = &c
 	}
 	return seats, chair
+}
+
+// autoSeats is one participant per agent that works on this server, on the
+// person's defaults for it: who takes part before they chose anybody.
+func (s *Server) autoSeats(ctx context.Context, u *store.User) []store.PanelSeatSpec {
+	st, _ := s.store.GetSettings(ctx, u.ID)
+	auto := []store.PanelSeatSpec{}
+	for _, id := range agent.ProviderIDs() {
+		p, ok := s.agentProvider(ctx, id)
+		if !ok {
+			continue
+		}
+		def := st.For(id)
+		acct, err := s.usableAccount(ctx, u, id, def.Account)
+		if err != nil {
+			continue
+		}
+		auto = append(auto, store.PanelSeatSpec{Provider: id, Model: firstNonEmpty(def.Model, p.DefaultModel), Effort: def.Effort, AccountID: acct})
+	}
+	return auto
 }
 
 // startPanel validates, stores and starts a panel.

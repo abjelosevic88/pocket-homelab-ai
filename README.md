@@ -94,7 +94,9 @@ Personal app assistance: [Briefing, workflows, memory, sources and document uplo
   too few answers end the panel honestly instead of faking a consensus. Add a note, a document, a task or
   anything else from your Pocket apps as context: the button under the question, or `@` in it. Start one on the Panels page or with
   `/council`, `/brainstorm`, `/debate`, `/ask-all`, `/second-opinion` in a conversation; `/refine` has the
-  conversation's agent run council rounds on its plan and revise it until the council says Go; agents start them with
+  conversation's agent run council rounds on its plan and revise it until the council says Go; every
+  reply and every text file an agent sends has a menu to send it to a panel on the spot; **Default models**
+  on the Panels page sets who takes part when you do not pick (switch agents off there); agents start them with
   `pocket_panel_start` (with your OK).
 - **Other machines**, like Paseo's hosts: add a server in Settings → Agents → Servers (any machine this server
   can `ssh` into without a password, a tailnet name works) and pick it next to the folder when you start a

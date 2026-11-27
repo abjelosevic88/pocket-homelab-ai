@@ -17,6 +17,8 @@ export interface PanelOptions {
   own_kinds: OwnKind[]
   logins: PanelLogin[]
   suggested: { seats: SeatSpec[]; chair: SeatSpec | null }
+  /** one participant per agent that works on the server, before the person chose */
+  automatic: SeatSpec[]
   max_seats: number
 }
 export type Depth = 'quick' | 'standard' | 'deep'
@@ -117,3 +119,17 @@ export function useRunningPanels(on: boolean): number {
   }, [on])
   return n
 }
+
+/** Send a message into an open conversation from outside its composer ("/refine" from a file's menu). */
+export const SEND_EVENT = 'pai:panel-send'
+export const sendToThread = (threadId: string, text: string) => window.dispatchEvent(new CustomEvent(SEND_EVENT, { detail: { threadId, text } }))
+
+/** What a plan, a file or an answer can be sent to. "refine" is not a panel but rounds of them, run by the conversation's agent. */
+export const SEND_TO: { kind: string; label: string; hint: string }[] = [
+  { kind: 'refine', label: 'Refine', hint: 'council rounds until it holds' },
+  { kind: 'council', label: 'Council', hint: 'judge it' },
+  { kind: 'review', label: 'Second opinion', hint: 'find what is wrong' },
+  { kind: 'brainstorm', label: 'Brainstorm', hint: 'ideas on it' },
+  { kind: 'debate', label: 'Debate', hint: 'for and against' },
+  { kind: 'ask', label: 'Ask all', hint: 'a question about it' },
+]

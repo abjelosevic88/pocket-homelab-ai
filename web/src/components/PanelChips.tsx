@@ -3,10 +3,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, V1 } from '../lib/api'
-import { PANEL_EVENT, type Panel } from '../lib/panels'
+import { KIND_ICON, PANEL_EVENT, SEND_TO, type Panel } from '../lib/panels'
 import type { Item, Thread } from '../lib/types'
 import { Icon } from './icons'
-import { Spinner } from './ui'
+import { MenuButton, Spinner, type MenuItem } from './ui'
 
 /** "Part of a panel" in the header of a participant's conversation. */
 export function PanelParentChip({ t }: { t: Thread }) {
@@ -52,4 +52,10 @@ export function reviewMaterial(items: Item[], turnKey: string, label = 'The answ
   const asked = start > 0 ? (items[start - 1].text || '').trim() : ''
   const said = items.slice(start, end).filter(i => i.kind === 'assistant' && i.text).map(i => i.text!.trim()).join('\n\n')
   return (asked && !asked.startsWith('<') ? `What was asked:\n\n${asked}\n\n---\n\n` : '') + `${label}:\n\n${said}`
+}
+
+/** "Send to a panel": refine it, have it judged, reviewed, brainstormed on… */
+export function SendToPanel({ onPick, size = 'sm', what = 'this' }: { onPick: (kind: string) => void; size?: 'xs' | 'sm'; what?: string }) {
+  const items: MenuItem[] = [{ heading: 'Send to a panel of models' }, ...SEND_TO.map(k => ({ label: k.label, icon: k.kind === 'refine' ? 'refresh' : KIND_ICON[k.kind], hint: k.hint, onSelect: () => onPick(k.kind) }))]
+  return <MenuButton label={`Send ${what} to a panel of models`} className={`btn ghost icon-only ${size}`} align="right" width={280} items={items}><Icon name="panel" size={size === 'xs' ? 14 : 15} /></MenuButton>
 }
