@@ -155,6 +155,8 @@
 
 /* sub-agents (Paseo-style): the chip, its list of every sub-agent, the panel */
 .sub-anchor { display: inline-flex; min-width: 0; }
+/* in the run bar a long "what" text must give way, not the chips (they spilled over fork + time) */
+.run-bar-row > .sub-anchor { flex-shrink: 0; }
 .sub-dock { display: flex; }
 .sub-dock:empty { display: none; }
 .sub-list { padding: 6px; gap: 2px; color: var(--text-2); }
