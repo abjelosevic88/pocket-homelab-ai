@@ -89,8 +89,11 @@
 .tl-item.appear .msg.user .bubble { animation: send-pop .34s var(--ease); transform-origin: bottom right; }
 @keyframes send-pop { 0% { transform: scale(.94) translateY(10px); opacity: 0; } 100% { transform: none; opacity: 1; } }
 
-/* the text the agent is writing has a blinking cursor */
-.tl-item.streaming .md > :last-child::after,
+/* the text the agent is writing has a blinking cursor: at the end of text
+   only (a code block or table ending the reply would put it alone on a line
+   of its own under it) */
+.tl-item.streaming .md > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
+.tl-item.streaming .md > :is(ul, ol):last-child > li:last-child::after,
 .tl-item.streaming .md:empty::after,
 .tl-item.streaming .thinking-body::after { content: ''; display: inline-block; width: .5em; height: 1.05em; margin-left: 2px; vertical-align: -2px;
   border-radius: 2px; background: var(--accent); animation: caret 1s steps(2, start) infinite; }
