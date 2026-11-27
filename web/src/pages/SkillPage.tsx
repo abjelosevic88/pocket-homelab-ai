@@ -263,7 +263,7 @@ const validFile = (p: string) => !!p && !p.startsWith('/') && !p.endsWith('/') &
 
 function Head({ name, onMenu, onBack, actions }: { name: string; onMenu?: () => void; onBack: () => void; actions?: ReactNode }) {
   return <header className="page-head sk-head">
-    {onMenu && <button type="button" className="btn ghost icon-only list-menu" aria-label="Menu" onClick={onMenu}><Icon name="menu" size={19} /></button>}
+    {onMenu && <button type="button" className="btn ghost icon-only list-menu" aria-label="Show the sidebar" title="Show the sidebar" onClick={onMenu}><Icon name="menu" size={19} /></button>}
     <button type="button" className="btn ghost icon-only" aria-label="Back to Skills" title="All skills" onClick={onBack}><Icon name="arrow-left" size={17} /></button>
     <div className="grow">
       <h1>{name}</h1>

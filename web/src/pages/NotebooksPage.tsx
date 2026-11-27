@@ -274,7 +274,7 @@ export function NotebookPage({ onMenu }: { onMenu?: () => void }) {
 
   return <div className={`page nb-work chat-${side}`}>
     <header className="nb-work-head">
-      {onMenu && <button type="button" className="btn ghost icon-only" aria-label="Menu" title="Menu" onClick={onMenu}><Icon name="menu" size={19} /></button>}
+      {onMenu && <button type="button" className="btn ghost icon-only" aria-label="Show the sidebar" title="Show the sidebar" onClick={onMenu}><Icon name="menu" size={19} /></button>}
       {!mobile && <button type="button" className={`btn ghost icon-only ${rail ? 'on' : ''}`} aria-pressed={rail} title={rail ? 'Hide the source list' : 'Show the source list'} aria-label="Source list" onClick={() => toggle('rail', !rail)}><Icon name="sidebar" size={16} /></button>}
       <span className="page-ico"><Icon name="book" size={15} /></span>
       <div className="grow nb-work-title">

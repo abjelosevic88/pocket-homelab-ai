@@ -71,8 +71,16 @@ function ShellInner() {
     window.addEventListener(FOCUS_MODE, on)
     return () => window.removeEventListener(FOCUS_MODE, on)
   }, [])
-  const drawer = !embedded && (mobile || narrow || focus)
+  // the sidebar put away on a wide screen (⌘B, Pocket Hub's app-sidebar key, its own button): ☰ brings it back
+  const [hidden, setHidden] = useState(() => localStorage.getItem('pai-sidebar') === 'hidden')
+  const folded = mobile || narrow || focus // no room for it: it is a drawer anyway
+  const drawer = !embedded && (folded || hidden)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const setSidebarHidden = useCallback((v: boolean) => { setHidden(v); setDrawerOpen(false); localStorage.setItem('pai-sidebar', v ? 'hidden' : 'shown') }, [])
+  /** Show or hide the sidebar: on a wide screen it goes away and comes back; as a drawer it opens and closes. */
+  const toggleSidebar = () => { if (folded) setDrawerOpen(o => !o); else setSidebarHidden(!hidden) }
+  const toggleRef = useRef(toggleSidebar)
+  toggleRef.current = toggleSidebar
   // Inside Pocket Hub: a link from another app (Projects' "Open in Pocket AI")
   // opens here in place, without a reload; the hub's sidebar shortcut opens and
   // closes the drawer (the wide layout keeps its sidebar: nothing to hide there).
@@ -90,8 +98,7 @@ function ShellInner() {
         return true
       },
       toggleSidebar: () => {
-        if (!drawerRef.current) return false
-        setDrawerOpen(o => !o)
+        toggleRef.current()
         return true
       },
     })
@@ -144,6 +151,13 @@ function ShellInner() {
         if (!isMac && (e.target as Element | null)?.closest?.('.xterm')) return
         e.preventDefault()
         if (tabsOn && tabs.active) tabs.close([tabs.active])
+        return
+      }
+      // Ctrl+B is tmux's (and the shell's back-a-character) inside a terminal off a Mac: left to it
+      if (action === 'sidebar') {
+        if (embedded || (!isMac && (e.target as Element | null)?.closest?.('.xterm'))) return
+        e.preventDefault()
+        toggleRef.current()
         return
       }
       // Ctrl+J is the shell's newline inside a terminal off a Mac: left to it
@@ -207,12 +221,14 @@ function ShellInner() {
   }, [])
 
   const openMenu = useCallback(() => setDrawerOpen(true), [])
-  const onMenu = drawer ? openMenu : undefined
+  const showSidebar = useCallback(() => setSidebarHidden(false), [setSidebarHidden])
+  // ☰: a put-away sidebar comes back where it was; a drawer slides in
+  const onMenu = !drawer ? undefined : !folded ? showSidebar : openMenu
 
   return (
     <div className={`app ${drawer ? 'drawer-mode' : ''} ${embedded ? 'embedded' : ''}`}>
       {!embedded && <div className={`sidebar-wrap ${drawerOpen ? 'open' : ''}`}>
-        <Sidebar onNavigate={() => setDrawerOpen(false)} onPalette={() => { setDrawerOpen(false); setPalette('all') }} />
+        <Sidebar onNavigate={() => setDrawerOpen(false)} onPalette={() => { setDrawerOpen(false); setPalette('all') }} onHide={folded ? undefined : () => setSidebarHidden(true)} hideKeys={keyCaps(keys.sidebar).join('')} />
       </div>}
       {drawer && drawerOpen && <div className="drawer-backdrop" onClick={() => setDrawerOpen(false)} />}
       <main className="main">

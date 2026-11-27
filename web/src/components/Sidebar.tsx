@@ -76,7 +76,9 @@ export function ThreadRow({ t, active, onOpen, onContextMenu, child }: { t: Thre
   )
 }
 
-export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onPalette: () => void }) {
+export function Sidebar({ onNavigate, onPalette, onHide, hideKeys }: { onNavigate: () => void; onPalette: () => void
+  /** put the sidebar away (a wide screen; as a drawer it closes by itself) */
+  onHide?: () => void; hideKeys?: string }) {
   const { threads, workspaces, worktrees, user, settings, saveSettings, live, status, updateReady, terms, away, setAway } = useApp()
   const navigate = useNavigate()
   const loc = useLocation()
@@ -362,6 +364,7 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
         <button type="button" className={`sb-foot-link ${loc.pathname.startsWith('/settings') ? 'active' : ''}`} onClick={() => go('/settings')} title="Settings">
           {user && <Avatar name={user.name} email={user.email} size={20} />}<Icon name="settings" size={14} />
         </button>
+        {onHide && <button type="button" className="sb-foot-link sb-hide" aria-label="Hide the sidebar" title={`Hide the sidebar${hideKeys ? ` (${hideKeys})` : ''}`} onClick={onHide}><Icon name="sidebar" size={15} /></button>}
       </div>
       </div>
       {ctx.menu}{tm.dialogs}

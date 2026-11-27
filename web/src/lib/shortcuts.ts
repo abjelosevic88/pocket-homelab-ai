@@ -3,9 +3,10 @@
 // change are saved (settings.shortcuts); "" turns one off.
 import { useApp } from './app-context'
 
-export type ShortcutId = 'palette' | 'recent' | 'recipes' | 'new_thread' | 'new_tab' | 'reopen_tab' | 'close_tab' | 'prev_tab' | 'next_tab' | 'stop' | 'side_question'
+export type ShortcutId = 'sidebar' | 'palette' | 'recent' | 'recipes' | 'new_thread' | 'new_tab' | 'reopen_tab' | 'close_tab' | 'prev_tab' | 'next_tab' | 'stop' | 'side_question'
 
 export const SHORTCUTS: { id: ShortcutId; label: string; group: 'Anywhere' | 'Tabs' | 'In a thread'; keys: string }[] = [
+  { id: 'sidebar', label: 'Show or hide the sidebar', group: 'Anywhere', keys: 'mod+b' },
   { id: 'palette', label: 'Search & commands', group: 'Anywhere', keys: 'mod+k' },
   { id: 'recent', label: 'Recent conversations', group: 'Anywhere', keys: 'mod+e' },
   { id: 'recipes', label: 'Run a recipe', group: 'Anywhere', keys: 'mod+j' },
