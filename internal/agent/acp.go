@@ -697,6 +697,10 @@ func (s *acpSession) request(id json.RawMessage, method string, params json.RawM
 	p.ToolCall.apply(t)
 	tc := *t
 	_, auto := s.a.ag.mode(s.opts.Mode)
+	// Pocket's own tools need no yes here: Pocket AI asks the person itself
+	// before one changes something, as with Claude Code (--allowedTools
+	// mcp__pocket__*). Antigravity asks about every MCP tool, even in Auto.
+	auto = auto || isPocketToolCall(tc)
 	if !auto {
 		s.pending[key] = acpPending{rpcID: id, options: p.Options}
 	}
@@ -1036,4 +1040,22 @@ func (s *acpSession) notify(method string, params json.RawMessage) {
 			ctxNow = &Context{Tokens: *u.Used, Window: u.Size}
 		}
 	}
+}
+
+// isPocketToolCall: the tool is one of the Pocket tools Pocket AI hands the
+// agent (its MCP server "pocket"); Antigravity calls it
+// "mcp_pocket_<tool>" ("Run mcp_pocket_pocket_find_tools"), others
+// "mcp__pocket__<tool>" or "pocket/<tool>".
+func isPocketToolCall(t Tool) bool {
+	for _, name := range []string{t.Title, t.Name} {
+		n := strings.ToLower(strings.TrimSpace(name))
+		n = strings.TrimPrefix(n, "run ")
+		n = strings.TrimPrefix(n, "use ")
+		for _, p := range []string{"mcp_pocket_pocket_", "mcp__pocket__pocket_", "pocket/pocket_"} {
+			if strings.HasPrefix(n, p) && !strings.ContainsAny(n[len(p):], " /") {
+				return true
+			}
+		}
+	}
+	return false
 }
