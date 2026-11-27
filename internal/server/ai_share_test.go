@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -122,7 +123,7 @@ func TestSharedLoginProxy(t *testing.T) {
 	if u.Requests != 1 || u.InputTokens != 1000 || u.CacheRead != 5000 || u.OutputTokens != 200 || u.CostUSD <= 0 {
 		t.Fatalf("usage = %+v", u)
 	}
-	if five, week, _, known := s.lentPlan(0); !known || week != 0.40 || five != 0.10 {
+	if five, week, _, known := s.lentPlan("claude", 0); !known || week != 0.40 || five != 0.10 {
 		t.Fatalf("plan = %v %v %v", five, week, known)
 	}
 
@@ -195,3 +196,110 @@ func TestShareMeterPlainJSON(t *testing.T) {
 }
 
 func storeUsage(ms int64) store.ShareUsage { return store.ShareUsage{ActiveMS: ms} }
+
+// A lent Codex login: Codex is pointed at the proxy by a model provider in
+// its config.toml; the proxy sends the owner's ChatGPT token and account
+// to the Codex backend and reads the usage of response.completed.
+func TestSharedCodexLogin(t *testing.T) {
+	var gotAuth, gotAcct, gotPath string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth, gotAcct, gotPath = r.Header.Get("Authorization"), r.Header.Get("Chatgpt-Account-Id"), r.URL.Path
+		w.Header().Set("X-Codex-Primary-Used-Percent", "12")
+		w.Header().Set("X-Codex-Primary-Window-Minutes", "10080")
+		w.Header().Set("X-Codex-Primary-Reset-At", fmt.Sprint(time.Now().Add(48*time.Hour).Unix()))
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-6.2-sol\",\"usage\":{\"input_tokens\":3000,\"input_tokens_details\":{\"cached_tokens\":2000},\"output_tokens\":50}}}\n\n")
+	}))
+	defer up.Close()
+	old := shareCodexUpstream
+	shareCodexUpstream = up.URL + "/backend-api/codex"
+	defer func() { shareCodexUpstream = old }()
+
+	s, h, _ := testServer(t)
+	admin, _ := person(t, s, h, "owner@example.com", "admin", false)
+	member, mu := person(t, s, h, "kid@example.com", "member", false)
+	ctx := context.Background()
+	_ = os.MkdirAll(s.cfg.CodexHome, 0o700)
+	// a JWT whose exp is an hour away
+	payload := base64URL(fmt.Sprintf(`{"exp":%d}`, time.Now().Add(time.Hour).Unix()))
+	auth := fmt.Sprintf(`{"auth_mode":"chatgpt","tokens":{"access_token":"h.%s.s","account_id":"acct-1","refresh_token":"r"}}`, payload)
+	if err := os.WriteFile(filepath.Join(s.cfg.CodexHome, "auth.json"), []byte(auth), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var list struct {
+		Logins []lendable `json:"logins"`
+	}
+	admin.want("GET", "/api/v1/ai-shares", nil, 200, &list)
+	codexOK := false
+	for _, l := range list.Logins {
+		codexOK = codexOK || (l.Provider == "codex" && l.ID == 0 && l.SignedIn)
+	}
+	if !codexOK {
+		t.Fatalf("Codex server login not lendable: %+v", list.Logins)
+	}
+	var row shareRow
+	admin.want("POST", "/api/v1/ai-shares", map[string]any{"user_id": mu.ID, "provider": "codex", "from": 0, "percent_week": 50}, 201, &row)
+	a, _ := s.store.GetAccount(ctx, row.AccountID)
+	if a.Provider != "codex" || !strings.Contains(a.Home, ".codex-shared") {
+		t.Fatalf("account = %+v", a)
+	}
+	var mine []accountView
+	member.want("GET", "/api/v1/accounts", nil, 200, &mine)
+	seen := false
+	for _, v := range mine {
+		seen = seen || (v.ID == a.ID && v.Provider == "codex" && v.SignedIn && v.Shared != nil)
+	}
+	if !seen {
+		t.Fatalf("member's logins: %+v", mine)
+	}
+	_, env := s.accountHome(ctx, "codex", a.ID)
+	tok := ""
+	for _, e := range env {
+		if v, ok := strings.CutPrefix(e, shareCodexKeyEnv+"="); ok {
+			tok = v
+		}
+	}
+	cfg, err := os.ReadFile(filepath.Join(a.Home, "config.toml"))
+	if tok == "" || err != nil || !strings.Contains(string(cfg), `env_key = "POCKET_SHARE_TOKEN"`) {
+		t.Fatalf("env %v config %s %v", env, cfg, err)
+	}
+	base := strings.Split(strings.Split(string(cfg), `base_url = "`)[1], `"`)[0]
+	req, _ := http.NewRequest("POST", base+"/responses", strings.NewReader(`{"model":"gpt-6.2-sol","stream":true}`))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 200 || !strings.Contains(string(b), "response.completed") {
+		t.Fatalf("answer %d %s", res.StatusCode, b)
+	}
+	if gotAuth != "Bearer h."+payload+".s" || gotAcct != "acct-1" || gotPath != "/backend-api/codex/responses" {
+		t.Fatalf("upstream saw %q %q %q", gotAuth, gotAcct, gotPath)
+	}
+	u, _ := s.store.ShareUsageSince(ctx, a.ID, time.Now().Add(-time.Hour))
+	if u.InputTokens != 1000 || u.CacheRead != 2000 || u.OutputTokens != 50 {
+		t.Fatalf("usage %+v", u)
+	}
+	if _, week, _, known := s.lentPlan("codex", 0); !known || week != 0.12 {
+		t.Fatalf("plan week %v", week)
+	}
+	// a Claude Code token does not open Codex's door
+	req, _ = http.NewRequest("POST", strings.TrimSuffix(base, "/codex")+"/v1/messages", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	if res, err := http.DefaultClient.Do(req); err != nil || res.StatusCode != 401 {
+		t.Fatalf("wrong door: %v %v", res.StatusCode, err)
+	}
+	// paused: refused the way OpenAI refuses
+	admin.want("PATCH", fmt.Sprintf("/api/v1/ai-shares/%d", a.ID), map[string]any{"paused": true}, 200, nil)
+	req, _ = http.NewRequest("POST", base+"/responses", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	res, _ = http.DefaultClient.Do(req)
+	b, _ = io.ReadAll(res.Body)
+	if res.StatusCode != 400 || !strings.Contains(string(b), `"message":`) || !strings.Contains(string(b), "paused") {
+		t.Fatalf("paused: %d %s", res.StatusCode, b)
+	}
+}
+
+func base64URL(s string) string { return base64.RawURLEncoding.EncodeToString([]byte(s)) }

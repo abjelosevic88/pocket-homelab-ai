@@ -113,6 +113,7 @@ export interface Account {
 /** A lent login's allowance and how much of it is used (server ai_share.go). */
 export interface ShareAllowance {
   from: number
+  provider: ProviderId
   from_label: string
   by: string
   minutes_day: number

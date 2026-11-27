@@ -19,6 +19,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +27,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -38,8 +40,12 @@ import (
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
 )
 
-// shareUpstream is Anthropic's API (a var for tests).
-var shareUpstream = "https://api.anthropic.com"
+// shareUpstream is Anthropic's API, shareCodexUpstream the one Codex uses
+// with a ChatGPT sign-in (vars for tests).
+var (
+	shareUpstream      = "https://api.anthropic.com"
+	shareCodexUpstream = "https://chatgpt.com/backend-api/codex"
+)
 
 const (
 	shareKeepKey     = "ai_share_keep"     // box setting: shared use stops at this % of the plan (default 80, "0" = never)
@@ -51,18 +57,19 @@ const (
 
 // shareState is the proxy's memory.
 type shareState struct {
-	mu       sync.Mutex
-	addr     string // 127.0.0.1:port once it listens
-	plan     map[int64]*sharePlan
+	mu   sync.Mutex
+	addr string // 127.0.0.1:port once it listens
+	// keyed by the lent login's limits key ("claude", "codex:3")
+	plan     map[string]*sharePlan
 	clock    map[int64]time.Time // lent account row → end of the last counted activity
 	inflight map[int64]float64   // lent account row → cost since its last finished turn
-	costs    map[int64]*shareCosts
-	stale    map[int64]bool      // the lent login's token was refused: renew before the next use
-	renewed  map[int64]time.Time // the lent login was last renewed
+	costs    map[string]*shareCosts
+	stale    map[string]bool      // the lent login's token was refused: renew before the next use
+	renewed  map[string]time.Time // the lent login was last renewed
 	renewMu  sync.Mutex
 }
 
-// sharePlan is what Anthropic last said about the lent login's plan.
+// sharePlan is what Anthropic (or OpenAI) last said about the lent login's plan.
 type sharePlan struct {
 	five, week float64 // 0..1
 	weekReset  time.Time
@@ -77,8 +84,8 @@ type shareCosts struct {
 
 func (st *shareState) init() {
 	if st.plan == nil {
-		st.plan, st.clock, st.inflight = map[int64]*sharePlan{}, map[int64]time.Time{}, map[int64]float64{}
-		st.costs, st.stale, st.renewed = map[int64]*shareCosts{}, map[int64]bool{}, map[int64]time.Time{}
+		st.plan, st.clock, st.inflight = map[string]*sharePlan{}, map[int64]time.Time{}, map[int64]float64{}
+		st.costs, st.stale, st.renewed = map[string]*shareCosts{}, map[string]bool{}, map[string]time.Time{}
 	}
 }
 
@@ -124,7 +131,7 @@ func (s *Server) startShareProxy(ctx context.Context) {
 // login also gets the way to the proxy.
 func (s *Server) homeEnv(ctx context.Context, provider, home string) []string {
 	env := agent.AccountEnv(provider, home)
-	if provider != "claude" || home == "" || !agent.IsPersonPath(home) {
+	if (provider != "claude" && provider != "codex") || home == "" || !agent.IsPersonPath(home) {
 		return env
 	}
 	list, _ := s.store.ListAccounts(ctx)
@@ -136,7 +143,10 @@ func (s *Server) homeEnv(ctx context.Context, provider, home string) []string {
 	return env
 }
 
-// shareEnv is what a lent login's Claude Code needs to reach the proxy.
+// shareEnv is what a lent login's CLI needs to reach the proxy: Claude
+// Code takes it from the environment; Codex from a model provider in its
+// config.toml (written here, so a new port is picked up) whose key is in
+// the environment.
 func (s *Server) shareEnv(ctx context.Context, a *store.Account) []string {
 	sh, err := s.store.GetAIShare(ctx, a.ID)
 	if err != nil {
@@ -147,7 +157,37 @@ func (s *Server) shareEnv(ctx context.Context, a *store.Account) []string {
 		s.log.Warn("shared AI proxy", "err", err)
 		return nil
 	}
+	if a.Provider == "codex" {
+		if err := writeCodexShareConfig(a.Home, addr); err != nil {
+			s.log.Warn("shared AI: Codex config", "err", err)
+		}
+		return []string{shareCodexKeyEnv + "=" + sh.Token}
+	}
 	return []string{"ANTHROPIC_BASE_URL=http://" + addr, "ANTHROPIC_AUTH_TOKEN=" + sh.Token}
+}
+
+const shareCodexKeyEnv = "POCKET_SHARE_TOKEN"
+
+// writeCodexShareConfig points a lent Codex login at the proxy.
+func writeCodexShareConfig(home, addr string) error {
+	want := "# Written by Pocket AI: this login is lent to you and reaches OpenAI through Pocket AI.\n" +
+		"model_provider = \"pocket\"\n\n[model_providers.pocket]\nname = \"Pocket AI\"\n" +
+		"base_url = \"http://" + addr + "/codex\"\nwire_api = \"responses\"\nenv_key = \"" + shareCodexKeyEnv + "\"\n"
+	p := filepath.Join(home, "config.toml")
+	if b, err := os.ReadFile(p); err == nil && string(b) == want {
+		return nil
+	}
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(p, []byte(want), 0o600)
+}
+
+// codexErr answers the way OpenAI's API does (Codex shows the message).
+func codexErr(w http.ResponseWriter, code int, kind, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"type": kind, "code": kind, "message": msg}})
 }
 
 // shareErr answers the way Anthropic's API does, so Claude Code shows the
@@ -167,10 +207,21 @@ func (s *Server) handleShareProxy(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	if r.Method != http.MethodPost || (path != "/v1/messages" && path != "/v1/messages/count_tokens") {
-		shareErr(w, http.StatusNotFound, "not_found_error", "Pocket AI passes on Claude Code's messages only.")
+	provider, fail := "claude", shareErr
+	upURL := shareUpstream + path
+	switch rest, codex := strings.CutPrefix(path, "/codex"); {
+	case codex:
+		provider, fail = "codex", codexErr
+		upURL = shareCodexUpstream + rest
+		if !((r.Method == http.MethodPost && (rest == "/responses" || rest == "/responses/compact")) || (r.Method == http.MethodGet && rest == "/models")) {
+			fail(w, http.StatusNotFound, "not_found_error", "Pocket AI passes on Codex's requests only.")
+			return
+		}
+	case r.Method != http.MethodPost || (path != "/v1/messages" && path != "/v1/messages/count_tokens"):
+		fail(w, http.StatusNotFound, "not_found_error", "Pocket AI passes on Claude Code's messages only.")
 		return
 	}
+	shareErr := fail
 	ctx := r.Context()
 	tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if tok == "" {
@@ -182,7 +233,7 @@ func (s *Server) handleShareProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a, err := s.store.GetAccount(ctx, sh.AccountID)
-	if err != nil || a.SharedFrom == nil || a.UserID == nil {
+	if err != nil || a.SharedFrom == nil || a.UserID == nil || a.Provider != provider {
 		shareErr(w, http.StatusUnauthorized, "authentication_error", "This shared login is no longer shared with you.")
 		return
 	}
@@ -195,7 +246,7 @@ func (s *Server) handleShareProxy(w http.ResponseWriter, r *http.Request) {
 		shareErr(w, http.StatusBadRequest, "invalid_request_error", "The request is too big.")
 		return
 	}
-	counting := path == "/v1/messages/count_tokens"
+	counting := path == "/v1/messages/count_tokens" || r.Method == http.MethodGet
 	if !counting {
 		if v := s.shareView(ctx, a, sh); v.Blocked != "" {
 			shareErr(w, http.StatusBadRequest, "invalid_request_error", v.Blocked)
@@ -203,7 +254,8 @@ func (s *Server) handleShareProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	from := *a.SharedFrom
-	token, err := s.lentToken(ctx, from)
+	lk := limitsKey(provider, from)
+	token, acct, err := s.lentToken(ctx, provider, from)
 	if err != nil {
 		shareErr(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
@@ -213,7 +265,11 @@ func (s *Server) handleShareProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.Unmarshal(body, &m)
 
-	up, err := http.NewRequestWithContext(ctx, http.MethodPost, shareUpstream+path, bytes.NewReader(body))
+	var rd io.Reader
+	if r.Method == http.MethodPost {
+		rd = bytes.NewReader(body)
+	}
+	up, err := http.NewRequestWithContext(ctx, r.Method, upURL, rd)
 	if err != nil {
 		shareErr(w, http.StatusInternalServerError, "api_error", "Pocket AI could not pass the request on.")
 		return
@@ -227,7 +283,12 @@ func (s *Server) handleShareProxy(w http.ResponseWriter, r *http.Request) {
 		up.Header[k] = v
 	}
 	up.Header.Set("Authorization", "Bearer "+token)
-	if beta := up.Header.Get("Anthropic-Beta"); !strings.Contains(beta, "oauth-2025-04-20") {
+	if provider == "codex" {
+		up.Header.Set("Chatgpt-Account-Id", acct)
+		if up.Header.Get("Originator") == "" {
+			up.Header.Set("Originator", "codex_cli_rs")
+		}
+	} else if beta := up.Header.Get("Anthropic-Beta"); !strings.Contains(beta, "oauth-2025-04-20") {
 		if beta != "" {
 			beta += ","
 		}
@@ -237,17 +298,17 @@ func (s *Server) handleShareProxy(w http.ResponseWriter, r *http.Request) {
 	res, err := shareClient.Do(up)
 	if err != nil {
 		if ctx.Err() == nil {
-			shareErr(w, http.StatusBadGateway, "api_error", "Anthropic could not be reached: "+err.Error())
+			shareErr(w, http.StatusBadGateway, "api_error", providerName(provider)+"'s service could not be reached: "+err.Error())
 		}
 		return
 	}
 	defer res.Body.Close()
 	if res.StatusCode == http.StatusUnauthorized {
 		s.share.mu.Lock()
-		s.share.stale[from] = true
+		s.share.stale[lk] = true
 		s.share.mu.Unlock()
 	}
-	s.notePlan(from, res.Header)
+	s.notePlan(lk, res.Header)
 	for k, v := range res.Header {
 		switch http.CanonicalHeaderKey(k) {
 		case "Content-Length", "Connection", "Transfer-Encoding", "Content-Encoding", "Keep-Alive":
@@ -256,7 +317,7 @@ func (s *Server) handleShareProxy(w http.ResponseWriter, r *http.Request) {
 		w.Header()[k] = v
 	}
 	w.WriteHeader(res.StatusCode)
-	meter := &shareMeter{sse: strings.Contains(res.Header.Get("Content-Type"), "event-stream"), model: m.Model}
+	meter := &shareMeter{sse: strings.Contains(res.Header.Get("Content-Type"), "event-stream"), model: m.Model, codex: provider == "codex"}
 	fl, _ := w.(http.Flusher)
 	buf := make([]byte, 32<<10)
 	for {
@@ -282,6 +343,7 @@ func (s *Server) handleShareProxy(w http.ResponseWriter, r *http.Request) {
 // shareMeter reads the usage out of a response as it passes.
 type shareMeter struct {
 	sse   bool
+	codex bool // OpenAI's Responses API, not Anthropic's
 	model string
 	line  []byte
 	whole []byte // a plain JSON answer (up to 4 MB)
@@ -314,6 +376,11 @@ func (m *shareMeter) take(u *apiUsage, all bool) {
 }
 
 func (m *shareMeter) feed(b []byte) {
+	if !m.sse && len(m.whole) == 0 {
+		// a stream does not always say so (the Codex backend)
+		t := bytes.TrimSpace(b)
+		m.sse = bytes.HasPrefix(t, []byte("event:")) || bytes.HasPrefix(t, []byte("data:"))
+	}
 	if !m.sse {
 		if len(m.whole)+len(b) <= 4<<20 {
 			m.whole = append(m.whole, b...)
@@ -329,6 +396,16 @@ func (m *shareMeter) feed(b []byte) {
 		l := bytes.TrimSpace(m.line[:i])
 		m.line = m.line[i+1:]
 		if !bytes.HasPrefix(l, []byte("data:")) || !bytes.Contains(l, []byte(`usage`)) {
+			continue
+		}
+		if m.codex {
+			var ev struct {
+				Type     string          `json:"type"`
+				Response json.RawMessage `json:"response"`
+			}
+			if json.Unmarshal(bytes.TrimSpace(l[5:]), &ev) == nil && ev.Type == "response.completed" {
+				m.takeOpenAI(ev.Response)
+			}
 			continue
 		}
 		var ev struct {
@@ -357,8 +434,33 @@ func (m *shareMeter) feed(b []byte) {
 	}
 }
 
+// takeOpenAI reads a Responses API answer's model and usage.
+func (m *shareMeter) takeOpenAI(raw []byte) {
+	var res struct {
+		Model string `json:"model"`
+		Usage *struct {
+			Input   int64 `json:"input_tokens"`
+			Output  int64 `json:"output_tokens"`
+			Details struct {
+				Cached int64 `json:"cached_tokens"`
+			} `json:"input_tokens_details"`
+		} `json:"usage"`
+	}
+	if json.Unmarshal(raw, &res) != nil || res.Usage == nil {
+		return
+	}
+	if res.Model != "" {
+		m.model = res.Model
+	}
+	m.u.InputTokens = max(0, res.Usage.Input-res.Usage.Details.Cached) // cached ones are counted in input
+	m.u.CacheRead = res.Usage.Details.Cached
+	m.u.OutputTokens = res.Usage.Output
+}
+
 func (m *shareMeter) done() store.ShareUsage {
-	if !m.sse && len(m.whole) > 0 {
+	if m.codex && !m.sse && len(m.whole) > 0 {
+		m.takeOpenAI(m.whole)
+	} else if !m.sse && len(m.whole) > 0 {
 		var res struct {
 			Model string    `json:"model"`
 			Usage *apiUsage `json:"usage"`
@@ -380,6 +482,8 @@ func (m *shareMeter) done() store.ShareUsage {
 func shareCost(model string, u store.ShareUsage) float64 {
 	in, out := 5.0, 25.0 // Opus
 	switch m := strings.ToLower(model); {
+	case strings.Contains(m, "gpt") || strings.Contains(m, "codex") || strings.HasPrefix(m, "o"):
+		in, out = 1.25, 10
 	case strings.Contains(m, "haiku"):
 		in, out = 1, 5
 	case strings.Contains(m, "sonnet"):
@@ -426,19 +530,39 @@ func (s *Server) shareTurnDone(accountID int64) {
 }
 
 // notePlan keeps what Anthropic says about the plan with each answer.
-func (s *Server) notePlan(from int64, h http.Header) {
+func (s *Server) notePlan(lk string, h http.Header) {
 	week, okW := headerFloat(h, "Anthropic-Ratelimit-Unified-7d-Utilization")
 	five, okF := headerFloat(h, "Anthropic-Ratelimit-Unified-5h-Utilization")
+	var reset time.Time
+	if sec, err := strconv.ParseInt(h.Get("Anthropic-Ratelimit-Unified-7d-Reset"), 10, 64); err == nil && sec > 0 {
+		reset = time.Unix(sec, 0)
+	}
+	// Codex: a primary and a secondary window, each with its length
+	for _, w := range []string{"Primary", "Secondary"} {
+		used, ok := headerFloat(h, "X-Codex-"+w+"-Used-Percent")
+		mins, _ := headerFloat(h, "X-Codex-"+w+"-Window-Minutes")
+		if !ok || mins <= 0 {
+			continue
+		}
+		if mins >= 7*24*60 {
+			week, okW = used/100, true
+			if sec, err := strconv.ParseInt(h.Get("X-Codex-"+w+"-Reset-At"), 10, 64); err == nil && sec > 0 {
+				reset = time.Unix(sec, 0)
+			}
+		} else {
+			five, okF = used/100, true
+		}
+	}
 	if !okW && !okF {
 		return
 	}
 	s.share.mu.Lock()
 	defer s.share.mu.Unlock()
 	s.share.init()
-	p := s.share.plan[from]
+	p := s.share.plan[lk]
 	if p == nil {
 		p = &sharePlan{}
-		s.share.plan[from] = p
+		s.share.plan[lk] = p
 	}
 	if okW {
 		p.week = week
@@ -446,8 +570,8 @@ func (s *Server) notePlan(from int64, h http.Header) {
 	if okF {
 		p.five = five
 	}
-	if sec, err := strconv.ParseInt(h.Get("Anthropic-Ratelimit-Unified-7d-Reset"), 10, 64); err == nil && sec > 0 {
-		p.weekReset = time.Unix(sec, 0)
+	if !reset.IsZero() {
+		p.weekReset = reset
 	}
 	p.at = time.Now()
 }
@@ -464,16 +588,29 @@ func headerFloat(h http.Header, k string) (float64, bool) {
 // ---------- the owner's sign-in ----------
 
 // lentHome is the config folder of a login that may be lent: the server's
-// own (0) or one of the owner's named Claude logins.
-func (s *Server) lentHome(ctx context.Context, from int64) (string, error) {
+// own (0) or one of the owner's named Claude Code / Codex logins.
+func (s *Server) lentHome(ctx context.Context, provider string, from int64) (string, error) {
+	if provider != "claude" && provider != "codex" {
+		return "", errors.New("only Claude Code and Codex logins can be shared")
+	}
 	if from == 0 {
-		return s.cfg.ClaudeHome, nil
+		return s.defaultHome(provider), nil
 	}
 	a, err := s.store.GetAccount(ctx, from)
-	if err != nil || a.Provider != "claude" || a.SharedFrom != nil || agent.IsPersonPath(a.Home) {
+	if err != nil || a.Provider != provider || a.SharedFrom != nil || agent.IsPersonPath(a.Home) {
 		return "", errors.New("that login cannot be shared")
 	}
 	return a.Home, nil
+}
+
+// readLentToken reads a login's access token (and, for Codex, its ChatGPT
+// account id) and when it runs out.
+func readLentToken(provider, home string) (tok, acct string, exp time.Time, err error) {
+	if provider == "codex" {
+		return readCodexToken(home)
+	}
+	tok, exp, err = readClaudeToken(home)
+	return
 }
 
 func readClaudeToken(home string) (string, time.Time, error) {
@@ -493,60 +630,111 @@ func readClaudeToken(home string) (string, time.Time, error) {
 	return c.OAuth.AccessToken, time.UnixMilli(c.OAuth.ExpiresAt), nil
 }
 
+// readCodexToken reads a ChatGPT sign-in from auth.json (an API key login
+// cannot be lent: it has no plan to share).
+func readCodexToken(home string) (string, string, time.Time, error) {
+	raw, err := os.ReadFile(filepath.Join(home, "auth.json"))
+	if err != nil {
+		return "", "", time.Time{}, err
+	}
+	var c struct {
+		Tokens struct {
+			AccessToken string `json:"access_token"`
+			AccountID   string `json:"account_id"`
+		} `json:"tokens"`
+	}
+	if err := json.Unmarshal(raw, &c); err != nil || c.Tokens.AccessToken == "" {
+		return "", "", time.Time{}, errors.New("no ChatGPT sign-in in it")
+	}
+	return c.Tokens.AccessToken, c.Tokens.AccountID, jwtExpiry(c.Tokens.AccessToken), nil
+}
+
+// jwtExpiry reads "exp" from a JWT without checking it (far future when
+// there is none: the upstream's 401 says when it ran out).
+func jwtExpiry(tok string) time.Time {
+	parts := strings.Split(tok, ".")
+	if len(parts) == 3 {
+		if b, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "=")); err == nil {
+			var c struct {
+				Exp int64 `json:"exp"`
+			}
+			if json.Unmarshal(b, &c) == nil && c.Exp > 0 {
+				return time.Unix(c.Exp, 0)
+			}
+		}
+	}
+	return time.Now().Add(24 * time.Hour)
+}
+
 // lentToken is the owner's access token for the lent login, renewed first
 // when it is about to run out (by the CLI itself: it writes the new one).
-func (s *Server) lentToken(ctx context.Context, from int64) (string, error) {
+func (s *Server) lentToken(ctx context.Context, provider string, from int64) (string, string, error) {
 	owner := s.ownerName(ctx)
-	home, err := s.lentHome(ctx, from)
+	home, err := s.lentHome(ctx, provider, from)
 	if err != nil {
-		return "", errors.New(owner + " no longer shares this login.")
+		return "", "", errors.New(owner + " no longer shares this login.")
 	}
-	tok, exp, err := readClaudeToken(home)
+	notHere := errors.New(owner + "'s login cannot be used right now: it is not signed in on this server.")
+	tok, acct, exp, err := readLentToken(provider, home)
 	if err != nil {
-		return "", errors.New(owner + "'s login cannot be used right now: it is not signed in on this server.")
+		return "", "", notHere
 	}
+	lk := limitsKey(provider, from)
 	s.share.mu.Lock()
 	s.share.init()
-	stale := s.share.stale[from]
+	stale := s.share.stale[lk]
 	s.share.mu.Unlock()
 	if stale || time.Until(exp) < 3*time.Minute {
-		s.renewLent(ctx, from, home)
-		if tok, exp, err = readClaudeToken(home); err != nil {
-			return "", errors.New(owner + "'s login cannot be used right now: it is not signed in on this server.")
+		s.renewLent(ctx, provider, from, home)
+		if tok, acct, exp, err = readLentToken(provider, home); err != nil {
+			return "", "", notHere
 		}
 	}
 	if time.Until(exp) <= 0 {
-		return "", errors.New(owner + "'s sign-in on this server has run out. They need to sign in again (Settings → Machines).")
+		return "", "", errors.New(owner + "'s sign-in on this server has run out. They need to sign in again (Settings → Machines).")
 	}
-	return tok, nil
+	return tok, acct, nil
 }
 
-// renewLent lets Claude Code renew the lent login's sign-in: a tiny
-// question on it (at most once a minute).
-func (s *Server) renewLent(ctx context.Context, from int64, home string) {
+// renewLent lets the CLI renew the lent login's sign-in: a tiny question
+// on it (at most once a minute).
+func (s *Server) renewLent(ctx context.Context, provider string, from int64, home string) {
 	s.share.renewMu.Lock()
 	defer s.share.renewMu.Unlock()
+	lk := limitsKey(provider, from)
 	s.share.mu.Lock()
-	last := s.share.renewed[from]
+	last := s.share.renewed[lk]
 	s.share.mu.Unlock()
 	if time.Since(last) < time.Minute {
 		return
 	}
 	var env []string
 	if from != 0 {
-		env = agent.AccountEnv("claude", home)
+		env = agent.AccountEnv(provider, home)
 	}
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 90*time.Second)
 	defer cancel()
-	_, _, err := agent.CompleteClaude(cctx, agent.Options{Bin: s.cfg.ClaudeBin, Cwd: s.cfg.Home, Model: "haiku", Env: env, Log: s.log}, "Reply with the single word: ok")
+	var err error
+	if provider == "codex" {
+		dir, derr := os.MkdirTemp("", "pocket-share-renew-")
+		if derr != nil {
+			return
+		}
+		defer os.RemoveAll(dir)
+		cmd := exec.CommandContext(cctx, s.cfg.CodexBin, "exec", "--skip-git-repo-check", "-C", dir, "Reply with the single word: ok")
+		cmd.Env = append(os.Environ(), env...)
+		_, err = cmd.CombinedOutput()
+	} else {
+		_, _, err = agent.CompleteClaude(cctx, agent.Options{Bin: s.cfg.ClaudeBin, Cwd: s.cfg.Home, Model: "haiku", Env: env, Log: s.log}, "Reply with the single word: ok")
+	}
 	s.share.mu.Lock()
-	s.share.renewed[from] = time.Now()
+	s.share.renewed[lk] = time.Now()
 	if err == nil {
-		delete(s.share.stale, from)
+		delete(s.share.stale, lk)
 	}
 	s.share.mu.Unlock()
 	if err != nil {
-		s.log.Warn("shared AI: renewing the lent login failed", "from", from, "err", err)
+		s.log.Warn("shared AI: renewing the lent login failed", "login", lk, "err", err)
 	}
 }
 
@@ -563,7 +751,8 @@ func (s *Server) ownerName(ctx context.Context) string {
 
 // shareView is a lent login's allowance and how much of it is used.
 type shareView struct {
-	From        int64   `json:"from"` // the lent login (0 = the server's own)
+	From        int64   `json:"from"`     // the lent login (0 = the server's own)
+	Provider    string  `json:"provider"` // claude | codex
 	FromLabel   string  `json:"from_label"`
 	By          string  `json:"by"` // whose it is
 	MinutesDay  int     `json:"minutes_day"`
@@ -597,24 +786,25 @@ func (s *Server) shareKeep(ctx context.Context) int {
 
 // lentPlan: the lent login's plan as last seen (the proxy's answers, else
 // the limits Pocket AI reads for the Usage page).
-func (s *Server) lentPlan(from int64) (five, week float64, reset time.Time, known bool) {
+func (s *Server) lentPlan(provider string, from int64) (five, week float64, reset time.Time, known bool) {
+	lk := limitsKey(provider, from)
 	s.share.mu.Lock()
 	s.share.init()
-	p := s.share.plan[from]
+	p := s.share.plan[lk]
 	if p != nil && time.Since(p.at) < 30*time.Minute {
 		five, week, reset, known = p.five, p.week, p.weekReset, true
 	}
 	s.share.mu.Unlock()
 	s.rt.mu.Lock()
-	l := s.rt.limits[limitsKey("claude", from)]
+	l := s.rt.limits[lk]
 	if l != nil {
 		for _, w := range l.Windows {
 			switch w.ID {
-			case "five_hour":
+			case "five_hour", "codex:300":
 				if !known {
 					five = w.Used
 				}
-			case "seven_day":
+			case "seven_day", "codex:10080":
 				if !known {
 					week = w.Used
 				}
@@ -631,8 +821,8 @@ func (s *Server) lentPlan(from int64) (five, week float64, reset time.Time, know
 
 // loginGroup: the limits keys of every login on the same Anthropic account
 // as the lent one (they all draw on its plan).
-func (s *Server) loginGroup(from int64) map[string]bool {
-	key := limitsKey("claude", from)
+func (s *Server) loginGroup(provider string, from int64) map[string]bool {
+	key := limitsKey(provider, from)
 	out := map[string]bool{key: true}
 	s.rt.mu.Lock()
 	defer s.rt.mu.Unlock()
@@ -647,19 +837,20 @@ func (s *Server) loginGroup(from int64) map[string]bool {
 }
 
 // weekCosts: what the turns since the week began cost per login (kept 30 s).
-func (s *Server) weekCosts(ctx context.Context, from int64, since time.Time) []store.LoginCost {
+func (s *Server) weekCosts(ctx context.Context, provider string, from int64, since time.Time) []store.LoginCost {
+	lk := limitsKey(provider, from)
 	s.share.mu.Lock()
-	c := s.share.costs[from]
+	c := s.share.costs[lk]
 	s.share.mu.Unlock()
 	if c != nil && time.Since(c.at) < 30*time.Second && c.since.Equal(since) {
 		return c.list
 	}
-	list, err := s.store.TurnCostsSince(ctx, "claude", since)
+	list, err := s.store.TurnCostsSince(ctx, provider, since)
 	if err != nil {
 		return nil
 	}
 	s.share.mu.Lock()
-	s.share.costs[from] = &shareCosts{at: time.Now(), since: since, list: list}
+	s.share.costs[lk] = &shareCosts{at: time.Now(), since: since, list: list}
 	s.share.mu.Unlock()
 	return list
 }
@@ -671,7 +862,7 @@ func (s *Server) shareView(ctx context.Context, a *store.Account, sh *store.AISh
 		from = *a.SharedFrom
 	}
 	owner := s.ownerName(ctx)
-	v := shareView{From: from, By: owner, MinutesDay: sh.MinutesDay, PercentWeek: sh.PercentWeek, Paused: sh.Paused, Keep: s.shareKeep(ctx)}
+	v := shareView{From: from, Provider: a.Provider, By: owner, MinutesDay: sh.MinutesDay, PercentWeek: sh.PercentWeek, Paused: sh.Paused, Keep: s.shareKeep(ctx)}
 	v.FromLabel = "Server login"
 	if from != 0 {
 		if src, err := s.store.GetAccount(ctx, from); err == nil {
@@ -683,7 +874,7 @@ func (s *Server) shareView(ctx context.Context, a *store.Account, sh *store.AISh
 	v.UsedMinutes = float64(today.ActiveMS) / 60000
 	v.CostToday, v.Requests = today.CostUSD, today.Requests
 
-	five, week, reset, known := s.lentPlan(from)
+	five, week, reset, known := s.lentPlan(a.Provider, from)
 	v.PlanUsed = max(five, week)
 	if !reset.IsZero() {
 		v.WeekResets = store.FormatTime(reset)
@@ -697,10 +888,10 @@ func (s *Server) shareView(ctx context.Context, a *store.Account, sh *store.AISh
 		if !reset.IsZero() && reset.After(now) {
 			begin = reset.Add(-7 * 24 * time.Hour)
 		}
-		group := s.loginGroup(from)
-		lent := s.lentRows(ctx, from)
+		group := s.loginGroup(a.Provider, from)
+		lent := s.lentRows(ctx, a.Provider, from)
 		var total, mine float64
-		for _, c := range s.weekCosts(ctx, from, begin) {
+		for _, c := range s.weekCosts(ctx, a.Provider, from, begin) {
 			key := limitsKey(c.Provider, c.AccountID)
 			if c.HostID > 0 {
 				key = hostLimitsKey(c.Provider, c.HostID, c.HostHome)
@@ -721,6 +912,9 @@ func (s *Server) shareView(ctx context.Context, a *store.Account, sh *store.AISh
 		mine += s.share.inflight[a.ID]
 		s.share.mu.Unlock()
 		capKey := shareCapKey + "." + strconv.FormatInt(from, 10)
+		if a.Provider != "claude" {
+			capKey = shareCapKey + "." + a.Provider + "." + strconv.FormatInt(from, 10)
+		}
 		var capacity float64
 		if known && week >= 0.03 && total > 0 {
 			capacity = total / week
@@ -764,11 +958,11 @@ func minutesText(m int) string {
 func trimFloat(f float64) string { return strconv.FormatFloat(f, 'f', -1, 64) }
 
 // lentRows: the lent account rows made from one login.
-func (s *Server) lentRows(ctx context.Context, from int64) map[int64]bool {
+func (s *Server) lentRows(ctx context.Context, provider string, from int64) map[int64]bool {
 	out := map[int64]bool{}
 	list, _ := s.store.ListAccounts(ctx)
 	for _, a := range list {
-		if a.SharedFrom != nil && *a.SharedFrom == from {
+		if a.SharedFrom != nil && *a.SharedFrom == from && a.Provider == provider {
 			out[a.ID] = true
 		}
 	}
@@ -804,6 +998,7 @@ func (s *Server) aiShareRoutes(r chi.Router) {
 
 type lendable struct {
 	ID       int64   `json:"id"` // 0 = the server's own login
+	Provider string  `json:"provider"`
 	Label    string  `json:"label"`
 	Email    string  `json:"email,omitempty"`
 	Plan     string  `json:"plan,omitempty"`
@@ -829,11 +1024,11 @@ type shareRow struct {
 
 // lendables lists the logins the owner may lend.
 func (s *Server) lendables(ctx context.Context) []lendable {
-	out := []lendable{{ID: 0, Label: "Server login"}}
+	out := []lendable{{ID: 0, Provider: "claude", Label: "Server login"}, {ID: 0, Provider: "codex", Label: "Server login"}}
 	list, _ := s.store.ListAccounts(ctx)
 	for _, a := range list {
-		if a.Provider == "claude" && a.SharedFrom == nil && !agent.IsPersonPath(a.Home) {
-			out = append(out, lendable{ID: a.ID, Label: a.Label})
+		if a.SharedFrom == nil && !agent.IsPersonPath(a.Home) {
+			out = append(out, lendable{ID: a.ID, Provider: a.Provider, Label: a.Label})
 		}
 	}
 	var wg sync.WaitGroup
@@ -841,11 +1036,11 @@ func (s *Server) lendables(ctx context.Context) []lendable {
 		wg.Add(1)
 		go func(l *lendable) {
 			defer wg.Done()
-			home, _ := s.lentHome(ctx, l.ID)
-			st := s.accountStatus(ctx, "claude", l.ID, home, false)
-			_, _, terr := readClaudeToken(home) // what the proxy needs
+			home, _ := s.lentHome(ctx, l.Provider, l.ID)
+			st := s.accountStatus(ctx, l.Provider, l.ID, home, false)
+			_, _, _, terr := readLentToken(l.Provider, home) // what the proxy needs
 			l.SignedIn, l.Email, l.Plan = terr == nil, st.Email, st.Plan
-			five, week, _, _ := s.lentPlan(l.ID)
+			five, week, _, _ := s.lentPlan(l.Provider, l.ID)
 			l.PlanUsed = max(five, week)
 		}(&out[i])
 	}
@@ -887,6 +1082,7 @@ func (s *Server) handleListShares(w http.ResponseWriter, r *http.Request) {
 
 type shareInput struct {
 	UserID      int64    `json:"user_id"`
+	Provider    string   `json:"provider"` // claude (default) | codex
 	From        *int64   `json:"from"`
 	MinutesDay  *int     `json:"minutes_day"`
 	PercentWeek *float64 `json:"percent_week"`
@@ -931,19 +1127,26 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, displayName(person)+" already runs on this server's own logins, so there is nothing to share with them.")
 		return
 	}
-	srcHome, err := s.lentHome(ctx, *in.From)
+	if in.Provider == "" {
+		in.Provider = "claude"
+	}
+	srcHome, err := s.lentHome(ctx, in.Provider, *in.From)
 	if err != nil {
 		s.fail(w, badRequest(err.Error()), "share")
 		return
 	}
-	if _, _, err := readClaudeToken(srcHome); err != nil {
-		writeErr(w, http.StatusBadRequest, "That login is not signed in on this server (or keeps its sign-in in a keychain), so it cannot be shared.")
+	if _, _, _, err := readLentToken(in.Provider, srcHome); err != nil {
+		msg := "That login is not signed in on this server (or keeps its sign-in in a keychain), so it cannot be shared."
+		if in.Provider == "codex" {
+			msg = "That Codex login is not signed in with ChatGPT on this server (an API key login has no plan to share)."
+		}
+		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
 	// one share per person and login: change it instead
 	list, _ := s.store.ListAccounts(ctx)
 	for _, a := range list {
-		if a.SharedFrom != nil && *a.SharedFrom == *in.From && a.UserID != nil && *a.UserID == person.ID {
+		if a.SharedFrom != nil && *a.SharedFrom == *in.From && a.Provider == in.Provider && a.UserID != nil && *a.UserID == person.ID {
 			sh, err := s.store.GetAIShare(ctx, a.ID)
 			if err != nil {
 				sh = &store.AIShare{AccountID: a.ID, Token: "psh_" + store.RandomToken(24)}
@@ -965,13 +1168,13 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "person folder")
 		return
 	}
-	srcLabel := "Claude"
+	srcLabel := providerName(in.Provider)
 	if *in.From != 0 {
 		if src, err := s.store.GetAccount(ctx, *in.From); err == nil {
 			srcLabel = src.Label
 		}
 	}
-	base := filepath.Join(s.personHome(person.ID), ".claude-shared")
+	base := filepath.Join(s.personHome(person.ID), "."+in.Provider+"-shared")
 	home := base
 	for i := 2; exists(home); i++ {
 		home = base + "-" + strconv.Itoa(i)
@@ -982,7 +1185,7 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 	}
 	from := *in.From
 	uid := person.ID
-	a := &store.Account{Provider: "claude", Label: oneLine(s.ownerName(ctx)+"'s "+srcLabel, 60), Home: home, UserID: &uid, SharedFrom: &from}
+	a := &store.Account{Provider: in.Provider, Label: oneLine(s.ownerName(ctx)+"'s "+srcLabel, 60), Home: home, UserID: &uid, SharedFrom: &from}
 	if err := s.store.CreateAccount(ctx, a); err != nil {
 		s.fail(w, err, "shared login")
 		return
@@ -1088,7 +1291,7 @@ func (s *Server) handleShareSettings(w http.ResponseWriter, r *http.Request) {
 // when the owner's is, without saying who that is.
 func (s *Server) sharedStatus(ctx context.Context, a *store.Account) acctStatus {
 	from := *a.SharedFrom
-	home, err := s.lentHome(ctx, from)
+	home, err := s.lentHome(ctx, a.Provider, from)
 	st := acctStatus{CheckedAt: store.Now()}
 	if err != nil {
 		st.Error = s.ownerName(ctx) + " no longer shares this login."
@@ -1096,8 +1299,8 @@ func (s *Server) sharedStatus(ctx context.Context, a *store.Account) acctStatus 
 	}
 	// signed in = its sign-in is in the file the proxy reads (the CLI's
 	// own answer only adds the plan)
-	_, _, terr := readClaudeToken(home)
-	src := s.accountStatus(ctx, "claude", from, home, false)
+	_, _, _, terr := readLentToken(a.Provider, home)
+	src := s.accountStatus(ctx, a.Provider, from, home, false)
 	st.SignedIn, st.Plan = terr == nil, src.Plan
 	if !st.SignedIn {
 		st.Error = s.ownerName(ctx) + "'s login is signed out on this server for now."
