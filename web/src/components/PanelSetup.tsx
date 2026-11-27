@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom'
 import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { planName, providerName, resetsIn, shortProviderName } from '../lib/format'
-import { DEPTHS, KIND_ICON, panelRuns, sameLogin, type Depth, type Lineup, type OwnKind, type Panel, type PanelDraft, type PanelLogin, type PanelOptions, type PanelStage, type SeatSpec } from '../lib/panels'
+import { ACCESS, DEPTHS, KIND_ICON, panelRuns, sameLogin, type Access, type Depth, type Lineup, type OwnKind, type Panel, type PanelDraft, type PanelLogin, type PanelOptions, type PanelStage, type SeatSpec } from '../lib/panels'
 import type { Provider, ProviderId } from '../lib/types'
 import { effortLabel, effortOptions } from './AgentPicker'
 import { FolderButton } from './FolderPicker'
@@ -161,6 +161,7 @@ export function PanelDefaults({ onClose }: { onClose: () => void }) {
   const [err, setErr] = useState('')
   const [rows, setRows] = useState<{ seat: SeatSpec; on: boolean }[]>([])
   const [chair, setChair] = useState<SeatSpec | null>(null)
+  const [access, setAccess] = useState<Access>('')
   const [busy, setBusy] = useState(false)
   useEffect(() => {
     api.get<PanelOptions>(`${V1}/panels/options`).then(o => {
@@ -171,6 +172,7 @@ export function PanelDefaults({ onClose }: { onClose: () => void }) {
       const off = (o.automatic || []).filter(a => !on.some(r => r.seat.provider === a.provider)).map(s => ({ seat: { ...s, role: '' }, on: false }))
       setRows([...on, ...off])
       setChair(def?.chair || o.suggested.chair)
+      setAccess(def?.access || '')
     }).catch(e => setErr(errMsg(e)))
   }, [])
   const def = opts?.lineups.find(l => l.default)
@@ -189,7 +191,7 @@ export function PanelDefaults({ onClose }: { onClose: () => void }) {
   const save = async () => {
     setBusy(true)
     try {
-      const body = { name: def?.name || 'My default', seats: picked.map(r => r.seat), chair, default: true }
+      const body = { name: def?.name || 'My default', seats: picked.map(r => r.seat), chair, default: true, access }
       if (def) await api.put(`${V1}/panels/lineups/${def.id}`, body); else await api.post(`${V1}/panels/lineups`, body)
       toast('Saved — used for every panel you start without picking')
       onClose()
@@ -198,7 +200,7 @@ export function PanelDefaults({ onClose }: { onClose: () => void }) {
   const reset = async () => {
     if (!def) return
     setBusy(true)
-    try { await api.put(`${V1}/panels/lineups/${def.id}`, { name: def.name, seats: def.seats, chair: def.chair, default: false }); toast('Back to one model per agent'); onClose() } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
+    try { await api.put(`${V1}/panels/lineups/${def.id}`, { name: def.name, seats: def.seats, chair: def.chair, default: false, access: def.access }); toast('Back to one model per agent'); onClose() } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
   }
   return (
     <Modal title="Who takes part by default" onClose={onClose} size="lg" className="pn-setup" footer={<>
@@ -227,6 +229,10 @@ export function PanelDefaults({ onClose }: { onClose: () => void }) {
             <span className="label">Who writes the summary</span>
             <SeatRow seat={chair} label="" opts={opts} providers={providers} roles={[]} onChange={setChair} />
           </div>}
+          <Field label="What they may do without asking" group>
+            <Segmented value={access} onChange={setAccess} label="What they may do without asking" options={ACCESS.map(a => ({ value: a.value, label: a.label, title: a.help }))} />
+            <span className={`help ${access === 'full' ? 'pn-access-full' : ''}`}>{ACCESS.find(a => a.value === access)?.help} A panel an agent starts for you is never freer than that agent itself.</span>
+          </Field>
         </div>
       )}
     </Modal>
@@ -250,7 +256,8 @@ export function PanelSetup({ draft, onClose }: { draft: PanelDraft; onClose: () 
   const [cwd, setCwd] = useState(draft.cwd || '')
   const [hostId, setHostId] = useState(draft.hostId || 0)
   const [report, setReport] = useState(!!draft.fromThreadId)
-  const [mode, setMode] = useState<'' | 'edit' | 'auto'>('edit')
+  const [mode, setMode] = useState<'' | 'edit' | 'auto' | 'full'>('edit')
+  const [access, setAccess] = useState<Access>('')
   // things picked from the person's other Pocket apps; picking: which box "@" was typed in (to take it out again)
   const [picks, setPicks] = useState<PickedItem[]>([])
   const [picking, setPicking] = useState<'' | 'button' | 'question' | 'material'>('')
@@ -260,7 +267,7 @@ export function PanelSetup({ draft, onClose }: { draft: PanelDraft; onClose: () 
   const [delKind, setDelKind] = useState<OwnKind | null>(null)
   const from = draft.fromThreadId ? threads?.find(t => t.id === draft.fromThreadId) : undefined
 
-  const use = (l: { seats: SeatSpec[]; chair: SeatSpec | null }) => { setSeats(l.seats.map(s => ({ ...s }))); setChair(l.chair ? { ...l.chair, role: '' } : null) }
+  const use = (l: { seats: SeatSpec[]; chair: SeatSpec | null; access?: Access }) => { setSeats(l.seats.map(s => ({ ...s }))); setChair(l.chair ? { ...l.chair, role: '' } : null); setAccess(l.access || '') }
   const load = () => api.get<PanelOptions>(`${V1}/panels/options`).then(o => { setOpts(o); return o }).catch(e => { setErr(errMsg(e)); return null })
   useEffect(() => {
     void load().then(o => {
@@ -324,7 +331,7 @@ export function PanelSetup({ draft, onClose }: { draft: PanelDraft; onClose: () 
         seats, chair: needsChair ? chair : undefined,
         cwd: cwd || undefined, host_id: cwd ? hostId : undefined,
         from_thread_id: draft.fromThreadId || undefined, report: !!draft.fromThreadId && report,
-        mode: building ? mode : undefined,
+        mode: building ? mode : undefined, access: building ? undefined : access,
         items: picks.length ? picks : undefined,
       })
       onClose()
@@ -345,7 +352,7 @@ export function PanelSetup({ draft, onClose }: { draft: PanelDraft; onClose: () 
   }
   const saveLineup = async (name: string, asDefault: boolean, id = 0) => {
     try {
-      const body = { name, seats, chair, default: asDefault }
+      const body = { name, seats, chair, default: asDefault, access }
       const l = id ? await api.put<Lineup>(`${V1}/panels/lineups/${id}`, body) : await api.post<Lineup>(`${V1}/panels/lineups`, body)
       await load(); setLineup(l.id); setSaveAs(null)
       toast(asDefault ? `“${name}” is your default line-up` : 'Line-up saved')
@@ -433,8 +440,11 @@ export function PanelSetup({ draft, onClose }: { draft: PanelDraft; onClose: () 
             </div>
           </Field>
 
-          {building && <Field label="What they may do on their own" group help="They work in their own copies, so nothing touches your folder. One that still has to ask shows “Needs your answer” in the panel.">
-            <Segmented value={mode} onChange={setMode} label="Permissions" options={[{ value: 'edit', label: 'Change files' }, { value: 'auto', label: 'Change files and run commands' }, { value: '', label: 'As I normally run them' }]} />
+          {building ? <Field label="What they may do without asking" group help="They work in their own copies, so nothing touches your folder. One that still has to ask shows up in the panel as waiting for you.">
+            <Segmented value={mode} onChange={setMode} label="Permissions" options={[{ value: 'edit', label: 'Change files' }, { value: 'auto', label: 'And run commands' }, { value: 'full', label: 'Full access' }, { value: '', label: 'As I normally run them' }]} />
+          </Field> : <Field label="What they may do without asking" group>
+            <Segmented value={access} onChange={setAccess} label="What they may do without asking" options={ACCESS.map(a => ({ value: a.value, label: a.label, title: a.help }))} />
+            <span className={`help ${access === 'full' ? 'pn-access-full' : ''}`}>{ACCESS.find(a => a.value === access)?.help}</span>
           </Field>}
 
           {draft.fromThreadId && <label className="inline-switch"><Switch checked={report} onChange={setReport} label="Bring the outcome back" />Bring the outcome back to the conversation, so its agent can carry on from it</label>}

@@ -77,6 +77,11 @@ type panelStart struct {
 	Report       bool   `json:"report"`
 	LimitMin     int    `json:"limit_min"`
 	Mode         string `json:"mode"` // build: the participants' permission mode
+	// Access: what the participants may do without asking ("" only look, "auto",
+	// "full"); nil = the person's default. accessCap: never freer than this
+	// level (a panel an agent starts is no freer than the agent itself).
+	Access    *string `json:"access"`
+	accessCap *int
 	// Items: things picked from the person's other Pocket apps (a note, a
 	// document, a task…): their text is read once and joins the material.
 	Items []panelItem `json:"items"`
@@ -152,7 +157,7 @@ func (rt *engine) loginUsed(key string) (used float64, resets string, ok bool) {
 
 // defaultSeats is who takes part when the person names nobody: their default
 // line-up, else one participant per agent that works on this server.
-func (s *Server) defaultSeats(ctx context.Context, u *store.User) (seats []store.PanelSeatSpec, chair *store.PanelSeatSpec) {
+func (s *Server) defaultSeats(ctx context.Context, u *store.User) (seats []store.PanelSeatSpec, chair *store.PanelSeatSpec, access string) {
 	if list, err := s.store.ListPanelLineups(ctx, u.ID); err == nil {
 		for _, l := range list {
 			if !l.Default {
@@ -166,6 +171,7 @@ func (s *Server) defaultSeats(ctx context.Context, u *store.User) (seats []store
 			if l.Chair != nil && s.checkSeat(ctx, u, *l.Chair) == nil {
 				chair = l.Chair
 			}
+			access = panelAccess(l.Access)
 			break
 		}
 	}
@@ -185,7 +191,7 @@ func (s *Server) defaultSeats(ctx context.Context, u *store.User) (seats []store
 		c.Role = ""
 		chair = &c
 	}
-	return seats, chair
+	return seats, chair, access
 }
 
 // autoSeats is one participant per agent that works on this server, on the
@@ -289,11 +295,12 @@ func (s *Server) startPanel(ctx context.Context, u *store.User, in panelStart) (
 
 	// who takes part
 	specs, chair := in.Seats, in.Chair
+	access := ""
 	if in.LineupID != 0 && len(specs) == 0 {
 		list, _ := s.store.ListPanelLineups(ctx, u.ID)
 		for _, l := range list {
 			if l.ID == in.LineupID {
-				specs = l.Seats
+				specs, access = l.Seats, panelAccess(l.Access)
 				if chair == nil {
 					chair = l.Chair
 				}
@@ -302,11 +309,24 @@ func (s *Server) startPanel(ctx context.Context, u *store.User, in panelStart) (
 	}
 	if len(specs) == 0 {
 		var defChair *store.PanelSeatSpec
-		specs, defChair = s.defaultSeats(ctx, u)
+		specs, defChair, access = s.defaultSeats(ctx, u)
 		if chair == nil {
 			chair = defChair
 		}
 	}
+	// what they may do without asking: as said, else the line-up's; another
+	// app's panel only looks (its material is not the person's own words), and
+	// one an agent starts is never freer than that agent
+	if in.Access != nil {
+		access = panelAccess(*in.Access)
+	}
+	if in.App != "" || p.Kind == "build" {
+		access = "" // Best of N has its own setting (Mode)
+	}
+	if in.accessCap != nil && panelAccessLevel[access] > *in.accessCap {
+		access = map[bool]string{true: "auto", false: ""}[*in.accessCap >= panelAccessLevel["auto"]]
+	}
+	p.Spec.Access = access
 	if len(specs) > panelMaxSeats {
 		return nil, badRequest(fmt.Sprintf("At most %d participants", panelMaxSeats))
 	}
@@ -379,7 +399,7 @@ func (s *Server) startPanel(ctx context.Context, u *store.User, in panelStart) (
 		p.Spec.LimitMin = 240
 	}
 	if p.Kind == "build" {
-		if p.Spec.Mode = strings.TrimSpace(in.Mode); p.Spec.Mode != "edit" && p.Spec.Mode != "auto" {
+		if p.Spec.Mode = strings.TrimSpace(in.Mode); p.Spec.Mode != "edit" && p.Spec.Mode != "auto" && p.Spec.Mode != "full" {
 			p.Spec.Mode = "" // as the person normally runs each agent
 		}
 	}
@@ -818,6 +838,8 @@ func (s *Server) askSeat(ctx context.Context, owner *store.User, p *store.Panel,
 		if building {
 			nt.Mode = panelBuildMode(st.Provider, p.Spec.Mode)
 			nt.Worktree = &newWorktree{Mode: "new", Name: "panel-" + p.ID[:6] + "-" + strings.ToLower(st.Label)}
+		} else if p.Spec.Access != "" && p.Kind != "build" {
+			nt.Mode = panelBuildMode(st.Provider, p.Spec.Access) // on its own, as far as the person allowed
 		} else {
 			nt.Mode = panelReadOnlyMode(st.Provider)
 		}
@@ -849,17 +871,28 @@ func (s *Server) askSeat(ctx context.Context, owner *store.User, p *store.Panel,
 	_ = s.store.SavePanelSeat(ctx, st)
 }
 
-// panelBuildMode is the permission mode of a Best of N participant: "" as the
-// person normally runs that agent, "edit" = it may change files without
-// asking, "auto" = it also runs commands on its own where the agent has such
-// a mode (never its unrestricted one).
-func panelBuildMode(provider, want string) string {
-	if want == "" {
-		return ""
+// panelAccess is what participants may do without asking, as stored.
+func panelAccess(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "auto":
+		return "auto"
+	case "full":
+		return "full"
 	}
-	top := 2
-	if want == "auto" {
-		top = 3
+	return ""
+}
+
+// panelAccessLevel orders them like modeLevel orders the agents' modes.
+var panelAccessLevel = map[string]int{"": 0, "edit": 2, "auto": 3, "full": 4}
+
+// panelBuildMode is the permission mode of a participant that works on its
+// own: "" as the person normally runs that agent, "edit" = it changes files
+// without asking, "auto" = it also runs commands on its own where the agent
+// has such a mode, "full" = the agent's freest mode, which never asks.
+func panelBuildMode(provider, want string) string {
+	top := panelAccessLevel[want]
+	if top == 0 {
+		return ""
 	}
 	best, lvl := "", 0
 	for _, m := range modesOf(provider) {

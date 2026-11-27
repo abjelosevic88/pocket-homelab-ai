@@ -235,7 +235,10 @@ func panelIntro(p *store.Panel, st *store.PanelSeat, readOnly bool) string {
 	} else {
 		fmt.Fprintf(&b, "You take part in a panel of AI models (\"%s\" in Pocket AI): several models are given the same thing separately and their answers are compared. You are Participant %s. Work alone and give your own honest view — do not try to guess or match what the others will say.\n", p.Spec.KindName, st.Label)
 	}
-	if readOnly {
+	if readOnly && p.Spec.Access != "" && p.Kind != "build" {
+		b.WriteString("You may read files, search and run commands here without asking, so do not stop to ask for permission. Nobody is at the keyboard: do not ask the person questions; decide yourself and say what you assumed. There is no implementation plan to approve.\n")
+		b.WriteString("This panel is about answering, not about changing things: do not edit files and do not change the person's data, unless the question explicitly asks for it. Use tools when the question is about this folder's files or needs facts you can check; otherwise answer from what you know and what is given here.\n")
+	} else if readOnly {
 		b.WriteString("You are read-only here: look, do not change anything, and answer in text. There is no implementation plan to approve, so do not call ExitPlanMode and do not ask the person questions — nobody is at the keyboard; decide yourself and say what you assumed.\n")
 		b.WriteString("Answer from what you know and from what is given here. Look at files in this folder or use tools only when the question is about them or needs facts you can check there.\n")
 	} else {

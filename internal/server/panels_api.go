@@ -263,7 +263,7 @@ func (s *Server) handleDeletePanel(w http.ResponseWriter, r *http.Request) {
 func (s *Server) panelAgainStart(ctx context.Context, p *store.Panel) panelStart {
 	in := panelStart{Kind: p.Kind, RecipeID: p.Spec.RecipeID, Question: p.Question, Material: p.Material, Title: p.Title,
 		Depth: panelDepthNames[min(max(p.Spec.Depth, 0), panelDeep)], Cwd: p.Spec.Cwd, HostID: &p.Spec.HostID,
-		FromThreadID: p.FromThreadID, LimitMin: p.Spec.LimitMin, Mode: p.Spec.Mode}
+		FromThreadID: p.FromThreadID, LimitMin: p.Spec.LimitMin, Mode: p.Spec.Mode, Access: &p.Spec.Access}
 	seats, _ := s.store.PanelSeats(ctx, p.ID)
 	for _, st := range seats {
 		sp := st.PanelSeatSpec
@@ -497,7 +497,7 @@ func (s *Server) handlePanelOptions(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(ctx)
 	lineups, _ := s.store.ListPanelLineups(ctx, u.ID)
 	recipes, _ := s.store.ListPanelRecipes(ctx, u.ID)
-	seats, chair := s.defaultSeats(ctx, u)
+	seats, chair, access := s.defaultSeats(ctx, u)
 	if seats == nil {
 		seats = []store.PanelSeatSpec{}
 	}
@@ -512,7 +512,7 @@ func (s *Server) handlePanelOptions(w http.ResponseWriter, r *http.Request) {
 		"lineups":   lineups,
 		"own_kinds": recipes,
 		"logins":    s.panelLogins(ctx, u),
-		"suggested": map[string]any{"seats": seats, "chair": chair},
+		"suggested": map[string]any{"seats": seats, "chair": chair, "access": access},
 		"automatic": s.autoSeats(ctx, u), // every agent that works here, before the person chose
 
 		"max_seats": panelMaxSeats,
@@ -538,6 +538,7 @@ func (s *Server) handleSaveLineup(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Sprintf("A line-up has 1 to %d participants", panelMaxSeats))
 		return
 	}
+	in.Access = panelAccess(in.Access)
 	if err := s.store.SavePanelLineup(r.Context(), &in); err != nil {
 		s.fail(w, err, "save line-up")
 		return

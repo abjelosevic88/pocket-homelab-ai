@@ -8,7 +8,14 @@ export interface PanelKind { id: string; name: string; description: string; ask:
 export interface OwnKind { id: number; name: string; description: string; stages: PanelStage[] }
 export interface SeatSpec { provider: ProviderId; model: string; effort: string; account_id: number; host_id: number; host_home: string; role: string }
 export interface PanelLogin { provider: ProviderId; account_id: number; host_id: number; host_home: string; label: string; where: string; signed_in: boolean; email?: string; plan?: string; used: number; resets_at?: string; error?: string }
-export interface Lineup { id: number; name: string; seats: SeatSpec[]; chair: SeatSpec | null; default: boolean }
+export interface Lineup { id: number; name: string; seats: SeatSpec[]; chair: SeatSpec | null; default: boolean; access: Access }
+/** What participants may do without asking: only look, each agent's own automatic mode, or anything. */
+export type Access = '' | 'auto' | 'full'
+export const ACCESS: { value: Access; label: string; help: string }[] = [
+  { value: '', label: 'Only look', help: 'They read and answer. One that wants to do more has to ask you, and waits for your answer.' },
+  { value: 'auto', label: 'On their own', help: 'Each runs in its own automatic mode: it reads, searches and runs commands without asking, and stops only for what it finds risky.' },
+  { value: 'full', label: 'Full access', help: 'They never ask. Each can run anything as you on its machine. They are told to change nothing unless you ask for it, but nothing stops them.' },
+]
 export interface PanelOptions {
   kinds: PanelKind[]
   depths: { id: Depth; name: string; description: string }[]
@@ -16,7 +23,7 @@ export interface PanelOptions {
   lineups: Lineup[]
   own_kinds: OwnKind[]
   logins: PanelLogin[]
-  suggested: { seats: SeatSpec[]; chair: SeatSpec | null }
+  suggested: { seats: SeatSpec[]; chair: SeatSpec | null; access?: Access }
   /** one participant per agent that works on the server, before the person chose */
   automatic: SeatSpec[]
   max_seats: number
@@ -34,7 +41,7 @@ export interface PanelSeat extends SeatSpec {
 export interface PanelAnswer { id: number; seat_id: number; stage: number; text: string; created_at: string }
 export interface Panel {
   id: string; kind: string; title: string; question: string; material: string
-  spec: { depth: number; stages: PanelStage[]; kind_name: string; cwd: string; host_id: number; limit_min: number; quorum: number }
+  spec: { depth: number; stages: PanelStage[]; kind_name: string; cwd: string; host_id: number; limit_min: number; quorum: number; access?: Access }
   status: 'running' | 'done' | 'failed' | 'stopped'
   stage: number; stage_at: string; result: string; error: string
   from_thread_id: string; report: boolean; from_title?: string

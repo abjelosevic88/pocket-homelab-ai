@@ -291,3 +291,66 @@ func TestLongPathsShowTheirEnd(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+// What participants may do without asking: each agent's own mode for the
+// level picked, a line-up's level when nothing is said, and a panel from
+// another app only ever looks.
+func TestPanelAccessLevels(t *testing.T) {
+	for _, c := range []struct{ provider, want, mode string }{
+		{"claude", "auto", "auto"}, {"claude", "full", "bypassPermissions"}, {"claude", "edit", "acceptEdits"},
+		{"codex", "auto", "on-request"}, {"codex", "full", "full-access"}, {"claude", "", ""},
+	} {
+		if got := panelBuildMode(c.provider, c.want); got != c.mode {
+			t.Fatalf("%s %q: %q, want %q", c.provider, c.want, got, c.mode)
+		}
+	}
+	fastPanels(t)
+	s, h, root := testServer(t)
+	c, u := person(t, s, h, "access@example.test", "admin", true)
+	fakeClaude(t, s, root)
+	if err := os.WriteFile(s.cfg.ClaudeBin, []byte(panelClaude), 0700); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	seats := []map[string]any{{"provider": "claude", "model": "default"}, {"provider": "claude", "model": "default"}}
+	modeOf := func(id string) (string, string) {
+		p := panelDone(t, s, id)
+		list, _ := s.store.PanelSeats(ctx, p.ID)
+		th, err := s.store.GetThreadAny(ctx, list[0].ThreadID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		items, _ := s.store.ListItems(ctx, th.ID)
+		return th.Mode, items[0].Body
+	}
+	var started struct {
+		ID string `json:"id"`
+	}
+	c.want("POST", "/api/v1/panels", map[string]any{"kind": "ask", "question": "q", "depth": "quick", "cwd": root, "seats": seats, "access": "full"}, 201, &started)
+	if mode, first := modeOf(started.ID); mode != "bypassPermissions" || !strings.Contains(first, "without asking") || strings.Contains(first, "You are read-only") {
+		t.Fatalf("full access: mode %q, told %q", mode, first)
+	}
+	// the default line-up's level is used when nothing is said
+	c.want("POST", "/api/v1/panels/lineups", map[string]any{"name": "Mine", "default": true, "access": "auto", "seats": seats}, 200, nil)
+	c.want("POST", "/api/v1/panels", map[string]any{"kind": "ask", "question": "q", "depth": "quick", "cwd": root}, 201, &started)
+	if mode, _ := modeOf(started.ID); mode != "auto" {
+		t.Fatalf("line-up's level: mode %q", mode)
+	}
+	// another app's panel only looks, whatever the default
+	p, err := s.startPanel(ctx, u, panelStart{Kind: "ask", Question: "q", Depth: "quick", App: "docs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode, first := modeOf(p.ID); mode != "plan" || !strings.Contains(first, "You are read-only") {
+		t.Fatalf("another app's panel: mode %q", mode)
+	}
+	// one an agent starts is no freer than the agent
+	level := 1
+	p, err = s.startPanel(ctx, u, panelStart{Kind: "ask", Question: "q", Depth: "quick", accessCap: &level})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode, _ := modeOf(p.ID); mode != "plan" {
+		t.Fatalf("capped by the starting agent: mode %q", mode)
+	}
+}

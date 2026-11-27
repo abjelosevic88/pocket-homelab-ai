@@ -144,7 +144,16 @@ func (s *Server) callPanelTool(ctx, session context.Context, owner *store.User, 
 			}
 		}
 		start := panelStart{Kind: kind.ID, Question: in.Question, Material: in.Material, Depth: in.Depth, Title: in.Title, FromThreadID: t.ID, Report: in.Report == nil || *in.Report}
-		seats, chair := s.defaultSeats(ctx, owner)
+		seats, chair, access := s.defaultSeats(ctx, owner)
+		// never freer than this conversation's own agent
+		capLevel, known := modeLevel[t.Mode]
+		if !known {
+			capLevel = 1
+		}
+		start.accessCap = &capLevel
+		if panelAccessLevel[access] > capLevel {
+			access = map[bool]string{true: "auto", false: ""}[capLevel >= panelAccessLevel["auto"]]
+		}
 		names := []string{}
 		for _, sp := range seats {
 			st := store.PanelSeat{PanelSeatSpec: sp}
@@ -159,6 +168,7 @@ func (s *Server) callPanelTool(ctx, session context.Context, owner *store.User, 
 			"participants": strings.Join(names, "; "),
 			"question":     tailHead(in.Question, 3000),
 		}
+		preview["they may"] = map[string]string{"": "only look (read-only)", "auto": "work on their own, each in its automatic mode", "full": "do anything without asking (full access)"}[access]
 		if chair != nil {
 			st := store.PanelSeat{PanelSeatSpec: *chair}
 			st.Role = ""

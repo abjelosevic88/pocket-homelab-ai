@@ -5,7 +5,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { ago, fmtCost, providerName } from '../lib/format'
-import { forgetPanelTab, KIND_ICON, openPanelSheet, PANEL_EVENT, panelTab, rememberTab, type Panel, type PanelSeat } from '../lib/panels'
+import { ACCESS, forgetPanelTab, KIND_ICON, openPanelSheet, PANEL_EVENT, panelTab, rememberTab, type Panel, type PanelSeat } from '../lib/panels'
 import { pathAfterDelete } from '../components/TabBar'
 import type { ProviderId, Thread } from '../lib/types'
 import { offeredProviders } from '../components/AgentPicker'
@@ -295,7 +295,7 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
           {asked && <div className="pn-asked-body">
             {p.question && <div className="pn-q">{p.question}</div>}
             {p.material && <><div className="label muted xsmall">The material</div><Markdown text={p.material} /></>}
-            <div className="muted xsmall">{p.depth[0].toUpperCase() + p.depth.slice(1)} · {ago(p.created_at)}{p.spec.cwd ? ` · ${p.spec.cwd}` : ''}
+            <div className="muted xsmall">{p.depth[0].toUpperCase() + p.depth.slice(1)}{p.kind !== 'build' ? ` · ${ACCESS.find(a => a.value === (p.spec.access || ''))?.label.toLowerCase()}` : ''} · {ago(p.created_at)}{p.spec.cwd ? ` · ${p.spec.cwd}` : ''}
               {p.from_thread_id && p.from_title && <> · from <button type="button" className="link-btn" onClick={() => openThread(p.from_thread_id)}>{p.from_title}</button></>}</div>
           </div>}
 

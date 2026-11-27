@@ -35,17 +35,20 @@ type PanelSeatSpec struct {
 
 // PanelSpec is how a panel runs, fixed when it starts.
 type PanelSpec struct {
-	Depth     int          `json:"depth"`     // 0 quick, 1 standard, 2 deep
-	Stages    []PanelStage `json:"stages"`    // the steps that run (already cut to the depth)
-	KindName  string       `json:"kind_name"` // "Council", or a recipe's name
-	RecipeID  int64        `json:"recipe_id,omitempty"`
-	Cwd       string       `json:"cwd"`                  // the folder the participants look at
-	HostID    int64        `json:"host_id"`              // the machine that folder is on
-	LimitMin  int          `json:"limit_min"`            // minutes one participant gets per step
-	Quorum    int          `json:"quorum"`               // answers the first step needs
-	Mode      string       `json:"mode,omitempty"`       // build: the participants' permission mode ("" = their default)
-	App       string       `json:"app,omitempty"`        // the Pocket app that started it over a Core link
-	ChairSwap bool         `json:"chair_swap,omitempty"` // the summary writer was replaced once already
+	Depth    int          `json:"depth"`     // 0 quick, 1 standard, 2 deep
+	Stages   []PanelStage `json:"stages"`    // the steps that run (already cut to the depth)
+	KindName string       `json:"kind_name"` // "Council", or a recipe's name
+	RecipeID int64        `json:"recipe_id,omitempty"`
+	Cwd      string       `json:"cwd"`            // the folder the participants look at
+	HostID   int64        `json:"host_id"`        // the machine that folder is on
+	LimitMin int          `json:"limit_min"`      // minutes one participant gets per step
+	Quorum   int          `json:"quorum"`         // answers the first step needs
+	Mode     string       `json:"mode,omitempty"` // build: the participants' permission mode ("" = their default)
+	App      string       `json:"app,omitempty"`  // the Pocket app that started it over a Core link
+	// Access: what the participants may do without asking: "" only look, "auto"
+	// each agent's own automatic mode, "full" never asks.
+	Access    string `json:"access,omitempty"`
+	ChairSwap bool   `json:"chair_swap,omitempty"` // the summary writer was replaced once already
 }
 
 // Panel is one run.
@@ -294,12 +297,13 @@ type PanelLineup struct {
 	Seats     []PanelSeatSpec `json:"seats"`
 	Chair     *PanelSeatSpec  `json:"chair"`
 	Default   bool            `json:"default"`
+	Access    string          `json:"access"` // "" | auto | full: what its participants may do without asking
 	CreatedAt string          `json:"created_at"`
 	UpdatedAt string          `json:"updated_at"`
 }
 
 func (s *Store) ListPanelLineups(ctx context.Context, userID int64) ([]*PanelLineup, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id, user_id, name, seats, chair, is_default, created_at, updated_at FROM panel_lineups WHERE user_id = ? ORDER BY is_default DESC, name COLLATE NOCASE, id`, userID)
+	rows, err := s.DB.QueryContext(ctx, `SELECT id, user_id, name, seats, chair, is_default, access, created_at, updated_at FROM panel_lineups WHERE user_id = ? ORDER BY is_default DESC, name COLLATE NOCASE, id`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -309,7 +313,7 @@ func (s *Store) ListPanelLineups(ctx context.Context, userID int64) ([]*PanelLin
 		var l PanelLineup
 		var seats, chair string
 		var def int
-		if err := rows.Scan(&l.ID, &l.UserID, &l.Name, &seats, &chair, &def, &l.CreatedAt, &l.UpdatedAt); err != nil {
+		if err := rows.Scan(&l.ID, &l.UserID, &l.Name, &seats, &chair, &def, &l.Access, &l.CreatedAt, &l.UpdatedAt); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(seats), &l.Seats)
@@ -339,8 +343,8 @@ func (s *Store) SavePanelLineup(ctx context.Context, l *PanelLineup) error {
 		}
 	}
 	if l.ID == 0 {
-		res, err := s.DB.ExecContext(ctx, `INSERT INTO panel_lineups (user_id, name, seats, chair, is_default, created_at, updated_at) VALUES (?,?,?,?,?,?,?)`,
-			l.UserID, l.Name, string(seats), string(chair), boolInt(l.Default), now, now)
+		res, err := s.DB.ExecContext(ctx, `INSERT INTO panel_lineups (user_id, name, seats, chair, is_default, access, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)`,
+			l.UserID, l.Name, string(seats), string(chair), boolInt(l.Default), l.Access, now, now)
 		if err != nil {
 			return err
 		}
@@ -348,8 +352,8 @@ func (s *Store) SavePanelLineup(ctx context.Context, l *PanelLineup) error {
 		l.CreatedAt, l.UpdatedAt = now, now
 		return nil
 	}
-	res, err := s.DB.ExecContext(ctx, `UPDATE panel_lineups SET name = ?, seats = ?, chair = ?, is_default = ?, updated_at = ? WHERE id = ? AND user_id = ?`,
-		l.Name, string(seats), string(chair), boolInt(l.Default), now, l.ID, l.UserID)
+	res, err := s.DB.ExecContext(ctx, `UPDATE panel_lineups SET name = ?, seats = ?, chair = ?, is_default = ?, access = ?, updated_at = ? WHERE id = ? AND user_id = ?`,
+		l.Name, string(seats), string(chair), boolInt(l.Default), l.Access, now, l.ID, l.UserID)
 	if err != nil {
 		return err
 	}
