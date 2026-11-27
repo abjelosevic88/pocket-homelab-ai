@@ -121,7 +121,11 @@ func (s *Server) homes(ctx context.Context) agent.Homes {
 // gone: the server's own login takes over).
 func (s *Server) accountHome(ctx context.Context, provider string, id int64) (dir string, env []string) {
 	if ag, ok := agent.ACPAgentByID(provider); ok {
-		// no logins of its own: its sign-in is where it keeps it, its keys come from Settings
+		// its keys come from Settings; with login folders (Antigravity) the
+		// account says which one, else its sign-in is where it keeps it
+		if ag.Logins {
+			return s.acpLoginDir(ctx, provider, id), s.acpEnv(ctx, provider)
+		}
 		return ag.ACPHome(), s.acpEnv(ctx, provider)
 	}
 	if id == 0 {
@@ -137,6 +141,19 @@ func (s *Server) accountHome(ctx context.Context, provider string, id int64) (di
 func (s *Server) accountEnv(ctx context.Context, provider string, id int64) []string {
 	_, env := s.accountHome(ctx, provider, id)
 	return env
+}
+
+// acpLoginDir is the login folder a thread's account names for an ACP agent
+// with logins: "" = its default (account 0, or an account that is gone).
+func (s *Server) acpLoginDir(ctx context.Context, provider string, id int64) string {
+	if id == 0 {
+		return ""
+	}
+	a, err := s.store.GetAccount(ctx, id)
+	if err != nil || a.Provider != provider {
+		return ""
+	}
+	return a.Home
 }
 
 // mayUseAccount: the owner runs on accounts nobody owns and their own;
@@ -172,6 +189,9 @@ func (s *Server) checkAccount(ctx context.Context, u *store.User, provider strin
 	if err != nil || a.Provider != provider || !s.mayUseAccount(ctx, u, a) {
 		return badRequest("that account is not available")
 	}
+	if agent.IsACP(provider) && !s.mayUseServerLogin(ctx, u) {
+		return badRequest(signInFirst(provider))
+	}
 	return nil
 }
 
@@ -197,6 +217,9 @@ func (s *Server) usableAccount(ctx context.Context, u *store.User, provider stri
 	if s.mayUseServerLogin(ctx, u) {
 		return 0, nil
 	}
+	if agent.IsACP(provider) {
+		return 0, badRequest(signInFirst(provider)) // the owner's alone
+	}
 	list, _ := s.store.ListAccounts(ctx)
 	for _, a := range list {
 		if a.Provider == provider && s.mayUseAccount(ctx, u, a) {
@@ -213,8 +236,17 @@ func (s *Server) accountsFor(ctx context.Context, u *store.User, manage, refresh
 	if s.mayUseServerLogin(ctx, u) || (manage && u.Role == "admin") {
 		out = append(out, accountView{Provider: "claude", Label: "Server login", Home: s.cfg.ClaudeHome, Default: true},
 			accountView{Provider: "codex", Label: "Server login", Home: s.cfg.CodexHome, Default: true})
+		for _, ag := range agent.ACPAgents { // agents with login folders, once installed here
+			if _, err := exec.LookPath(ag.Command()); ag.Logins && err == nil {
+				out = append(out, accountView{Provider: ag.ID, Label: "Server login", Home: ag.LoginHome(""), Default: true})
+			}
+		}
 	}
 	list, _ := s.store.ListAccounts(ctx)
+	if s.mayUseServerLogin(ctx, u) { // the other agents' logins are the owner's alone
+		more, _ := s.store.ListAgentAccounts(ctx)
+		list = append(list, more...)
+	}
 	for _, a := range list {
 		if s.mayUseAccount(ctx, u, a) || (manage && u.Role == "admin") {
 			out = append(out, accountView{ID: a.ID, Provider: a.Provider, Label: a.Label, Home: a.Home, UserID: a.UserID})
@@ -249,6 +281,23 @@ func (s *Server) accountStatus(ctx context.Context, provider string, id int64, h
 	if ok && !refresh && time.Since(cur.at) < 10*time.Minute && !loginChanged(provider, home, cur.at) {
 		return cur
 	}
+	if ag, ok := agent.ACPAgentByID(provider); ok {
+		// who it is stands in its token file (read, never shown)
+		dir := home
+		if id == 0 {
+			dir = ""
+		}
+		email, signedIn := ag.LoginStatus(dir)
+		st := acctStatus{SignedIn: signedIn, Email: email, at: time.Now()}
+		if signedIn && email != "" {
+			st.ident = loginIdent(provider, email, "")
+		}
+		st.CheckedAt = store.FormatTime(st.at)
+		s.accts.mu.Lock()
+		s.accts.status[k] = st
+		s.accts.mu.Unlock()
+		return st
+	}
 	var env []string
 	if id != 0 {
 		env = agent.AccountEnv(provider, home)
@@ -281,6 +330,9 @@ func loginChanged(provider, home string, t time.Time) bool {
 	name := ".credentials.json"
 	if provider == "codex" {
 		name = "auth.json"
+	}
+	if ag, ok := agent.ACPAgentByID(provider); ok {
+		name = ag.TokenFile
 	}
 	fi, err := os.Stat(filepath.Join(home, name))
 	return err == nil && fi.ModTime().After(t)
@@ -368,8 +420,13 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	if in.Provider != "claude" && in.Provider != "codex" {
-		writeErr(w, http.StatusBadRequest, "provider must be claude or codex")
+	ag, isACP := agent.ACPAgentByID(in.Provider)
+	if in.Provider != "claude" && in.Provider != "codex" && !ag.Logins {
+		writeErr(w, http.StatusBadRequest, "that agent has no logins to add")
+		return
+	}
+	if isACP && (u.Role != "admin" || !s.mayUseServerLogin(r.Context(), u) || in.UserID != nil) {
+		writeErr(w, http.StatusForbidden, signInFirst(in.Provider))
 		return
 	}
 	in.Label = oneLine(in.Label, 60)
@@ -399,6 +456,9 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 		home = s.newAccountHome(*in.UserID, in.Provider, slug)
 	} else {
 		base := filepath.Join(s.cfg.Home, "."+in.Provider+"-"+slug)
+		if isACP {
+			base = filepath.Join(s.cfg.Home, ag.LoginPrefix()+"-"+slug) // ~/.gemini-work
+		}
 		home = base
 		for i := 2; ; i++ {
 			if _, err := os.Lstat(home); os.IsNotExist(err) {
@@ -411,7 +471,7 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "create account folder")
 		return
 	}
-	if !person {
+	if !person && !isACP {
 		agent.ShareSetup(in.Provider, s.defaultHome(in.Provider), home)
 		_, _, _ = linkSkills(filepath.Join(s.defaultHome(in.Provider), "skills"), filepath.Join(home, "skills")) // even before the shared folder exists
 		if in.Provider == "claude" {
@@ -534,6 +594,10 @@ func (s *Server) handlePatchAccount(w http.ResponseWriter, r *http.Request) {
 		if !s.requireAdmin(w, r) {
 			return
 		}
+		if agent.IsACP(a.Provider) {
+			writeErr(w, http.StatusBadRequest, providerName(a.Provider)+" logins are the server owner's and cannot be given to someone else")
+			return
+		}
 		var uid *int64
 		if err := json.Unmarshal(*in.UserID, &uid); err != nil {
 			writeErr(w, http.StatusBadRequest, "user_id must be a number or null")
@@ -581,6 +645,19 @@ func (s *Server) handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAccountLogout(w http.ResponseWriter, r *http.Request) {
 	a := s.adminAccount(w, r)
 	if a == nil {
+		return
+	}
+	if ag, ok := agent.ACPAgentByID(a.Provider); ok {
+		// signing out is forgetting the token
+		if err := os.Remove(ag.TokenPath(a.Home)); err != nil && !os.IsNotExist(err) {
+			s.fail(w, err, "sign out")
+			return
+		}
+		s.rt.stopAccount(a.ID)
+		s.forgetProviders()
+		st := s.accountStatus(r.Context(), a.Provider, a.ID, a.Home, true)
+		s.rt.publishAccounts()
+		writeJSON(w, http.StatusOK, st)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -676,6 +753,9 @@ func (s *Server) handleStartLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	s.startLogin(w, a.Provider, loginKey(a.ID), a.Home, agent.AccountEnv(a.Provider, a.Home), func(ok bool) {
 		s.accountStatus(s.rt.ctx, a.Provider, a.ID, a.Home, true)
+		if ok && agent.IsACP(a.Provider) {
+			s.forgetProviders() // its models may be the first this server sees
+		}
 		if ok {
 			s.rt.stopAccount(a.ID) // idle threads start again on the new sign-in
 		}
@@ -737,6 +817,10 @@ func (s *Server) startLogin(w http.ResponseWriter, provider, key, dir string, en
 	s.cancelLogin(key)
 	ctx, cancel := context.WithTimeout(s.rt.ctx, loginExpiry)
 	bin, args := loginArgs(provider, s.cfg.ClaudeBin, s.cfg.CodexBin)
+	if ag, ok := agent.ACPAgentByID(provider); ok {
+		// dir is the account's login folder: the agent is told by a flag
+		bin, args = ag.Command(), ag.LoginCommand(dir)
+	}
 	// nothing to open on a server
 	cmd, err := agent.LocalCmd(ctx, dir, append(env, loginEnv...), bin, args...)
 	if err != nil {

@@ -494,6 +494,9 @@ func (rt *engine) startRun(t *store.Thread) (*run, error) {
 	// The account's folder, with the session in it (it may have been
 	// started on another login).
 	o.Env = append(o.Env, rt.s.accountEnv(ctx, t.Provider, t.AccountID)...)
+	if ag, ok := agent.ACPAgentByID(t.Provider); ok && ag.Logins {
+		o.LoginDir = rt.s.acpLoginDir(ctx, t.Provider, t.AccountID) // which login here
+	}
 	if err := rt.s.ensureSession(ctx, t, o.ResumeID); err != nil {
 		cancel()
 		return nil, err
@@ -637,7 +640,20 @@ func (rt *engine) startRemote(t *store.Thread, h *store.Host) (*run, error) {
 	o.Remote.Slot = t.ID // ends this thread's process from a connection that dropped unnoticed there
 	o.Bin = hostBin(h, t.Provider)
 	o.Env = append(o.Env, agent.HomeEnv(t.Provider, t.HostHome)...) // which login there
-	if o.ResumeID != "" {
+	acp := agent.IsACP(t.Provider)
+	if acp {
+		o.LoginDir = t.HostHome // told by a flag, not the environment
+		// the last check of the machine may be from before it was installed
+		// there (or from before Pocket AI knew the agent): look now
+		if out, errOut, err := remoteOf(h).Run(ctx, 30*time.Second, `command -v "$1" >/dev/null 2>&1 && echo there`, o.Bin); err != nil && strings.TrimSpace(out) != "there" {
+			cancel()
+			if strings.TrimSpace(errOut) != "" && !strings.Contains(errOut, "not found") {
+				return nil, badRequest(h.Name + ": " + sshError(errOut, err))
+			}
+			return nil, badRequest(providerName(t.Provider) + " is not installed on " + h.Name + ": install it in Settings → Machines")
+		}
+	}
+	if o.ResumeID != "" && !acp {
 		// switched to another login there (or imported from one): its folder
 		// needs the session file to resume it
 		if _, errOut, err := remoteOf(h).Run(ctx, 2*time.Minute, remoteEnsureSession, t.Provider, t.HostHome, o.ResumeID); err != nil {

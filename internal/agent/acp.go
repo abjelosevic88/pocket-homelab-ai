@@ -156,7 +156,8 @@ func openACP(ctx context.Context, o Options, ag ACPAgent, sink Sink) (*acpConn, 
 	o.Hold = nil // never held: see acpMarks
 	o.Env = append(append([]string{}, ag.Env...), o.Env...)
 	ag.prepare(o.Env)
-	c, err := openRPCWith(ctx, o, bin, ag.Args, acpMarks, sink)
+	args := append(append([]string{}, ag.Args...), ag.loginArgs(o.LoginDir)...)
+	c, err := openRPCWith(ctx, o, bin, args, acpMarks, sink)
 	if err != nil {
 		return nil, err
 	}
@@ -222,6 +223,9 @@ type ACPSignInError struct {
 }
 
 func (e *ACPSignInError) Error() string {
+	if e.Agent.Logins { // its logins, here and on machines, are on the Machines page
+		return e.Agent.Name + " is not signed in on this login (" + oneLine(e.Why, 200) + "). Sign it in, or copy a sign-in to it, in Settings → Machines."
+	}
 	return e.Agent.Name + " is not signed in (" + oneLine(e.Why, 200) + "). Set it up in Settings → Agents → " + e.Agent.Name + "."
 }
 
@@ -309,6 +313,9 @@ type acpSession struct {
 	preamble string
 	closed   bool
 	exited   chan struct{}
+	// epoch makes the item keys this process invents unique in the thread:
+	// a later process counts its turns from one again
+	epoch int64
 }
 
 type acpPending struct {
@@ -329,7 +336,7 @@ func StartACP(ctx context.Context, ag ACPAgent, o Options, sink Sink) (Session, 
 		return nil, err
 	}
 	s := &acpSession{opts: o, sink: sink, a: a, c: a.c, ctx: ctx, pending: map[string]acpPending{},
-		text: map[string]*strings.Builder{}, tools: map[string]*Tool{}, exited: make(chan struct{})}
+		text: map[string]*strings.Builder{}, tools: map[string]*Tool{}, exited: make(chan struct{}), epoch: time.Now().UnixMilli()}
 	a.c.onNotify = s.notify
 	a.c.onRequest = s.request
 	ictx, cancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -964,7 +971,7 @@ func (s *acpSession) notify(method string, params json.RawMessage) {
 				out = append(out, s.flushText()...)
 				if key == "" {
 					s.seg++
-					key = fmt.Sprintf("%s-%d-%d", kind[:1], s.turnN, s.seg)
+					key = fmt.Sprintf("%s-%x-%d-%d", kind[:1], s.epoch, s.turnN, s.seg)
 				}
 			}
 		}
@@ -1005,7 +1012,7 @@ func (s *acpSession) notify(method string, params json.RawMessage) {
 		for _, e := range u.Entries {
 			todos = append(todos, Todo{Text: e.Content, Status: todoStatus(e.Status)})
 		}
-		out = append(out, Item{Key: fmt.Sprintf("plan-%d", s.turnN), Kind: "todos", Todos: todos})
+		out = append(out, Item{Key: fmt.Sprintf("plan-%x-%d", s.epoch, s.turnN), Kind: "todos", Todos: todos})
 	case "current_mode_update":
 		var m struct {
 			ID string `json:"currentModeId"`

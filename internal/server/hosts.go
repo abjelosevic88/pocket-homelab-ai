@@ -127,6 +127,9 @@ func (s *Server) manageHost(w http.ResponseWriter, r *http.Request) *store.Host 
 
 // hostBin is the CLI to start on a host.
 func hostBin(h *store.Host, provider string) string {
+	if ag, ok := agent.ACPAgentByID(provider); ok {
+		return ag.Bin // as its installer names it, on the PATH there
+	}
 	if provider == "codex" {
 		return firstNonEmpty(h.CodexBin, "codex")
 	}
@@ -349,6 +352,8 @@ probe() {
 }
 probe claude "$1"
 probe codex "$2"
+# other agents with logins on machines (Antigravity CLI): only said when there
+if p=$(command -v "$3" 2>/dev/null); then echo "version_antigravity=$("$p" --version 2>&1 </dev/null | head -n 1)"; fi
 `
 
 // personKey is the public half of a person's own ssh key, made the first
@@ -372,7 +377,7 @@ var keyNameRe = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 // checkHost connects and looks at the CLIs.
 func (s *Server) checkHost(ctx context.Context, h *store.Host) store.HostInfo {
 	info := store.HostInfo{CheckedAt: store.Now(), Versions: map[string]string{}, Missing: map[string]string{}}
-	out, errOut, err := remoteOf(h).Run(ctx, 40*time.Second, hostProbe, hostBin(h, "claude"), hostBin(h, "codex"))
+	out, errOut, err := remoteOf(h).Run(ctx, 40*time.Second, hostProbe, hostBin(h, "claude"), hostBin(h, "codex"), hostBin(h, "antigravity"))
 	if err != nil && !strings.Contains(out, "home=") {
 		info.Error = sshError(errOut, err)
 		return info
@@ -404,7 +409,9 @@ func (s *Server) checkHost(ctx context.Context, h *store.Host) store.HostInfo {
 		delete(info.Versions, p)
 	}
 	info.OK = len(info.Versions) > len(info.Missing) || len(info.Missing) < 2
-	if len(info.Missing) == 2 {
+	if len(info.Missing) == 2 && info.Versions["antigravity"] != "" {
+		info.OK = true // Antigravity CLI alone runs there
+	} else if len(info.Missing) == 2 {
 		info.OK = false
 		info.Error = "neither Claude Code nor Codex can run there yet"
 	}

@@ -5,7 +5,7 @@ import type React from 'react'
 import { useEffect, useState } from 'react'
 import { api, V1 } from '../../lib/api'
 import { planName, providerName } from '../../lib/format'
-import type { ProviderId } from '../../lib/types'
+import { LOGIN_PROVIDERS, type ProviderId } from '../../lib/types'
 import { Icon } from '../../components/icons'
 import { errMsg, MenuButton, type MenuItem, Spinner, useToast } from '../../components/ui'
 import { StatusDot } from './common'
@@ -30,6 +30,8 @@ export interface CliChip {
   latest?: string
   /** updates it there (who may: an admin, or the machine's own person) */
   onUpdate?: () => void; updating?: boolean
+  /** not there yet, and it can be installed from here (Antigravity CLI) */
+  onInstall?: () => void
 }
 
 /** a newer than b ("2.1.331" vs "2.1.326 (Claude Code)") */
@@ -64,13 +66,13 @@ export function useLatestCLIs(): Partial<Record<ProviderId, string>> {
 export function useCLIUpdate() {
   const { toast } = useToast()
   const [updating, setUpdating] = useState<string | null>(null)
-  const update = async (hostId: number, name: string, p: ProviderId, onDone: () => unknown) => {
+  const update = async (hostId: number, name: string, p: ProviderId, onDone: () => unknown, install = false) => {
     setUpdating(`${hostId}:${p}`)
-    toast(`Updating ${provName(p)} on ${name}…`)
+    toast(`${install ? 'Installing' : 'Updating'} ${provName(p)} on ${name}…`)
     try {
       const r = await api.post<{ ok: boolean; version: string; error?: string }>(`${V1}/hosts/${hostId}/update/${p}`)
-      if (r.ok) toast(`${provName(p)} on ${name} is ${shortVersion(r.version || '') || 'updated'}`, 'ok')
-      else toast(`${provName(p)} on ${name}: ${r.error || 'the update did not finish'}`, 'err')
+      if (r.ok) toast(`${provName(p)} on ${name} is ${shortVersion(r.version || '') || (install ? 'installed' : 'updated')}`, 'ok')
+      else toast(`${provName(p)} on ${name}: ${(r.error || 'the update did not finish').replace(/^the update/, install ? 'the install' : 'the update')}`, 'err')
     } catch (e) { toast(errMsg(e), 'err') } finally {
       setUpdating(null)
       await Promise.resolve(onDone()).catch(() => {})
@@ -101,6 +103,13 @@ export function MachineCard({ icon, name, health, healthLabel, meta, clis, actio
           {clis.map(c => {
             const behind = !c.error && !!c.version && !!c.latest && isNewer(c.latest, c.version)
             const current = !c.error && !!c.version && !!c.latest && !behind
+            if (c.onInstall) return (
+              <span key={c.provider} className={`mc-cli ${c.provider} absent`} title={`${provName(c.provider)} is not installed here yet`}>
+                <Icon name={c.provider} size={13} />{provName(c.provider)}
+                <button type="button" className="mc-cli-up" disabled={c.updating} onClick={c.onInstall}>
+                  {c.updating ? <Spinner size={11} /> : <Icon name="download" size={12} />}{c.updating ? 'Installing…' : 'Install'}</button>
+              </span>
+            )
             return (
               <span key={c.provider} className={`mc-cli ${c.provider} ${c.error ? 'bad' : ''} ${behind ? 'behind' : ''}`} title={c.error || `${provName(c.provider)} ${c.version || ''}${current ? ' — the latest' : behind ? ` — ${c.latest} is out` : ''}`}>
                 <Icon name={c.provider} size={13} />{provName(c.provider)}<b>{c.error ? 'not installed' : shortVersion(c.version || '')}</b>
@@ -131,7 +140,7 @@ export interface LoginItem {
 
 /** A machine's logins, grouped by CLI: a header with how many and Add, then a row each. */
 export function LoginList({ items, providers, onAdd }: { items: LoginItem[]; providers?: ProviderId[]; onAdd?: (p: ProviderId) => void }) {
-  const pids = (['claude', 'codex'] as ProviderId[]).filter(p => items.some(i => i.provider === p) || providers?.includes(p))
+  const pids = LOGIN_PROVIDERS.filter(p => items.some(i => i.provider === p) || providers?.includes(p))
   return (
     <div className="acct-groups">
       {pids.map(pid => {

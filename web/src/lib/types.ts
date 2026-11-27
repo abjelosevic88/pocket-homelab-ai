@@ -30,6 +30,10 @@ export type CliId = 'claude' | 'codex'
 export type AcpId = 'antigravity' | 'gemini' | 'opencode' | 'qwen'
 export const ACP_IDS: AcpId[] = ['antigravity', 'gemini', 'opencode', 'qwen']
 export const isAcp = (p: string | undefined): p is AcpId => !!p && (ACP_IDS as string[]).includes(p)
+/** The agents with logins of their own, on this server and on machines (Settings → Machines):
+ *  several accounts each, one folder per login. */
+export const LOGIN_PROVIDERS: ProviderId[] = ['claude', 'codex', 'antigravity']
+export const hasLogins = (p: string | undefined) => !!p && (LOGIN_PROVIDERS as string[]).includes(p)
 
 /** An ACP agent in Settings → Agents (GET /agents/acp, admin). */
 export interface AcpAgent {

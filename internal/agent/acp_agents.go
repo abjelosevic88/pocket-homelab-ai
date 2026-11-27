@@ -33,6 +33,14 @@ type ACPAgent struct {
 	// InstallScript: installed by the vendor's script instead of npm; such
 	// agents update themselves.
 	InstallScript string `json:"install_script,omitempty"`
+	// Logins: it has login folders like Claude Code and Codex: the default
+	// (~/.gemini) and others next to it (~/.gemini-work), each its own
+	// account, on this server and on the person's other machines (Settings →
+	// Machines). LoginFlag points it at one; TokenFile, inside the folder, is
+	// where its sign-in is kept.
+	Logins    bool   `json:"logins"`
+	LoginFlag string `json:"-"`
+	TokenFile string `json:"-"`
 	// Note says how it is set up, for Settings.
 	Note string `json:"note"`
 	// Modes: Pocket AI's own permission modes for it, when the agent's are
@@ -74,9 +82,12 @@ type ACPKey struct {
 // ACPAgents are the ACP agents Pocket AI knows, in the order it shows them.
 var ACPAgents = []ACPAgent{
 	{
-		ID: "antigravity", Name: "Antigravity CLI", Bin: "agy", Args: []string{"acp"},
+		// --process-per-session: only then does it take the HTTP MCP servers a
+		// client hands it (the Pocket tools)
+		ID: "antigravity", Name: "Antigravity CLI", Bin: "agy", Args: []string{"acp", "--process-per-session"},
 		InstallScript: "https://antigravity.google/cli/install.sh", Site: "https://antigravity.google/docs/cli/acp",
 		GoogleLogin: true, LoginArgs: []string{"acp", "--login"},
+		Logins: true, LoginFlag: "--gemini-dir", TokenFile: "antigravity-cli/antigravity-oauth-token",
 		// agy starts in auto, which needs its terminal sandbox: ask first instead
 		DefaultMode: "default",
 		Note:        "Google's agent on your Google AI plan (Free, Pro or Ultra): Gemini 4 Neon and more. Sign in with Google; it updates itself.",
@@ -165,9 +176,21 @@ func ProviderIDs() []string {
 	return out
 }
 
+// userHome is the home folder the agents keep their sign-ins in: the
+// server's AGENT_HOME when set (as for Claude Code and Codex; tests point it
+// at a folder of their own, so they never touch a real sign-in), else the
+// user's.
+func userHome() string {
+	if v := os.Getenv("AGENT_HOME"); v != "" {
+		return v
+	}
+	h, _ := os.UserHomeDir()
+	return h
+}
+
 // ACPHome is the folder the agent keeps its own settings and sign-ins in.
 func (a ACPAgent) ACPHome() string {
-	h, _ := os.UserHomeDir()
+	h := userHome()
 	switch a.ID {
 	case "gemini":
 		return filepath.Join(h, ".gemini")
@@ -181,16 +204,77 @@ func (a ACPAgent) ACPHome() string {
 	return ""
 }
 
-// GoogleSignedIn: Gemini CLI has a Google sign-in saved.
+// LoginHome is a login folder of an agent with Logins: dir, or its default
+// one here ("" = ~/.gemini).
+func (a ACPAgent) LoginHome(dir string) string {
+	if dir != "" {
+		return dir
+	}
+	h := userHome()
+	return filepath.Join(h, loginPrefix[a.ID])
+}
+
+// loginPrefix: what the login folders of an agent are called in a home
+// folder: ".gemini" and ".gemini-<name>".
+var loginPrefix = map[string]string{"antigravity": ".gemini"}
+
+// LoginPrefix is the name of the agent's default login folder (".gemini").
+func (a ACPAgent) LoginPrefix() string { return loginPrefix[a.ID] }
+
+// loginArgs point the agent at a login folder ("" = its default: nothing).
+func (a ACPAgent) loginArgs(dir string) []string {
+	if dir == "" || a.LoginFlag == "" {
+		return nil
+	}
+	return []string{a.LoginFlag, dir}
+}
+
+// LoginCommand is what signs a login folder in with a pasted code and exits.
+func (a ACPAgent) LoginCommand(dir string) []string {
+	return append(append([]string{}, a.LoginArgs...), a.loginArgs(dir)...)
+}
+
+// LoginStatus reads who a login folder here is signed in as (never the
+// token itself). The email is "" when the file does not say.
+func (a ACPAgent) LoginStatus(dir string) (email string, signedIn bool) {
+	if a.TokenFile == "" {
+		return "", false
+	}
+	b, err := os.ReadFile(filepath.Join(a.LoginHome(dir), a.TokenFile))
+	if err != nil || len(strings.TrimSpace(string(b))) == 0 {
+		return "", false
+	}
+	var t struct {
+		Email string `json:"id_token_email"`
+	}
+	_ = json.Unmarshal(b, &t)
+	return t.Email, true
+}
+
+// TokenPath is where a login folder here keeps its sign-in.
+func (a ACPAgent) TokenPath(dir string) string {
+	return filepath.Join(a.LoginHome(dir), a.TokenFile)
+}
+
+// GoogleSignedIn: a Google sign-in is saved (Gemini CLI; Antigravity's
+// default login).
 func (a ACPAgent) GoogleSignedIn() bool {
-	if !a.GoogleLogin || a.LoginArgs != nil {
-		return false // Antigravity keeps it in the keyring: only a start tells
+	if !a.GoogleLogin {
+		return false
+	}
+	if a.TokenFile != "" {
+		_, ok := a.LoginStatus("")
+		return ok
 	}
 	return fileExists(filepath.Join(a.ACPHome(), "oauth_creds.json"))
 }
 
-// GoogleAccount is the Google account Gemini CLI signed in with, if it says.
+// GoogleAccount is the Google account it signed in with, if it says.
 func (a ACPAgent) GoogleAccount() string {
+	if a.TokenFile != "" {
+		email, _ := a.LoginStatus("")
+		return email
+	}
 	b, err := os.ReadFile(filepath.Join(a.ACPHome(), "google_accounts.json"))
 	if err != nil {
 		return ""
@@ -327,7 +411,11 @@ func ACPProbed(id string) (Provider, bool) {
 // ProbeACP asks an ACP agent for its version, then opens a session in an
 // empty folder (no prompt) for its models and modes. A missing sign-in
 // leaves it unavailable, with what to do in Error.
-func ProbeACP(ctx context.Context, ag ACPAgent, bin, dir string, env []string) Provider {
+func ProbeACP(ctx context.Context, ag ACPAgent, bin, dir string, env []string, loginDir ...string) Provider {
+	login := ""
+	if len(loginDir) > 0 {
+		login = loginDir[0]
+	}
 	bin = firstNonEmpty(bin, ag.Command())
 	p := Provider{ID: ag.ID, Name: ag.Name, Models: []Model{}, Efforts: []string{}, Modes: []Mode{}, Speeds: []Speed{}}
 	defer func() { probed.Store(ag.ID, p) }()
@@ -343,7 +431,7 @@ func ProbeACP(ctx context.Context, ag ACPAgent, bin, dir string, env []string) P
 	}
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	a, err := openACP(ctx, Options{Cwd: dir, Env: env, Bin: bin}, ag, nil)
+	a, err := openACP(ctx, Options{Cwd: dir, Env: env, Bin: bin, LoginDir: login}, ag, nil)
 	if err != nil {
 		p.Error = oneLine(err.Error(), 300)
 		return p
@@ -366,7 +454,11 @@ func ProbeACP(ctx context.Context, ag ACPAgent, bin, dir string, env []string) P
 		}
 	}
 	if ag.DefaultMode != "" {
-		p.DefaultMode = ag.DefaultMode
+		for _, m := range p.Modes { // only a mode it really has
+			if m.ID == ag.DefaultMode {
+				p.DefaultMode = ag.DefaultMode
+			}
+		}
 	}
 	if p.Models == nil {
 		p.Models = []Model{}
@@ -381,8 +473,9 @@ func ProbeACP(ctx context.Context, ag ACPAgent, bin, dir string, env []string) P
 	if ag.ID == "gemini" && ag.GoogleSignedIn() {
 		p.Account = firstNonEmpty(ag.GoogleAccount(), "Google account")
 	}
-	if ag.LoginArgs != nil {
-		p.Account = "Google account"
+	if ag.TokenFile != "" {
+		email, _ := ag.LoginStatus(login)
+		p.Account = firstNonEmpty(email, "Google account")
 	}
 	if a.caps.Session.Close != nil && info.SessionID != "" {
 		cctx, ccancel := context.WithTimeout(ctx, 5*time.Second)

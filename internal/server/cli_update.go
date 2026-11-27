@@ -18,6 +18,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/agent"
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
 )
 
@@ -99,13 +100,31 @@ func (s *Server) handleCLILatest(w http.ResponseWriter, r *http.Request) {
 const cliUpdateScript = `p=$(command -v "$1" 2>/dev/null) || { echo "$1 is not on the PATH there"; exit 127; }
 "$p" update </dev/null 2>&1`
 
+// cliInstallScript: $1 the CLI, $2 its installer. Updates it when it is
+// there, else installs it with the vendor's script (which checks the
+// download's checksum itself) and says where it went.
+const cliInstallScript = `if p=$(command -v "$1" 2>/dev/null); then "$p" update </dev/null 2>&1; exit $?; fi
+command -v curl >/dev/null 2>&1 || { echo "curl is not installed there"; exit 127; }
+t=$(mktemp -d) || exit 3
+curl -fsSL "$2" -o "$t/install.sh" && bash "$t/install.sh" </dev/null 2>&1; rc=$?
+rm -rf "$t"
+[ $rc = 0 ] || exit $rc
+PATH="$HOME/.local/bin:$PATH"; command -v "$1" >/dev/null 2>&1 || { echo "installed, but $1 is not on the PATH there"; exit 127; }`
+
 // handleCLIUpdate updates Claude Code or Codex on a machine (0 = this
 // server, for an admin; another machine for whoever may manage it).
 func (s *Server) handleCLIUpdate(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
-	if _, ok := cliPackages[provider]; !ok {
-		writeErr(w, http.StatusBadRequest, "provider must be claude or codex")
+	ag, _ := agent.ACPAgentByID(provider)
+	if _, ok := cliPackages[provider]; !ok && !(ag.Logins && ag.InstallScript != "") {
+		writeErr(w, http.StatusBadRequest, "that agent is not installed or updated from here")
 		return
+	}
+	// an agent with an installer (Antigravity CLI): installed when it is not
+	// there yet, else its own update
+	script, args := cliUpdateScript, []string{}
+	if ag.InstallScript != "" {
+		script, args = cliInstallScript, []string{ag.InstallScript}
 	}
 	var h *store.Host
 	if chi.URLParam(r, "id") == "0" {
@@ -130,16 +149,19 @@ func (s *Server) handleCLIUpdate(w http.ResponseWriter, r *http.Request) {
 		if provider == "codex" {
 			bin = s.cfg.CodexBin
 		}
+		if ag.ID != "" {
+			bin = ag.Command()
+		}
 		c, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
-		cmd := exec.CommandContext(c, "sh", "-c", cliUpdateScript, "sh", bin)
+		cmd := exec.CommandContext(c, "sh", append([]string{"-c", script, "sh", bin}, args...)...)
 		cmd.Env = append(os.Environ(), "HOME="+s.cfg.Home)
 		cmd.Dir = s.cfg.Home
 		b, e := cmd.CombinedOutput()
 		out, err = string(b), e
 	} else {
 		var stderr string
-		out, stderr, err = remoteOf(h).Run(ctx, 5*time.Minute, cliUpdateScript, hostBin(h, provider))
+		out, stderr, err = remoteOf(h).Run(ctx, 5*time.Minute, script, append([]string{hostBin(h, provider)}, args...)...)
 		if err != nil && strings.TrimSpace(out) == "" {
 			out = sshError(stderr, err)
 		}

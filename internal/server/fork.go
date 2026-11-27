@@ -158,8 +158,8 @@ func (s *Server) providerSettings(ctx context.Context, n *store.Thread, provider
 		return badRequest("unknown agent " + provider)
 	}
 	u := userFrom(ctx)
-	if agent.IsACP(provider) && n.HostID != 0 {
-		return badRequest(providerName(provider) + " runs on this server only, not on other machines (yet)")
+	if ag, ok := agent.ACPAgentByID(provider); ok && n.HostID != 0 && !ag.Logins {
+		return badRequest(ag.Name + " runs on this server only, not on other machines (yet)")
 	}
 	prov, ok := s.agentProvider(ctx, provider)
 	if n.HostID != 0 {

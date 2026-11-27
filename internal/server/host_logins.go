@@ -75,6 +75,15 @@ else echo "claude_missing=1"; fi
 if command -v "$2" >/dev/null 2>&1; then
   homes codex | while IFS= read -r d; do echo "codex_home=$d"; done
 else echo "codex_missing=1"; fi
+# Antigravity CLI ($3, when there): its login folders, and who each is signed
+# in as (the email its token file names; the token itself is not read out)
+if command -v "$3" >/dev/null 2>&1; then
+  homes antigravity | while IFS= read -r d; do
+    echo "antigravity_home=$d"
+    f="$d/$4"
+    if [ -s "$f" ]; then echo "antigravity_email=$(sed -n 's/.*"id_token_email"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" | head -n 1)"; fi
+  done
+fi
 `
 
 type hostLoginCache struct {
@@ -111,7 +120,8 @@ func (s *Server) hostLogins(ctx context.Context, h *store.Host, refresh bool) []
 	base := func(provider, home string) hostLoginView {
 		return hostLoginView{HostID: h.ID, Host: h.Name, Target: h.Target, Provider: provider, Home: home}
 	}
-	res, errOut, err := remoteOf(h).Run(ctx, 45*time.Second, hostStatusScript, hostBin(h, "claude"), hostBin(h, "codex"))
+	agy, _ := agent.ACPAgentByID("antigravity")
+	res, errOut, err := remoteOf(h).Run(ctx, 45*time.Second, hostStatusScript, hostBin(h, "claude"), hostBin(h, "codex"), agy.Bin, agy.TokenFile)
 	if err != nil && !strings.Contains(res, "home=") {
 		msg := sshError(errOut, err)
 		out := []hostLoginView{base("claude", "~/.claude"), base("codex", "~/.codex")}
@@ -121,7 +131,7 @@ func (s *Server) hostLogins(ctx context.Context, h *store.Host, refresh bool) []
 		}
 		return out // not cached: the machine may be back in a minute
 	}
-	var claude, codex []hostLoginView
+	var claude, codex, antigravity []hostLoginView
 	claudeMissing, codexMissing := false, false
 	for _, line := range strings.Split(res, "\n") {
 		k, v, ok := strings.Cut(line, "=")
@@ -138,6 +148,15 @@ func (s *Server) hostLogins(ctx context.Context, h *store.Host, refresh bool) []
 			}
 		case "codex_home":
 			codex = append(codex, base("codex", v))
+		case "antigravity_home":
+			antigravity = append(antigravity, base("antigravity", v))
+		case "antigravity_email":
+			if n := len(antigravity); n > 0 {
+				antigravity[n-1].acctStatus = acctStatus{SignedIn: true, Email: v}
+				if v != "" {
+					antigravity[n-1].ident = loginIdent("antigravity", v, "")
+				}
+			}
 		case "claude_missing":
 			claudeMissing = true
 		case "codex_missing":
@@ -173,13 +192,16 @@ func (s *Server) hostLogins(ctx context.Context, h *store.Host, refresh bool) []
 		}
 		wg.Wait()
 	}
-	out := append(claude, codex...)
-	for i := range out {
-		// the first of each CLI is the default login: threads name it ""
-		if i != 0 && i != len(claude) {
-			out[i].Dir, out[i].Label = out[i].Home, agent.HomeLabel(out[i].Home)
+	var out []hostLoginView
+	for _, group := range [][]hostLoginView{claude, codex, antigravity} {
+		for i := range group {
+			// the first of each CLI is the default login: threads name it ""
+			if i != 0 {
+				group[i].Dir, group[i].Label = group[i].Home, agent.HomeLabel(group[i].Home)
+			}
+			stamp(&group[i])
 		}
-		stamp(&out[i])
+		out = append(out, group...)
 	}
 	hostLoginsMu.Lock()
 	hostLoginsCache[h.ID] = hostLoginCache{at: now, views: out}
@@ -221,7 +243,7 @@ func (s *Server) forgetHostLogins(id int64) {
 	hostLoginsMu.Lock()
 	views := hostLoginsCache[id].views
 	hostLoginsMu.Unlock()
-	for _, p := range []string{"claude", "codex"} {
+	for _, p := range []string{"claude", "codex", "antigravity"} {
 		s.cancelLogin(hostLoginKey(id, p, ""))
 	}
 	for _, v := range views {
@@ -273,8 +295,8 @@ func (s *Server) handleHostLogins(w http.ResponseWriter, r *http.Request) {
 // of a request, for someone who may run there.
 func (s *Server) loginHost(w http.ResponseWriter, r *http.Request) (*store.Host, string, string) {
 	provider := chi.URLParam(r, "provider")
-	if provider != "claude" && provider != "codex" {
-		writeErr(w, http.StatusBadRequest, "provider must be claude or codex")
+	if ag, _ := agent.ACPAgentByID(provider); provider != "claude" && provider != "codex" && !ag.Logins {
+		writeErr(w, http.StatusBadRequest, "that agent has no logins on machines")
 		return nil, "", ""
 	}
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -304,6 +326,9 @@ func (s *Server) handleHostLoginStart(w http.ResponseWriter, r *http.Request) {
 	s.cancelLogin(key)
 	ctx, cancel := context.WithTimeout(s.rt.ctx, loginExpiry)
 	bin, args := loginArgs(provider, hostBin(h, "claude"), hostBin(h, "codex"))
+	if ag, ok := agent.ACPAgentByID(provider); ok {
+		bin, args = hostBin(h, provider), ag.LoginCommand(dir) // agy acp --login [--gemini-dir …]
+	}
 	cmd, err := agent.Command(remoteOf(h), "", append(append([]string{}, loginEnv...), agent.HomeEnv(provider, dir)...), bin, args...)
 	if err != nil {
 		cancel()
@@ -362,6 +387,14 @@ func (s *Server) handleHostLoginCancel(w http.ResponseWriter, r *http.Request) {
 // prints it. One that is already there is kept as it is (asked twice, or
 // made by hand before): Pocket AI just signs it in.
 const hostAddLoginScript = `p=$1; name=$2; shift 2
+if [ "$p" = antigravity ]; then
+  # Antigravity CLI: ~/.gemini-<name>, told to it with --gemini-dir
+  d="$HOME/.gemini-$name"
+  if [ -L "$d" ] || { [ -e "$d" ] && [ ! -d "$d" ]; }; then echo "$d is there already and is not a login folder" >&2; exit 4; fi
+  [ -d "$d" ] || mkdir -m 700 "$d" || exit 3
+  mkdir -p "$d/antigravity-cli" || exit 3
+  printf '%s\n' "$d"; exit 0
+fi
 if [ "$p" = claude ]; then d0="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; else d0="${CODEX_HOME:-$HOME/.codex}"; fi
 d="$HOME/.$p-$name"
 if [ -L "$d" ] || { [ -e "$d" ] && [ ! -d "$d" ]; }; then echo "$d is there already and is not a login folder" >&2; exit 4; fi
@@ -430,7 +463,14 @@ func (s *Server) handleHostLogout(w http.ResponseWriter, r *http.Request) {
 	if provider == "codex" {
 		script = `"$1" logout`
 	}
-	out, errOut, err := remoteOf(h).Run(r.Context(), 30*time.Second, inLogin(provider, dir, script+" </dev/null 2>&1"), hostBin(h, provider))
+	var out, errOut string
+	var err error
+	if ag, ok := agent.ACPAgentByID(provider); ok {
+		// signing out is forgetting the token of that login folder
+		out, errOut, err = remoteOf(h).Run(r.Context(), 30*time.Second, `d=${1:-$HOME/`+ag.LoginPrefix()+`}; rm -f -- "$d/$2"`, dir, ag.TokenFile)
+	} else {
+		out, errOut, err = remoteOf(h).Run(r.Context(), 30*time.Second, inLogin(provider, dir, script+" </dev/null 2>&1"), hostBin(h, provider))
+	}
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "sign out failed: "+oneLine(stripANSI(firstNonEmpty(out, sshError(errOut, err))), 300))
 		return

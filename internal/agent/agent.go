@@ -221,13 +221,16 @@ type Options struct {
 	MCPConfig  string
 	// Connectors: the claude.ai connectors a Restricted session may read
 	// from (names as in Connector.Name); every other one is turned off.
-	Connectors   []string
-	Bin          string
-	Cwd          string
-	Model        string
-	Effort       string
-	Mode         string
-	Speed        string // "" standard, "fast" (Claude fast mode) or a Codex service tier id
+	Connectors []string
+	Bin        string
+	Cwd        string
+	Model      string
+	Effort     string
+	Mode       string
+	Speed      string // "" standard, "fast" (Claude fast mode) or a Codex service tier id
+	// LoginDir: the login folder of an ACP agent that has several (Antigravity:
+	// ~/.gemini-work), there where it runs; "" = its default.
+	LoginDir     string
 	ResumeID     string // provider session to continue
 	Fork         bool   // continue ResumeID under a new id
 	SystemPrompt string

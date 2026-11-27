@@ -13,10 +13,11 @@ import (
 // starts the CLI on (CLAUDE_CONFIG_DIR / CODEX_HOME). Pocket AI finds them
 // all and runs a thread on whichever one it was given (Thread.HostHome).
 
-// RemoteHomesSh defines `homes claude|codex` for remote scripts: the CLI's
-// login folders there, the default first.
+// RemoteHomesSh defines `homes claude|codex|antigravity` for remote scripts:
+// the CLI's login folders there, the default first.
 const RemoteHomesSh = `homes() {
   if [ "$1" = claude ]; then d0="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; p=.claude; m='.claude.json .credentials.json projects settings.json'
+  elif [ "$1" = antigravity ]; then d0="$HOME/.gemini"; p=.gemini; m='antigravity-cli'
   else d0="${CODEX_HOME:-$HOME/.codex}"; p=.codex; m='auth.json config.toml sessions'; fi
   printf '%s\n' "$d0"
   for d in "$HOME/$p"-* "$HOME/$p"_*; do
@@ -29,6 +30,8 @@ const RemoteHomesSh = `homes() {
 var homeBaseRe = map[string]*regexp.Regexp{
 	"claude": regexp.MustCompile(`^\.claude[-_][A-Za-z0-9._-]{1,60}$`),
 	"codex":  regexp.MustCompile(`^\.codex[-_][A-Za-z0-9._-]{1,60}$`),
+	// Antigravity CLI: ~/.gemini-work (agy acp --gemini-dir)
+	"antigravity": regexp.MustCompile(`^\.gemini[-_][A-Za-z0-9._-]{1,60}$`),
 }
 
 // ValidHostHome: dir is an extra login folder of the CLI right in the
@@ -44,7 +47,7 @@ func ValidHostHome(provider, home, dir string) bool {
 // HomeEnv points the CLI at a login folder ("" = the default: nothing).
 func HomeEnv(provider, dir string) []string {
 	switch {
-	case dir == "":
+	case dir == "" || IsACP(provider): // an ACP agent is given its folder as a flag (Options.LoginDir)
 		return nil
 	case provider == "codex":
 		return []string{"CODEX_HOME=" + dir}

@@ -210,8 +210,8 @@ func (s *Server) createThread(ctx context.Context, u *store.User, in newThread, 
 	if !agent.KnownProvider(in.Provider) {
 		return nil, badRequest("unknown agent " + in.Provider)
 	}
-	if agent.IsACP(in.Provider) && in.HostID != 0 {
-		return nil, badRequest(providerName(in.Provider) + " runs on this server only, not on other machines (yet)")
+	if ag, ok := agent.ACPAgentByID(in.Provider); ok && in.HostID != 0 && !ag.Logins {
+		return nil, badRequest(ag.Name + " runs on this server only, not on other machines (yet)")
 	}
 	host, err := s.checkHostUse(ctx, u, in.HostID)
 	if err != nil {
@@ -372,7 +372,9 @@ func validMode(provider, mode string) bool {
 	if agent.IsACP(provider) {
 		p, ok := agent.ACPProbed(provider)
 		if !ok || len(p.Modes) == 0 {
-			return mode != "" // not asked yet (or it has no modes): it says so when it starts
+			// this server has not asked it (it may only be signed in on a
+			// machine): it runs in its own default mode, or says no when it starts
+			return true
 		}
 		modes = p.Modes
 	}

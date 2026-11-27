@@ -47,7 +47,7 @@ export function MachinesTab() {
           <span className="mpick-main"><span className="mpick-name">Add machine</span><span className="mpick-sub">over ssh</span></span>
         </button>}
       </div>
-      {sel === 0 ? <AccountsSection /> : <HostsSection logins={logins} only={sel} onAdded={pick} onRemoved={() => pick(0)} />}
+      {sel === 0 ? <AccountsSection hostLogins={logins.byHost} /> : <HostsSection logins={logins} only={sel} onAdded={pick} onRemoved={() => pick(0)} />}
     </div>
   )
 }

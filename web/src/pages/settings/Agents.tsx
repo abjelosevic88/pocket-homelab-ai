@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useApp } from '../../lib/app-context'
-import { ACP_IDS, type AcpAgent, type Provider, type ProviderId, isAcp } from '../../lib/types'
+import { ACP_IDS, type AcpAgent, type Provider, type ProviderId, hasLogins, isAcp } from '../../lib/types'
 import { planName, providerName } from '../../lib/format'
 import { AgentPicker, effortLabel, modeName, modelName, ProviderToggle, settingsFor } from '../../components/AgentPicker'
 import { AcpInstallButton, acpNeeds, AcpSetup, type AcpChanged, useAcpAgents } from './AcpAgents'
@@ -115,9 +115,10 @@ function AgentRow({ id, p, a, isDefault, open, onToggle, onChanged }: {
       </div>
       {open && (
         <div className="agent-body">
-          {ok ? <AgentPicker showProvider={false} noAccount={isAcp(id)} value={{ provider: id, ...cur }} onChange={put} />
+          {ok ? <AgentPicker showProvider={false} noAccount={!hasLogins(id)} value={{ provider: id, ...cur }} onChange={put} />
             : !isAcp(id) && <p className="muted small" style={{ margin: 0 }}>Install the CLI on this server as the user Pocket AI runs as, then check it again under <Link to="/settings/machines">Machines</Link>.</p>}
           {!isAcp(id) && ok && <p className="muted xsmall" style={{ margin: 0 }}>Logins and plan limits: <Link to="/settings/machines">Machines</Link>.</p>}
+          {isAcp(id) && hasLogins(id) && a?.installed && <p className="muted xsmall" style={{ margin: 0 }}>More logins, and this agent on your other machines: <Link to="/settings/machines">Machines</Link>.</p>}
           {a && <>
             {a.note && a.installed && <p className="muted xsmall" style={{ margin: 0 }}>{a.note} <a href={a.site} target="_blank" rel="noopener noreferrer">More</a></p>}
             <AcpSetup a={a} onChanged={onChanged} />

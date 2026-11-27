@@ -30,9 +30,21 @@ func scanAccount(row interface{ Scan(...any) error }) (*Account, error) {
 
 const accountCols = `id, provider, label, home, user_id, created_at`
 
-// ListAccounts returns every account, oldest first.
+// ListAccounts returns every Claude Code and Codex account, oldest first.
+// Logins of other agents (Antigravity) are not among them: everything that
+// reads session files, limits and skills of the two CLIs goes through here.
 func (s *Store) ListAccounts(ctx context.Context) ([]*Account, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+accountCols+` FROM accounts ORDER BY id`)
+	return s.listAccounts(ctx, `provider IN ('claude', 'codex')`)
+}
+
+// ListAgentAccounts returns the logins of the other agents (ACP agents with
+// login folders), oldest first.
+func (s *Store) ListAgentAccounts(ctx context.Context) ([]*Account, error) {
+	return s.listAccounts(ctx, `provider NOT IN ('claude', 'codex')`)
+}
+
+func (s *Store) listAccounts(ctx context.Context, where string) ([]*Account, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+accountCols+` FROM accounts WHERE `+where+` ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}

@@ -115,8 +115,10 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		st.Codex = *in.Codex
 	}
 	for id, d := range in.Agents {
-		if agent.IsACP(id) {
-			d.Account = 0 // the server's own sign-in: ACP agents have no logins of their own
+		if ag, ok := agent.ACPAgentByID(id); ok {
+			if !ag.Logins || s.checkAccount(ctx, u, id, d.Account) != nil {
+				d.Account = 0 // its own sign-in (or a login that is gone)
+			}
 			st.SetFor(id, d)
 		}
 	}

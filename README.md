@@ -45,7 +45,12 @@ Personal app assistance: [Briefing, workflows, memory, sources and document uplo
   Code through the Agent Client Protocol (ACP). Install them, sign Antigravity in with a Google account and add API keys in Settings → Agents → More agents; once
   one is set up it sits next to Claude Code and Codex in the model menu. OpenCode brings free models out of the
   box and every provider you give a key for (Google AI with Gemini 4 Neon, OpenRouter, DeepSeek, Kimi, Grok,
-  Mistral, Groq). They run on this server (not on other machines yet), on the owner's keys.
+  Mistral, Groq). They run on this server, on the owner's keys.
+- **Antigravity on every machine, several Google accounts**: Settings → Machines shows Antigravity CLI next to
+  Claude Code and Codex on this server and on each machine: install it there with one tap, add logins (each a
+  folder of its own, `~/.gemini-<name>`), and sign one in with Google or **copy the sign-in of a login you
+  already have** — one trip through Google's page, then every machine in a tap. A conversation picks the machine
+  and the login next to the model.
 - Model, effort and permission mode per thread (Claude: ask first, accept edits, plan, auto, full access; Codex:
   ask first, sandboxed, read only, full access), changeable mid-thread — the session is resumed with the new flags.
 - **More than one account**: add more Claude Code / Codex logins in Settings (signed in from the browser, each

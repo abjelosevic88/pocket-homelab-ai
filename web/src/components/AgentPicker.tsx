@@ -4,7 +4,7 @@ import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { planName } from '../lib/format'
 import { providerName } from '../lib/format'
-import { type AgentDefaults, type Account, type HostLogin, type Provider, type ProviderId, type Settings, isAcp } from '../lib/types'
+import { ACP_IDS, type AgentDefaults, type Account, type HostLogin, type Provider, type ProviderId, type Settings, isAcp } from '../lib/types'
 import { type Option, Select } from './Select'
 import { Segmented } from './ui'
 import { Icon } from './icons'
@@ -192,14 +192,17 @@ export function machineLoginOptions(list: HostLogin[], pid: ProviderId, current:
 export interface RemoteSwitch { on: boolean; busy?: boolean; state?: string; onToggle: () => void }
 
 /** Every CLI's models in one list, grouped by CLI: value "provider:model". */
-function allModelOptions(providers: Provider[], host: number, current: ProviderId): Option<string>[] {
-  // ACP agents run on this server only
-  return offeredProviders(providers, current).filter(id => !host || !isAcp(id)).flatMap(id => {
+function allModelOptions(providers: Provider[], host: number, current: ProviderId, hostHas: (id: ProviderId) => boolean): Option<string>[] {
+  // On a machine: the CLIs, and the ACP agents installed there (Antigravity); the others run on this server only
+  const ids = host ? [...new Set([...offeredProviders(providers, current).filter(id => !isAcp(id)), ...ACP_IDS.filter(hostHas)])] : offeredProviders(providers, current)
+  return ids.flatMap(id => {
     const q = providers.find(x => x.id === id)
     if (!q) return []
     // availability is this server's; a machine is checked when the chat switches
     const off = !host && !q.available ? q.error || 'Not available on the server' : ''
     const list = modelOptions(q, false)
+    // on a machine, an agent this server has not asked for its models runs on its own default
+    if (!list.length && host) return [{ value: `${id}:`, label: 'Its default model', group: q.name, description: `As ${q.name} is set up there`, disabled: false }]
     if (!list.length) return off ? [{ value: `${id}:`, label: q.name, group: q.name, description: off, disabled: true }] : []
     return list.map(o => ({ ...o, value: `${id}:${o.value}`, group: q.name, description: off || o.description, disabled: !!off }))
   })
@@ -218,13 +221,14 @@ export function AgentPicker({ value, onChange, allowDefault = false, compact = f
   /** the chat has not started: the model menu also lists the other CLI's models */
   switchProvider?: boolean
 }) {
-  const { providers, settings, accounts } = useApp()
+  const { providers, settings, accounts, hosts } = useApp()
+  const hostHas = (id: ProviderId) => !!hosts.find(h => h.id === host)?.info.versions?.[id]
   const pid = (value.provider || settings?.default_provider || 'claude') as ProviderId
   const p = providers.find(x => x.id === pid)
   const accts = allowDefault || noAccount || host ? [] : accountOptions(accounts, pid, value.account_id || 0)
   const machineLogins = machineLoginOptions(useHostLogins(allowDefault || noAccount ? 0 : host, accounts), pid, value.host_home || '')
   const both = switchProvider && !ask && !allowDefault
-  const models = ask ? ASK_MODELS : both ? allModelOptions(providers, host, pid) : modelOptions(p, allowDefault)
+  const models = ask ? ASK_MODELS : both ? allModelOptions(providers, host, pid, hostHas) : modelOptions(p, allowDefault)
   const pickModel = (v: string) => {
     if (!both) return onChange({ model: v })
     const at = v.indexOf(':')

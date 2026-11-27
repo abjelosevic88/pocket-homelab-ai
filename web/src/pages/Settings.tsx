@@ -24,7 +24,7 @@ const TABS: { id: TabId; label: string; icon: string; sub: string; admin?: boole
   { id: 'app-defaults', label: 'App defaults', icon: 'sparkles', sub: 'Your default model for text generation across connected Pocket apps.' },
   { id: 'app-changes', label: 'App changes', icon: 'shield', sub: 'Which connectors Ask may read, and which changes to your Pocket apps run without waiting for your Allow.' },
   { id: 'agents', label: 'Agents', icon: 'bot', sub: 'What new threads start with: the agent, folder, model, effort and permissions, and your extra instructions.' },
-  { id: 'machines', label: 'Machines', icon: 'server', sub: 'Where agents run — this server and your other machines — and the Claude Code and Codex logins on each.' },
+  { id: 'machines', label: 'Machines', icon: 'server', sub: 'Where agents run — this server and your other machines — and the Claude Code, Codex and Antigravity logins on each.' },
   { id: 'notifications', label: 'Notifications', icon: 'bell', sub: 'A push when an agent finishes, gets stuck or needs your answer.' },
   { id: 'workspaces', label: 'Folders', icon: 'folder', sub: 'Folders on the server agents start in, one tap away.' },
   { id: 'profile', label: 'Profile', icon: 'user', sub: 'Your name, email and password.' },

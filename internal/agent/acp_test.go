@@ -103,6 +103,9 @@ func TestACPTurnPlain(t *testing.T) {
 	if got := strings.Join(kinds, ","); got != "thinking,tool,tool,todos,assistant" {
 		t.Fatalf("items %s %v", got, r.order)
 	}
+	if !strings.HasPrefix(r.order[0], "t-") || !strings.HasSuffix(r.order[0], "-1-1") || r.order[0] == "t-1-1" {
+		t.Fatalf("thinking key %q is not unique per start", r.order[0])
+	}
 	th := r.items[r.order[0]]
 	if th.Text != "Let me look." {
 		t.Fatalf("thinking %q", th.Text)
@@ -224,6 +227,7 @@ func TestACPLive(t *testing.T) {
 func TestGeminiPrepare(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("AGENT_HOME", home)
 	ag, _ := ACPAgentByID("gemini")
 	gh := ag.ACPHome()
 	_ = os.MkdirAll(gh, 0o700)

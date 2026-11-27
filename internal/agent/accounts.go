@@ -48,7 +48,7 @@ func (h Homes) Of(provider string) []AccountHome {
 // AccountEnv points a CLI at an account's folder. The server's own login
 // (dir "") needs nothing: the CLI finds its default folder by itself.
 func AccountEnv(provider, dir string) []string {
-	if dir == "" {
+	if dir == "" || IsACP(provider) {
 		return nil
 	}
 	if provider == "codex" {

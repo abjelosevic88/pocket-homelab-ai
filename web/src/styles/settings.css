@@ -189,6 +189,9 @@ button.sbset-grip:hover, button.sbset-grip:focus-visible { color: var(--text-2);
 .mc-cli { --pc: var(--claude); display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border-radius: 7px; font-size: 12px; font-weight: 550;
   color: color-mix(in srgb, var(--pc) 75%, var(--text)); background: color-mix(in srgb, var(--pc) 10%, transparent); border: 1px solid color-mix(in srgb, var(--pc) 22%, transparent); }
 .mc-cli.codex { --pc: var(--codex); }
+.mc-cli.antigravity { --pc: var(--antigravity); }
+.mc-cli.absent { border-style: dashed; padding-right: 0; overflow: hidden; }
+.acct-group.antigravity { --pc: var(--antigravity); }
 .mc-cli b { font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
 .mc-cli.bad { --pc: var(--danger); }
 .mc-cli-ok { color: var(--success); }

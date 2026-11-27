@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -138,5 +139,152 @@ echo "Signed in."
 	if b, _ := os.ReadFile(got); strings.TrimSpace(string(b)) != "4/abc-123" {
 		t.Fatalf("code %q", b)
 	}
-	owner.want("POST", "/api/v1/agents/acp/antigravity/logout", nil, 400, nil)
+	// signing out forgets the token of the default login (in the test's own home)
+	ag, _ := agent.ACPAgentByID("antigravity")
+	if !strings.HasPrefix(ag.TokenPath(""), root) {
+		t.Fatalf("the token path %s is outside the test's home", ag.TokenPath(""))
+	}
+	_ = os.MkdirAll(filepath.Dir(ag.TokenPath("")), 0o700)
+	_ = os.WriteFile(ag.TokenPath(""), []byte(`{"id_token_email":"me@example.test"}`), 0o600)
+	owner.want("POST", "/api/v1/agents/acp/antigravity/logout", nil, 200, nil)
+	if _, err := os.Stat(ag.TokenPath("")); !os.IsNotExist(err) {
+		t.Fatal("still signed in")
+	}
+}
+
+// The scripts that run on a machine for Antigravity logins: add one, find
+// them with who they are, copy a token in, read it back, sign out.
+func TestAntigravityHostScripts(t *testing.T) {
+	home := t.TempDir()
+	ag, _ := agent.ACPAgentByID("antigravity")
+	bin := filepath.Join(home, "agy")
+	_ = os.WriteFile(bin, []byte("#!/bin/sh\necho 1.5.18\n"), 0o700)
+
+	dir := strings.TrimSpace(runLoginSh(t, home, hostAddLoginScript, "antigravity", "work"))
+	if dir != filepath.Join(home, ".gemini-work") || !agent.ValidHostHome("antigravity", home, dir) {
+		t.Fatalf("made %q", dir)
+	}
+	if agent.ValidHostHome("antigravity", home, filepath.Join(home, ".claude-work")) || agent.ValidHostHome("claude", home, dir) {
+		t.Fatal("login folders of the CLIs are mixed up")
+	}
+	// the token goes in on stdin, private
+	cmd := exec.Command("sh", "-c", writeTokenScript, "sh", dir, ag.TokenFile, ag.LoginPrefix())
+	cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH")}
+	cmd.Stdin = strings.NewReader(`{"token":{"refresh_token":"r"},"id_token_email":"me@example.test"}`)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	fi, err := os.Stat(filepath.Join(dir, ag.TokenFile))
+	if err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("token file: %v %v", fi, err)
+	}
+	if got := runLoginSh(t, home, readTokenScript, dir, ag.TokenFile, ag.LoginPrefix()); !strings.Contains(got, `"refresh_token":"r"`) {
+		t.Fatalf("read back %q", got)
+	}
+	// the default login (dir ""): ~/.gemini
+	cmd = exec.Command("sh", "-c", writeTokenScript, "sh", "", ag.TokenFile, ag.LoginPrefix())
+	cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH")}
+	cmd.Stdin = strings.NewReader(`{"id_token_email": "first@example.test"}`)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	st := runLoginSh(t, home, hostStatusScript, filepath.Join(home, "no-claude"), filepath.Join(home, "no-codex"), bin, ag.TokenFile)
+	want := "antigravity_home=" + filepath.Join(home, ".gemini") + "\nantigravity_email=first@example.test\nantigravity_home=" + dir + "\nantigravity_email=me@example.test\n"
+	if !strings.Contains(st, want) {
+		t.Fatalf("status:\n%s", st)
+	}
+	// not installed: nothing said about it
+	if st := runLoginSh(t, home, hostStatusScript, "no-claude", "no-codex", filepath.Join(home, "no-agy"), ag.TokenFile); strings.Contains(st, "antigravity") {
+		t.Fatalf("status without agy:\n%s", st)
+	}
+	if v := runLoginSh(t, home, hostProbe, "no-claude", "no-codex", bin); !strings.Contains(v, "version_antigravity=1.5.18") {
+		t.Fatalf("probe:\n%s", v)
+	}
+}
+
+// Antigravity logins on this server: the default one and more accounts, a
+// sign-in copied from one to a new one, and a conversation started on it.
+func TestAntigravityAccounts(t *testing.T) {
+	s, h, root := testServer(t)
+	ag, _ := agent.ACPAgentByID("antigravity")
+	if !strings.HasPrefix(ag.TokenPath(""), root) {
+		t.Fatalf("the token path %s is outside the test's home", ag.TokenPath(""))
+	}
+	bin := filepath.Join(root, "agy")
+	argsLog := filepath.Join(root, "agy-args")
+	// a fake agy: logs how it was started, answers ACP like the fake above
+	_ = os.WriteFile(bin, []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 1.5.18; exit 0; fi\necho \"$*\" >> "+argsLog+"\n"+strings.TrimPrefix(fakeOpenCode, "#!/bin/sh\n")), 0o700)
+	t.Setenv("ANTIGRAVITY_BIN", bin)
+	t.Setenv("FAKE_LOG", filepath.Join(root, "fake.log"))
+	owner, _ := person(t, s, h, "owner@example.test", "admin", true)
+
+	// signed in on the default login
+	_ = os.MkdirAll(filepath.Dir(ag.TokenPath("")), 0o700)
+	_ = os.WriteFile(ag.TokenPath(""), []byte(`{"token":{"refresh_token":"r"},"id_token_email":"me@example.test"}`), 0o600)
+	var accts []accountView
+	owner.want("GET", "/api/v1/accounts?refresh=1", nil, 200, &accts)
+	var def *accountView
+	for i := range accts {
+		if accts[i].Provider == "antigravity" {
+			def = &accts[i]
+		}
+	}
+	if def == nil || def.ID != 0 || !def.SignedIn || def.Email != "me@example.test" {
+		t.Fatalf("default antigravity login: %+v", def)
+	}
+
+	// one tap: the same account as a second login
+	var cp struct {
+		Email string `json:"email"`
+		Dir   string `json:"dir"`
+	}
+	owner.want("POST", "/api/v1/agents/acp/antigravity/copy-login", map[string]any{"from": map[string]any{"host": 0}, "to": map[string]any{"host": 0, "name": "Work"}}, 200, &cp)
+	if cp.Email != "me@example.test" || cp.Dir != filepath.Join(root, ".gemini-work") {
+		t.Fatalf("copied %+v", cp)
+	}
+	if fi, err := os.Stat(filepath.Join(cp.Dir, ag.TokenFile)); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("token not copied privately: %v %v", fi, err)
+	}
+	owner.want("GET", "/api/v1/accounts", nil, 200, &accts)
+	var work *accountView
+	for i := range accts {
+		if accts[i].Provider == "antigravity" && accts[i].ID != 0 {
+			work = &accts[i]
+		}
+	}
+	if work == nil || work.Label != "Work" || !work.SignedIn || work.Email != "me@example.test" {
+		t.Fatalf("work login: %+v", work)
+	}
+	// Claude's lists never see it
+	if list, _ := s.store.ListAccounts(context.Background()); len(list) != 0 {
+		t.Fatalf("an Antigravity login among the CLI accounts: %+v", list[0])
+	}
+	// someone else gets neither the logins nor the copy
+	other, _ := person(t, s, h, "other@example.test", "member", true)
+	other.want("POST", "/api/v1/agents/acp/antigravity/copy-login", map[string]any{"from": map[string]any{"host": 0}, "to": map[string]any{"host": 0, "name": "Mine"}}, 403, nil)
+	other.want("POST", "/api/v1/accounts", map[string]any{"provider": "antigravity", "label": "Mine"}, 403, nil)
+
+	// a conversation on the second login is started on its folder
+	var th struct {
+		ID string `json:"id"`
+	}
+	owner.want("POST", "/api/v1/threads", map[string]any{"provider": "antigravity", "text": "hi", "cwd": root, "account_id": work.ID}, 201, &th)
+	for i := 0; i < 200; i++ {
+		if b, _ := os.ReadFile(argsLog); strings.Contains(string(b), "--gemini-dir "+cp.Dir) {
+			break
+		}
+		if i == 199 {
+			b, _ := os.ReadFile(argsLog)
+			t.Fatalf("not started on the login folder: %s", b)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	// signing out forgets the token of that login only
+	owner.want("POST", "/api/v1/accounts/"+strconv.FormatInt(work.ID, 10)+"/logout", nil, 200, nil)
+	if _, err := os.Stat(filepath.Join(cp.Dir, ag.TokenFile)); !os.IsNotExist(err) {
+		t.Fatal("the token is still there after signing out")
+	}
+	if _, ok := ag.LoginStatus(""); !ok {
+		t.Fatal("signing one login out took the default one along")
+	}
 }
