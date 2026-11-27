@@ -367,6 +367,7 @@ func (s *Server) preparePocketTools(ctx context.Context, t *store.Thread, sink *
 			} else {
 				result = withAgentTools(withLinkTools(nil, linked), t)
 			}
+			result = portableToolList(result)
 		case "tools/call":
 			result = s.callPocketTool(r.Context(), ctx, t, sink, tools, rpc.Params)
 
