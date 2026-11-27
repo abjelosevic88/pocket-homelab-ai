@@ -54,7 +54,10 @@ type accountView struct {
 	Home     string `json:"home"`
 	UserID   *int64 `json:"user_id"`
 	Default  bool   `json:"default"`
+	// Shared: a login the owner lends this person, with its allowance.
+	Shared *shareView `json:"shared,omitempty"`
 	acctStatus
+	acct *store.Account
 }
 
 // acctStatus is what the CLI says about a login (cached).
@@ -135,7 +138,11 @@ func (s *Server) accountHome(ctx context.Context, provider string, id int64) (di
 	if err != nil || a.Provider != provider {
 		return s.defaultHome(provider), nil
 	}
-	return a.Home, agent.AccountEnv(provider, a.Home)
+	env = agent.AccountEnv(provider, a.Home)
+	if a.SharedFrom != nil { // a login the owner lends: through the proxy (ai_share.go)
+		env = append(env, s.shareEnv(ctx, a)...)
+	}
+	return a.Home, env
 }
 
 func (s *Server) accountEnv(ctx context.Context, provider string, id int64) []string {
@@ -249,7 +256,14 @@ func (s *Server) accountsFor(ctx context.Context, u *store.User, manage, refresh
 	}
 	for _, a := range list {
 		if s.mayUseAccount(ctx, u, a) || (manage && u.Role == "admin") {
-			out = append(out, accountView{ID: a.ID, Provider: a.Provider, Label: a.Label, Home: a.Home, UserID: a.UserID})
+			v := accountView{ID: a.ID, Provider: a.Provider, Label: a.Label, Home: a.Home, UserID: a.UserID}
+			if a.SharedFrom != nil {
+				if sh, err := s.store.GetAIShare(ctx, a.ID); err == nil {
+					sv := s.shareView(ctx, a, sh)
+					v.Shared, v.acct = &sv, a
+				}
+			}
+			out = append(out, v)
 		}
 	}
 	var wg sync.WaitGroup
@@ -257,6 +271,10 @@ func (s *Server) accountsFor(ctx context.Context, u *store.User, manage, refresh
 		wg.Add(1)
 		go func(v *accountView) {
 			defer wg.Done()
+			if v.acct != nil {
+				v.acctStatus = s.sharedStatus(ctx, v.acct)
+				return
+			}
 			v.acctStatus = s.accountStatus(ctx, v.Provider, v.ID, v.Home, refresh)
 		}(&out[i])
 	}
@@ -566,6 +584,10 @@ func (s *Server) adminAccount(w http.ResponseWriter, r *http.Request) *store.Acc
 		return nil
 	}
 	if u.Role == "admin" || (u.MayRun() && a.UserID != nil && *a.UserID == u.ID) {
+		if a.SharedFrom != nil && u.Role != "admin" && r.Method != http.MethodPatch {
+			writeErr(w, http.StatusForbidden, s.ownerName(r.Context())+" shares this login with you; only they can stop sharing it, and it has no sign-in of its own.")
+			return nil
+		}
 		return a
 	}
 	writeErr(w, http.StatusNotFound, "account not found")
@@ -592,6 +614,10 @@ func (s *Server) handlePatchAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.UserID != nil {
 		if !s.requireAdmin(w, r) {
+			return
+		}
+		if a.SharedFrom != nil {
+			writeErr(w, http.StatusBadRequest, "a shared login belongs to the person it is shared with; stop sharing it instead")
 			return
 		}
 		if agent.IsACP(a.Provider) {

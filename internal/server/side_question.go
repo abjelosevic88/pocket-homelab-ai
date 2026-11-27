@@ -139,7 +139,7 @@ func (s *Server) handleSideQuestion(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	start := time.Now()
 	text, usage, err := agent.CompleteClaudeInput(cctx, agent.Options{Bin: s.cfg.ClaudeBin, Cwd: cwd, Model: model, Effort: effort,
-		SystemPrompt: sideQuestionSystem, Env: agent.AccountEnv("claude", home), Log: s.log}, agent.Input{Text: prompt})
+		SystemPrompt: sideQuestionSystem, Env: s.homeEnv(ctx, "claude", home), Log: s.log}, agent.Input{Text: prompt})
 	if err != nil {
 		s.log.Warn("side question failed", "user", u.ID, "thread", t.ID, "err", err)
 		writeErr(w, 502, "Could not answer the side question; check your Claude login in Pocket AI Settings")

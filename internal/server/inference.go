@@ -131,7 +131,7 @@ func (s *Server) handleInference(w http.ResponseWriter, r *http.Request) {
 		}
 		input.Images = append(input.Images, agent.ImageFile{Path: path, Mime: im.Mime})
 	}
-	text, usage, err := agent.CompleteClaudeInput(ctx, agent.Options{Bin: s.cfg.ClaudeBin, Cwd: cwd, Model: model, Effort: effort, SystemPrompt: system, Env: agent.AccountEnv("claude", home), Log: s.log}, input)
+	text, usage, err := agent.CompleteClaudeInput(ctx, agent.Options{Bin: s.cfg.ClaudeBin, Cwd: cwd, Model: model, Effort: effort, SystemPrompt: system, Env: s.homeEnv(ctx, "claude", home), Log: s.log}, input)
 	if err != nil {
 		s.log.Warn("app inference failed", "user", u.ID, "err", err)
 		writeErr(w, 502, "Pocket AI could not generate an answer; check your Claude account in Pocket AI")
@@ -207,7 +207,7 @@ func (s *Server) inferenceModels(ctx context.Context, key, home, cwd string) ([]
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	provider := agent.ProbeInferenceClaude(ctx, s.cfg.ClaudeBin, cwd, agent.AccountEnv("claude", home))
+	provider := agent.ProbeInferenceClaude(ctx, s.cfg.ClaudeBin, cwd, s.homeEnv(ctx, "claude", home))
 	models := []inferenceModel{}
 	for _, m := range provider.Models {
 		// "default" is represented by the explicit follow-Pocket-AI option.

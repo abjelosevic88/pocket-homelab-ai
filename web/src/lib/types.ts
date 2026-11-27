@@ -106,6 +106,27 @@ export interface Account {
   org?: string
   /** Another login on the server is signed in to this same account. */
   same_as?: string
+  /** A login the owner lends this person, with its allowance. */
+  shared?: ShareAllowance
+}
+
+/** A lent login's allowance and how much of it is used (server ai_share.go). */
+export interface ShareAllowance {
+  from: number
+  from_label: string
+  by: string
+  minutes_day: number
+  used_minutes: number
+  percent_week: number
+  used_percent: number
+  percent_known: boolean
+  week_resets?: string
+  paused: boolean
+  plan_used: number
+  keep: number
+  cost_today: number
+  requests_today: number
+  blocked?: string
 }
 
 /** A sign-in started from Settings (Claude: paste the code; Codex: type the code on the page). */

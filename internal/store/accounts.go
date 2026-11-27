@@ -8,27 +8,33 @@ import (
 // Account is one more CLI login on the server (account 0, the server's own
 // login, has no row).
 type Account struct {
-	ID        int64  `json:"id"`
-	Provider  string `json:"provider"` // claude | codex
-	Label     string `json:"label"`
-	Home      string `json:"home"`    // the CLI's config folder
-	UserID    *int64 `json:"user_id"` // nil = everyone who may run agents
-	CreatedAt string `json:"created_at"`
+	ID       int64  `json:"id"`
+	Provider string `json:"provider"` // claude | codex
+	Label    string `json:"label"`
+	Home     string `json:"home"`    // the CLI's config folder
+	UserID   *int64 `json:"user_id"` // nil = everyone who may run agents
+	// SharedFrom: a login the owner lends this person (ai_shares), nil for
+	// a login of its own; 0 = the server's own login.
+	SharedFrom *int64 `json:"shared_from,omitempty"`
+	CreatedAt  string `json:"created_at"`
 }
 
 func scanAccount(row interface{ Scan(...any) error }) (*Account, error) {
 	var a Account
-	var uid sql.NullInt64
-	if err := row.Scan(&a.ID, &a.Provider, &a.Label, &a.Home, &uid, &a.CreatedAt); err != nil {
+	var uid, from sql.NullInt64
+	if err := row.Scan(&a.ID, &a.Provider, &a.Label, &a.Home, &uid, &from, &a.CreatedAt); err != nil {
 		return nil, notFound(err)
 	}
 	if uid.Valid {
 		a.UserID = &uid.Int64
 	}
+	if from.Valid {
+		a.SharedFrom = &from.Int64
+	}
 	return &a, nil
 }
 
-const accountCols = `id, provider, label, home, user_id, created_at`
+const accountCols = `id, provider, label, home, user_id, shared_from, created_at`
 
 // ListAccounts returns every Claude Code and Codex account, oldest first.
 // Logins of other agents (Antigravity) are not among them: everything that
@@ -68,8 +74,8 @@ func (s *Store) GetAccount(ctx context.Context, id int64) (*Account, error) {
 // CreateAccount inserts an account.
 func (s *Store) CreateAccount(ctx context.Context, a *Account) error {
 	a.CreatedAt = Now()
-	res, err := s.DB.ExecContext(ctx, `INSERT INTO accounts (provider, label, home, user_id, created_at) VALUES (?, ?, ?, ?, ?)`,
-		a.Provider, a.Label, a.Home, nullInt(a.UserID), a.CreatedAt)
+	res, err := s.DB.ExecContext(ctx, `INSERT INTO accounts (provider, label, home, user_id, shared_from, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		a.Provider, a.Label, a.Home, nullInt(a.UserID), nullZero(a.SharedFrom), a.CreatedAt)
 	if err != nil {
 		return conflict(err)
 	}

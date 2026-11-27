@@ -825,6 +825,11 @@ func (rt *engine) enforceMax(keep string) {
 // send hands a message to the thread's agent, or queues it while a turn runs.
 // The user item is written by the caller.
 func (rt *engine) send(t *store.Thread, key string, in agent.Input, sendNow ...bool) (bool, error) {
+	if t.HostID == 0 {
+		if why := rt.s.shareBlocked(rt.ctx, t.AccountID); why != "" {
+			return false, badRequest(why) // a lent login whose allowance is used up (ai_share.go)
+		}
+	}
 	unlock, err := rt.s.useWorktreeFolder(rt.ctx, t.HostID, t.WorktreeID, t.Cwd)
 	if err != nil {
 		return false, err
@@ -1656,6 +1661,9 @@ func (rt *engine) refreshLimits(wait bool) {
 		logins := []*login{{provider: "claude", home: rt.s.defaultHome("claude")}, {provider: "codex", home: rt.s.defaultHome("codex")}}
 		if list, err := rt.s.store.ListAccounts(ctx); err == nil {
 			for _, a := range list {
+				if a.SharedFrom != nil {
+					continue // no sign-in of its own: the lent login's limits are its own
+				}
 				logins = append(logins, &login{provider: a.Provider, id: a.ID, home: a.Home, env: agent.AccountEnv(a.Provider, a.Home)})
 			}
 		}
@@ -1879,7 +1887,7 @@ func (rt *engine) limitsSnapshot(uid int64) map[string]any {
 	}
 	if list, err := rt.s.store.ListAccounts(rt.ctx); err == nil {
 		for _, a := range list {
-			if rt.s.mayUseAccount(rt.ctx, u, a) {
+			if a.SharedFrom == nil && rt.s.mayUseAccount(rt.ctx, u, a) {
 				srcs[limitsKey(a.Provider, a.ID)] = src{a.Label, admin || (a.UserID != nil && u != nil && *a.UserID == u.ID)}
 			}
 		}
@@ -2198,6 +2206,9 @@ func (k *runSink) TurnDone(ti agent.TurnInfo) {
 	if !dup {
 		_ = rt.s.store.AddTurn(rt.ctx, store.Turn{UserID: t.UserID, ThreadID: t.ID, Provider: t.Provider, Model: t.Model, OK: ti.OK,
 			DurationMS: ti.DurationMS, InputTokens: ti.InputTokens, OutputTokens: ti.OutputTokens, CachedTokens: ti.CachedTokens, CostUSD: ti.CostUSD})
+		if t.HostID == 0 && t.AccountID != 0 {
+			rt.s.shareTurnDone(t.AccountID) // a lent login's turn is counted in turns now
+		}
 	}
 	rt.publishThread(t)
 

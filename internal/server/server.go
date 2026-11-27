@@ -81,6 +81,7 @@ type Server struct {
 	inferenceModelCache map[string]inferenceModelEntry
 
 	accts accountState // logins: status cache, sign-ins in progress (accounts.go)
+	share shareState   // logins the owner lends, with allowances (ai_share.go)
 	terms termHub      // shells in the browser (terminals.go)
 	aw    awayBook     // away from keyboard (away.go)
 }
@@ -156,6 +157,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	if err := s.loadSecretKey(); err != nil {
 		return err
 	}
+	s.startShareProxy(ctx) // before the agents come back: lent logins reach it (ai_share.go)
 	s.rt.start(ctx)
 	s.links.start(ctx) // the controller lease, then the machines' links (machine_link.go)
 	// a turn cut off by a crash or a restart: take it back from its holder,
@@ -295,6 +297,7 @@ func (s *Server) Router() http.Handler {
 
 			// Threads, messages, requests, search, usage: threads_api.go.
 			s.threadRoutes(r)
+			s.aiShareRoutes(r)
 			s.askRoutes(r)
 			s.assistantRoutes(r)
 			// Images for prompts: uploads.go.

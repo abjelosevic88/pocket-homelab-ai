@@ -1,5 +1,6 @@
 // Provider / model / effort / mode pickers, fed by GET /providers.
 import { type ReactNode, useEffect, useState } from 'react'
+import { shareNote } from '../lib/aiShare'
 import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { planName } from '../lib/format'
@@ -42,6 +43,7 @@ export function defaultsFor(p: Provider | undefined, s: Settings | null): Omit<A
 /** One line about a login for pickers: plan, email, and whether another
  * login is the same account (they share limits). */
 export function accountNote(a: Account) {
+  if (a.shared) return a.signed_in ? `From ${a.shared.by} · ${shareNote(a.shared, true)}` : a.error || `From ${a.shared.by} · signed out`
   if (!a.signed_in) return a.error || 'Not signed in — Settings → Machines'
   return [a.plan && planName(a.plan), a.email, a.same_as && `same account as ${a.same_as}`].filter(Boolean).join(' · ')
 }

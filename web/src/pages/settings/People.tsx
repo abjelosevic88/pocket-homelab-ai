@@ -5,6 +5,7 @@ import type { User } from '../../lib/types'
 import { Icon } from '../../components/icons'
 import { Avatar, Confirm, Empty, errMsg, Field, Loading, MenuButton, Modal, Segmented, Switch, useAsync, useToast, type MenuItem, useContextMenu } from '../../components/ui'
 import { Section } from './common'
+import { SharedAISection } from './SharedAI'
 
 export function PeopleTab() {
   const { user, status } = useApp()
@@ -41,6 +42,7 @@ export function PeopleTab() {
         )}
         {status?.auth_mode !== 'local' && <p className="muted small mt">Sign-in mode is <code>{status?.auth_mode}</code>: accounts are also created automatically the first time someone signs in.</p>}
       </Section>
+      <SharedAISection />
       {edit && <PersonDialog person={edit} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); list.reload() }} />}
       {del && <Confirm title={`Remove ${del.name || del.email}?`} message="Their account, threads, recipes and schedules are deleted."
         onCancel={() => setDel(null)} onConfirm={async () => { const d = del; setDel(null); try { await api.del(`${V1}/users/${d.id}`); toast('Removed'); list.reload() } catch (e) { toast(errMsg(e), 'err') } }} />}

@@ -5,6 +5,8 @@
 // account per thread in the composer. Admins see and manage every login.
 // Other machines (Settings → Machines) list and manage their own logins there.
 import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { shareNote } from '../../lib/aiShare'
 import { api, V1 } from '../../lib/api'
 import { useApp } from '../../lib/app-context'
 import { type Account, type HostLogin, type LoginState, type ProviderId, type User, isAcp } from '../../lib/types'
@@ -23,6 +25,7 @@ import { LoginList, MachineCard, osIcon, useCLIUpdate, useLatestCLIs } from './M
 /** "max" → "Max", "PRO" → "Pro". */
 
 export function AccountsSection({ hostLogins = {} }: { hostLogins?: Record<number, HostLogin[]> }) {
+  const navigate = useNavigate()
   const { user, reloadAccounts, providers: all, reloadProviders } = useApp()
   // Antigravity CLI: installed here once it says its version (signed in or not)
   const agy = all.find(p => p.id === 'antigravity')
@@ -91,6 +94,15 @@ export function AccountsSection({ hostLogins = {} }: { hostLogins?: Record<numbe
               'sep',
               { label: 'Remove…', icon: 'trash', danger: true, onSelect: () => setDel(a) },
             ]
+            if (a.shared) { // lent by the owner: no sign-in of its own, the owner stops sharing it
+              const lent: MenuItem[] = isAdmin ? [{ label: 'Change the allowance…', icon: 'edit', onSelect: () => navigate('/settings/users') }] : [{ label: 'Rename…', icon: 'edit', onSelect: () => setEdit(a) }]
+              return {
+                key: String(a.id), provider: a.provider, name: a.label, signedIn: a.signed_in, plan: a.plan, error: a.signed_in ? a.shared.blocked : a.error, folder: a.home,
+                menu: lent, onContextMenu: (e: React.MouseEvent) => ctx.open(e, lent),
+                tags: <span className="badge accent" title={`${a.shared.by} shares their ${a.shared.from_label} with you. Pocket AI keeps their sign-in and counts what you use.`}>Shared by {a.shared.by}</span>,
+                meta: <span>{shareNote(a.shared)}</span>,
+              }
+            }
             const manage = canManage(a) || (a.default && isAdmin)
             return {
               key: a.default ? `server-${a.provider}` : String(a.id), provider: a.provider, name: a.label, signedIn: a.signed_in, plan: a.plan, email: a.email, error: a.error, folder: a.home,

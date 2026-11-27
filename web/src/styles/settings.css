@@ -292,3 +292,21 @@ button.sbset-grip:hover, button.sbset-grip:focus-visible { color: var(--text-2);
   .agent-body { padding: 4px 12px 14px; }
   .agent-name .xsmall { display: none; }
 }
+
+/* Settings → Users → Shared AI (SharedAI.tsx) */
+.share-keep { display: flex; align-items: center; gap: 12px; }
+.share-num { display: inline-flex; align-items: center; gap: 6px; flex: none; white-space: nowrap; }
+.share-num input { width: 76px; text-align: right; }
+.share-person { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; border-bottom: 1px solid var(--hairline); }
+.share-person:last-child { border-bottom: 0; }
+.share-person-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.share-person-head .badge { margin-left: 6px; }
+.share-person-head .btn { flex: none; }
+.share-indent { margin-left: 40px; }
+.share-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.share-row .grow { min-width: 0; }
+.share-row .badge { margin-left: 6px; }
+.share-choice { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+@media (max-width: 760px) {
+  .share-indent { margin-left: 0; }
+}

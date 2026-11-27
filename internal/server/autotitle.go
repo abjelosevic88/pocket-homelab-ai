@@ -158,7 +158,7 @@ func (s *Server) titleFor(ctx context.Context, userID int64, model, prompt strin
 
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	text, _, err := agent.CompleteClaude(ctx, agent.Options{Bin: s.cfg.ClaudeBin, Cwd: cwd, Model: model, SystemPrompt: autoTitleSystem, Env: agent.AccountEnv("claude", home), Log: s.log}, prompt)
+	text, _, err := agent.CompleteClaude(ctx, agent.Options{Bin: s.cfg.ClaudeBin, Cwd: cwd, Model: model, SystemPrompt: autoTitleSystem, Env: s.homeEnv(ctx, "claude", home), Log: s.log}, prompt)
 	if err != nil {
 		return "", err
 	}
