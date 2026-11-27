@@ -50,7 +50,7 @@ export interface Panel {
   /** a panel that keeps the versions of what it works on (Refine): all of them, oldest first */
   versions?: PanelVersion[]
   /** the person's chat with the panel's editor; chat_live: what it is writing right now */
-  chat?: PanelChatMessage[]; chat_live?: string
+  chat?: PanelChatMessage[]; chat_live?: string; chat_activity?: string
   /** there is an editor to talk to */
   editor?: boolean
   url?: string
@@ -69,7 +69,7 @@ export const openPanelSheet = (d: PanelDraft = {}) => window.dispatchEvent(new C
 export const PANEL_EVENT = 'pai:panel'
 
 /** The "/" commands that start a panel → its kind. */
-export const PANEL_COMMANDS: Record<string, string> = { 'ask-all': 'ask', brainstorm: 'brainstorm', council: 'council', debate: 'debate', 'second-opinion': 'review', 'best-of': 'build', committee: 'ask', advisor: 'review', panel: '' }
+export const PANEL_COMMANDS: Record<string, string> = { 'ask-all': 'ask', brainstorm: 'brainstorm', council: 'council', 'refine-panel': 'refine', debate: 'debate', 'second-opinion': 'review', 'best-of': 'build', committee: 'ask', advisor: 'review', panel: '' }
 
 export const KIND_ICON: Record<string, string> = { refine: 'refresh', ask: 'message', brainstorm: 'sparkles', council: 'users', debate: 'repeat', review: 'eye', build: 'fork', recipe: 'list-checks' }
 

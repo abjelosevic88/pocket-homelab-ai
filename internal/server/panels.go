@@ -36,10 +36,22 @@ type panelRun struct {
 var (
 	panelRunsMu sync.Mutex
 	panelRuns   = map[panelKey]*panelRun{}
+	panelEditMu [64]sync.Mutex
 	// panelWaiters counts the pocket_panel_wait calls on a panel: its result
 	// goes to them instead of coming back as a message.
 	panelWaiters sync.Map // panelKey → *atomic.Int32
 )
+
+// lockPanel serializes version/chat/round mutations for one panel.
+func (s *Server) lockPanel(id string) func() {
+	var hash uint32 = 2166136261
+	for i := range id {
+		hash = (hash ^ uint32(id[i])) * 16777619
+	}
+	mu := &panelEditMu[hash%uint32(len(panelEditMu))]
+	mu.Lock()
+	return mu.Unlock
+}
 
 type panelKey struct {
 	S  *Server

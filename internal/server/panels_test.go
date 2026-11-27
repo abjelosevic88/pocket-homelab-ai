@@ -413,6 +413,15 @@ func TestSplitRewrite(t *testing.T) {
 	if v != "# Plan\n\nDo it." || !strings.HasPrefix(note, "## What changed") {
 		t.Fatalf("%q / %q", v, note)
 	}
+	// trailing markdown emphasis must survive, while standalone divider lines are stripped
+	v, note = splitRewrite("# Plan\n\nShip this **first**\n\n---\n\n--- end of the version ---\n\n## What changed\n- bolded")
+	if v != "# Plan\n\nShip this **first**" || !strings.Contains(note, "bolded") {
+		t.Fatalf("bold + divider: %q / %q", v, note)
+	}
+	v, _ = splitRewrite("# Plan\n\nKeep _italics_\n--- end of the version ---")
+	if v != "# Plan\n\nKeep _italics_" {
+		t.Fatalf("italics: %q", v)
+	}
 	// an answer from before the marker was asked for: the heading parts it
 	v, note = splitRewrite("# Plan\n\nDo it.\n\n## What changed\n\n- shorter\n\n## Not taken\n\n- x")
 	if v != "# Plan\n\nDo it." || !strings.Contains(note, "Not taken") {
@@ -427,6 +436,28 @@ func TestSplitRewrite(t *testing.T) {
 	}
 	if said, prop = splitProposal("It is fine as it is."); prop != "" || said != "It is fine as it is." {
 		t.Fatalf("%q / %q", said, prop)
+	}
+}
+
+func TestRevealNames(t *testing.T) {
+	seats := []*store.PanelSeat{
+		{Label: "A", PanelSeatSpec: store.PanelSeatSpec{Provider: "claude", Role: "Sceptic"}},
+		{Label: "B", PanelSeatSpec: store.PanelSeatSpec{Provider: "codex", Role: "Pragmatist"}},
+		{Label: "C", PanelSeatSpec: store.PanelSeatSpec{Provider: "gemini"}},
+	}
+	for _, tc := range []struct{ in, want string }{
+		{"Participant A agrees with Participant B.", "Claude, Sceptic (A) agrees with Codex, Pragmatist (B)."},
+		{"Participants A and B agree.", "Claude, Sceptic (A) and Codex, Pragmatist (B) agree."},
+		{"Participants A, B, and C raised this.", "Claude, Sceptic (A), Codex, Pragmatist (B), and Gemini CLI (C) raised this."},
+		{"Participants A, B & C", "Claude, Sceptic (A), Codex, Pragmatist (B) & Gemini CLI (C)"},
+		{"Participant A/B disagreed", "Claude, Sceptic (A)/Codex, Pragmatist (B) disagreed"},
+		// words starting with B..H after "and" must not be mistaken for a seat letter
+		{"Participant A and Build both pass.", "Claude, Sceptic (A) and Build both pass."},
+		{"Participant F is unknown.", "Participant F is unknown."},
+	} {
+		if got := revealNames(tc.in, seats); got != tc.want {
+			t.Errorf("revealNames(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }
 
@@ -547,8 +578,41 @@ func TestPanelKeepsVersionsAndGoesOn(t *testing.T) {
 	if !strings.Contains(note, "Short plan.") || !strings.Contains(note, "version 7 of 7") || !strings.Contains(note, "One go plan") {
 		t.Fatalf("link note %q", note)
 	}
+	// a panel report's own link must not duplicate the outcome, while a user link after the report still expands
+	reportMsg := "<pocket-panel-report kind=\"Refine\" panel-id=\"" + id + "\">\nOutcome\n(see /panels/" + id + ")\n</pocket-panel-report>"
+	if got := s.panelRefNote(ctx, u.ID, reportMsg); got != "" {
+		t.Fatalf("report link was re-injected: %q", got)
+	}
+	if got := s.panelRefNote(ctx, u.ID, reportMsg+"\n\nAlso check /panels/"+id); !strings.Contains(got, "Short plan.") {
+		t.Fatalf("user link after report was missed: %q", got)
+	}
 	if s.panelRefNote(ctx, u.ID+99, "see /panels/"+id) != "" || s.panelRefNote(ctx, u.ID, "no link here") != "" {
 		t.Fatal("a panel was handed to someone it does not belong to, or without a link")
+	}
+	// another round is rejected with 409 while the editor is busy answering in chat
+	busyMsg := &store.PanelChatMessage{PanelID: id, Role: "editor", State: "working"}
+	if err := s.store.AddPanelChat(ctx, busyMsg); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := c.call("POST", "/api/v1/panels/"+id+"/rounds", map[string]string{}); code != 409 || !strings.Contains(string(body), "chat") {
+		t.Fatalf("round while chat working: %d %s", code, body)
+	}
+	busyMsg.State = "done"
+	_ = s.store.SavePanelChat(ctx, busyMsg)
+
+	// export includes current version and version history
+	code, exportBody := c.call("GET", "/api/v1/panels/"+id+"/export.md", nil)
+	if code != 200 || !strings.Contains(string(exportBody), "## Current version (v7)") || !strings.Contains(string(exportBody), "## Version history") {
+		t.Fatalf("export: %d %s", code, exportBody)
+	}
+	// list view returns batched seats cleanly
+	var listed []struct {
+		ID    string `json:"id"`
+		Seats []any  `json:"seats"`
+	}
+	c.want("GET", "/api/v1/panels", nil, 200, &listed)
+	if len(listed) != 1 || listed[0].ID != id || len(listed[0].Seats) != 3 {
+		t.Fatalf("list panels: %+v", listed)
 	}
 	// found by name for the @ picker, and saved as a file
 	if items := s.panelItems(ctx, u.ID, "one go", 5); len(items) != 1 || items[0].Subtitle != "Refine · version 7" || !strings.HasSuffix(items[0].URL, "/panels/"+id) {

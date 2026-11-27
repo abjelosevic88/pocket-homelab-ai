@@ -2412,12 +2412,16 @@ func (rt *engine) takeTurnNote(threadID string) string {
 // chatting in a shared thread doesn't get theirs pulled into it unasked.
 func (rt *engine) withMemory(r *run, in agent.Input, sender int64) agent.Input {
 	in.Text += rt.takeTurnNote(r.threadID)
-	in.Text += rt.s.appMentionNote(rt.ctxOrBackground(), sender, in.Text)
-	in.Text += rt.s.panelRefNote(rt.ctxOrBackground(), sender, in.Text) // a linked panel: its current version (panel_versions.go)
+	t, err := rt.s.store.GetThread(rt.ctx, r.userID, r.threadID)
+	// panel participants already received their resolved material and should not
+	// re-expand links or @mentions quoted inside material or other seats' answers
+	if err != nil || t.Source != "panel" {
+		in.Text += rt.s.appMentionNote(rt.ctxOrBackground(), sender, in.Text)
+		in.Text += rt.s.panelRefNote(rt.ctxOrBackground(), sender, in.Text) // a linked panel: its current version (panel_versions.go)
+	}
 	if rt.s.isAway(rt.ctxOrBackground(), sender) {
 		in.Text += awayNote
 	}
-	t, err := rt.s.store.GetThread(rt.ctx, r.userID, r.threadID)
 	if err != nil || sender != r.userID {
 		return in
 	}

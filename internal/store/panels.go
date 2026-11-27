@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"strings"
 )
 
 // Panels: one question put to several models at once, in steps the server
@@ -252,6 +254,56 @@ func (s *Store) PanelSeats(ctx context.Context, panelID string) ([]*PanelSeat, e
 		}
 		st.Chair = chair != 0
 		out = append(out, &st)
+	}
+	return out, rows.Err()
+}
+
+// PanelSeatMeta is a seat with its thread usage and host name joined in one query
+// for list views (avoiding per-panel/per-seat N+1 lookups).
+type PanelSeatMeta struct {
+	Seat        *PanelSeat
+	Usage       Usage
+	MachineName string
+	HasHost     bool
+}
+
+// PanelSeatsFor loads seats, thread usage and host names for many panels in one query.
+func (s *Store) PanelSeatsFor(ctx context.Context, panelIDs []string) (map[string][]PanelSeatMeta, error) {
+	out := make(map[string][]PanelSeatMeta, len(panelIDs))
+	if len(panelIDs) == 0 {
+		return out, nil
+	}
+	placeholders := make([]string, len(panelIDs))
+	args := make([]any, len(panelIDs))
+	for i, id := range panelIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	q := `SELECT ps.id, ps.panel_id, ps.idx, ps.chair, ps.label, ps.provider, ps.model, ps.effort, ps.account_id, ps.host_id, ps.host_home, ps.role, ps.thread_id, ps.asked, ps.state, ps.error,
+		COALESCE(t.usage, '{}'), h.name
+		FROM panel_seats ps
+		LEFT JOIN threads t ON t.id = ps.thread_id AND ps.thread_id != ''
+		LEFT JOIN hosts h ON h.id = ps.host_id AND ps.host_id != 0
+		WHERE ps.panel_id IN (` + strings.Join(placeholders, ",") + `)
+		ORDER BY ps.panel_id, ps.chair, ps.idx, ps.id`
+	rows, err := s.DB.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var st PanelSeat
+		var chair int
+		var usage string
+		var hostName sql.NullString
+		if err := rows.Scan(&st.ID, &st.PanelID, &st.Idx, &chair, &st.Label, &st.Provider, &st.Model, &st.Effort, &st.AccountID, &st.HostID, &st.HostHome,
+			&st.Role, &st.ThreadID, &st.Asked, &st.State, &st.Error, &usage, &hostName); err != nil {
+			return nil, err
+		}
+		st.Chair = chair != 0
+		m := PanelSeatMeta{Seat: &st, MachineName: hostName.String, HasHost: hostName.Valid}
+		_ = json.Unmarshal([]byte(usage), &m.Usage)
+		out[st.PanelID] = append(out[st.PanelID], m)
 	}
 	return out, rows.Err()
 }

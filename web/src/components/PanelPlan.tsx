@@ -50,6 +50,7 @@ export function PanelPlan({ p, onChange }: { p: Panel; onChange: (p: Panel) => v
   const shown = versions.find(v => v.n === at) || cur
   const prev = versions.find(v => v.n === shown.n - 1)
   const running = p.status === 'running'
+  const chatting = !!p.chat?.some(m => m.role === 'editor' && m.state === 'working')
   const isCurrent = shown.n === cur.n
   useEffect(() => { setAt(0) }, [cur?.n]) // a new version: show it
   const changed = useMemo(() => prev ? diffCount(prev.text, shown.text) : null, [prev, shown])
@@ -60,7 +61,7 @@ export function PanelPlan({ p, onChange }: { p: Panel; onChange: (p: Panel) => v
   const saveEdit = () => act('edit', async () => { await post('/versions', edit); setEdit(null); toast('Saved as a new version') })
   const startRound = () => act('round', async () => { await post('/rounds', { note: round || '' }); setRound(null) })
   const implement = () => act('impl', async () => {
-    const t = await api.post<Thread>(`${V1}/panels/${p.id}/continue`, { text: impl?.text || '', provider: impl?.provider || undefined, cwd: impl?.cwd || undefined })
+    const t = await api.post<Thread>(`${V1}/panels/${p.id}/continue`, { text: impl?.text || '', provider: impl?.provider || undefined, cwd: impl?.cwd || undefined, host_id: p.spec.host_id || undefined })
     upsertThread(t); setImpl(null); navigate(`/t/${t.id}`)
   })
   const saveFile = (dir?: string, force = false) => act('save', async () => {
@@ -115,8 +116,8 @@ export function PanelPlan({ p, onChange }: { p: Panel; onChange: (p: Panel) => v
       {shown.note && shown.source !== 'restore' && <details className="pv-note"><summary>{shown.source === 'rewrite' ? 'What the editor changed, and what it did not take' : shown.source === 'chat' ? 'What you asked for' : 'Your note'}</summary>
         {shown.source === 'rewrite' ? <Markdown text={shown.note} /> : <p>{shown.note}</p>}</details>}
       {isCurrent && <div className="pn-outcome-foot">
-        <button type="button" className="btn primary sm" disabled={running} onClick={() => setRound('')} title="The participants judge this version, and the editor rewrites it from their verdicts"><Icon name="refresh" size={13} />Another round</button>
-        <button type="button" className="btn sm" onClick={() => setImpl({ text: 'Implement phase 1 of this plan.', provider: '', cwd: p.spec.host_id ? '' : p.spec.cwd })}><Icon name="play" size={12} />Implement…</button>
+        <button type="button" className="btn primary sm" disabled={running || chatting} onClick={() => setRound('')} title={chatting ? 'Wait for the editor to finish answering in the chat' : 'The participants judge this version, and the editor rewrites it from their verdicts'}><Icon name="refresh" size={13} />Another round</button>
+        <button type="button" className="btn sm" onClick={() => setImpl({ text: 'Implement phase 1 of this plan.', provider: '', cwd: p.spec.cwd })}><Icon name="play" size={12} />Implement…</button>
         <button type="button" className="btn sm" onClick={async () => { if (await copyText(reference)) toast('Link copied. Paste it into any conversation — or type @panels # there and pick it. It always stands for the current version.', 'ok', undefined, 8000) }}><Icon name="link" size={13} />Use in a chat</button>
         {p.from_thread_id && p.from_title && <button type="button" className="btn ghost sm" onClick={() => navigate(`/t/${p.from_thread_id}`)}><Icon name="message" size={13} />Back to the conversation</button>}
       </div>}
@@ -149,7 +150,7 @@ export function PanelPlan({ p, onChange }: { p: Panel; onChange: (p: Panel) => v
           <textarea {...noGrammarly} autoFocus rows={3} value={impl.text} onChange={e => setImpl({ ...impl, text: e.target.value })} />
           <div className="row wrap">
             <Select label="Agent" value={impl.provider} options={provOpts} onChange={v => setImpl({ ...impl, provider: v })} searchable={false} width={240} />
-            <FolderButton value={impl.cwd} onChange={cwd => setImpl({ ...impl, cwd })} className="btn" />
+            <FolderButton value={impl.cwd} host={p.spec.host_id || 0} onChange={cwd => setImpl({ ...impl, cwd })} className="btn" />
           </div>
         </div>
       </Modal>}
@@ -160,21 +161,29 @@ export function PanelPlan({ p, onChange }: { p: Panel; onChange: (p: Panel) => v
 }
 
 /** The person's chat with the panel's editor about the current version. */
-export function EditorChat({ p, onChange }: { p: Panel; onChange: (p: Panel) => void }) {
+export function EditorChat({ p, onChange, onOpenThread }: { p: Panel; onChange: (p: Panel) => void; onOpenThread?: (tid: string) => void }) {
   const { toast } = useToast()
+  const navigate = useNavigate()
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
+  const [takingId, setTakingId] = useState<number | null>(null)
   const [open, setOpen] = useState<number | null>(null) // a proposal being looked at
   const chat = p.chat || []
   const versions = p.versions || []
   const cur = versions[versions.length - 1]
   const working = chat.some(m => m.role === 'editor' && m.state === 'working')
   const running = p.status === 'running'
+  const asks = working && p.chat_activity === 'waiting_for_person'
   // new messages show at the bottom of the chat's own list; the page itself stays where it is
   const list = useRef<HTMLDivElement>(null)
   const count = chat.length + (p.chat_live?.length || 0)
   useEffect(() => { if (list.current) list.current.scrollTop = list.current.scrollHeight }, [count])
   const editor = p.seats.filter(s => s.chair && s.state !== 'failed').pop()
+  const openEditor = () => {
+    if (!editor?.thread_id) return
+    if (onOpenThread) onOpenThread(editor.thread_id)
+    else navigate(`/t/${editor.thread_id}`)
+  }
   const send = async () => {
     const t = text.trim()
     if (!t || busy || working || running) return
@@ -182,7 +191,9 @@ export function EditorChat({ p, onChange }: { p: Panel; onChange: (p: Panel) => 
     try { onChange(await api.post<Panel>(`${V1}/panels/${p.id}/chat`, { text: t })); setText('') } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
   }
   const take = async (m: PanelChatMessage) => {
-    try { onChange(await api.post<Panel>(`${V1}/panels/${p.id}/chat/${m.id}/accept`)); setOpen(null); toast(`Saved as version ${cur.n + 1}`) } catch (e) { toast(errMsg(e), 'err') }
+    if (takingId !== null) return
+    setTakingId(m.id)
+    try { onChange(await api.post<Panel>(`${V1}/panels/${p.id}/chat/${m.id}/accept`)); setOpen(null); toast(`Saved as version ${cur.n + 1}`) } catch (e) { toast(errMsg(e), 'err') } finally { setTakingId(null) }
   }
   if (!cur) return null
   return (
@@ -191,13 +202,18 @@ export function EditorChat({ p, onChange }: { p: Panel; onChange: (p: Panel) => 
         <Icon name="message" size={14} /><b>Talk to the editor</b>
         {editor && <span className="muted xsmall pc-who"><Icon name={editor.provider} size={12} className={`prov-glyph ${editor.provider}`} />{providerName(editor.provider)}{editor.model ? ` · ${editor.model}` : ''}</span>}
         <span className="muted xsmall pc-hint">It knows the text and every verdict. Say what to change; you decide whether to take what it proposes.</span>
+        {editor?.thread_id && <button type="button" className="btn ghost icon-only xs" title="Open the editor’s conversation" aria-label="Open the editor’s conversation" onClick={openEditor}><Icon name="external" size={14} /></button>}
       </header>
       {chat.length > 0 && <div className="pc-list" ref={list}>
         {chat.map(m => m.role === 'person'
           ? <div key={m.id} className="pc-msg me"><div className="pc-bubble">{m.text}</div></div>
           : <div key={m.id} className="pc-msg">
             {m.state === 'working'
-              ? <div className="pc-bubble working">{p.chat_live ? <Markdown text={p.chat_live} /> : null}<span className="pc-typing"><Spinner size={11} />{p.chat_live ? 'Writing…' : 'Thinking…'}</span></div>
+              ? <div className="pc-bubble working">
+                {asks && editor?.thread_id && <button type="button" className="pc-asks" onClick={openEditor}><Icon name="alert" size={13} /><span>It asked something — open it to answer</span></button>}
+                {p.chat_live ? <Markdown text={p.chat_live} /> : null}
+                <span className="pc-typing">{asks ? <Icon name="alert" size={12} /> : <Spinner size={11} />}{asks ? 'Waiting for your answer…' : p.chat_live ? 'Writing…' : 'Thinking…'}</span>
+              </div>
               : <div className={`pc-bubble ${m.state === 'failed' ? 'failed' : ''}`}>
                 {m.text && (m.state === 'failed' ? <span>{m.text}</span> : <Markdown text={m.text} />)}
                 {m.proposal && (
@@ -205,7 +221,7 @@ export function EditorChat({ p, onChange }: { p: Panel; onChange: (p: Panel) => 
                     <span className="pc-prop-h"><Icon name="sparkles" size={13} />{m.version_n ? `Taken as version ${m.version_n}` : 'It proposes a new version'}</span>
                     <span className="grow" />
                     <button type="button" className="btn sm" onClick={() => setOpen(m.id)}><Icon name="eye" size={13} />{m.version_n ? 'Look' : 'See what changes'}</button>
-                    {!m.version_n && <button type="button" className="btn primary sm" disabled={running} onClick={() => void take(m)}>Take it as v{cur.n + 1}</button>}
+                    {!m.version_n && <button type="button" className="btn primary sm" disabled={running || takingId !== null} onClick={() => void take(m)}>{takingId === m.id && <Spinner size={11} />}Take it as v{cur.n + 1}</button>}
                   </div>
                 )}
               </div>}
@@ -227,7 +243,7 @@ export function EditorChat({ p, onChange }: { p: Panel; onChange: (p: Panel) => 
           <Modal title={m.version_n ? `Version ${m.version_n}, from the chat` : `Proposed: version ${cur.n + 1}`} onClose={() => setOpen(null)} size="xl" footer={<>
             <span className="muted small grow">Compared with version {base.n}</span>
             <button type="button" className="btn" onClick={() => setOpen(null)}>Close</button>
-            {!m.version_n && <button type="button" className="btn primary" disabled={running} onClick={() => void take(m)}>Take it as version {cur.n + 1}</button>}
+            {!m.version_n && <button type="button" className="btn primary" disabled={running || takingId !== null} onClick={() => void take(m)}>{takingId === m.id && <Spinner size={11} />}Take it as version {cur.n + 1}</button>}
           </>}>
             <VersionDiff before={base.text} after={m.proposal} />
           </Modal>

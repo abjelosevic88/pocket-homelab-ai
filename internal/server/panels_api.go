@@ -64,12 +64,14 @@ type panelView struct {
 	CostUSD   float64              `json:"cost_usd"`
 	FromTitle string               `json:"from_title,omitempty"`
 	// A panel that keeps versions of what it works on: all of them, and the
-	// person's chat with its editor (ChatLive: what the editor is writing).
-	Versions []*store.PanelVersion     `json:"versions,omitempty"`
-	Chat     []*store.PanelChatMessage `json:"chat,omitempty"`
-	ChatLive string                    `json:"chat_live,omitempty"`
-	Editor   bool                      `json:"editor"` // there is an editor to talk to
-	URL      string                    `json:"url"`
+	// person's chat with its editor (ChatLive: what the editor is writing;
+	// ChatActivity: working | waiting_for_person | starting while answering).
+	Versions     []*store.PanelVersion     `json:"versions,omitempty"`
+	Chat         []*store.PanelChatMessage `json:"chat,omitempty"`
+	ChatLive     string                    `json:"chat_live,omitempty"`
+	ChatActivity string                    `json:"chat_activity,omitempty"`
+	Editor       bool                      `json:"editor"` // there is an editor to talk to
+	URL          string                    `json:"url"`
 }
 
 // viewPanel builds a panel for the web app; full adds the answers and what
@@ -120,6 +122,11 @@ func (s *Server) viewPanel(ctx context.Context, p *store.Panel, full bool) panel
 						v.ChatLive, _, _ = s.store.LastReply(ctx, ed.ThreadID)
 						if said, _ := splitProposal(v.ChatLive); said != "" || v.ChatLive != "" {
 							v.ChatLive = said
+						}
+						if th, err := s.store.GetThreadAny(ctx, ed.ThreadID); err == nil {
+							if info := s.agentState(ctx, th, false); !info.Finished {
+								v.ChatActivity = info.State
+							}
 						}
 					}
 				}
@@ -177,18 +184,56 @@ func (s *Server) seatDoing(ctx context.Context, threadID string) (int, string) {
 	return n, last
 }
 
+// viewPanelsList builds summary views for many panels using a single batched
+// seat/thread/host lookup (only querying live agent state for active seats).
+func (s *Server) viewPanelsList(ctx context.Context, list []*store.Panel) []panelView {
+	ids := make([]string, len(list))
+	for i, p := range list {
+		ids[i] = p.ID
+	}
+	byPanel, _ := s.store.PanelSeatsFor(ctx, ids)
+	out := make([]panelView, 0, len(list))
+	for _, p := range list {
+		p.Material = "" // the list does not need it
+		v := panelView{Panel: p, Depth: panelDepthNames[min(max(p.Spec.Depth, 0), panelDeep)], Seats: []panelSeatView{}}
+		v.URL = firstNonEmpty(s.publicURL("/panels/"+p.ID), "/panels/"+p.ID)
+		for _, meta := range byPanel[p.ID] {
+			st := meta.Seat
+			sv := panelSeatView{PanelSeat: st, Name: providerName(st.Provider), Who: seatWho(st), Activity: st.State,
+				CostUSD: meta.Usage.CostUSD, Tokens: meta.Usage.InputTokens + meta.Usage.OutputTokens}
+			if st.Provider == "claude" {
+				sv.Name = "Claude Code"
+			}
+			if st.HostID != 0 {
+				if meta.HasHost {
+					sv.Machine = meta.MachineName
+				} else {
+					sv.Machine = "Removed machine"
+				}
+			}
+			v.CostUSD += sv.CostUSD
+			if st.ThreadID != "" && st.State == "working" && p.Status == "running" {
+				if th, err := s.store.GetThreadAny(ctx, st.ThreadID); err == nil {
+					if info := s.agentState(ctx, th, false); !info.Finished {
+						sv.Activity = info.State
+					}
+					sv.Since = firstNonEmpty(th.PromptAt, th.ActivityAt)
+				}
+			}
+			v.Seats = append(v.Seats, sv)
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
 func (s *Server) handleListPanels(w http.ResponseWriter, r *http.Request) {
 	list, err := s.store.ListPanels(r.Context(), me(r), queryInt(r, "limit"))
 	if err != nil {
 		s.fail(w, err, "list panels")
 		return
 	}
-	out := make([]panelView, 0, len(list))
-	for _, p := range list {
-		p.Material = "" // the list does not need it
-		out = append(out, s.viewPanel(r.Context(), p, false))
-	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, s.viewPanelsList(r.Context(), list))
 }
 
 func (s *Server) handleThreadPanels(w http.ResponseWriter, r *http.Request) {
@@ -201,12 +246,7 @@ func (s *Server) handleThreadPanels(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "list panels")
 		return
 	}
-	out := make([]panelView, 0, len(list))
-	for _, p := range list {
-		p.Material = ""
-		out = append(out, s.viewPanel(r.Context(), p, false))
-	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, s.viewPanelsList(r.Context(), list))
 }
 
 func (s *Server) panel(w http.ResponseWriter, r *http.Request) *store.Panel {
@@ -345,10 +385,19 @@ func (s *Server) handlePanelContinue(w http.ResponseWriter, r *http.Request) {
 		Provider string `json:"provider"`
 		Model    string `json:"model"`
 		Cwd      string `json:"cwd"`
+		HostID   *int64 `json:"host_id"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid request")
 		return
+	}
+	applyPlace := func(nt *newThread) {
+		nt.Cwd = strings.TrimSpace(in.Cwd)
+		if in.HostID != nil {
+			nt.HostID = *in.HostID
+		} else if nt.Cwd == "" {
+			nt.Cwd, nt.HostID = p.Spec.Cwd, p.Spec.HostID
+		}
 	}
 	if hasVersions(p) {
 		// a plan the panel keeps: the conversation links to it and is handed its
@@ -360,10 +409,7 @@ func (s *Server) handlePanelContinue(w http.ResponseWriter, r *http.Request) {
 		link := "[" + strings.NewReplacer("[", "(", "]", ")").Replace(oneLine(p.Title, 120)) + "](" + firstNonEmpty(s.publicURL("/panels/"+p.ID), "/panels/"+p.ID) + ")"
 		nt := newThread{Provider: in.Provider, Model: in.Model, Title: oneLine(firstNonEmpty(strings.TrimSpace(in.Text), "From the plan")+" · "+p.Title, 140),
 			Text: firstNonEmpty(strings.TrimSpace(in.Text), "Read this plan and tell me briefly how you would go about it.") + "\n\nThe plan: " + link}
-		nt.Cwd = strings.TrimSpace(in.Cwd)
-		if nt.Cwd == "" && p.Spec.HostID == 0 {
-			nt.Cwd = p.Spec.Cwd
-		}
+		applyPlace(&nt)
 		t, err := s.createThread(r.Context(), userFrom(r.Context()), nt, "web", "")
 		if err != nil && t == nil {
 			s.fail(w, err, "continue from panel")
@@ -391,9 +437,7 @@ func (s *Server) handlePanelContinue(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(&b, "The outcome:\n\n%s\n</pocket-panel-report>\n\n", out)
 	b.WriteString(firstNonEmpty(strings.TrimSpace(in.Text), "Let's continue from this outcome. Tell me briefly how you read it and what you would do next."))
 	nt := newThread{Provider: in.Provider, Model: in.Model, Text: b.String(), Title: oneLine("After "+strings.ToLower(p.Spec.KindName)+": "+p.Title, 140)}
-	if p.Spec.HostID == 0 {
-		nt.Cwd = p.Spec.Cwd
-	}
+	applyPlace(&nt)
 	t, err := s.createThread(r.Context(), userFrom(r.Context()), nt, "web", "")
 	if err != nil && t == nil {
 		s.fail(w, err, "continue from panel")
@@ -409,15 +453,19 @@ func (s *Server) handlePanelExport(w http.ResponseWriter, r *http.Request) {
 	}
 	seats, _ := s.store.PanelSeats(r.Context(), p.ID)
 	answers, _ := s.store.PanelAnswers(r.Context(), p.ID)
+	var versions []*store.PanelVersion
+	if hasVersions(p) {
+		versions = s.panelVersions(r.Context(), p)
+	}
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	if queryBool(r, "download") {
 		w.Header().Set("Content-Disposition", `attachment; filename="panel-`+p.ID[:8]+`.md"`)
 	}
-	_, _ = w.Write([]byte(panelMarkdown(p, seats, answers)))
+	_, _ = w.Write([]byte(panelMarkdown(p, seats, answers, versions)))
 }
 
 // panelMarkdown is a whole panel as one document.
-func panelMarkdown(p *store.Panel, seats []*store.PanelSeat, answers []*store.PanelAnswer) string {
+func panelMarkdown(p *store.Panel, seats []*store.PanelSeat, answers []*store.PanelAnswer, versions []*store.PanelVersion) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s: %s\n\n", p.Spec.KindName, p.Title)
 	if when, err := time.Parse(time.RFC3339Nano, p.CreatedAt); err == nil {
@@ -435,7 +483,27 @@ func panelMarkdown(p *store.Panel, seats []*store.PanelSeat, answers []*store.Pa
 	if m := strings.TrimSpace(p.Material); m != "" {
 		fmt.Fprintf(&b, "## The material\n\n%s\n\n", m)
 	}
-	if res := strings.TrimSpace(p.Result); res != "" {
+	if len(versions) > 0 {
+		cur := versions[len(versions)-1]
+		fmt.Fprintf(&b, "## Current version (v%d)\n\n%s\n\n", cur.N, strings.TrimSpace(cur.Text))
+		if note := strings.TrimSpace(cur.Note); note != "" {
+			fmt.Fprintf(&b, "### Notes on v%d\n\n%s\n\n", cur.N, note)
+		}
+		if len(versions) > 1 {
+			b.WriteString("## Version history\n\n")
+			for _, v := range versions {
+				line := fmt.Sprintf("- **v%d** (%s)", v.N, v.Source)
+				if when, err := time.Parse(time.RFC3339Nano, v.CreatedAt); err == nil {
+					line += " · " + when.Local().Format("2 Jan 2006, 15:04")
+				}
+				if note := oneLine(v.Note, 180); note != "" {
+					line += " — " + note
+				}
+				b.WriteString(line + "\n")
+			}
+			b.WriteString("\n")
+		}
+	} else if res := strings.TrimSpace(p.Result); res != "" {
 		fmt.Fprintf(&b, "## Outcome\n\n%s\n\n", res)
 	}
 	if p.Error != "" {

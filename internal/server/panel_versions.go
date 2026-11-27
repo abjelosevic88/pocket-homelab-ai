@@ -34,6 +34,8 @@ var (
 	versionEndRe   = regexp.MustCompile(`(?im)^[ \t>*_=–—-]*end of the version[ \t*_=–—-]*$`)
 	versionStartRe = regexp.MustCompile(`(?im)^[ \t>*_=–—-]*new version[ \t*_=–—-]*$`)
 	changedHeadRe  = regexp.MustCompile(`(?im)^[ \t]*(?:#{1,6}[ \t]*|\*\*)what changed\b`)
+	trailingRuleRe = regexp.MustCompile(`(?m)(?:\r?\n[ \t]*[-–—=_*]{3,}[ \t]*)+$`)
+	panelReportRe  = regexp.MustCompile(`(?s)<pocket-panel-report\b[^>]*>.*?</pocket-panel-report>`)
 )
 
 // splitRewrite takes an editor's answer apart: the new version, and what it
@@ -50,7 +52,16 @@ func splitRewrite(text string) (version, note string) {
 	if loc := versionStartRe.FindStringIndex(version); loc != nil {
 		version = version[loc[1]:]
 	}
-	version = strings.TrimSpace(strings.TrimRight(strings.TrimSpace(version), "-–—=_* \t\n"))
+	// strip only trailing standalone divider lines (---, ***, ===), never
+	// markdown emphasis (* or _) at the end of a sentence
+	version = strings.TrimSpace(version)
+	for {
+		trimmed := strings.TrimSpace(trailingRuleRe.ReplaceAllString(version, ""))
+		if trimmed == version {
+			break
+		}
+		version = trimmed
+	}
 	return version, strings.TrimSpace(note)
 }
 
@@ -75,6 +86,19 @@ func hasVersions(p *store.Panel) bool { return p.Kind == "refine" }
 // panelVersions lists a panel's versions, making them from what it has for
 // one that ran before versions were kept: the material, then each rewrite.
 func (s *Server) panelVersions(ctx context.Context, p *store.Panel) []*store.PanelVersion {
+	if !hasVersions(p) {
+		return nil
+	}
+	list, err := s.store.PanelVersions(ctx, p.ID)
+	if err != nil || len(list) > 0 {
+		return list
+	}
+	unlock := s.lockPanel(p.ID)
+	defer unlock()
+	return s.panelVersionsLocked(ctx, p)
+}
+
+func (s *Server) panelVersionsLocked(ctx context.Context, p *store.Panel) []*store.PanelVersion {
 	if !hasVersions(p) {
 		return nil
 	}
@@ -110,9 +134,23 @@ func (s *Server) currentVersion(ctx context.Context, p *store.Panel) *store.Pane
 	return list[len(list)-1]
 }
 
+func (s *Server) currentVersionLocked(ctx context.Context, p *store.Panel) *store.PanelVersion {
+	list := s.panelVersionsLocked(ctx, p)
+	if len(list) == 0 {
+		return nil
+	}
+	return list[len(list)-1]
+}
+
 // addVersion appends a version and makes it what the panel shows as its outcome.
 func (s *Server) addVersion(ctx context.Context, p *store.Panel, v *store.PanelVersion) error {
-	s.panelVersions(ctx, p) // the earlier ones first, for a panel from before versions
+	unlock := s.lockPanel(p.ID)
+	defer unlock()
+	return s.addVersionLocked(ctx, p, v)
+}
+
+func (s *Server) addVersionLocked(ctx context.Context, p *store.Panel, v *store.PanelVersion) error {
+	s.panelVersionsLocked(ctx, p) // the earlier ones first, for a panel from before versions
 	v.PanelID = p.ID
 	if len(v.Text) > panelVersionMax {
 		return badRequest("That is too long for one version")
@@ -152,21 +190,16 @@ func (s *Server) versioned(w http.ResponseWriter, r *http.Request) *store.Panel 
 	return p
 }
 
-func (s *Server) saved(w http.ResponseWriter, r *http.Request, p *store.Panel) {
-	if err := s.store.SavePanel(r.Context(), p); err != nil {
-		s.fail(w, err, "save panel")
-		return
+func (s *Server) savedPanel(ctx context.Context, p *store.Panel) error {
+	if err := s.store.SavePanel(ctx, p); err != nil {
+		return err
 	}
 	s.panelChanged(p)
-	writeJSON(w, http.StatusOK, s.viewPanel(r.Context(), p, true))
+	return nil
 }
 
 // handleAddVersion: the person changed the text by hand.
 func (s *Server) handleAddVersion(w http.ResponseWriter, r *http.Request) {
-	p := s.versioned(w, r)
-	if p == nil {
-		return
-	}
 	var in struct {
 		Text string `json:"text"`
 		Note string `json:"note"`
@@ -175,35 +208,59 @@ func (s *Server) handleAddVersion(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Write the new version")
 		return
 	}
-	if cur := s.currentVersion(r.Context(), p); cur != nil && strings.TrimSpace(cur.Text) == strings.TrimSpace(in.Text) {
+	unlock := s.lockPanel(chi.URLParam(r, "id"))
+	p := s.versioned(w, r)
+	if p == nil {
+		unlock()
+		return
+	}
+	if cur := s.currentVersionLocked(r.Context(), p); cur != nil && strings.TrimSpace(cur.Text) == strings.TrimSpace(in.Text) {
+		unlock()
 		writeErr(w, http.StatusBadRequest, "Nothing was changed")
 		return
 	}
-	if err := s.addVersion(r.Context(), p, &store.PanelVersion{Text: strings.TrimSpace(in.Text), Source: "edit", Note: oneLine(in.Note, 300), Stage: -1}); err != nil {
+	if err := s.addVersionLocked(r.Context(), p, &store.PanelVersion{Text: strings.TrimSpace(in.Text), Source: "edit", Note: oneLine(in.Note, 300), Stage: -1}); err != nil {
+		unlock()
 		s.fail(w, err, "add version")
 		return
 	}
-	s.saved(w, r, p)
+	if err := s.savedPanel(r.Context(), p); err != nil {
+		unlock()
+		s.fail(w, err, "save panel")
+		return
+	}
+	unlock()
+	writeJSON(w, http.StatusOK, s.viewPanel(r.Context(), p, true))
 }
 
 // handleRestoreVersion makes an earlier version the current one again (as a new version).
 func (s *Server) handleRestoreVersion(w http.ResponseWriter, r *http.Request) {
+	unlock := s.lockPanel(chi.URLParam(r, "id"))
 	p := s.versioned(w, r)
 	if p == nil {
+		unlock()
 		return
 	}
 	n, _ := strconv.Atoi(chi.URLParam(r, "n"))
-	list := s.panelVersions(r.Context(), p)
+	list := s.panelVersionsLocked(r.Context(), p)
 	for _, v := range list {
 		if v.N == n && n != list[len(list)-1].N {
-			if err := s.addVersion(r.Context(), p, &store.PanelVersion{Text: v.Text, Source: "restore", Note: fmt.Sprintf("Back to version %d", n), Stage: -1}); err != nil {
+			if err := s.addVersionLocked(r.Context(), p, &store.PanelVersion{Text: v.Text, Source: "restore", Note: fmt.Sprintf("Back to version %d", n), Stage: -1}); err != nil {
+				unlock()
 				s.fail(w, err, "restore version")
 				return
 			}
-			s.saved(w, r, p)
+			if err := s.savedPanel(r.Context(), p); err != nil {
+				unlock()
+				s.fail(w, err, "save panel")
+				return
+			}
+			unlock()
+			writeJSON(w, http.StatusOK, s.viewPanel(r.Context(), p, true))
 			return
 		}
 	}
+	unlock()
 	writeErr(w, http.StatusBadRequest, "That version is the current one, or is not there")
 }
 
@@ -213,17 +270,25 @@ func (s *Server) handlePanelRound(w http.ResponseWriter, r *http.Request) {
 	if !s.requireRun(w, r) {
 		return
 	}
-	p := s.versioned(w, r)
-	if p == nil {
-		return
-	}
 	var in struct {
 		Note string `json:"note"`
 	}
 	_ = decode(r, &in)
+	unlock := s.lockPanel(chi.URLParam(r, "id"))
+	p := s.versioned(w, r)
+	if p == nil {
+		unlock()
+		return
+	}
 	ctx := r.Context()
-	cur := s.currentVersion(ctx, p)
+	if chat, _ := s.store.PanelChat(ctx, p.ID); panelChatWorking(chat) {
+		unlock()
+		writeErr(w, http.StatusConflict, "The editor is still answering in the chat; wait for it first")
+		return
+	}
+	cur := s.currentVersionLocked(ctx, p)
 	if cur == nil {
+		unlock()
 		writeErr(w, http.StatusBadRequest, "There is no version to judge yet")
 		return
 	}
@@ -238,18 +303,21 @@ func (s *Server) handlePanelRound(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if judges == 0 {
+		unlock()
 		writeErr(w, http.StatusBadRequest, "None of this panel's participants is left to judge; run it again as a new panel")
 		return
 	}
 	if !editor { // the one that wrote before is gone: a participant takes over
 		sub := panelSubstitute(seats, &store.PanelSeat{})
 		if sub == nil {
+			unlock()
 			writeErr(w, http.StatusBadRequest, "Nobody is left to rewrite it; run it again as a new panel")
 			return
 		}
 		nc := &store.PanelSeat{PanelID: p.ID, Idx: len(seats), Chair: true, PanelSeatSpec: *sub, Asked: -1, State: "waiting"}
 		nc.Role = ""
 		if err := s.store.AddPanelSeat(ctx, nc); err != nil {
+			unlock()
 			s.fail(w, err, "add editor")
 			return
 		}
@@ -265,13 +333,24 @@ func (s *Server) handlePanelRound(w http.ResponseWriter, r *http.Request) {
 	p.Status, p.Error, p.FinishedAt, p.StageAt = "running", "", "", store.Now()
 	p.Spec.ChairSwap = false
 	if err := s.store.SavePanel(ctx, p); err != nil {
+		unlock()
 		s.fail(w, err, "start round")
 		return
 	}
+	unlock()
 	s.log.Info("panel: another round", "panel", p.ID, "on_version", cur.N)
 	s.panelChanged(p)
 	s.goPanel(p.ID)
 	writeJSON(w, http.StatusOK, s.viewPanel(ctx, p, true))
+}
+
+func panelChatWorking(chat []*store.PanelChatMessage) bool {
+	for _, m := range chat {
+		if m.Role == "editor" && m.State == "working" {
+			return true
+		}
+	}
+	return false
 }
 
 // ---------- a word with the editor ----------
@@ -294,10 +373,6 @@ func (s *Server) handlePanelChat(w http.ResponseWriter, r *http.Request) {
 	if !s.requireRun(w, r) {
 		return
 	}
-	p := s.versioned(w, r)
-	if p == nil {
-		return
-	}
 	var in struct {
 		Text string `json:"text"`
 	}
@@ -305,28 +380,36 @@ func (s *Server) handlePanelChat(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Write what you want to say")
 		return
 	}
+	unlock := s.lockPanel(chi.URLParam(r, "id"))
+	p := s.versioned(w, r)
+	if p == nil {
+		unlock()
+		return
+	}
 	ctx := r.Context()
 	u := userFrom(ctx)
 	seats, _ := s.store.PanelSeats(ctx, p.ID)
 	ed := panelEditor(seats)
 	if ed == nil {
+		unlock()
 		writeErr(w, http.StatusBadRequest, "This panel's editor is gone. Run another round: a participant takes over as editor.")
 		return
 	}
 	chat, _ := s.store.PanelChat(ctx, p.ID)
-	for _, m := range chat {
-		if m.Role == "editor" && m.State == "working" {
-			writeErr(w, http.StatusConflict, "The editor is still answering")
-			return
-		}
+	if panelChatWorking(chat) {
+		unlock()
+		writeErr(w, http.StatusConflict, "The editor is still answering")
+		return
 	}
-	cur := s.currentVersion(ctx, p)
+	cur := s.currentVersionLocked(ctx, p)
 	if cur == nil {
+		unlock()
 		writeErr(w, http.StatusBadRequest, "There is no version to talk about yet")
 		return
 	}
 	th, err := s.store.GetThreadAny(ctx, ed.ThreadID)
 	if err != nil {
+		unlock()
 		writeErr(w, http.StatusBadRequest, "The editor's conversation was deleted. Run another round: a participant takes over as editor.")
 		return
 	}
@@ -338,22 +421,30 @@ func (s *Server) handlePanelChat(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(&b, "\nThe person says:\n\n%s\n\n", strings.TrimSpace(in.Text))
 	b.WriteString("If they ask for a change: say in a few lines what you change, then write the complete new version between a line that says exactly `" + panelVersionStart + "` and a line that says exactly `" + panelVersionEnd + "`. Change only what they ask for and what follows from it; keep everything else word for word. If it is a question or they want your opinion, answer it and write no version. They decide whether to take a version you propose.")
 	if err := s.store.AddPanelChat(ctx, &store.PanelChatMessage{PanelID: p.ID, Role: "person", Text: strings.TrimSpace(in.Text)}); err != nil {
+		unlock()
 		s.fail(w, err, "panel chat")
 		return
 	}
 	reply := &store.PanelChatMessage{PanelID: p.ID, Role: "editor", State: "working"}
 	if err := s.store.AddPanelChat(ctx, reply); err != nil {
+		unlock()
 		s.fail(w, err, "panel chat")
 		return
 	}
+	unlock()
 	if _, err := s.postMessage(context.WithoutCancel(ctx), u, th, b.String(), nil); err != nil {
 		reply.State, reply.Text = "failed", "It could not be asked: "+err.Error()
 		_ = s.store.SavePanelChat(ctx, reply)
 		s.fail(w, err, "panel chat")
 		return
 	}
-	p.Spec.EditorKnows = cur.N
-	_ = s.store.SavePanel(ctx, p)
+	unlock = s.lockPanel(p.ID)
+	if fresh, err := s.store.GetPanelAny(ctx, p.ID); err == nil {
+		fresh.Spec.EditorKnows = cur.N
+		_ = s.store.SavePanel(ctx, fresh)
+		p = fresh
+	}
+	unlock()
 	go s.awaitEditor(p.ID, reply.ID)
 	s.panelChanged(p)
 	writeJSON(w, http.StatusOK, s.viewPanel(ctx, p, true))
@@ -384,11 +475,19 @@ func (s *Server) awaitEditor(panelID string, msgID int64) {
 	done := func(state, text, proposal string) {
 		m.State, m.Text, m.Proposal = state, text, proposal
 		_ = s.store.SavePanelChat(ctx, m)
-		if fresh, err := s.store.GetPanelAny(ctx, panelID); err == nil {
-			if proposal != "" { // it now takes its proposal for the text; it is told otherwise if that is not taken
-				fresh.Spec.EditorKnows = 0
-				_ = s.store.SavePanel(ctx, fresh)
+		var fresh *store.Panel
+		if proposal != "" { // it now takes its proposal for the text; it is told otherwise if that is not taken
+			unlock := s.lockPanel(panelID)
+			if p, err := s.store.GetPanelAny(ctx, panelID); err == nil {
+				p.Spec.EditorKnows = 0
+				_ = s.store.SavePanel(ctx, p)
+				fresh = p
 			}
+			unlock()
+		} else if p, err := s.store.GetPanelAny(ctx, panelID); err == nil {
+			fresh = p
+		}
+		if fresh != nil {
 			s.panelChanged(fresh)
 		}
 	}
@@ -421,11 +520,17 @@ func (s *Server) awaitEditor(panelID string, msgID int64) {
 			}
 			return
 		}
-		if time.Since(began) > limit && info.State != "waiting_for_person" {
+		over := time.Since(began)
+		// one waiting for the person (an approval) gets three times as long, like panelStage
+		if over > limit && (info.State != "waiting_for_person" || over > 3*limit) {
 			if !s.stopReattached(th.ID) {
 				_ = s.rt.interrupt(th.ID)
 			}
-			done("failed", "It did not answer in time", "")
+			why := "It did not answer in time"
+			if info.State == "waiting_for_person" {
+				why = "It waited for your answer for too long"
+			}
+			done("failed", why, "")
 			return
 		}
 		select {
@@ -461,8 +566,10 @@ func (s *Server) resumePanelChats(ctx context.Context) {
 
 // handleAcceptProposal takes a version the editor proposed in the chat.
 func (s *Server) handleAcceptProposal(w http.ResponseWriter, r *http.Request) {
+	unlock := s.lockPanel(chi.URLParam(r, "id"))
 	p := s.versioned(w, r)
 	if p == nil {
+		unlock()
 		return
 	}
 	ctx := r.Context()
@@ -480,7 +587,8 @@ func (s *Server) handleAcceptProposal(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		v := &store.PanelVersion{Text: m.Proposal, Source: "chat", Note: oneLine(asked, 300), Stage: -1}
-		if err := s.addVersion(ctx, p, v); err != nil {
+		if err := s.addVersionLocked(ctx, p, v); err != nil {
+			unlock()
 			s.fail(w, err, "take version")
 			return
 		}
@@ -495,9 +603,16 @@ func (s *Server) handleAcceptProposal(w http.ResponseWriter, r *http.Request) {
 		if latest {
 			p.Spec.EditorKnows = v.N // it is what the editor wrote last
 		}
-		s.saved(w, r, p)
+		if err := s.savedPanel(ctx, p); err != nil {
+			unlock()
+			s.fail(w, err, "save panel")
+			return
+		}
+		unlock()
+		writeJSON(w, http.StatusOK, s.viewPanel(ctx, p, true))
 		return
 	}
+	unlock()
 	writeErr(w, http.StatusBadRequest, "That proposal is not there any more")
 }
 
@@ -611,7 +726,10 @@ var panelLinkRe = regexp.MustCompile(`/panels/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{
 // version of each (a plan the person refined), or its outcome. The message
 // itself keeps the short link; "" when it links to none of the sender's.
 func (s *Server) panelRefNote(ctx context.Context, uid int64, text string) string {
-	found := panelLinkRe.FindAllStringSubmatch(text, -1)
+	// strip server-generated panel reports so their own "/panels/<id>" footer
+	// link does not duplicate the outcome a second time
+	scan := panelReportRe.ReplaceAllString(text, "")
+	found := panelLinkRe.FindAllStringSubmatch(scan, -1)
 	if len(found) == 0 {
 		return ""
 	}

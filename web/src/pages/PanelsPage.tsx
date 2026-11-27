@@ -348,7 +348,7 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
           </div>}
 
           {versioned && <PanelPlan p={p} onChange={setP} />}
-          {versioned && <EditorChat p={p} onChange={setP} />}
+          {versioned && <EditorChat p={p} onChange={setP} onOpenThread={openThread} />}
           {(outcome || writing) && finalStage >= 0 && (
             <section className={`pn-outcome ${writing ? 'writing' : ''}`}>
               <header className="pn-outcome-h">

@@ -226,10 +226,15 @@ func shortModel(m string) string {
 	return m
 }
 
-var participantRe = regexp.MustCompile(`\bParticipants? ([A-H])\b`)
+var (
+	participantRe       = regexp.MustCompile(`\bParticipants?\s+([A-H]\b(?:(?:\s*,\s*(?:and\s+|&\s+)?|\s+(?:and|&)\s+|\s*/\s*)[A-H]\b)*)`)
+	participantLetterRe = regexp.MustCompile(`\b[A-H]\b`)
+)
 
-// revealNames replaces "Participant A" in a summary by who that was. The
-// summary writer never saw the names, so its judgment could not lean on them.
+// revealNames replaces "Participant A" (and grouped references like
+// "Participants A and B" or "Participants A, B, and C") in a summary by who
+// that was. The summary writer never saw the names, so its judgment could not
+// lean on them.
 func revealNames(text string, seats []*store.PanelSeat) string {
 	by := map[string]string{}
 	for _, st := range seats {
@@ -239,10 +244,21 @@ func revealNames(text string, seats []*store.PanelSeat) string {
 	}
 	return participantRe.ReplaceAllStringFunc(text, func(m string) string {
 		sub := participantRe.FindStringSubmatch(m)
-		if name, ok := by[sub[1]]; ok {
-			return name
+		if len(sub) < 2 {
+			return m
 		}
-		return m
+		matched := false
+		out := participantLetterRe.ReplaceAllStringFunc(sub[1], func(letter string) string {
+			if name, ok := by[letter]; ok {
+				matched = true
+				return name
+			}
+			return "Participant " + letter
+		})
+		if !matched {
+			return m
+		}
+		return out
 	})
 }
 
