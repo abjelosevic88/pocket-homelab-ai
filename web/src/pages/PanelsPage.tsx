@@ -1,0 +1,300 @@
+// Panels: one question put to several models at once — the list, and one
+// panel with its outcome on top and every participant's answers per step.
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
+import { api, V1 } from '../lib/api'
+import { useApp } from '../lib/app-context'
+import { ago, fmtCost, providerName } from '../lib/format'
+import { KIND_ICON, openPanelSheet, PANEL_EVENT, type Panel, type PanelSeat } from '../lib/panels'
+import type { ProviderId, Thread } from '../lib/types'
+import { offeredProviders } from '../components/AgentPicker'
+import { Icon } from '../components/icons'
+import { Markdown } from '../components/Markdown'
+import { PageHead } from '../components/PageHead'
+import { Select } from '../components/Select'
+import { Confirm, copyText, download, Empty, errMsg, Loading, MenuButton, Modal, Spinner, useContextMenu, useToast, type MenuItem, noGrammarly } from '../components/ui'
+
+const STATUS: Record<string, { label: string; cls: string; icon: string }> = {
+  running: { label: 'Running', cls: 'accent-soft', icon: 'refresh' },
+  done: { label: 'Done', cls: 'ok', icon: 'check-circle' },
+  failed: { label: 'Did not finish', cls: 'danger', icon: 'x-circle' },
+  stopped: { label: 'Stopped', cls: 'warn', icon: 'x-circle' },
+}
+
+/** Refetch when the server says a panel moved on. */
+function usePanelEvents(fn: (d: { id: string; status: string }) => void) {
+  const ref = useRef(fn)
+  ref.current = fn
+  useEffect(() => {
+    const on = (e: Event) => ref.current((e as CustomEvent).detail || {})
+    window.addEventListener(PANEL_EVENT, on)
+    return () => window.removeEventListener(PANEL_EVENT, on)
+  }, [])
+}
+
+function SeatDots({ seats }: { seats: PanelSeat[] }) {
+  return <span className="pn-dots">{seats.filter(s => !s.chair).map(s => <span key={s.id} className={`pn-dot ${s.state}`} title={`${s.who}${s.error ? ' — ' + s.error : ''}`}><Icon name={s.provider} size={13} className={`prov-glyph ${s.provider}`} /></span>)}</span>
+}
+
+export default function PanelsPage({ onMenu }: { onMenu?: () => void }) {
+  const { toast } = useToast()
+  const navigate = useNavigate()
+  const { user } = useApp()
+  const [list, setList] = useState<Panel[] | null>(null)
+  const [err, setErr] = useState('')
+  const [del, setDel] = useState<Panel | null>(null)
+  const ctx = useContextMenu()
+  const canRun = !!user && (user.role === 'admin' || user.can_run)
+  const load = useCallback(() => api.get<Panel[]>(`${V1}/panels`).then(l => { setList(l || []); setErr('') }).catch(e => setErr(errMsg(e))), [])
+  useEffect(() => { void load() }, [load])
+  usePanelEvents(() => { void load() })
+  const anyRunning = !!list?.some(p => p.status === 'running')
+  useEffect(() => {
+    if (!anyRunning) return
+    const t = setInterval(() => { if (!document.hidden) void load() }, 5000)
+    return () => clearInterval(t)
+  }, [anyRunning, load])
+
+  const kinds: { id: string; name: string; text: string }[] = [
+    { id: 'ask', name: 'Ask all', text: 'Same question, answers side by side' },
+    { id: 'brainstorm', name: 'Brainstorm', text: 'Ideas, built on each other' },
+    { id: 'council', name: 'Council', text: 'Judge a plan from several views' },
+    { id: 'debate', name: 'Debate', text: 'For and against, then a ruling' },
+    { id: 'review', name: 'Second opinion', text: 'Other models check an answer' },
+    { id: 'build', name: 'Best of N', text: 'Same coding task, best result wins' },
+  ]
+  return (
+    <div className="page">
+      <PageHead title="Panels" icon="panel" onMenu={onMenu} sub="One question, several models at once: they answer alone, see each other’s answers without names, and one writes the summary."
+        actions={<button type="button" className="btn primary" disabled={!canRun} onClick={() => openPanelSheet()}><Icon name="plus" size={14} />New panel</button>} />
+      <div className="page-scroll">
+        <div className="page-inner">
+          {err && <div className="callout danger"><Icon name="alert" size={15} /><span>{err}</span></div>}
+          <div className="stack">
+            <div className="pn-starts">
+              {kinds.map(k => <button key={k.id} type="button" className="pn-start" disabled={!canRun} onClick={() => openPanelSheet({ kind: k.id })}>
+                <span className="pn-start-ico"><Icon name={KIND_ICON[k.id]} size={16} /></span>
+                <span className="pn-start-text"><b>{k.name}</b><span className="muted">{k.text}</span></span>
+              </button>)}
+            </div>
+            {!list ? (!err && <Loading />) : list.length === 0 ? (
+              <Empty title="No panels yet" icon="panel">
+                Pick a kind above. In any conversation you can also type <code>/council</code>, <code>/brainstorm</code>, <code>/debate</code>, <code>/ask-all</code> or <code>/second-opinion</code>.
+              </Empty>
+            ) : (
+              <div className="list-cards">
+                {ctx.menu}
+                {list.map(p => {
+                  const st = STATUS[p.status]
+                  const more: MenuItem[] = [
+                    { label: 'Open', icon: 'external', onSelect: () => navigate(`/panels/${p.id}`) },
+                    { label: 'Delete…', icon: 'trash', danger: true, onSelect: () => setDel(p) },
+                  ]
+                  const step = p.status === 'running' && p.spec.stages[p.stage]
+                  return (
+                    <div key={p.id} className="list-card pn-card" role="button" tabIndex={0} onClick={() => navigate(`/panels/${p.id}`)} onKeyDown={e => { if (e.key === 'Enter') navigate(`/panels/${p.id}`) }} onContextMenu={e => ctx.open(e, more)}>
+                      <span className="pn-start-ico"><Icon name={KIND_ICON[p.kind] || 'users'} size={16} /></span>
+                      <div className="grow" style={{ minWidth: 0 }}>
+                        <div className="list-card-title"><span className="ellipsis">{p.title}</span></div>
+                        <div className="sched-meta">
+                          <span>{p.spec.kind_name}</span>
+                          <span className={`badge ${st.cls}`}>{p.status === 'running' ? <Spinner size={9} /> : <Icon name={st.icon} size={10} />}{step ? `${p.stage + 1}/${p.spec.stages.length} ${step.name}` : st.label}</span>
+                          <SeatDots seats={p.seats} />
+                          <span className="faint">{ago(p.created_at)}</span>
+                          {p.cost_usd > 0 && <span className="faint tnum">{fmtCost(p.cost_usd)}</span>}
+                        </div>
+                      </div>
+                      <div className="list-card-actions" onClick={e => e.stopPropagation()}>
+                        <MenuButton label={`More for ${p.title}`} align="right" items={more}><Icon name="more" size={16} /></MenuButton>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+      {del && <Confirm title={`Delete “${del.title}”?`} message="The participants’ conversations are deleted with it." onCancel={() => setDel(null)}
+        onConfirm={async () => { const d = del; setDel(null); try { await api.del(`${V1}/panels/${d.id}`); void load(); toast('Panel deleted') } catch (e) { toast(errMsg(e), 'err') } }} />}
+    </div>
+  )
+}
+
+const ACTIVITY: Record<string, string> = { starting: 'Starting…', working: 'Working…', waiting_for_person: 'Needs your answer', waiting: 'Waiting for its turn', skipped: 'Left out', failed: 'Dropped out', done: 'Done' }
+
+/** One participant's card in a step: its answer, what it is writing, or why it dropped out. */
+function SeatCard({ seat, text, live, current, onOpen }: { seat: PanelSeat; text?: string; live?: boolean; current: boolean; onOpen: () => void }) {
+  const [copied, setCopied] = useState(false)
+  const failed = !text && (seat.state === 'failed' || seat.state === 'skipped')
+  const working = current && !text && seat.state === 'working'
+  return (
+    <article className={`pn-answer ${failed ? 'failed' : ''} ${working ? 'working' : ''}`}>
+      <header className="pn-answer-h">
+        <span className="pn-letter">{seat.label}</span>
+        <div className="grow" style={{ minWidth: 0 }}>
+          <div className="pn-who"><Icon name={seat.provider} size={14} className={`prov-glyph ${seat.provider}`} /><span className="ellipsis">{providerName(seat.provider)}{seat.model ? ` · ${seat.model}` : ''}</span></div>
+          <div className="pn-sub muted xsmall">{[seat.role, seat.machine].filter(Boolean).join(' · ')}</div>
+        </div>
+        {working && <span className={`badge ${seat.activity === 'waiting_for_person' ? 'warn' : 'accent-soft'}`}>{seat.activity === 'waiting_for_person' ? <Icon name="alert" size={10} /> : <Spinner size={9} />}{ACTIVITY[seat.activity] || 'Working…'}</span>}
+        {text && <button type="button" className="btn ghost icon-only xs" title={copied ? 'Copied' : 'Copy'} aria-label="Copy this answer" onClick={async () => { if (await copyText(text)) { setCopied(true); setTimeout(() => setCopied(false), 1500) } }}><Icon name={copied ? 'check' : 'copy'} size={14} /></button>}
+        {seat.thread_id && <button type="button" className="btn ghost icon-only xs" title="Open its conversation: see how it worked, or ask it more" aria-label="Open its conversation" onClick={onOpen}><Icon name="external" size={14} /></button>}
+      </header>
+      <div className="pn-answer-body">
+        {text ? <Markdown text={text} className={live ? 'pn-live' : ''} />
+          : failed ? <div className="pn-out"><Icon name="alert" size={14} /><span>{seat.error || ACTIVITY[seat.state]}</span></div>
+          : working ? <div className="pn-wait muted small">{seat.activity === 'waiting_for_person' ? 'It asked something. Open its conversation to answer.' : 'Nothing written yet…'}</div>
+          : <div className="pn-wait muted small">{current ? ACTIVITY[seat.state] || '' : 'No answer in this step'}</div>}
+      </div>
+    </article>
+  )
+}
+
+export function PanelPage({ onMenu }: { onMenu?: () => void }) {
+  const { id = '' } = useParams()
+  const { toast } = useToast()
+  const navigate = useNavigate()
+  const { providers, settings, upsertThread } = useApp()
+  const [p, setP] = useState<Panel | null>(null)
+  const [err, setErr] = useState('')
+  const [tab, setTab] = useState<number | null>(null)
+  const [asked, setAsked] = useState(false)
+  const [del, setDel] = useState(false)
+  const [cont, setCont] = useState<{ text: string; provider: ProviderId | '' } | null>(null)
+  const [busy, setBusy] = useState('')
+  const load = useCallback(() => api.get<Panel>(`${V1}/panels/${id}`).then(x => { setP(x); setErr('') }).catch(e => setErr(errMsg(e))), [id])
+  useEffect(() => { setP(null); setTab(null); void load() }, [load])
+  usePanelEvents(d => { if (d.id === id) void load() })
+  const running = p?.status === 'running'
+  useEffect(() => {
+    if (!running) return
+    const t = setInterval(() => { if (!document.hidden) void load() }, 1500)
+    return () => clearInterval(t)
+  }, [running, load])
+
+  if (err && !p) return <div className="page"><PageHead title="Panel" icon="panel" onMenu={onMenu} /><div className="page-scroll"><div className="page-inner"><div className="callout danger"><Icon name="alert" size={15} /><span>{err === 'not found' ? 'This panel is gone.' : err}</span></div></div></div></div>
+  if (!p) return <div className="page"><PageHead title="Panel" icon="panel" onMenu={onMenu} /><div className="page-scroll"><Loading /></div></div>
+
+  const stages = p.spec.stages
+  const answers = p.answers || []
+  const seats = p.seats.filter(s => !s.chair)
+  const chairs = p.seats.filter(s => s.chair)
+  const chair = chairs.find(s => s.state !== 'failed') || chairs[chairs.length - 1]
+  const rounds = stages.map((s, i) => ({ ...s, i })).filter(s => s.who !== 'chair')
+  const chairStage = stages.findIndex(s => s.who === 'chair')
+  // the step shown: the one picked, else the one being answered, else the last one answered
+  const lastAnswered = [...rounds].reverse().find(r => answers.some(a => a.stage === r.i))
+  const auto = running && stages[p.stage]?.who !== 'chair' ? p.stage : (lastAnswered?.i ?? rounds[0]?.i ?? 0)
+  const shown = tab ?? auto
+  const st = STATUS[p.status]
+  const writing = running && stages[p.stage]?.who === 'chair'
+  const chairLive = writing ? chair?.live : ''
+  const failedSeats = seats.filter(s => s.state === 'failed' || s.state === 'skipped')
+  const openThread = (tid: string) => navigate(`/t/${tid}`)
+
+  const act = async (what: string, fn: () => Promise<void>) => { setBusy(what); try { await fn() } catch (e) { toast(errMsg(e), 'err') } finally { setBusy('') } }
+  const stop = () => act('stop', async () => { setP(await api.post<Panel>(`${V1}/panels/${p.id}/stop`)) })
+  const again = () => act('again', async () => { const np = await api.post<Panel>(`${V1}/panels/${p.id}/again`); navigate(`/panels/${np.id}`) })
+  const copyAll = async () => { try { if (await copyText(await api.getText(`${V1}/panels/${p.id}/export.md`))) toast('Copied as Markdown') } catch (e) { toast(errMsg(e), 'err') } }
+  const goOn = () => act('cont', async () => {
+    const t = await api.post<Thread>(`${V1}/panels/${p.id}/continue`, { text: cont?.text || '', provider: cont?.provider || undefined })
+    upsertThread(t); setCont(null); navigate(`/t/${t.id}`)
+  })
+  const more: MenuItem[] = [
+    { label: 'Copy everything as Markdown', icon: 'copy', onSelect: () => void copyAll() },
+    { label: 'Download as Markdown', icon: 'download', onSelect: () => download(`${V1}/panels/${p.id}/export.md?download=1`) },
+    { label: 'Run it again', icon: 'refresh', onSelect: () => void again(), disabled: running },
+    'sep',
+    { label: 'Delete…', icon: 'trash', danger: true, onSelect: () => setDel(true) },
+  ]
+  const outcome = p.result || chairLive || ''
+  const provOpts = [{ value: '' as ProviderId | '', label: 'My default agent' }, ...offeredProviders(providers, settings?.default_provider).map(x => ({ value: x as ProviderId | '', label: providerName(x), disabled: !providers.find(q => q.id === x)?.available }))]
+
+  return (
+    <div className="page">
+      <PageHead title={p.spec.kind_name} icon={KIND_ICON[p.kind] || 'users'} onMenu={onMenu} sub={<span className="pn-head-sub">{p.title}</span>}
+        actions={<>
+          <button type="button" className="btn ghost sm pn-back" onClick={() => navigate('/panels')}><Icon name="chevron-left" size={14} />All panels</button>
+          {running ? <button type="button" className="btn" disabled={busy === 'stop'} onClick={stop}>{busy === 'stop' ? <Spinner size={11} /> : <Icon name="x" size={13} />}Stop</button>
+            : <button type="button" className="btn" disabled={busy === 'again'} onClick={again}>{busy === 'again' ? <Spinner size={11} /> : <Icon name="refresh" size={13} />}Run again</button>}
+          <MenuButton label="More" align="right" items={more}><Icon name="more" size={16} /></MenuButton>
+        </>} />
+      <div className="page-scroll">
+        <div className="page-inner pn-page">
+          <div className="pn-progress">
+            {stages.map((s, i) => {
+              const state = p.status === 'done' || i < p.stage ? 'done' : i === p.stage ? (running ? 'now' : 'halt') : ''
+              return <span key={i} className={`pn-prog ${state} ${s.who === 'chair' ? 'chair' : ''}`}>{state === 'now' ? <Spinner size={10} /> : state === 'done' ? <Icon name="check" size={11} /> : <span className="pn-prog-n">{i + 1}</span>}{s.name}</span>
+            })}
+            <span className="grow" />
+            <span className={`badge ${st.cls}`}><Icon name={st.icon} size={10} />{st.label}</span>
+            {p.cost_usd > 0 && <span className="faint xsmall tnum" title="What the participants’ runs cost so far">{fmtCost(p.cost_usd)}</span>}
+          </div>
+
+          {p.error && <div className={`callout ${p.status === 'failed' ? 'danger' : 'warn'}`}><Icon name="alert" size={15} /><span>{p.error}</span></div>}
+          {p.status === 'done' && failedSeats.length > 0 && <div className="callout warn"><Icon name="alert" size={15} /><span>{seats.length - failedSeats.length} of {seats.length} answered. {failedSeats.map(s => `${s.who}: ${s.error}`).join('; ')}</span></div>}
+
+          <button type="button" className="pn-asked" onClick={() => setAsked(v => !v)} aria-expanded={asked}>
+            <Icon name={asked ? 'chevron-down' : 'chevron-right'} size={13} /><span className="muted">Asked:</span><span className={asked ? '' : 'ellipsis'}>{asked ? '' : p.question || p.title}</span>
+          </button>
+          {asked && <div className="pn-asked-body">
+            {p.question && <div className="pn-q">{p.question}</div>}
+            {p.material && <><div className="label muted xsmall">The material</div><Markdown text={p.material} /></>}
+            <div className="muted xsmall">{p.depth[0].toUpperCase() + p.depth.slice(1)} · {ago(p.created_at)}{p.spec.cwd ? ` · ${p.spec.cwd}` : ''}
+              {p.from_thread_id && p.from_title && <> · from <button type="button" className="link-btn" onClick={() => openThread(p.from_thread_id)}>{p.from_title}</button></>}</div>
+          </div>}
+
+          {(outcome || writing) && chairStage >= 0 && (
+            <section className={`pn-outcome ${writing ? 'writing' : ''}`}>
+              <header className="pn-outcome-h">
+                <Icon name="sparkles" size={15} /><b className="grow">{stages[stages.length - 1].who === 'chair' ? stages[stages.length - 1].name : 'Outcome'}</b>
+                {writing ? <span className="badge accent-soft"><Spinner size={9} />{chair?.activity === 'starting' ? 'Starting…' : 'Being written…'}</span>
+                  : chair && <span className="muted xsmall pn-by" title="It got the answers by letter, without the models’ names"><Icon name={chair.provider} size={12} className={`prov-glyph ${chair.provider}`} />{providerName(chair.provider)}{chair.model ? ` · ${chair.model}` : ''}</span>}
+                {chair?.thread_id && <button type="button" className="btn ghost icon-only xs" title="Open the summary writer’s conversation" aria-label="Open the summary writer’s conversation" onClick={() => openThread(chair.thread_id)}><Icon name="external" size={14} /></button>}
+              </header>
+              {outcome ? <Markdown text={outcome} className={writing ? 'pn-live' : ''} /> : <div className="pn-wait muted small">Reading the answers…</div>}
+              {p.result && !running && <div className="pn-outcome-foot">
+                <button type="button" className="btn primary sm" onClick={() => setCont({ text: '', provider: '' })}><Icon name="arrow-right" size={13} />Continue with this</button>
+                <button type="button" className="btn sm" onClick={async () => { if (await copyText(p.result)) toast('Copied') }}><Icon name="copy" size={13} />Copy</button>
+                {p.from_thread_id && p.from_title && <button type="button" className="btn ghost sm" onClick={() => openThread(p.from_thread_id)}><Icon name="message" size={13} />Back to the conversation</button>}
+              </div>}
+            </section>
+          )}
+          {!p.result && !running && answers.length > 0 && chairStage < 0 && <div className="row"><button type="button" className="btn primary sm" onClick={() => setCont({ text: '', provider: '' })}><Icon name="arrow-right" size={13} />Continue with these answers</button></div>}
+
+          {rounds.length > 0 && <section className="pn-rounds">
+            <div className="pn-tabs" role="tablist">
+              {rounds.map(r => {
+                const n = answers.filter(a => a.stage === r.i).length
+                const reached = r.i <= p.stage || n > 0
+                return <button key={r.i} type="button" role="tab" aria-selected={shown === r.i} disabled={!reached} className={`pn-tab ${shown === r.i ? 'on' : ''}`} onClick={() => setTab(r.i)}>
+                  {r.name}{running && p.stage === r.i ? <Spinner size={9} /> : n > 0 && <span className="muted tnum">{n}</span>}
+                </button>
+              })}
+            </div>
+            <div className={`pn-cols n${Math.min(seats.length, 4)}`}>
+              {seats.map(s => {
+                const a = answers.find(x => x.stage === shown && x.seat_id === s.id)
+                const current = running && p.stage === shown
+                const live = current && !a && s.state === 'working' ? s.live : ''
+                return <SeatCard key={s.id} seat={s} text={a?.text || live || undefined} live={!!live} current={current} onOpen={() => openThread(s.thread_id)} />
+              })}
+            </div>
+          </section>}
+        </div>
+      </div>
+      {del && <Confirm title="Delete this panel?" message="The participants’ conversations are deleted with it." onCancel={() => setDel(false)}
+        onConfirm={async () => { setDel(false); try { await api.del(`${V1}/panels/${p.id}`); navigate('/panels'); toast('Panel deleted') } catch (e) { toast(errMsg(e), 'err') } }} />}
+      {cont && <Modal title="Continue with this" onClose={() => setCont(null)} footer={<>
+        <button type="button" className="btn" onClick={() => setCont(null)}>Cancel</button>
+        <button type="button" className="btn primary" disabled={busy === 'cont'} onClick={goOn}>{busy === 'cont' && <Spinner />}Start the conversation</button>
+      </>}>
+        <div className="stack">
+          <p className="muted small" style={{ margin: 0 }}>A normal conversation starts with the question and this outcome in it, so one agent can take it from here.</p>
+          <textarea {...noGrammarly} autoFocus rows={4} value={cont.text} onChange={e => setCont({ ...cont, text: e.target.value })} placeholder="What next? e.g. “Turn this into a step-by-step plan” (optional)" />
+          <Select label="Agent" value={cont.provider} options={provOpts} onChange={v => setCont({ ...cont, provider: v })} searchable={false} />
+        </div>
+      </Modal>}
+    </div>
+  )
+}

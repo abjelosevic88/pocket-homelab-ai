@@ -167,9 +167,13 @@ don't get them.
 - `pocket_agent_wait` (≤600 s, under Codex's 660 s tool timeout) polls the
   children's state (`agentState`: starting / working / waiting_for_person /
   done / failed / stopped) and takes the report it hands over.
-- `/handoff`, `/advisor`, `/committee` (`agent_commands.go`) are listed in the
+- `/handoff` and the panel commands (`/council`, `/brainstorm`, `/debate`,
+  `/ask-all`, `/second-opinion`; `agent_commands.go`) are listed in the
   composer's "/" menu (group "Other agents") and expanded server-side in
   `postMessage`: the timeline keeps what was typed, the agent gets the brief.
+  The web app catches the panel commands before they are sent and opens the
+  panel's start sheet instead; other clients let the agent start the panel
+  with `pocket_panel_start`.
 - UI: the parent shows an "N agents" chip above the composer / in the run bar;
   a child shows "Started by …"; the sidebar nests children under their parent.
 - Other conversations: send/read/wait/stop also take any of the same
@@ -219,3 +223,39 @@ A lighter link than `threads:write`: an app (Pocket Bookshelf: "Ask about this b
 - `GET /api/v1/link/chats?url=<item address>` → the person's chats about that item started by the calling app, newest activity first (archived ones left out), same shape. `status` is idle / running / waiting / error.
 
 The app shows a chat in its own page with `<BASE_URL>/t/<id>?embed=1&links=1` in a frame. A native app may load that URL at the top level of a web view that has a `pocketAI` script message handler: the page then counts as embedded and posts to the handler what it would post to a framing page (`{type: 'pocket-ai', path, thread_id, status}`, `{link}`).
+
+## Panels (one question, several models)
+
+- `panels.go` is the engine, `panels_kinds.go` the built-in kinds and what
+  participants are told, `panels_api.go` the HTTP API, `panels_tools.go` the
+  `pocket_panel_*` tools. Tables: `panels`, `panel_seats`, `panel_answers`,
+  `panel_lineups`, `panel_recipes` (migration 0037).
+- The server runs the steps itself; no agent orchestrates. A kind is a list of
+  steps (`store.PanelStage`): who answers (`all` participants or the `chair`),
+  what of the earlier steps they are shown (`others`, `all`, `everything`),
+  the instructions, and the depth it runs from (quick 0, standard 1, deep 2).
+  A person's own kinds (`panel_recipes`) have the same shape.
+- Every participant is a thread (source `panel`, source_ref = the panel) in a
+  read-only mode on the login picked for it: `createThread` for its first
+  step, `postMessage` for the later ones, so it keeps its own context. These
+  threads are in no list (`ListThreads` leaves them out, `publishThread` does
+  not send them to the person's lists, they do not notify); the panel page
+  links to them.
+- A step: send it to whoever has not got it (`panel_seats.asked`), poll
+  `agentState` until each finished, keep `LastReply` in `panel_answers`.
+  One that fails, is stopped, writes nothing or runs past the step's time
+  limit is out of the panel, with the reason. The first step needs the kind's
+  quorum of answers, else the panel fails and says who dropped out. A summary
+  writer that fails is replaced once by another model of the panel.
+- Blindness: participants are labelled A, B, C. Later steps and the summary
+  writer get the answers as "Participant A" and so on; `revealNames` puts the
+  models' names into the summary afterwards.
+- Where a panel stands is in the database (`stage`, `asked`, answers), so
+  `resumePanels` picks running ones up after a restart.
+- Quota: a participant whose login's plan limit is used up (`loginUsed`) is
+  left out at the start; the start sheet shows each login's use.
+- Best of N (`build`): participants get a new worktree each and a writing
+  mode (`panelBuildMode`); the judge is read-only in the project folder and
+  is told each worktree's folder and branch.
+- Started from a conversation, a panel can report back: `<pocket-panel-report>`
+  posted to it when it ends, unless `pocket_panel_wait` is waiting for it.

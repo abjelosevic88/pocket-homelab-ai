@@ -1,6 +1,8 @@
 // Stroke icons (24-grid, 1.75 stroke) drawn inline — no icon dependency.
 const P: Record<string, string> = {
   plus: 'M12 5v14M5 12h14',
+  panel: 'M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2zM18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1',
+  'arrow-right': 'M5 12h14M12 5l7 7-7 7',
   minus: 'M5 12h14',
   'chevron-left': 'M15 18l-6-6 6-6',
   'chevron-right': 'M9 18l6-6-6-6',

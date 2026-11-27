@@ -253,7 +253,7 @@ export interface Thread {
   pinned: boolean
   archived: boolean
   unread: boolean
-  source: 'web' | 'recipe' | 'schedule' | 'import' | 'api' | 'ask' | 'fork' | 'rewind' | 'quick-chat' | 'agent'
+  source: 'web' | 'recipe' | 'schedule' | 'import' | 'api' | 'ask' | 'fork' | 'rewind' | 'quick-chat' | 'agent' | 'panel'
   source_ref: string
   preview: string
   usage: Usage

@@ -1,3 +1,4 @@
+import { openPanelSheet, PANEL_COMMANDS } from '../lib/panels'
 import { Select } from '../components/Select'
 // Start a thread: pick the agent and folder, type (or paste a screenshot), go. Recipes one tap away.
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -271,7 +272,12 @@ export default function HomePage({ onMenu }: { onMenu?: () => void }) {
   const remoteSwitch = { on: rcNext, onToggle: () => setRcNext(v => { localStorage.setItem('pai-rc-next', v ? '0' : '1'); return !v }) }
 
   // /mcp needs a running conversation: there is no agent yet here
-  const startFirst = (name: string) => {
+  const startFirst = (name: string, args = '') => {
+    if (name in PANEL_COMMANDS) {
+      // a panel of models needs no conversation first: its start sheet
+      openPanelSheet({ kind: PANEL_COMMANDS[name] || undefined, question: args, cwd: choice?.cwd || undefined, hostId })
+      return true
+    }
     if (name !== 'mcp') return false
     toast('Send a first message — then /mcp shows that conversation’s MCP servers')
     return true

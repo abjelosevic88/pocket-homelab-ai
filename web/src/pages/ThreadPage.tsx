@@ -28,6 +28,8 @@ import { ThreadRefChip } from '../components/ThreadRefChip'
 import { projectsPaused, projectsRef, refKey, reloadProjectsLink, useProjectsLink } from '../lib/projects'
 import { AttachIssueDialog } from '../components/AttachIssueDialog'
 import { Timeline } from '../components/Timeline'
+import { PanelParentChip, PanelsChip, reviewMaterial } from '../components/PanelChips'
+import { openPanelSheet, PANEL_COMMANDS } from '../lib/panels'
 import { FileLinkContext } from '../components/Markdown'
 import { NotebookPane, withReading, type Reading } from '../components/Notebook'
 import { PrivacyBadge, ShareDialog } from '../components/ShareDialog'
@@ -394,7 +396,15 @@ export default function ThreadPage({ onMenu, threadId, embedded, reading }: { on
     } catch (e) { toast(errMsg(e), 'err') }
   }
   // slash commands Pocket AI answers itself instead of the agent
-  const localCommand = (name: string) => {
+  const localCommand = (name: string, args = '') => {
+    if (name in PANEL_COMMANDS && t && t.source !== 'ask' && t.source !== 'panel' && owner && canRun) {
+      // a panel of models: its start sheet, with this conversation's folder
+      const kind = PANEL_COMMANDS[name]
+      const lastTurn = [...(items || [])].reverse().find(i => i.kind === 'turn')
+      openPanelSheet({ kind: kind || undefined, fromThreadId: t.id, hostId: t.host_id, question: args,
+        material: kind === 'review' && lastTurn ? reviewMaterial(items || [], lastTurn.key) : undefined })
+      return true
+    }
     if (name !== 'mcp') return false
     if (t?.source === 'ask') { toast('Pocket Ask chats keep the connectors they were set up with', 'err'); return true }
     if (t?.external) { toast('This conversation runs somewhere else — manage its MCP servers there', 'err'); return true }
@@ -529,6 +539,7 @@ export default function ThreadPage({ onMenu, threadId, embedded, reading }: { on
             <ProviderBadge provider={t.provider} size="xs" />
             <ThreadRefChip threadId={t.id} source={t.source} owner={owner} attached={!!issueRef} rev={refRev} />
             <ParentChip t={t} />
+            <PanelParentChip t={t} />
             {t.source === 'quick-chat' && <span className="quick-chat-chip" title="Started from Quick Chat in Pocket Launcher"><Icon name="sparkles" size={12} />Quick Chat</span>}
             {!!t.worktree_id && <WorktreeChip id={t.worktree_id} threadId={t.id} onAsk={owner && canRun ? text => { void send(text, []) } : undefined} />}
             {t.remote_control && <RemoteChip rc={t.remote_control} />}
@@ -562,6 +573,7 @@ export default function ThreadPage({ onMenu, threadId, embedded, reading }: { on
               <FileLinkContext.Provider value={filePlace}>
               <Timeline key={id} threadId={t.provider === 'claude' ? id : undefined} items={visible} onResend={canSend ? resend : undefined} onDropUnsent={canSend ? dropUnsent : undefined} showThinking={!!settings?.show_thinking} streamingKey={streamingKey}
                 onFork={owner && t.source !== 'ask' && t.provider_session_id && canRun ? forkNewTab : undefined}
+                onReview={owner && canRun && t.source !== 'ask' && t.source !== 'panel' ? (_text, key) => openPanelSheet({ kind: 'review', fromThreadId: t.id, hostId: t.host_id, material: reviewMaterial(items || [], key) }) : undefined}
                 onEdit={owner && canRun ? item => setRewindTarget({ item, keepText: true }) : undefined}
                 onRewind={owner && canRun ? (item, keepText = true) => setRewindTarget({ item, keepText }) : undefined} rewindDisabled={rewindDisabled}
                 owner={sharedOwner} onMoveFolder={owner && canRun ? () => setMoving(true) : undefined} />
@@ -577,7 +589,7 @@ export default function ThreadPage({ onMenu, threadId, embedded, reading }: { on
         {newBelow && !atBottom && <button type="button" className="new-below" onClick={() => { toBottom(true); setNewBelow(false) }}><Icon name="arrow-down" size={13} />New messages</button>}
         <div className="thread-bottom-inner">
           {(running || t.status === 'waiting' || !!t.subagents?.length || !!t.background?.length) && items ? <RunBar t={t} items={items} reconnecting={streamDown} />
-            : <div className="sub-dock">{t.provider === 'claude' && t.provider_session_id && <SubagentsChip t={t} />}<AgentsChip t={t} /><HeartbeatsChip t={t} rev={hbRev} owner={owner} /></div>}
+            : <div className="sub-dock">{t.provider === 'claude' && t.provider_session_id && <SubagentsChip t={t} />}<AgentsChip t={t} />{owner && <PanelsChip t={t} />}<HeartbeatsChip t={t} rev={hbRev} owner={owner} /></div>}
           <SideQuestions list={side.list} onDismiss={side.dismiss} onRetry={q => { void side.ask(q.question) }} />
           <QueueStrip threadId={id} queued={queuedItems} agent={shortProviderName(t.provider)} onClearAll={canSend ? clearQueue : undefined} onEdit={canSend ? async it => {
             const draft = await api.post<{ text: string; uploads: Upload[] }>(`${V1}/threads/${id}/queue/${encodeURIComponent(it.key)}/edit`)

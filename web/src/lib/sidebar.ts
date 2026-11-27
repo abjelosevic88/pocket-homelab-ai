@@ -23,6 +23,7 @@ export const SIDEBAR_ITEMS: SidebarItem[] = [
   { id: 'notebooks', label: 'Notebooks', icon: 'book', path: '/notebooks', runner: true },
   { id: 'recipes', label: 'Recipes', icon: 'zap', path: '/recipes' },
   { id: 'schedules', label: 'Schedules', icon: 'clock', path: '/schedules' },
+  { id: 'panels', label: 'Panels', icon: 'panel', path: '/panels', runner: true },
   { id: 'skills', label: 'Skills', icon: 'sparkles', path: '/skills', runner: true },
   { id: 'history', label: 'On this server', icon: 'history', path: '/history', runner: true },
   { id: 'worktrees', label: 'Worktrees', icon: 'fork', path: '/worktrees', runner: true },

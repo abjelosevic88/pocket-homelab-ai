@@ -11,7 +11,7 @@ export interface FileLinkPlace { host: number; cwd: string }
 
 // First path segments that are Pocket AI's own pages or API, never a file.
 const APP = new Set(['t', 'f', 'files', 'term', 'terminal', 'recipes', 'schedules', 'history', 'shared', 'today', 'briefing',
-  'memory', 'actions', 'workflows', 'usage', 'skills', 'snippets', 'away', 'worktrees', 'notebooks', 'settings', 'login',
+  'memory', 'actions', 'workflows', 'usage', 'skills', 'snippets', 'away', 'worktrees', 'notebooks', 'panels', 'settings', 'login',
   'setup', 'api', 'v1', 'assets', 'share', 's'])
 
 // "…/x.go:12", "…/x.go:12:5", "…/x.go#L12", "…/x.go#L12-L20"

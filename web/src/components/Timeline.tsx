@@ -1,6 +1,7 @@
 // A thread's items, in order: what you said, what the agent said and did.
 import { useApp } from '../lib/app-context'
 import { memo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { fmtBytes, fmtCost, fmtDuration, fmtTokens } from '../lib/format'
 import { V1 } from '../lib/api'
 import type { Item, ItemImage, SentFile, Todo, ToolInfo, TurnInfo } from '../lib/types'
@@ -200,7 +201,7 @@ const imageCount = (t: ToolInfo) => t.images ?? (t.output || '').split('\n').fil
 // Messages the CLI hands the agent on its own (a summary when a session is
 // continued, notes from other sessions, sub-agent reports) fold into a quiet
 // one-line row so they don't take over the conversation.
-type Folded = { icon: string; label: string; body: string; rest: string }
+type Folded = { icon: string; label: string; body: string; rest: string; href?: string; go?: string }
 const attr = (attrs: string, name: string) => attrs.match(new RegExp(`\\b${name}="([^"]*)"`))?.[1] || ''
 export function foldedMessage(text: string): Folded | null {
   const t = text.trim()
@@ -228,6 +229,13 @@ export function foldedMessage(text: string): Folded | null {
       const state = attr(attrs, 'state')
       return { icon: 'bot', label: state === 'failed' ? `${name} stopped with an error` : state === 'stopped' ? `${name} was stopped` : `Answer from ${name}`, body, rest }
     }
+    case 'pocket-panel-report': {
+      // a panel of models started from this conversation has finished (Panels)
+      const kind = attr(attrs, 'kind') || 'Panel'
+      const state = attr(attrs, 'state')
+      const id = attr(attrs, 'panel-id')
+      return { icon: 'panel', label: state === 'done' ? `${kind}: the outcome` : `${kind} did not finish`, body, rest, href: id ? `/panels/${id}` : undefined, go: 'Open the panel' }
+    }
     default: {
       const name = tag.replace(/-/g, ' ')
       return { icon: 'info', label: name[0].toUpperCase() + name.slice(1), body, rest }
@@ -254,7 +262,7 @@ function FoldedNote({ f }: { f: Folded }) {
         {!open && preview && <span className="folded-preview">{preview}</span>}
         <Icon name="chevron-down" size={14} className="tool-caret" />
       </button>
-      {open && <div className="thinking-body folded-body">{f.body}</div>}
+      {open && <div className="thinking-body folded-body">{f.href && <p><Link to={f.href} className="folded-go">{f.go || 'Open'}<Icon name="chevron-right" size={12} /></Link></p>}{f.body}</div>}
     </div>
   )
 }
@@ -313,7 +321,7 @@ export const ItemView = memo(function ItemView({ item, showThinking, threadId, o
 
 // Under every reply, like Paseo: what it cost, copy, fork from here, and how
 // long the agent worked.
-function TurnFoot({ t, onFork, onRewindHere, rewindDisabled, text }: { t: TurnInfo; onFork?: () => void; onRewindHere?: () => void; rewindDisabled?: boolean; text?: string }) {
+function TurnFoot({ t, onFork, onRewindHere, rewindDisabled, text, onReview }: { t: TurnInfo; onFork?: () => void; onRewindHere?: () => void; rewindDisabled?: boolean; text?: string; onReview?: () => void }) {
   const [copied, setCopied] = useState(false)
   const copy = async () => {
     if (!text || !await copyText(text)) return
@@ -331,6 +339,7 @@ function TurnFoot({ t, onFork, onRewindHere, rewindDisabled, text }: { t: TurnIn
       <span className="grow" />
       {bits.length > 0 && <span className="tnum turn-bits">{bits.join(' · ')}</span>}
       {text && <button type="button" className="btn ghost icon-only xs" onClick={() => { void copy() }} title={copied ? 'Copied' : 'Copy response'} aria-label="Copy response"><Icon name={copied ? 'check' : 'copy'} size={14} /></button>}
+      {text && onReview && <button type="button" className="btn ghost icon-only xs" onClick={onReview} title="Second opinion: have other models review this answer" aria-label="Second opinion from other models"><Icon name="panel" size={14} /></button>}
       {onRewindHere && <button type="button" className="btn ghost icon-only xs" disabled={rewindDisabled} onClick={onRewindHere} title={rewindDisabled ? 'Stop the agent and clear its queue before rewinding' : 'Rewind to here: remove all later messages from this chat'} aria-label="Rewind to here"><Icon name="undo" size={14} /></button>}
       {onFork && <button type="button" className="btn ghost icon-only xs" onClick={onFork} title="Fork from here into a new tab" aria-label="Fork from here into a new tab"><Icon name="fork" size={14} /></button>}
       <span className="run-time tnum" title="How long the agent worked on this">Worked for {fmtDuration(t.duration_ms)}</span>
@@ -338,7 +347,9 @@ function TurnFoot({ t, onFork, onRewindHere, rewindDisabled, text }: { t: TurnIn
   )
 }
 
-export function Timeline({ items, showThinking, streamingKey, onFork, threadId, onResend, onDropUnsent, onEdit, onRewind, rewindDisabled, owner, onMoveFolder }: { items: Item[]; showThinking: boolean; streamingKey?: string; onFork?: (after: string) => void; threadId?: string; onResend?: (it: Item) => void; onDropUnsent?: (it: Item) => void; onEdit?: (it: Item) => void; onRewind?: (it: Item, keepText?: boolean) => void; rewindDisabled?: boolean; owner?: Owner; onMoveFolder?: () => void }) {
+export function Timeline({ items, showThinking, streamingKey, onFork, threadId, onResend, onDropUnsent, onEdit, onRewind, rewindDisabled, owner, onMoveFolder, onReview }: { items: Item[]; showThinking: boolean; streamingKey?: string; onFork?: (after: string) => void;
+  /** a second opinion on a reply: what it said, and the turn it ended */
+  onReview?: (text: string, turnKey: string) => void; threadId?: string; onResend?: (it: Item) => void; onDropUnsent?: (it: Item) => void; onEdit?: (it: Item) => void; onRewind?: (it: Item, keepText?: boolean) => void; rewindDisabled?: boolean; owner?: Owner; onMoveFolder?: () => void }) {
   // Items there when the thread opened render still; anything that arrives
   // while you watch slides in.
   const initial = useRef<Set<string> | null>(null)
@@ -369,7 +380,7 @@ export function Timeline({ items, showThinking, streamingKey, onFork, threadId, 
         const it = entry.type === 'item' ? entry.item : entry.items[0]
         return (
         <div key={entry.key} className={`tl-item ${initial.current!.has(it.key) ? '' : 'appear'} ${it.key === streamingKey ? 'streaming' : ''}`}>
-          {entry.type === 'tools' ? <ToolActivity items={entry.items} /> : it.kind === 'turn' && it.turn ? <TurnFoot t={it.turn} text={said.get(it.key)} onFork={onFork ? () => onFork(it.key) : undefined}
+          {entry.type === 'tools' ? <ToolActivity items={entry.items} /> : it.kind === 'turn' && it.turn ? <TurnFoot t={it.turn} text={said.get(it.key)} onFork={onFork ? () => onFork(it.key) : undefined} onReview={onReview && said.get(it.key) ? () => onReview(said.get(it.key)!, it.key) : undefined}
               onRewindHere={onRewind && nextUser.has(it.key) ? () => onRewind(nextUser.get(it.key)!, false) : undefined} rewindDisabled={rewindDisabled} />
             : <ItemView item={it} showThinking={showThinking} threadId={threadId} ownerId={owner?.id} ownerName={owner?.name} onMoveFolder={onMoveFolder} />}
           {it.kind === 'user' && !it.queued && !it.unsent && (onEdit || onRewind) && <div className="message-actions">

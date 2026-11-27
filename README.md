@@ -82,9 +82,18 @@ Personal app assistance: [Briefing, workflows, memory, sources and document uplo
   machines, in a folder or its own worktree), message them, wait for them and read what they wrote; each is a
   conversation of its own, nested under the one that started it, and its answer comes back by itself. Starting
   one asks you first unless you always allow it. Agents can also message your other conversations (with your
-  OK) and set heartbeats — a prompt that comes back to the conversation on a schedule. `/handoff`, `/advisor`
-  (second opinion from the other agent) and `/committee` (Claude Code and Codex in parallel, combined) are
-  built in.
+  OK) and set heartbeats — a prompt that comes back to the conversation on a schedule. `/handoff` is built in.
+- **Panels**: one question to several models at once, on any of your agents, models, logins and machines.
+  **Ask all** (answers side by side and one merged answer), **Brainstorm** (ideas, then built on each other),
+  **Council** (they judge a plan from different points of view and criticise each other without seeing who
+  wrote what), **Debate** (two sides, a judge), **Second opinion** (other models review an answer or a change;
+  the button under every reply) and **Best of N** (the same coding task in a worktree each, a judge picks).
+  Pocket AI runs the rounds itself: everyone answers alone first, later rounds show the others' answers by
+  letter only, and the summary writer gets them without the models' names. Quick, Standard or Deep; your own
+  kinds of panel (your steps, your instructions); saved line-ups; a model that does not answer is named, and
+  too few answers end the panel honestly instead of faking a consensus. Start one on the Panels page or with
+  `/council`, `/brainstorm`, `/debate`, `/ask-all`, `/second-opinion` in a conversation; agents start them with
+  `pocket_panel_start` (with your OK).
 - **Other machines**, like Paseo's hosts: add a server in Settings → Agents → Servers (any machine this server
   can `ssh` into without a password, a tailnet name works) and pick it next to the folder when you start a
   thread. The CLI runs there with that machine's own login; folders and git branches are browsed over ssh, and

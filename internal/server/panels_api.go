@@ -92,7 +92,7 @@ func (s *Server) viewPanel(ctx context.Context, p *store.Panel, full bool) panel
 		}
 		if p.FromThreadID != "" {
 			if th, err := s.store.GetThreadAny(ctx, p.FromThreadID); err == nil && th.UserID == p.UserID {
-				v.FromTitle = th.Title
+				v.FromTitle = firstNonEmpty(th.Title, "a conversation")
 			}
 		}
 	}

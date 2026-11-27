@@ -231,7 +231,7 @@ func (s *Server) startPanel(ctx context.Context, u *store.User, in panelStart) (
 	if len(p.Spec.Stages) == 0 {
 		return nil, badRequest("This kind of panel has no steps at that depth")
 	}
-	p.Title = firstNonEmpty(strings.TrimSpace(in.Title), titleFrom(firstNonEmpty(in.Question, in.Material)))
+	p.Title = firstNonEmpty(strings.TrimSpace(in.Title), titleFrom(firstNonEmpty(in.Question, panelMaterialLine(in.Material))))
 
 	// where it looks: the conversation it comes from, or the folder given
 	if in.FromThreadID != "" {
@@ -361,7 +361,9 @@ func (s *Server) startPanel(ctx context.Context, u *store.User, in panelStart) (
 		p.Spec.LimitMin = 240
 	}
 	if p.Kind == "build" {
-		p.Spec.Mode = strings.TrimSpace(in.Mode)
+		if p.Spec.Mode = strings.TrimSpace(in.Mode); p.Spec.Mode != "edit" && p.Spec.Mode != "auto" {
+			p.Spec.Mode = "" // as the person normally runs each agent
+		}
 	}
 	if err := s.store.CreatePanel(ctx, p, seats); err != nil {
 		return nil, err
@@ -370,6 +372,18 @@ func (s *Server) startPanel(ctx context.Context, u *store.User, in panelStart) (
 	s.panelChanged(p)
 	s.goPanel(p.ID)
 	return p, nil
+}
+
+// panelMaterialLine is the first line of the material that says something
+// (not a heading like "What was asked:"), to name a panel without a question.
+func panelMaterialLine(m string) string {
+	for _, line := range strings.Split(m, "\n") {
+		line = strings.TrimSpace(strings.TrimLeft(line, "#>-* "))
+		if len(line) > 3 && !strings.HasSuffix(line, ":") {
+			return line
+		}
+	}
+	return m
 }
 
 // goPanel runs a panel in the background (once).
@@ -698,7 +712,7 @@ func (s *Server) askSeat(ctx context.Context, owner *store.User, p *store.Panel,
 			nt.Cwd = p.Spec.Cwd
 		}
 		if building {
-			nt.Mode = p.Spec.Mode
+			nt.Mode = panelBuildMode(st.Provider, p.Spec.Mode)
 			nt.Worktree = &newWorktree{Mode: "new", Name: "panel-" + p.ID[:6] + "-" + strings.ToLower(st.Label)}
 		} else {
 			nt.Mode = panelReadOnlyMode(st.Provider)
@@ -729,6 +743,27 @@ func (s *Server) askSeat(ctx context.Context, owner *store.User, p *store.Panel,
 	}
 	st.Asked, st.State, st.Error = p.Stage, "working", ""
 	_ = s.store.SavePanelSeat(ctx, st)
+}
+
+// panelBuildMode is the permission mode of a Best of N participant: "" as the
+// person normally runs that agent, "edit" = it may change files without
+// asking, "auto" = it also runs commands on its own where the agent has such
+// a mode (never its unrestricted one).
+func panelBuildMode(provider, want string) string {
+	if want == "" {
+		return ""
+	}
+	top := 2
+	if want == "auto" {
+		top = 3
+	}
+	best, lvl := "", 0
+	for _, m := range modesOf(provider) {
+		if l, ok := modeLevel[m.ID]; ok && l <= top && l > lvl {
+			best, lvl = m.ID, l
+		}
+	}
+	return best
 }
 
 func panelSeatTitle(p *store.Panel, st *store.PanelSeat) string {
@@ -779,7 +814,21 @@ func (s *Server) finishPanel(ctx context.Context, p *store.Panel, status, why st
 	if status == "failed" {
 		title, body = p.Spec.KindName+" did not finish", oneLine(p.Title+"\n"+why, 240)
 	}
-	s.notifyUser(ctx, p.UserID, map[bool]string{true: "finished", false: "failed"}[status == "done"], title, body, s.publicURL("/panels/"+p.ID))
+	what := map[bool]string{true: "finished", false: "failed"}[status == "done"]
+	s.notifyUser(ctx, p.UserID, what, title, body, s.publicURL("/panels/"+p.ID))
+	if !p.Report || p.FromThreadID == "" {
+		// on the phone it opens the summary writer's conversation (the outcome is its last answer);
+		// one that reports back is announced by the conversation it reports to
+		open := ""
+		if seats, err := s.store.PanelSeats(ctx, p.ID); err == nil {
+			for _, st := range seats {
+				if st.ThreadID != "" && (open == "" || st.Chair && st.State == "done") {
+					open = st.ThreadID
+				}
+			}
+		}
+		s.notifyMobile(p.UserID, what, title, body, open)
+	}
 	s.panelReport(ctx, p)
 }
 
@@ -916,6 +965,7 @@ func (s *Server) deletePanel(ctx context.Context, p *store.Panel) error {
 		} else if err == nil && th.UserID == p.UserID && th.Source == "panel" {
 			// one with a worktree stays, its work is there: an ordinary conversation from now on
 			_, _ = s.store.DB.ExecContext(ctx, `UPDATE threads SET source = 'web', source_ref = '' WHERE id = ?`, th.ID)
+			th.Source, th.SourceRef = "web", ""
 			s.rt.publishThread(th)
 		}
 	}

@@ -91,7 +91,7 @@ func TestCouncilRunsItsSteps(t *testing.T) {
 	if p.Status != "done" || p.Stage != 3 {
 		t.Fatalf("panel %+v", p)
 	}
-	if !strings.Contains(p.Result, "Claude default, Sceptic (A) and Claude default, Pragmatist (B) agree") || !strings.Contains(p.Result, "saw-critique") {
+	if !strings.Contains(p.Result, "Claude, Sceptic (A) and Claude, Pragmatist (B) agree") || !strings.Contains(p.Result, "saw-critique") {
 		t.Fatalf("result %q", p.Result)
 	}
 	ctx := context.Background()
@@ -132,7 +132,7 @@ func TestCouncilRunsItsSteps(t *testing.T) {
 		} `json:"seats"`
 	}
 	c.want("GET", "/api/v1/panels/"+p.ID, nil, 200, &got)
-	if len(got.Answers) != 5 || got.Seats[0].Who != "Claude default, Sceptic (A)" {
+	if len(got.Answers) != 5 || got.Seats[0].Who != "Claude, Sceptic (A)" {
 		t.Fatalf("view %+v", got)
 	}
 	// deleting it takes its participants' conversations along

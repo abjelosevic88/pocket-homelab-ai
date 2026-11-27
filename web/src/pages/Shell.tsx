@@ -31,6 +31,9 @@ import WorktreesPage from './WorktreesPage'
 import FilesPage from './FilesPage'
 import FileView from './FileView'
 import { NotebookPage, NotebooksPage } from './NotebooksPage'
+import PanelsPage, { PanelPage } from './PanelsPage'
+import { PanelSetup } from '../components/PanelSetup'
+import { OPEN_PANEL, openPanelSheet, type PanelDraft } from '../lib/panels'
 // xterm is big: only loaded once you have a terminal
 const TerminalArea = lazy(() => import('./TerminalArea'))
 import { BriefingPage, MemoryPage, ActionsPage, WorkflowsPage } from './AssistantPages'
@@ -171,6 +174,8 @@ function ShellInner() {
     { id: 'run-recipe', label: 'Run a recipe…', icon: 'play', hint: keyCaps(keys.recipes).join(''), keywords: 'recipes prompts saved start', run: () => setPalette('recipes') },
     { id: 'recipes', label: 'Recipes', icon: 'zap', keywords: 'prompts saved', run: () => navigate('/recipes') },
     { id: 'schedules', label: 'Schedules', icon: 'clock', keywords: 'cron timer automatic', run: () => navigate('/schedules') },
+    { id: 'panels', label: 'Panels', icon: 'panel', keywords: 'council brainstorm debate several models compare second opinion multi', run: () => navigate('/panels') },
+    { id: 'panel-new', label: 'New panel…', icon: 'panel', keywords: 'council brainstorm debate ask all models second opinion', run: () => openPanelSheet() },
     { id: 'history', label: 'On this server — CLI sessions', icon: 'history', keywords: 'import resume history claude codex', run: () => navigate('/history') },
     { id: 'skills', label: 'Skills', icon: 'sparkles', keywords: 'skill slash commands plugins add edit', run: () => navigate('/skills') },
     { id: 'today', label: 'Today', icon: 'today', keywords: 'runs account day', run: () => navigate('/today') },
@@ -193,6 +198,14 @@ function ShellInner() {
     { id: 'keys-edit', label: 'Change keyboard shortcuts', icon: 'keyboard', keywords: 'keys hotkeys bindings', run: () => navigate('/settings/general#shortcuts') },
   ], [navigate, theme, setThemeMode, keys.recent, keys.recipes, drawer])
 
+  // the start sheet of a panel, from anywhere (a "/" command, the Panels page, a reply's footer)
+  const [panelDraft, setPanelDraft] = useState<PanelDraft | null>(null)
+  useEffect(() => {
+    const on = (e: Event) => setPanelDraft((e as CustomEvent<PanelDraft>).detail || {})
+    window.addEventListener(OPEN_PANEL, on)
+    return () => window.removeEventListener(OPEN_PANEL, on)
+  }, [])
+
   const openMenu = useCallback(() => setDrawerOpen(true), [])
   const onMenu = drawer ? openMenu : undefined
 
@@ -211,6 +224,8 @@ function ShellInner() {
             <Route path="/t/:id" element={<ThreadPage onMenu={onMenu} />} />
             <Route path="/recipes" element={<RecipesPage onMenu={onMenu} />} />
             <Route path="/schedules" element={<SchedulesPage onMenu={onMenu} />} />
+            <Route path="/panels" element={<PanelsPage onMenu={onMenu} />} />
+            <Route path="/panels/:id" element={<PanelPage onMenu={onMenu} />} />
             <Route path="/history" element={<HistoryPage onMenu={onMenu} />} />
             <Route path="/shared" element={<SharedPage onMenu={onMenu} />} />
             <Route path="/today" element={<TodayPage onMenu={onMenu} />} />
@@ -239,6 +254,7 @@ function ShellInner() {
       </main>
       {palette && <CommandPalette key={palette} mode={palette} onClose={() => setPalette('')} commands={commands} openThread={id => navigate(`/t/${id}`)} runRecipe={runRecipe} />}
       {shortcuts && <ShortcutsSheet onClose={() => setShortcuts(false)} />}
+      {panelDraft && <PanelSetup draft={panelDraft} onClose={() => setPanelDraft(null)} />}
     </div>
   )
 }

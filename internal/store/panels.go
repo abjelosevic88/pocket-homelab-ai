@@ -35,15 +35,15 @@ type PanelSeatSpec struct {
 
 // PanelSpec is how a panel runs, fixed when it starts.
 type PanelSpec struct {
-	Depth     int          `json:"depth"`       // 0 quick, 1 standard, 2 deep
-	Stages    []PanelStage `json:"stages"`      // the steps that run (already cut to the depth)
-	KindName  string       `json:"kind_name"`   // "Council", or a recipe's name
+	Depth     int          `json:"depth"`     // 0 quick, 1 standard, 2 deep
+	Stages    []PanelStage `json:"stages"`    // the steps that run (already cut to the depth)
+	KindName  string       `json:"kind_name"` // "Council", or a recipe's name
 	RecipeID  int64        `json:"recipe_id,omitempty"`
-	Cwd       string       `json:"cwd"`         // the folder the participants look at
-	HostID    int64        `json:"host_id"`     // the machine that folder is on
-	LimitMin  int          `json:"limit_min"`   // minutes one participant gets per step
-	Quorum    int          `json:"quorum"`      // answers the first step needs
-	Mode      string       `json:"mode,omitempty"` // build: the participants' permission mode ("" = their default)
+	Cwd       string       `json:"cwd"`                  // the folder the participants look at
+	HostID    int64        `json:"host_id"`              // the machine that folder is on
+	LimitMin  int          `json:"limit_min"`            // minutes one participant gets per step
+	Quorum    int          `json:"quorum"`               // answers the first step needs
+	Mode      string       `json:"mode,omitempty"`       // build: the participants' permission mode ("" = their default)
 	ChairSwap bool         `json:"chair_swap,omitempty"` // the summary writer was replaced once already
 }
 

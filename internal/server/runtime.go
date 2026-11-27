@@ -301,6 +301,9 @@ func (rt *engine) publishThread(t *store.Thread) {
 	rt.decorate(t)
 	ev := sseEvent{Name: "thread", Data: t}
 	rt.toThread(t.ID, ev)
+	if t.Source == "panel" {
+		return // a panel's participant: in no list, its panel tells the person (panels.go)
+	}
 	rt.toUser(t.UserID, ev)
 	rt.s.notifyMobileBadge(t.UserID)
 	for _, uid := range rt.sharers(t.ID) {

@@ -207,6 +207,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (!list) return list
       if (t.archived) return list.filter(x => x.id !== t.id)
       const i = list.findIndex(x => x.id === t.id)
+      if (i < 0 && t.source === 'panel') return list // a panel's participant: opened from its panel, in no list
       const next = i >= 0 ? list.map(x => x.id === t.id ? t : x) : [t, ...list]
       return sortThreads(next)
     })
@@ -250,6 +251,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       running: () => reloadRunning(),
       terminals: d => setTerms({ ...noTerms, ...(d as TermSummary) }),
       away: () => reloadAway(),
+      // a panel moved on: the Panels pages and the conversation it came from listen
+      panel: d => window.dispatchEvent(new CustomEvent('pai:panel', { detail: d })),
       ping: () => {},
     }, { onOpen: () => { setLive(true); reloadThreads().catch(() => {}); reloadRunning(); reloadTerms(); reloadAway() }, onDown: () => setLive(false) })
     return () => { close(); setLive(false) }

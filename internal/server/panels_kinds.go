@@ -184,7 +184,7 @@ func seatWho(st *store.PanelSeat) string {
 	if st.Provider == "claude" {
 		name = "Claude"
 	}
-	if m := shortModel(st.Model); m != "" {
+	if m := shortModel(st.Model); m != "" && m != "default" {
 		name += " " + m
 	}
 	if st.Role != "" {

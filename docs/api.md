@@ -266,6 +266,24 @@ Scheduled prompts get an instruction appended: finish with a first line `OK: …
 | POST | `/schedules/{id}/run` → `Thread` (run now) |
 | GET | `/schedules/preview?spec=` → `{ok, next: [iso, iso, iso], error}` |
 
+## Panels (one question, several models)
+
+| | |
+|---|---|
+| `GET /panels` | the person's panels, newest first (participants, state, cost; no answers) |
+| `GET /panels/options` | what the start sheet offers: `kinds` (with their steps), `depths`, `roles`, `lineups`, `own_kinds`, `logins` (every login a participant can run on, with `used` 0..1 of its plan limit, -1 = unknown), `suggested` participants |
+| `POST /panels` | start one: `kind` (`ask`, `brainstorm`, `council`, `debate`, `review`, `build`) or `recipe_id`, `question`, `material`, `depth` (`quick`, `standard`, `deep`), `seats` (`provider`, `model`, `effort`, `account_id` or `host_id` + `host_home`, `role`), `chair`, `cwd`, `host_id`, `from_thread_id`, `report`, `mode` (build: ``, `edit`, `auto`). Without `seats`: the default line-up |
+| `GET /panels/{id}` | everything: `seats` (state, `activity`, `live` = what it is writing), `answers` per step, `result` |
+| `POST /panels/{id}/stop` · `/again` | stop it; run it once more with the same settings |
+| `POST /panels/{id}/continue` | start an ordinary conversation that carries the outcome (`text`, `provider`, `model`) |
+| `GET /panels/{id}/export.md` | the whole panel as Markdown (`?download=1`) |
+| `DELETE /panels/{id}` | with its participants' conversations |
+| `POST·PUT·DELETE /panels/lineups[/{id}]` | saved line-ups (`name`, `seats`, `chair`, `default`) |
+| `POST·PUT·DELETE /panels/kinds[/{id}]` | the person's own kinds (`name`, `description`, `stages`) |
+| `GET /threads/{id}/panels` | the panels started from a conversation |
+
+The user event stream sends `panel` (`id`, `status`, `stage`, `from_thread_id`) whenever one moves on.
+
 ## History (sessions the CLIs already have on the server)
 
 | Method | Path | Notes |
