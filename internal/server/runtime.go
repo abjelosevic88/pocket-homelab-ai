@@ -1675,7 +1675,7 @@ func (rt *engine) refreshLimits(wait bool) {
 			logins = append(logins, &login{provider: ag.ID, home: ag.LoginHome("")})
 			if list, err := rt.s.store.ListAgentAccounts(ctx); err == nil {
 				for _, a := range list {
-					if a.Provider == ag.ID {
+					if a.Provider == ag.ID && a.SharedFrom == nil {
 						logins = append(logins, &login{provider: a.Provider, id: a.ID, home: a.Home, dir: a.Home})
 					}
 				}

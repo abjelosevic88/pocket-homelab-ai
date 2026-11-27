@@ -8,7 +8,7 @@ import { Select } from '../../components/Select'
 import { Avatar, Confirm, errMsg, Field, Loading, MenuButton, Modal, Segmented, Spinner, useAsync, useContextMenu, useToast, type MenuItem } from '../../components/ui'
 import { Section } from './common'
 
-interface Lendable { id: number; provider: ProviderId; label: string; email?: string; plan?: string; signed_in: boolean; plan_used: number }
+interface Lendable { id: number; provider: ProviderId; label: string; email?: string; plan?: string; signed_in: boolean; plan_used: number; plan_known: boolean; why?: string }
 interface ShareRow extends ShareAllowance { account_id: number; label: string }
 interface SharePerson { id: number; name: string; email: string; role: string; can_run: boolean; own_folder: boolean; shares: ShareRow[] }
 interface SharesData { keep: number; logins: Lendable[]; people: SharePerson[] }
@@ -49,7 +49,7 @@ export function SharedAISection() {
 
   const people = data.data?.people || []
   return (
-    <Section title="Shared AI" sub="Let people use your Claude Code and Codex logins, with a limit. Pocket AI keeps your sign-in to itself and counts what they use; they can still add logins of their own and pick one per conversation.">
+    <Section title="Shared AI" sub="Let people use your agents (Claude Code, Codex, Antigravity, Gemini CLI, OpenCode, Qwen Code), with a limit. Everything they use goes through Pocket AI. Pocket AI keeps your sign-in to itself and counts what they use; they can still add logins of their own and pick one per conversation.">
       {!data.data ? (data.error ? <p className="danger-text small">{data.error}</p> : <Loading />) : (
         <div className="stack">
           <div className="aishare-keep">
@@ -131,7 +131,7 @@ function ShareDialog({ person, row, logins, onClose, onSaved }: { person: ShareP
     setBusy(true)
     try {
       if (row) await api.patch(`${V1}/ai-shares/${row.account_id}`, { minutes_day: minutes, percent_week: percent })
-      else await api.post(`${V1}/ai-shares`, { user_id: person.id, provider: chosen?.provider, from: chosen?.id, minutes_day: minutes, percent_week: percent })
+      else await api.post(`${V1}/ai-shares`, { user_id: person.id, provider: chosen?.provider, from: chosen?.id, minutes_day: minutes, percent_week: chosen?.plan_known ? percent : 0 })
       toast(row ? 'Saved' : `Shared with ${name}`)
       onSaved()
     } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
@@ -142,22 +142,21 @@ function ShareDialog({ person, row, logins, onClose, onSaved }: { person: ShareP
       <button type="button" className="btn primary" disabled={busy || (!row && !chosen)} onClick={save}>{busy && <Spinner />}{row ? 'Save' : 'Share'}</button>
     </>}>
       <div className="stack">
-        {!row && <Field label="Login" help="Any Claude Code or Codex login on this server. Their agent runs on it through Pocket AI, which keeps your sign-in to itself.">
+        {!row && <Field label="Login" help="Any agent signed in here, or running on your keys. Their agent goes through Pocket AI, which keeps your sign-ins and keys to itself.">
           <Select value={pick} onChange={v => setPick(String(v))} label="Login" searchable={false}
             renderValue={o => <span className="prov-opt">{chosen && <Icon name={chosen.provider} size={14} className={`prov-glyph ${chosen.provider}`} />}{o?.label ?? 'Choose a login'}</span>}
             options={logins.map(l => ({
               value: loginKey(l), label: `${providerName(l.provider)} · ${l.label}`, disabled: !l.signed_in || taken.has(loginKey(l)),
-              description: taken.has(loginKey(l)) ? 'already shared with them' : !l.signed_in ? (l.provider === 'codex' ? 'not signed in with ChatGPT here' : 'not signed in here') : [l.plan && planName(l.plan), l.email, l.plan_used ? `${Math.round(l.plan_used * 100)}% used` : ''].filter(Boolean).join(' · '),
+              description: taken.has(loginKey(l)) ? 'already shared with them' : !l.signed_in ? (l.why || (l.provider === 'codex' ? 'not signed in with ChatGPT here' : 'not signed in here')) : [l.plan && planName(l.plan), l.email, l.plan_used ? `${Math.round(l.plan_used * 100)}% used` : ''].filter(Boolean).join(' · '),
             }))} />
         </Field>}
         <Field label="Time a day" group help="Agent working time, counted while it thinks and runs its tools. Comes back at midnight. Type any number of minutes.">
           <Amount label="Time a day" value={minutes} onChange={setMinutes} presets={MINUTES} presetLabel={m => (m === 0 ? 'No limit' : m < 60 ? `${m} min` : `${m / 60} h`)} unit="min" max={1440} />
         </Field>
-        <Field label="Share of your weekly limit" group help="About this much of your plan’s week. Comes back when your plan’s week starts again. Type any percentage (0.5 steps).">
+        {(row ? ['claude', 'codex'].includes(row.provider) : chosen?.plan_known !== false) ? <Field label="Share of your weekly limit" group help="About this much of your plan’s week. Comes back when your plan’s week starts again. Type any percentage (0.5 steps).">
           <Amount label="Share of your weekly limit" value={percent} onChange={setPercent} presets={PERCENTS} presetLabel={p => (p === 0 ? 'No limit' : `${p}%`)} unit="%" max={100} step={0.5} />
-        </Field>
+        </Field> : <p className="muted small">{chosen ? providerName(chosen.provider) : 'This agent'} doesn’t say how full your plan is, so only its time a day can be limited.</p>}
         {row && <p className="muted small">Now: {shareNote(row)}.</p>}
-        {!row && <p className="muted small">Antigravity, Gemini CLI, OpenCode and Qwen Code can’t be shared: they have no way to go through Pocket AI.</p>}
         {!person.can_run && !row && <p className="muted small">Sharing also lets {name} run agents (in a folder of their own).</p>}
       </div>
     </Modal>

@@ -174,10 +174,18 @@ func (s *Server) providersFor(ctx context.Context, u *store.User, refresh bool) 
 	if s.mayUseServerLogin(ctx, u) {
 		return list
 	}
+	lent := map[string]bool{} // agents the owner lends them
+	if more, err := s.store.ListAgentAccounts(ctx); err == nil && u != nil {
+		for _, a := range more {
+			if a.SharedFrom != nil && a.UserID != nil && *a.UserID == u.ID {
+				lent[a.Provider] = true
+			}
+		}
+	}
 	out := make([]agent.Provider, len(list))
 	for i, p := range list {
 		p.Account = ""
-		if ag, ok := agent.ACPAgentByID(p.ID); ok && p.Available {
+		if ag, ok := agent.ACPAgentByID(p.ID); ok && p.Available && !lent[p.ID] {
 			// it runs on the owner's keys and sign-in
 			p.Available, p.Error = false, ag.Name+" runs on the server owner's keys, so only they can use it here."
 		}

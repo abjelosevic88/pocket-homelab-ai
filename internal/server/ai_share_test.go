@@ -3,12 +3,15 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -303,3 +306,166 @@ func TestSharedCodexLogin(t *testing.T) {
 }
 
 func base64URL(s string) string { return base64.RawURLEncoding.EncodeToString([]byte(s)) }
+
+// Qwen Code on the owner's key and endpoint: the member's agent gets the
+// relay and the share key; the endpoint gets the owner's key; the usage of
+// the last stream chunk counts. Agents whose provider does not say how full
+// the plan is get no weekly share.
+func TestSharedQwenThroughRelay(t *testing.T) {
+	var gotAuth, gotPath string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth, gotPath = r.Header.Get("Authorization"), r.URL.Path
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"pong\"}}]}\n\n")
+		fmt.Fprint(w, "data: {\"model\":\"qwen3-coder-plus\",\"choices\":[],\"usage\":{\"prompt_tokens\":900,\"completion_tokens\":12,\"prompt_tokens_details\":{\"cached_tokens\":400}}}\n\ndata: [DONE]\n\n")
+	}))
+	defer up.Close()
+	s, h, _ := testServer(t)
+	t.Setenv("QWEN_BIN", "/bin/true")
+	admin, _ := person(t, s, h, "owner@example.com", "admin", false)
+	_, mu := person(t, s, h, "kid@example.com", "member", false)
+	ctx := context.Background()
+	if err := s.store.SetACPEnv(ctx, "qwen", map[string]string{"OPENAI_API_KEY": "sk-owner", "OPENAI_BASE_URL": up.URL + "/compatible-mode/v1", "OPENAI_MODEL": "qwen3-coder-plus"}); err != nil {
+		t.Fatal(err)
+	}
+	var row shareRow
+	admin.want("POST", "/api/v1/ai-shares", map[string]any{"user_id": mu.ID, "provider": "qwen", "from": 0, "percent_week": 5}, 201, &row)
+	if row.PercentWeek != 0 {
+		t.Fatalf("a weekly share for an API key: %+v", row)
+	}
+	a, _ := s.store.GetAccount(ctx, row.AccountID)
+	if err := s.checkAccount(ctx, mu, "qwen", a.ID); err != nil {
+		t.Fatalf("the member may not run the lent Qwen: %v", err)
+	}
+	_, env := s.accountHome(ctx, "qwen", a.ID)
+	all := strings.Join(env, " ")
+	if strings.Contains(all, "sk-owner") || !strings.Contains(all, "OPENAI_MODEL=qwen3-coder-plus") {
+		t.Fatalf("env %v", env)
+	}
+	var base, tok string
+	for _, e := range env {
+		if v, ok := strings.CutPrefix(e, "OPENAI_BASE_URL="); ok {
+			base = v
+		}
+		if v, ok := strings.CutPrefix(e, "OPENAI_API_KEY="); ok {
+			tok = v
+		}
+	}
+	req, _ := http.NewRequest("POST", base+"/chat/completions", strings.NewReader(`{"model":"qwen3-coder-plus","stream":true}`))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 200 || !strings.Contains(string(b), "pong") || gotAuth != "Bearer sk-owner" || gotPath != "/compatible-mode/v1/chat/completions" {
+		t.Fatalf("%d %s / upstream saw %q %q", res.StatusCode, b, gotAuth, gotPath)
+	}
+	u, _ := s.store.ShareUsageSince(ctx, a.ID, time.Now().Add(-time.Hour))
+	if u.InputTokens != 500 || u.CacheRead != 400 || u.OutputTokens != 12 {
+		t.Fatalf("usage %+v", u)
+	}
+}
+
+func TestShareMeterGoogle(t *testing.T) {
+	m := &shareMeter{kind: "google", sse: true}
+	m.feed([]byte("data: {\"response\":{\"candidates\":[],\"usageMetadata\":{\"promptTokenCount\":100,\"candidatesTokenCount\":5,\"thoughtsTokenCount\":20,\"cachedContentTokenCount\":60},\"modelVersion\":\"gemini-4-neon\"}}\n\n"))
+	u := m.done()
+	if u.InputTokens != 40 || u.CacheRead != 60 || u.OutputTokens != 25 || m.model != "gemini-4-neon" {
+		t.Fatalf("usage %+v model %s", u, m.model)
+	}
+	m = &shareMeter{kind: "google"}
+	m.feed([]byte(`[{"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":3}}]`))
+	if u := m.done(); u.InputTokens != 7 || u.OutputTokens != 3 {
+		t.Fatalf("plain usage %+v", u)
+	}
+}
+
+// Antigravity's HTTPS proxy: the share key is the proxy password; its token
+// renewal is answered with the share key; only the few Google calls it needs
+// get the owner's token, anything else on Google is refused.
+func TestSharedAntigravityProxy(t *testing.T) {
+	var gotAuth string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		fmt.Fprint(w, `{"email":"owner@gmail.com"}`)
+	}))
+	defer up.Close()
+	shareGoogleHosts["www.googleapis.com"] = up.URL
+	defer delete(shareGoogleHosts, "www.googleapis.com")
+
+	s, h, root := testServer(t)
+	t.Setenv("ANTIGRAVITY_BIN", "/bin/true")
+	admin, _ := person(t, s, h, "owner@example.com", "admin", false)
+	_, mu := person(t, s, h, "kid@example.com", "member", false)
+	ctx := context.Background()
+	_ = os.MkdirAll(filepath.Join(root, ".gemini", "antigravity-cli"), 0o700)
+	tokFile := fmt.Sprintf(`{"token":{"access_token":"ya29.owner","expiry":%q},"auth_method":"consumer"}`, time.Now().Add(time.Hour).Format(time.RFC3339Nano))
+	if err := os.WriteFile(filepath.Join(root, ".gemini", "antigravity-cli", "antigravity-oauth-token"), []byte(tokFile), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var row shareRow
+	admin.want("POST", "/api/v1/ai-shares", map[string]any{"user_id": mu.ID, "provider": "antigravity", "from": 0, "minutes_day": 30}, 201, &row)
+	a, _ := s.store.GetAccount(ctx, row.AccountID)
+	dir, env := s.accountHome(ctx, "antigravity", a.ID)
+	if dir != a.Home || strings.Contains(strings.Join(env, " "), "ya29.owner") {
+		t.Fatalf("dir %s env %v", dir, env)
+	}
+	ph, _ := os.ReadFile(filepath.Join(a.Home, "antigravity-cli", "antigravity-oauth-token"))
+	if strings.Contains(string(ph), "ya29.owner") || !strings.Contains(string(ph), "psh_") {
+		t.Fatalf("placeholder %s", ph)
+	}
+	var proxy, bundle string
+	for _, e := range env {
+		if v, ok := strings.CutPrefix(e, "HTTPS_PROXY="); ok {
+			proxy = v
+		}
+		if v, ok := strings.CutPrefix(e, "SSL_CERT_FILE="); ok {
+			bundle = v
+		}
+	}
+	pem, err := os.ReadFile(bundle)
+	if err != nil || !strings.Contains(proxy, "psh_") {
+		t.Fatalf("proxy %q bundle %v", proxy, err)
+	}
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(pem)
+	pu, _ := url.Parse(proxy)
+	c := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(pu), TLSClientConfig: &tls.Config{RootCAs: pool}}}
+	get := func(method, u, body string) (int, string) {
+		req, _ := http.NewRequest(method, u, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer psh_whatever")
+		res, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		return res.StatusCode, string(b)
+	}
+	if code, b := get("POST", "https://oauth2.googleapis.com/token", "grant_type=refresh_token"); code != 200 || !strings.Contains(b, row.shareViewToken(s, t)) {
+		t.Fatalf("renewal: %d %s", code, b)
+	}
+	if code, b := get("GET", "https://www.googleapis.com/oauth2/v2/userinfo", ""); code != 200 || gotAuth != "Bearer ya29.owner" || !strings.Contains(b, "owner@gmail.com") {
+		t.Fatalf("userinfo: %d %s (upstream saw %q)", code, b, gotAuth)
+	}
+	gotAuth = ""
+	if code, _ := get("GET", "https://www.googleapis.com/drive/v3/files", ""); code != 403 || gotAuth != "" {
+		t.Fatalf("Drive with the owner's token: %d %q", code, gotAuth)
+	}
+	// a wrong password: no proxy at all
+	bad, _ := url.Parse(strings.Replace(proxy, "psh_", "psh_x", 1))
+	c2 := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(bad), TLSClientConfig: &tls.Config{RootCAs: pool}}}
+	if _, err := c2.Get("https://oauth2.googleapis.com/token"); err == nil {
+		t.Fatal("the proxy let a wrong share key in")
+	}
+}
+
+func (r shareRow) shareViewToken(s *Server, t *testing.T) string {
+	sh, err := s.store.GetAIShare(context.Background(), r.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sh.Token
+}

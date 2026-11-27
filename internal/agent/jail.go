@@ -327,7 +327,19 @@ func jailArgs(cfg JailConfig, person, dir, path string, env []string, bin string
 	// tools next to bin/, Claude Code its versions)
 	binDir := func(real string) string {
 		d := filepath.Dir(real)
+		// a package of node: its whole folder (it reads its package.json and dist)
+		for p := d; filepath.Dir(p) != p; p = filepath.Dir(p) {
+			if filepath.Base(filepath.Dir(p)) == "node_modules" {
+				return p
+			}
+			if fileExists(filepath.Join(p, "package.json")) && strings.Contains(p, "node_modules") {
+				return p
+			}
+		}
 		if filepath.Base(d) == "bin" {
+			if parent := filepath.Dir(d); filepath.Base(parent) == ".local" || parent == userHome() {
+				return real // a single program in ~/.local/bin: not the rest of ~/.local (other apps' data)
+			}
 			d = filepath.Dir(d)
 		}
 		return d

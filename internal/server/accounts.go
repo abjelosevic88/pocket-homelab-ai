@@ -124,6 +124,11 @@ func (s *Server) homes(ctx context.Context) agent.Homes {
 // gone: the server's own login takes over).
 func (s *Server) accountHome(ctx context.Context, provider string, id int64) (dir string, env []string) {
 	if ag, ok := agent.ACPAgentByID(provider); ok {
+		if id != 0 { // a login the owner lends: its own folder, the relay's key (ai_share_agents.go)
+			if a, err := s.store.GetAccount(ctx, id); err == nil && a.Provider == provider && a.SharedFrom != nil {
+				return a.Home, s.shareEnv(ctx, a)
+			}
+		}
 		// its keys come from Settings; with login folders (Antigravity) the
 		// account says which one, else its sign-in is where it keeps it
 		if ag.Logins {
@@ -196,7 +201,7 @@ func (s *Server) checkAccount(ctx context.Context, u *store.User, provider strin
 	if err != nil || a.Provider != provider || !s.mayUseAccount(ctx, u, a) {
 		return badRequest("that account is not available")
 	}
-	if agent.IsACP(provider) && !s.mayUseServerLogin(ctx, u) {
+	if agent.IsACP(provider) && !s.mayUseServerLogin(ctx, u) && a.SharedFrom == nil {
 		return badRequest(signInFirst(provider))
 	}
 	return nil
@@ -225,7 +230,14 @@ func (s *Server) usableAccount(ctx context.Context, u *store.User, provider stri
 		return 0, nil
 	}
 	if agent.IsACP(provider) {
-		return 0, badRequest(signInFirst(provider)) // the owner's alone
+		// the owner's alone, unless they lend it (ai_share_agents.go)
+		more, _ := s.store.ListAgentAccounts(ctx)
+		for _, a := range more {
+			if a.Provider == provider && a.SharedFrom != nil && s.mayUseAccount(ctx, u, a) {
+				return a.ID, nil
+			}
+		}
+		return 0, badRequest(signInFirst(provider))
 	}
 	list, _ := s.store.ListAccounts(ctx)
 	for _, a := range list {
@@ -250,9 +262,14 @@ func (s *Server) accountsFor(ctx context.Context, u *store.User, manage, refresh
 		}
 	}
 	list, _ := s.store.ListAccounts(ctx)
-	if s.mayUseServerLogin(ctx, u) { // the other agents' logins are the owner's alone
-		more, _ := s.store.ListAgentAccounts(ctx)
+	if more, _ := s.store.ListAgentAccounts(ctx); s.mayUseServerLogin(ctx, u) { // the other agents' logins are the owner's alone
 		list = append(list, more...)
+	} else {
+		for _, a := range more { // … unless the owner lends one
+			if a.SharedFrom != nil {
+				list = append(list, a)
+			}
+		}
 	}
 	for _, a := range list {
 		if s.mayUseAccount(ctx, u, a) || (manage && u.Role == "admin") {

@@ -157,6 +157,9 @@ func (s *Server) shareEnv(ctx context.Context, a *store.Account) []string {
 		s.log.Warn("shared AI proxy", "err", err)
 		return nil
 	}
+	if agent.IsACP(a.Provider) {
+		return s.shareACPEnv(ctx, a, sh.Token, addr)
+	}
 	if a.Provider == "codex" {
 		if err := writeCodexShareConfig(a.Home, addr); err != nil {
 			s.log.Warn("shared AI: Codex config", "err", err)
@@ -201,32 +204,98 @@ func shareErr(w http.ResponseWriter, code int, kind, msg string) {
 
 var shareClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, ForceAttemptHTTP2: true, IdleConnTimeout: 90 * time.Second, ResponseHeaderTimeout: 10 * time.Minute}}
 
+// shareRoute is where a lent agent's request goes.
+type shareRoute struct {
+	provider string
+	sub      string // OpenCode's provider
+	upURL    string
+	metered  bool // a model call: counted and held to the allowance
+	fail     func(http.ResponseWriter, int, string, string)
+	meter    string // anthropic | responses | chat | google
+}
+
+// routeShare works out a relay request's route ("" provider = none).
+func (s *Server) routeShare(ctx context.Context, r *http.Request) shareRoute {
+	path, post := r.URL.Path, r.Method == http.MethodPost
+	switch {
+	case path == "/v1/messages" || path == "/v1/messages/count_tokens":
+		if post {
+			return shareRoute{provider: "claude", upURL: shareUpstream + path, metered: path == "/v1/messages", fail: shareErr, meter: "anthropic"}
+		}
+	case strings.HasPrefix(path, "/codex/"):
+		rest := strings.TrimPrefix(path, "/codex")
+		if (post && (rest == "/responses" || rest == "/responses/compact")) || (r.Method == http.MethodGet && rest == "/models") {
+			return shareRoute{provider: "codex", upURL: shareCodexUpstream + rest, metered: post, fail: codexErr, meter: "responses"}
+		}
+	case strings.HasPrefix(path, "/gca/v1internal:"):
+		rest := strings.TrimPrefix(path, "/gca")
+		return shareRoute{provider: "antigravity", upURL: shareGCAUpstream + rest, metered: strings.Contains(rest, "enerateContent"), fail: googleErr, meter: "google"}
+	case strings.HasPrefix(path, "/gemini/"):
+		rest := strings.TrimPrefix(path, "/gemini")
+		return shareRoute{provider: "gemini", upURL: shareGeminiUpstream + rest, metered: strings.Contains(rest, "enerateContent"), fail: googleErr, meter: "google"}
+	case strings.HasPrefix(path, "/openai/qwen/"):
+		base := strings.TrimRight(s.store.ACPEnv(ctx, "qwen")["OPENAI_BASE_URL"], "/")
+		if base != "" {
+			return shareRoute{provider: "qwen", upURL: base + strings.TrimPrefix(path, "/openai/qwen"), metered: post, fail: codexErr, meter: "chat"}
+		}
+	case strings.HasPrefix(path, "/oc/"):
+		sub, rest, _ := strings.Cut(strings.TrimPrefix(path, "/oc/"), "/")
+		if p, ok := ocProviders[sub]; ok {
+			m := "chat"
+			if p.auth == "google" {
+				m = "google"
+			}
+			return shareRoute{provider: "opencode", sub: sub, upURL: p.base + "/" + rest, metered: post, fail: codexErr, meter: m}
+		}
+	}
+	return shareRoute{}
+}
+
+// googleErr answers the way Google's APIs do.
+func googleErr(w http.ResponseWriter, code int, kind, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	status := "FAILED_PRECONDITION"
+	if code == http.StatusUnauthorized {
+		status = "UNAUTHENTICATED"
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": code, "message": msg, "status": status}})
+}
+
+// shareKeyOf finds the share key in a request, wherever its agent puts it.
+func shareKeyOf(r *http.Request) string {
+	if v, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok && strings.HasPrefix(v, "psh_") {
+		return v
+	}
+	for _, h := range []string{"X-Api-Key", "X-Goog-Api-Key"} {
+		if v := r.Header.Get(h); strings.HasPrefix(v, "psh_") {
+			return v
+		}
+	}
+	if v := r.URL.Query().Get("key"); strings.HasPrefix(v, "psh_") {
+		return v
+	}
+	return ""
+}
+
 func (s *Server) handleShareProxy(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Path
-	if path == "/api/hello" { // Claude Code's "is it there" check
+	if r.Method == http.MethodConnect { // a lent Antigravity login's HTTPS proxy
+		s.handleShareConnect(w, r)
+		return
+	}
+	if r.URL.Path == "/api/hello" { // Claude Code's "is it there" check
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	provider, fail := "claude", shareErr
-	upURL := shareUpstream + path
-	switch rest, codex := strings.CutPrefix(path, "/codex"); {
-	case codex:
-		provider, fail = "codex", codexErr
-		upURL = shareCodexUpstream + rest
-		if !((r.Method == http.MethodPost && (rest == "/responses" || rest == "/responses/compact")) || (r.Method == http.MethodGet && rest == "/models")) {
-			fail(w, http.StatusNotFound, "not_found_error", "Pocket AI passes on Codex's requests only.")
-			return
-		}
-	case r.Method != http.MethodPost || (path != "/v1/messages" && path != "/v1/messages/count_tokens"):
-		fail(w, http.StatusNotFound, "not_found_error", "Pocket AI passes on Claude Code's messages only.")
+	ctx := r.Context()
+	rt := s.routeShare(ctx, r)
+	if rt.provider == "" {
+		shareErr(w, http.StatusNotFound, "not_found_error", "Pocket AI does not pass this on for a shared login.")
 		return
 	}
-	shareErr := fail
-	ctx := r.Context()
-	tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if tok == "" {
-		tok = r.Header.Get("X-Api-Key")
-	}
+	shareErr := rt.fail
+	provider := rt.provider
+	tok := shareKeyOf(r)
 	sh, err := s.store.GetAIShareByToken(ctx, tok)
 	if tok == "" || err != nil {
 		shareErr(w, http.StatusUnauthorized, "authentication_error", "This shared login is no longer shared with you. Pick another login for the conversation.")
@@ -246,8 +315,7 @@ func (s *Server) handleShareProxy(w http.ResponseWriter, r *http.Request) {
 		shareErr(w, http.StatusBadRequest, "invalid_request_error", "The request is too big.")
 		return
 	}
-	counting := path == "/v1/messages/count_tokens" || r.Method == http.MethodGet
-	if !counting {
+	if rt.metered {
 		if v := s.shareView(ctx, a, sh); v.Blocked != "" {
 			shareErr(w, http.StatusBadRequest, "invalid_request_error", v.Blocked)
 			return
@@ -255,7 +323,12 @@ func (s *Server) handleShareProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	from := *a.SharedFrom
 	lk := limitsKey(provider, from)
-	token, acct, err := s.lentToken(ctx, provider, from)
+	var token, acct string
+	if provider == "claude" || provider == "codex" {
+		token, acct, err = s.lentToken(ctx, provider, from)
+	} else {
+		token, err = s.lentACPCred(ctx, provider, from, rt.sub)
+	}
 	if err != nil {
 		shareErr(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
@@ -269,30 +342,43 @@ func (s *Server) handleShareProxy(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		rd = bytes.NewReader(body)
 	}
-	up, err := http.NewRequestWithContext(ctx, r.Method, upURL, rd)
+	up, err := http.NewRequestWithContext(ctx, r.Method, rt.upURL, rd)
 	if err != nil {
 		shareErr(w, http.StatusInternalServerError, "api_error", "Pocket AI could not pass the request on.")
 		return
 	}
-	up.URL.RawQuery = r.URL.RawQuery
-	for k, v := range r.Header {
-		switch http.CanonicalHeaderKey(k) {
-		case "Authorization", "X-Api-Key", "Host", "Content-Length", "Connection", "Accept-Encoding", "Proxy-Connection", "Keep-Alive", "Te", "Upgrade":
-			continue
+	q := r.URL.Query()
+	q.Del("key") // a key in the query is the share key: the owner's goes in a header
+	up.URL.RawQuery = q.Encode()
+	copyShareHeaders(up.Header, r.Header)
+	switch provider {
+	case "claude":
+		up.Header.Set("Authorization", "Bearer "+token)
+		if beta := up.Header.Get("Anthropic-Beta"); !strings.Contains(beta, "oauth-2025-04-20") {
+			if beta != "" {
+				beta += ","
+			}
+			up.Header.Set("Anthropic-Beta", beta+"oauth-2025-04-20")
 		}
-		up.Header[k] = v
-	}
-	up.Header.Set("Authorization", "Bearer "+token)
-	if provider == "codex" {
+	case "codex":
+		up.Header.Set("Authorization", "Bearer "+token)
 		up.Header.Set("Chatgpt-Account-Id", acct)
 		if up.Header.Get("Originator") == "" {
 			up.Header.Set("Originator", "codex_cli_rs")
 		}
-	} else if beta := up.Header.Get("Anthropic-Beta"); !strings.Contains(beta, "oauth-2025-04-20") {
-		if beta != "" {
-			beta += ","
+	case "gemini":
+		up.Header.Set("X-Goog-Api-Key", token)
+	case "opencode":
+		switch ocProviders[rt.sub].auth {
+		case "google":
+			up.Header.Set("X-Goog-Api-Key", token)
+		case "keep": // OpenCode's free models: its own public key
+			up.Header.Set("Authorization", "Bearer public")
+		default:
+			up.Header.Set("Authorization", "Bearer "+token)
 		}
-		up.Header.Set("Anthropic-Beta", beta+"oauth-2025-04-20")
+	default: // antigravity, qwen
+		up.Header.Set("Authorization", "Bearer "+token)
 	}
 	start := time.Now()
 	res, err := shareClient.Do(up)
@@ -305,6 +391,7 @@ func (s *Server) handleShareProxy(w http.ResponseWriter, r *http.Request) {
 	defer res.Body.Close()
 	if res.StatusCode == http.StatusUnauthorized {
 		s.share.mu.Lock()
+		s.share.init()
 		s.share.stale[lk] = true
 		s.share.mu.Unlock()
 	}
@@ -317,7 +404,7 @@ func (s *Server) handleShareProxy(w http.ResponseWriter, r *http.Request) {
 		w.Header()[k] = v
 	}
 	w.WriteHeader(res.StatusCode)
-	meter := &shareMeter{sse: strings.Contains(res.Header.Get("Content-Type"), "event-stream"), model: m.Model, codex: provider == "codex"}
+	meter := &shareMeter{sse: strings.Contains(res.Header.Get("Content-Type"), "event-stream"), model: m.Model, kind: rt.meter, codex: rt.meter == "responses"}
 	fl, _ := w.(http.Flusher)
 	buf := make([]byte, 32<<10)
 	for {
@@ -335,7 +422,7 @@ func (s *Server) handleShareProxy(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	if !counting {
+	if rt.metered {
 		s.shareRecord(a, start, time.Now(), meter.done())
 	}
 }
@@ -343,7 +430,8 @@ func (s *Server) handleShareProxy(w http.ResponseWriter, r *http.Request) {
 // shareMeter reads the usage out of a response as it passes.
 type shareMeter struct {
 	sse   bool
-	codex bool // OpenAI's Responses API, not Anthropic's
+	codex bool   // OpenAI's Responses API, not Anthropic's
+	kind  string // anthropic | responses | chat (OpenAI-style chat completions) | google
 	model string
 	line  []byte
 	whole []byte // a plain JSON answer (up to 4 MB)
@@ -396,6 +484,10 @@ func (m *shareMeter) feed(b []byte) {
 		l := bytes.TrimSpace(m.line[:i])
 		m.line = m.line[i+1:]
 		if !bytes.HasPrefix(l, []byte("data:")) || !bytes.Contains(l, []byte(`usage`)) {
+			continue
+		}
+		if m.kind == "chat" || m.kind == "google" {
+			m.takeOther(bytes.TrimSpace(l[5:]))
 			continue
 		}
 		if m.codex {
@@ -457,8 +549,73 @@ func (m *shareMeter) takeOpenAI(raw []byte) {
 	m.u.OutputTokens = res.Usage.Output
 }
 
+// takeOther reads the usage of an OpenAI-style chat answer or a Google one
+// (Gemini API, or Code Assist's wrapped {"response": …}); a later chunk
+// replaces an earlier one (they are running totals).
+func (m *shareMeter) takeOther(raw []byte) {
+	if m.kind == "chat" {
+		var c struct {
+			Model string `json:"model"`
+			Usage *struct {
+				Prompt     int64 `json:"prompt_tokens"`
+				Completion int64 `json:"completion_tokens"`
+				Details    struct {
+					Cached int64 `json:"cached_tokens"`
+				} `json:"prompt_tokens_details"`
+			} `json:"usage"`
+		}
+		if json.Unmarshal(raw, &c) != nil || c.Usage == nil {
+			return
+		}
+		if c.Model != "" {
+			m.model = c.Model
+		}
+		m.u.InputTokens = max(0, c.Usage.Prompt-c.Usage.Details.Cached)
+		m.u.CacheRead, m.u.OutputTokens = c.Usage.Details.Cached, c.Usage.Completion
+		return
+	}
+	type gUsage struct {
+		Prompt     int64 `json:"promptTokenCount"`
+		Candidates int64 `json:"candidatesTokenCount"`
+		Thoughts   int64 `json:"thoughtsTokenCount"`
+		Cached     int64 `json:"cachedContentTokenCount"`
+	}
+	type gResp struct {
+		Usage   *gUsage `json:"usageMetadata"`
+		Version string  `json:"modelVersion"`
+	}
+	var one struct {
+		gResp
+		Response *gResp `json:"response"`
+	}
+	var list []json.RawMessage
+	if json.Unmarshal(raw, &list) == nil { // a plain answer may be a list of chunks
+		for _, it := range list {
+			m.takeOther(it)
+		}
+		return
+	}
+	if json.Unmarshal(raw, &one) != nil {
+		return
+	}
+	g := &one.gResp
+	if one.Response != nil {
+		g = one.Response
+	}
+	if g.Usage == nil {
+		return
+	}
+	if g.Version != "" {
+		m.model = g.Version
+	}
+	m.u.InputTokens = max(0, g.Usage.Prompt-g.Usage.Cached)
+	m.u.CacheRead, m.u.OutputTokens = g.Usage.Cached, g.Usage.Candidates+g.Usage.Thoughts
+}
+
 func (m *shareMeter) done() store.ShareUsage {
-	if m.codex && !m.sse && len(m.whole) > 0 {
+	if (m.kind == "chat" || m.kind == "google") && !m.sse && len(m.whole) > 0 {
+		m.takeOther(m.whole)
+	} else if m.codex && !m.sse && len(m.whole) > 0 {
 		m.takeOpenAI(m.whole)
 	} else if !m.sse && len(m.whole) > 0 {
 		var res struct {
@@ -490,6 +647,8 @@ func shareCost(model string, u store.ShareUsage) float64 {
 		in, out = 3, 15
 	case strings.Contains(m, "fable"):
 		in, out = 15, 75
+	case strings.Contains(m, "gemini"):
+		in, out = 1.25, 10
 	}
 	return (float64(u.InputTokens)*in + float64(u.CacheWrite)*in*1.25 + float64(u.CacheRead)*in*0.1 + float64(u.OutputTokens)*out) / 1e6
 }
@@ -864,6 +1023,12 @@ func (s *Server) shareView(ctx context.Context, a *store.Account, sh *store.AISh
 	owner := s.ownerName(ctx)
 	v := shareView{From: from, Provider: a.Provider, By: owner, MinutesDay: sh.MinutesDay, PercentWeek: sh.PercentWeek, Paused: sh.Paused, Keep: s.shareKeep(ctx)}
 	v.FromLabel = "Server login"
+	switch a.Provider {
+	case "gemini", "qwen":
+		v.FromLabel = "API key"
+	case "opencode":
+		v.FromLabel = "Free models and keys"
+	}
 	if from != 0 {
 		if src, err := s.store.GetAccount(ctx, from); err == nil {
 			v.FromLabel = src.Label
@@ -1004,6 +1169,10 @@ type lendable struct {
 	Plan     string  `json:"plan,omitempty"`
 	SignedIn bool    `json:"signed_in"`
 	PlanUsed float64 `json:"plan_used"`
+	// PlanKnown: its provider says how full the plan is (a share of the week
+	// can be set); Why: why it cannot be lent now.
+	PlanKnown bool   `json:"plan_known"`
+	Why       string `json:"why,omitempty"`
 }
 
 type aiSharePerson struct {
@@ -1031,11 +1200,43 @@ func (s *Server) lendables(ctx context.Context) []lendable {
 			out = append(out, lendable{ID: a.ID, Provider: a.Provider, Label: a.Label})
 		}
 	}
+	for _, ag := range agent.ACPAgents {
+		if !shareable(ag.ID) {
+			continue
+		}
+		label := "Server login"
+		switch ag.ID {
+		case "gemini", "qwen":
+			label = "Your API key"
+		case "opencode":
+			label = "Free models and your keys"
+		}
+		out = append(out, lendable{ID: 0, Provider: ag.ID, Label: label})
+		if ag.Logins {
+			more, _ := s.store.ListAgentAccounts(ctx)
+			for _, a := range more {
+				if a.Provider == ag.ID && a.SharedFrom == nil && !agent.IsPersonPath(a.Home) {
+					out = append(out, lendable{ID: a.ID, Provider: ag.ID, Label: a.Label})
+				}
+			}
+		}
+	}
 	var wg sync.WaitGroup
 	for i := range out {
 		wg.Add(1)
 		go func(l *lendable) {
 			defer wg.Done()
+			l.PlanKnown = sharePlanKnown(l.Provider)
+			if agent.IsACP(l.Provider) {
+				l.Why = s.lentACPReady(ctx, l.Provider, l.ID)
+				l.SignedIn = l.Why == ""
+				if home, _ := s.lentACPHome(ctx, l.Provider, l.ID); home != "" && l.SignedIn {
+					if ag, ok := agent.ACPAgentByID(l.Provider); ok {
+						l.Email, _ = ag.LoginStatus(home)
+					}
+				}
+				return
+			}
 			home, _ := s.lentHome(ctx, l.Provider, l.ID)
 			st := s.accountStatus(ctx, l.Provider, l.ID, home, false)
 			_, _, _, terr := readLentToken(l.Provider, home) // what the proxy needs
@@ -1130,12 +1331,23 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 	if in.Provider == "" {
 		in.Provider = "claude"
 	}
-	srcHome, err := s.lentHome(ctx, in.Provider, *in.From)
-	if err != nil {
-		s.fail(w, badRequest(err.Error()), "share")
+	if !shareable(in.Provider) {
+		writeErr(w, http.StatusBadRequest, providerName(in.Provider)+" cannot be shared")
 		return
 	}
-	if _, _, _, err := readLentToken(in.Provider, srcHome); err != nil {
+	if agent.IsACP(in.Provider) {
+		if why := s.lentACPReady(ctx, in.Provider, *in.From); why != "" {
+			writeErr(w, http.StatusBadRequest, providerName(in.Provider)+": "+why+".")
+			return
+		}
+		if !sharePlanKnown(in.Provider) {
+			z := 0.0
+			in.PercentWeek = &z // its provider does not say how full the plan is
+		}
+	} else if srcHome, err := s.lentHome(ctx, in.Provider, *in.From); err != nil {
+		s.fail(w, badRequest(err.Error()), "share")
+		return
+	} else if _, _, _, err := readLentToken(in.Provider, srcHome); err != nil {
 		msg := "That login is not signed in on this server (or keeps its sign-in in a keychain), so it cannot be shared."
 		if in.Provider == "codex" {
 			msg = "That Codex login is not signed in with ChatGPT on this server (an API key login has no plan to share)."
@@ -1169,9 +1381,14 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	srcLabel := providerName(in.Provider)
-	if *in.From != 0 {
+	if *in.From != 0 && !agent.IsACP(in.Provider) {
 		if src, err := s.store.GetAccount(ctx, *in.From); err == nil {
 			srcLabel = src.Label
+		}
+	}
+	if *in.From != 0 && agent.IsACP(in.Provider) {
+		if src, err := s.store.GetAccount(ctx, *in.From); err == nil {
+			srcLabel = providerName(in.Provider) + " " + src.Label
 		}
 	}
 	base := filepath.Join(s.personHome(person.ID), "."+in.Provider+"-shared")
@@ -1291,6 +1508,13 @@ func (s *Server) handleShareSettings(w http.ResponseWriter, r *http.Request) {
 // when the owner's is, without saying who that is.
 func (s *Server) sharedStatus(ctx context.Context, a *store.Account) acctStatus {
 	from := *a.SharedFrom
+	if agent.IsACP(a.Provider) {
+		st := acctStatus{CheckedAt: store.Now(), SignedIn: true}
+		if why := s.lentACPReady(ctx, a.Provider, from); why != "" {
+			st.SignedIn, st.Error = false, s.ownerName(ctx)+"'s "+providerName(a.Provider)+" cannot be used right now: "+why+"."
+		}
+		return st
+	}
 	home, err := s.lentHome(ctx, a.Provider, from)
 	st := acctStatus{CheckedAt: store.Now()}
 	if err != nil {

@@ -300,8 +300,8 @@ func (a ACPAgent) GoogleAccount() string {
 // starts on the sign-in its settings name and waits for a browser when that
 // one is a Google sign-in it does not have: name the one that is there.
 func (a ACPAgent) prepare(env []string) {
-	if a.ID != "gemini" {
-		return
+	if a.ID != "gemini" || envHas(env, SharedEnv) {
+		return // a lent login: Pocket AI set up its own folder (server/ai_share_agents.go)
 	}
 	switch {
 	case a.GoogleSignedIn():
@@ -372,6 +372,17 @@ func (a ACPAgent) authMethod(env []string, methods []acpAuthMethod) string {
 		}
 		return false
 	}
+	if envHas(env, SharedEnv) { // a lent login: a key that only Pocket AI's relay takes
+		switch {
+		case a.ID == "gemini" && has("gemini-api-key"):
+			return "gemini-api-key"
+		case a.ID == "qwen" && has("openai"):
+			return "openai"
+		case a.LoginArgs != nil && has("oauth-personal"):
+			return "oauth-personal"
+		}
+		return ""
+	}
 	if a.ID == "gemini" {
 		if a.GoogleSignedIn() && has("oauth-personal") {
 			return "oauth-personal"
@@ -391,6 +402,10 @@ func (a ACPAgent) authMethod(env []string, methods []acpAuthMethod) string {
 	}
 	return ""
 }
+
+// SharedEnv marks the environment of a login the owner lends someone: the
+// agent reaches its provider through Pocket AI's relay only.
+const SharedEnv = "POCKET_SHARED"
 
 func envHas(env []string, name string) bool {
 	for _, e := range env {
