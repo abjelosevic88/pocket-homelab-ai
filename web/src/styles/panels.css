@@ -22,8 +22,10 @@
 .pn-dot.working { background: var(--accent-soft); animation: pn-pulse 1.4s ease-in-out infinite; }
 @keyframes pn-pulse { 50% { opacity: .5; } }
 /* an icon or a spinner in front of a badge's words needs room */
-.pn-page .badge, .pn-card .badge, .pn-answer .badge { gap: 5px; height: 20px; padding: 0 8px; white-space: nowrap; flex: none; }
-.pn-page .badge .spinner, .pn-card .badge .spinner { border-width: 1.5px; }
+.pn-bar-end .badge, .pn-outcome-h .badge, .pn-card .badge, .pn-answer .badge { gap: 6px; height: 22px; padding: 0 10px 0 8px; white-space: nowrap; flex: none; }
+.pn-bar-end .badge .icon, .pn-outcome-h .badge .icon, .pn-card .badge .icon, .pn-answer .badge .icon { flex: none; }
+/* a spinner in a coloured badge: a faint ring of the badge's own colour, not the grey page ring */
+.badge .spinner { flex: none; border-width: 1.5px; border-color: color-mix(in srgb, currentColor 28%, transparent); border-top-color: currentColor; }
 
 /* ----- the start sheet ----- */
 .pn-kinds { display: flex; flex-wrap: wrap; gap: 6px; }

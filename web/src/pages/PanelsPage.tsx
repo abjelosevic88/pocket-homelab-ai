@@ -110,7 +110,7 @@ export default function PanelsPage({ onMenu }: { onMenu?: () => void }) {
                         <div className="list-card-title"><span className="ellipsis">{p.title}</span></div>
                         <div className="sched-meta">
                           <span>{p.spec.kind_name}</span>
-                          <span className={`badge ${st.cls}`}>{p.status === 'running' ? <Spinner size={9} /> : <Icon name={st.icon} size={10} />}{step ? `${p.stage + 1}/${p.spec.stages.length} ${step.name}` : st.label}</span>
+                          <span className={`badge ${st.cls}`}>{p.status === 'running' ? <Spinner size={10} /> : <Icon name={st.icon} size={11} />}{step ? `${p.stage + 1}/${p.spec.stages.length} ${step.name}` : st.label}</span>
                           <SeatDots seats={p.seats} />
                           <span className="faint">{ago(p.created_at)}</span>
                           {p.cost_usd > 0 && <span className="faint tnum">{fmtCost(p.cost_usd)}</span>}
@@ -473,7 +473,7 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
               <button type="button" className={`btn ghost icon-only xs ${view === 'side' ? 'on' : ''}`} aria-pressed={view === 'side'} title="All answers side by side" aria-label="All answers side by side" onClick={() => { setView('side'); localStorage.setItem('pai-panel-view', 'side') }}><Icon name="split-right" size={15} /></button>
             </span>}
             {/* done needs no badge: every step in the row has its tick */}
-            {p.status !== 'done' && <span className={`badge ${st.cls}`}><Icon name={st.icon} size={10} />{st.label}</span>}
+            {p.status !== 'done' && <span className={`badge ${st.cls}`}>{running ? <Spinner size={10} /> : <Icon name={st.icon} size={11} />}{st.label}</span>}
             {p.cost_usd > 0 && <span className="faint xsmall tnum pn-cost" title="What the participants’ runs cost so far">{fmtCost(p.cost_usd)}</span>}
             {versioned && roomy && <button type="button" className={`btn ghost icon-only xs ${dockOn ? 'on' : ''}`} aria-pressed={dockOn} title={dockOn ? 'Hide the editor chat' : 'Show the editor chat beside the plan'} aria-label={dockOn ? 'Hide the editor chat' : 'Show the editor chat'} onClick={() => { showDock(!dockOn); if (!dockOn && tab === 'chat') setTab('out') }}><Icon name="sidebar-right" size={15} /></button>}
             {full && <>
@@ -501,7 +501,7 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
               <section className={`pn-outcome ${writing ? 'writing' : ''}`}>
                 <header className="pn-outcome-h">
                   <Icon name="sparkles" size={15} /><b className="grow">{stages[finalStage].name}</b>
-                  {writing ? <span className="badge accent-soft"><Spinner size={9} />{chair?.activity === 'starting' ? 'Starting…' : 'Being written…'}</span>
+                  {writing ? <span className="badge accent-soft"><Spinner size={10} />{chair?.activity === 'starting' ? 'Starting…' : 'Being written…'}</span>
                     : chair && <span className="muted xsmall pn-by" title="It got the answers by letter, without the models’ names"><Icon name={chair.provider} size={12} className={`prov-glyph ${chair.provider}`} />{providerName(chair.provider)}{chair.model ? ` · ${chair.model}` : ''}</span>}
                   {p.result && !running && <button type="button" className="btn ghost icon-only xs" title="Copy" aria-label="Copy the result" onClick={async () => { if (await copyText(p.result)) toast('Copied') }}><Icon name="copy" size={14} /></button>}
                   {chair?.thread_id && <button type="button" className="btn ghost icon-only xs" title="Open the summary writer’s conversation" aria-label="Open the summary writer’s conversation" onClick={() => openThread(chair.thread_id)}><Icon name="external" size={14} /></button>}
