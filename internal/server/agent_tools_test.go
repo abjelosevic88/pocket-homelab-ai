@@ -324,11 +324,15 @@ func TestAgentDepthAndModes(t *testing.T) {
 }
 
 func TestAgentCommandsExpand(t *testing.T) {
+	// the commands from before panels still work when typed: they start a panel now
 	got := expandAgentCommand("claude", "/advisor is the cache right?")
-	if !strings.Contains(got, `provider "codex"`) || !strings.HasSuffix(got, "is the cache right?") {
+	if !strings.Contains(got, `pocket_panel_start, kind "review"`) || !strings.HasSuffix(got, "is the cache right?") {
 		t.Fatal(got)
 	}
-	if got := expandAgentCommand("codex", "/committee\nwhich db?"); !strings.Contains(got, "/committee]") || !strings.HasSuffix(got, "which db?") {
+	if got := expandAgentCommand("codex", "/committee\nwhich db?"); !strings.Contains(got, "/ask-all]") || !strings.HasSuffix(got, "which db?") {
+		t.Fatal(got)
+	}
+	if got := expandAgentCommand("codex", "/council should we?"); !strings.Contains(got, `kind "council"`) {
 		t.Fatal(got)
 	}
 	for _, keep := range []string{"/handoffs now", "hello /handoff", "/compact"} {
@@ -336,7 +340,7 @@ func TestAgentCommandsExpand(t *testing.T) {
 			t.Fatal("expanded", keep)
 		}
 	}
-	if l := agentCommandSkills([]agent.Skill{{Name: "handoff"}}); len(l) != 2 {
+	if l := agentCommandSkills([]agent.Skill{{Name: "handoff"}}); len(l) != 5 { // the panel commands
 		t.Fatal(l)
 	}
 }

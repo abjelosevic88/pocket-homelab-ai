@@ -44,6 +44,7 @@ type PanelSpec struct {
 	LimitMin  int          `json:"limit_min"`            // minutes one participant gets per step
 	Quorum    int          `json:"quorum"`               // answers the first step needs
 	Mode      string       `json:"mode,omitempty"`       // build: the participants' permission mode ("" = their default)
+	App       string       `json:"app,omitempty"`        // the Pocket app that started it over a Core link
 	ChairSwap bool         `json:"chair_swap,omitempty"` // the summary writer was replaced once already
 }
 

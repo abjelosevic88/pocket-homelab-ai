@@ -282,6 +282,10 @@ Scheduled prompts get an instruction appended: finish with a first line `OK: …
 | `POST·PUT·DELETE /panels/kinds[/{id}]` | the person's own kinds (`name`, `description`, `stages`) |
 | `GET /threads/{id}/panels` | the panels started from a conversation |
 
+Other Pocket apps, with a Core link token that has `panels:write`: `POST /api/v1/link/panels` (`kind`, `question`,
+`material`, `depth`, `title`; the person's default line-up, no folder) and `GET /api/v1/link/panels/{id}` (`status`,
+`step`, and `outcome` once `finished`).
+
 The user event stream sends `panel` (`id`, `status`, `stage`, `from_thread_id`) whenever one moves on.
 
 ## History (sessions the CLIs already have on the server)

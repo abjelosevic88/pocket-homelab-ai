@@ -77,6 +77,7 @@ type panelStart struct {
 	Report       bool   `json:"report"`
 	LimitMin     int    `json:"limit_min"`
 	Mode         string `json:"mode"` // build: the participants' permission mode
+	App          string `json:"-"`    // the Pocket app that starts it over a Core link (link_panels.go)
 }
 
 func panelDepth(name string) int {
@@ -211,7 +212,7 @@ func (s *Server) startPanel(ctx context.Context, u *store.User, in panelStart) (
 	}
 	depth := panelDepth(in.Depth)
 	p := &store.Panel{ID: uuid.NewString(), UserID: u.ID, Kind: in.Kind, Question: in.Question, Material: in.Material, Status: "running", Report: in.Report}
-	p.Spec.Depth = depth
+	p.Spec.Depth, p.Spec.App = depth, in.App
 	var all []store.PanelStage
 	quorum := 2
 	if in.RecipeID != 0 {
