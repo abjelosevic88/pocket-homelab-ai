@@ -828,12 +828,13 @@ func (s *Server) startLogin(w http.ResponseWriter, provider, key, dir string, en
 		s.fail(w, err, "login")
 		return
 	}
-	l, err := s.beginLogin(ctx, cancel, key, provider, cmd, func(ok bool) {
+	l, err := s.beginLogin(ctx, cancel, key, provider, cmd, func(ok bool) error {
 		after(ok)
 		s.rt.publishAccounts()
 		if ok {
 			s.rt.refreshLimitsNow()
 		}
+		return nil
 	})
 	if err != nil {
 		s.fail(w, err, "login")
@@ -855,9 +856,10 @@ func loginArgs(provider, claudeBin, codexBin string) (string, []string) {
 
 // beginLogin starts a sign-in command (here, or ssh to another machine) and
 // follows its output for the URL and code. after runs once it has ended,
-// before anyone waiting is told.
+// before anyone waiting is told; an error from it (ok only) fails the
+// sign-in after all (the token could not be taken where it belongs).
 // The command is stopped when ctx ends (cancel is called when it exits).
-func (s *Server) beginLogin(ctx context.Context, cancel context.CancelFunc, key, provider string, cmd *exec.Cmd, after func(ok bool)) (*loginRun, error) {
+func (s *Server) beginLogin(ctx context.Context, cancel context.CancelFunc, key, provider string, cmd *exec.Cmd, after func(ok bool) error) (*loginRun, error) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	l := &loginRun{provider: provider, cmd: cmd, State: "starting", done: make(chan struct{})}
 	stdin, err := cmd.StdinPipe()
@@ -899,17 +901,22 @@ func (s *Server) beginLogin(ctx context.Context, cancel context.CancelFunc, key,
 		if l.succeeded {
 			err = nil
 		}
+		l.mu.Unlock()
+		// first: whoever waits for "done" then sees the new login
+		aerr := after(err == nil)
+		l.mu.Lock()
 		switch {
+		case err == nil && aerr != nil:
+			l.State, l.Error = "failed", aerr.Error()
 		case err == nil:
 			l.State = "done"
 		case expired:
 			l.State, l.Error = "failed", "The sign-in expired. Start again."
 		case l.State == "cancelled":
 		default:
-			l.State, l.Error = "failed", firstNonEmpty(lastLines(l.out.String(), 3), err.Error())
+			l.State, l.Error = "failed", firstNonEmpty(loginError(l.out.String()), err.Error())
 		}
 		l.mu.Unlock()
-		after(err == nil) // first: whoever waits for "done" then sees the new login
 		close(l.done)
 	}()
 	return l, nil
@@ -982,6 +989,26 @@ func (l *loginRun) feed(line string) {
 	if l.provider == "claude" && l.Sent && (strings.Contains(low, "invalid") || strings.Contains(low, "error") || strings.Contains(low, "failed")) {
 		l.Error = strings.TrimSpace(line)
 	}
+}
+
+// loginError is what a failed sign-in said: the CLI's own "Error: …" line
+// when it has one (not the sign-in link and prompt printed before it), else
+// its last lines.
+func loginError(out string) string {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		l := strings.TrimSpace(lines[i])
+		if rest, ok := strings.CutPrefix(l, "Error:"); ok && strings.TrimSpace(rest) != "" {
+			msg := strings.TrimSpace(rest)
+			low := strings.ToLower(msg)
+			if strings.Contains(low, "dial tcp") || strings.Contains(low, "connection refused") || strings.Contains(low, "no such host") || strings.Contains(low, "i/o timeout") {
+				why := msg[strings.LastIndex(msg, ": ")+2:] // "connection refused", not the whole chain
+				return "Could not reach Google to finish the sign-in (" + why + "). Check the network, then try again."
+			}
+			return msg
+		}
+	}
+	return lastLines(out, 3)
 }
 
 func lastLines(s string, n int) string {

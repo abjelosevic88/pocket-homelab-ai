@@ -8,7 +8,11 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -324,6 +328,12 @@ func (s *Server) handleHostLoginStart(w http.ResponseWriter, r *http.Request) {
 	}
 	key := hostLoginKey(h.ID, provider, dir)
 	s.cancelLogin(key)
+	if ag, ok := agent.ACPAgentByID(provider); ok && ag.TokenFile != "" {
+		if bin, err := exec.LookPath(ag.Command()); err == nil {
+			s.hostLoginViaServer(w, h, ag, bin, key, dir)
+			return
+		}
+	}
 	ctx, cancel := context.WithTimeout(s.rt.ctx, loginExpiry)
 	bin, args := loginArgs(provider, hostBin(h, "claude"), hostBin(h, "codex"))
 	if ag, ok := agent.ACPAgentByID(provider); ok {
@@ -335,15 +345,74 @@ func (s *Server) handleHostLoginStart(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "login")
 		return
 	}
-	l, err := s.beginLogin(ctx, cancel, key, provider, cmd, func(ok bool) {
+	l, err := s.beginLogin(ctx, cancel, key, provider, cmd, func(ok bool) error {
 		s.dropHostStatus(h.ID) // the next list asks the machine again
 		go s.afterHostLogin(h.ID)
+		if ag, isACP := agent.ACPAgentByID(provider); ok && isACP && ag.TokenFile != "" {
+			// the CLI may keep it somewhere a run over ssh does not look
+			// (agy on a Mac: the Keychain)
+			if _, _, err := remoteOf(h).Run(s.rt.ctx, 30*time.Second, `d=${1:-$HOME/$3}; [ -s "$d/$2" ]`, dir, ag.TokenFile, ag.LoginPrefix()); err != nil {
+				return fmt.Errorf("%s signed in, but kept the sign-in where Pocket AI cannot use it over ssh. Use \"Copy sign-in from…\" in its ⋯ menu instead.", h.Name)
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		s.fail(w, err, "login")
 		return
 	}
 	s.log.Info("sign-in started on a server", "host", h.Name, "provider", provider, "login", firstNonEmpty(dir, "default"))
+	writeJSON(w, http.StatusOK, l.waitStarted())
+}
+
+// hostLoginViaServer signs a login of a token-file agent (Antigravity) on a
+// machine in through this server: the CLI here signs a throwaway folder in
+// (the same Google page and pasted code), then its token is written into the
+// machine's login folder, as Copy a sign-in does. On a Mac, agy run over ssh
+// saves its sign-in in the Keychain but looks only in the file on every
+// later run over ssh, so a sign-in made there never worked; signing in here
+// also leaves the machine's own network out of it.
+func (s *Server) hostLoginViaServer(w http.ResponseWriter, h *store.Host, ag agent.ACPAgent, bin, key, dir string) {
+	tmp, err := os.MkdirTemp("", "pocket-"+ag.ID+"-login-")
+	if err != nil {
+		s.fail(w, err, "login")
+		return
+	}
+	ctx, cancel := context.WithTimeout(s.rt.ctx, loginExpiry)
+	// no session bus: the token goes to its file, never a keyring here
+	env := append([]string{"DBUS_SESSION_BUS_ADDRESS="}, loginEnv...)
+	cmd, err := agent.LocalCmd(ctx, tmp, env, bin, ag.LoginCommand(tmp)...)
+	if err != nil {
+		cancel()
+		_ = os.RemoveAll(tmp)
+		s.fail(w, err, "login")
+		return
+	}
+	l, err := s.beginLogin(ctx, cancel, key, ag.ID, cmd, func(ok bool) error {
+		defer os.RemoveAll(tmp)
+		if !ok {
+			return nil
+		}
+		token, rerr := os.ReadFile(filepath.Join(tmp, ag.TokenFile))
+		if rerr != nil || len(strings.TrimSpace(string(token))) == 0 {
+			return fmt.Errorf("%s signed in, but saved no sign-in Pocket AI could take to %s. Try again.", ag.Name, h.Name)
+		}
+		wctx, wcancel := context.WithTimeout(s.rt.ctx, time.Minute)
+		defer wcancel()
+		if _, errOut, werr := remoteOf(h).RunInput(wctx, 45*time.Second, strings.NewReader(string(token)), writeTokenScript, dir, ag.TokenFile, ag.LoginPrefix()); werr != nil {
+			return fmt.Errorf("signed in, but could not save it on %s: %s", h.Name, oneLine(stripANSI(sshError(errOut, werr)), 300))
+		}
+		s.log.Info("signed in on a server", "host", h.Name, "provider", ag.ID, "login", firstNonEmpty(dir, "default"), "via", "this server")
+		s.dropHostStatus(h.ID)
+		s.afterHostLogin(h.ID)
+		return nil
+	})
+	if err != nil {
+		_ = os.RemoveAll(tmp)
+		s.fail(w, err, "login")
+		return
+	}
+	s.log.Info("sign-in started on a server", "host", h.Name, "provider", ag.ID, "login", firstNonEmpty(dir, "default"), "via", "this server")
 	writeJSON(w, http.StatusOK, l.waitStarted())
 }
 

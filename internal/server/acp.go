@@ -326,7 +326,7 @@ func (s *Server) handleACPLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	cmd.Dir = firstNonEmpty(dir, s.cfg.Home)
 	cmd.Env = append(os.Environ(), "NO_BROWSER=true", "TERM=dumb", "NO_COLOR=1", "BROWSER=true")
-	l, err := s.beginLogin(ctx, cancel, key, ag.ID, cmd, func(ok bool) {
+	l, err := s.beginLogin(ctx, cancel, key, ag.ID, cmd, func(ok bool) error {
 		if dir != "" {
 			_ = os.RemoveAll(dir)
 		}
@@ -339,6 +339,7 @@ func (s *Server) handleACPLogin(w http.ResponseWriter, r *http.Request) {
 			s.accountStatus(s.rt.ctx, ag.ID, 0, ag.LoginHome(""), true)
 		}
 		s.rt.publishAccounts()
+		return nil
 	})
 	if err != nil {
 		s.fail(w, err, "login")

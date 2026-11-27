@@ -300,7 +300,7 @@ export function SignInDialog({ target, onClose }: { target: SignInTarget; onClos
         </>}>
       {!st || st.state === 'starting' && !st.url ? <div className="loading"><Spinner /> Starting {command} {where ? `on ${where}` : 'on the server'}…</div>
         : st.state === 'done' ? <div className="callout success"><Icon name="check-circle" size={15} /><span>{where && target.query?.dir ? <>Signed in. In a conversation on that machine, pick <b>{where}</b> next to the model to run on it.</> : where ? <>Signed in. Threads on <b>{where}</b> run on this login now.</> : <>Signed in. New threads can use <b>{label}</b> now.</>}</span></div>
-        : st.state === 'failed' ? <div className="callout danger"><Icon name="alert" size={15} /><span>{st.error || 'The sign-in did not finish.'}</span></div>
+        : st.state === 'failed' ? <div className="callout danger"><Icon name="alert" size={15} /><span style={{ overflowWrap: 'anywhere', minWidth: 0 }}>{st.error || 'The sign-in did not finish.'}</span></div>
         : (
           <div className="stack">
             <ol className="signin-steps">
@@ -319,7 +319,7 @@ export function SignInDialog({ target, onClose }: { target: SignInTarget; onClos
             </ol>
             {st.state === 'checking' && <div className="loading"><Spinner /> Checking the code…</div>}
             {!isClaude && <div className="loading"><Spinner /> Waiting for you to finish on the page…</div>}
-            {st.error && <p className="danger-text small" style={{ margin: 0 }}>{st.error}</p>}
+            {st.error && <p className="danger-text small" style={{ margin: 0, overflowWrap: 'anywhere' }}>{st.error}</p>}
           </div>
         )}
     </Modal>
