@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -951,6 +952,18 @@ func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// requestIDParam is the request's id as the agent gave it. chi hands a
+// path parameter over still escaped when the path had escapes the default
+// encoding would not make: Antigravity's ids have a colon
+// ("jetski-acp-front:2"), which the app sends as %3A.
+func requestIDParam(r *http.Request) string {
+	rid := chi.URLParam(r, "rid")
+	if u, err := url.PathUnescape(rid); err == nil {
+		return u
+	}
+	return rid
+}
+
 func (s *Server) handleRespond(w http.ResponseWriter, r *http.Request) {
 	if !s.requireRun(w, r) {
 		return
@@ -959,20 +972,21 @@ func (s *Server) handleRespond(w http.ResponseWriter, r *http.Request) {
 	if t == nil {
 		return
 	}
+	rid := requestIDParam(r)
 	var in agent.Response
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
 	// saved while its person was away: decided now, told to the agent (away.go)
-	if saved, err := s.deferredFor(r.Context(), t.ID, chi.URLParam(r, "rid"), me(r)); saved {
+	if saved, err := s.deferredFor(r.Context(), t.ID, rid, me(r)); saved {
 		switch {
 		case err != nil:
 			writeErr(w, http.StatusForbidden, err.Error())
 		case in.Decision != "allow" && in.Decision != "allow_session" && in.Decision != "deny":
 			writeErr(w, http.StatusBadRequest, "decision must be allow or deny")
 		default:
-			if err := s.decideDeferred(r.Context(), me(r), t, chi.URLParam(r, "rid"), in); err != nil {
+			if err := s.decideDeferred(r.Context(), me(r), t, rid, in); err != nil {
 				s.fail(w, err, "decide")
 				return
 			}
@@ -980,13 +994,13 @@ func (s *Server) handleRespond(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if strings.HasPrefix(chi.URLParam(r, "rid"), "ask-") {
-		if who := s.askApprover(t.ID, chi.URLParam(r, "rid")); who != 0 && who != me(r) {
+	if strings.HasPrefix(rid, "ask-") {
+		if who := s.askApprover(t.ID, rid); who != 0 && who != me(r) {
 			writeErr(w, http.StatusForbidden, "this change is for someone else's apps: only they can approve it")
 			return
 		}
 	}
-	if (t.Source == "ask" || strings.HasPrefix(chi.URLParam(r, "rid"), "ask-")) && in.Decision == "allow_session" {
+	if (t.Source == "ask" || strings.HasPrefix(rid, "ask-")) && in.Decision == "allow_session" {
 		writeErr(w, 400, "Approve each Ask change individually")
 		return
 	}
@@ -996,7 +1010,7 @@ func (s *Server) handleRespond(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "decision must be allow, allow_session or deny")
 		return
 	}
-	if err := s.rt.respond(t, chi.URLParam(r, "rid"), in); err != nil {
+	if err := s.rt.respond(t, rid, in); err != nil {
 		s.fail(w, err, "respond")
 		return
 	}
