@@ -1,7 +1,7 @@
 // Threads as tabs along the top, like Paseo or a browser: every thread you
 // open gets one. Click to switch, drag to reorder, middle-click or ✕ to
 // close. The list is kept per browser (localStorage).
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useApp } from '../lib/app-context'
 import { providerIcon, threadTitle } from '../lib/format'
@@ -15,6 +15,7 @@ import { projectsRef, refHost, refKey, useProjectsLink } from '../lib/projects'
 import { idsOf, isTermTab, TERM_TAB, tabPath, useMachineItems, useTerminals } from '../lib/terminals'
 import { baseOf, fileIcon, fileTab, isFileTab, parseFileTab } from '../lib/files'
 import { RunDots } from './RunningList'
+import { isPanelTab, KIND_ICON, panelTab, tabInfoStore } from '../lib/panels'
 
 const KEY = 'pai-tabs'
 const load = (key = KEY): string[] => { try { const v = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(v) ? v.filter(x => typeof x === 'string') : [] } catch { return [] } }
@@ -75,6 +76,7 @@ export function useTabs(enabled: boolean) {
   const filePathParam = fileHost ? new URLSearchParams(loc.search).get('path') : null
   const active = /^\/t\/([^/]+)/.exec(loc.pathname)?.[1] || ((g => g ? TERM_TAB + g : '')(/^\/term\/([^/]+)/.exec(loc.pathname)?.[1]))
     || (fileHost && filePathParam ? fileTab(Number(fileHost), filePathParam) : '')
+    || (p => p ? panelTab(p) : '')(/^\/panels\/([^/]+)/.exec(loc.pathname)?.[1]) // a panel is a tab too
   useEffect(() => { localStorage.setItem(KEY, JSON.stringify(tabs)) }, [tabs])
   useEffect(() => { openTabs = enabled ? tabs : null; return () => { openTabs = null } }, [enabled, tabs])
   useEffect(() => { localStorage.setItem(CLOSED, JSON.stringify(closed)) }, [closed])
@@ -215,9 +217,11 @@ export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, i
   const ctx = useContextMenu()
   const tm = useThreadMenu()
   const byId = new Map((threads || []).map(t => [t.id, t] as [string, Thread]))
+  // panels, and the conversations of their participants (in no list): what their tabs show
+  const extra = useSyncExternalStore(tabInfoStore.subscribe, tabInfoStore.get)
   // tabs of threads that are gone (deleted or archived) drop out — except the
   // one on screen (an archived thread you opened keeps its tab)
-  const gone = tabs.filter(id => id !== active && !isFileTab(id) && (isTermTab(id) ? term.list !== null && !termGroup(id) : !!threads && !byId.has(id)))
+  const gone = tabs.filter(id => id !== active && !isFileTab(id) && (extra[id] ? !!extra[id].gone : isPanelTab(id) ? false : isTermTab(id) ? term.list !== null && !termGroup(id) : !!threads && !byId.has(id)))
   const shown = tabs.filter(id => !gone.includes(id))
   useEffect(() => { if (gone.length) close(gone, false) }, [gone.join()]) // eslint-disable-line react-hooks/exhaustive-deps
   const scroller = useRef<HTMLDivElement>(null)
@@ -308,10 +312,11 @@ export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, i
           const tLead = tg ? term.byId.get(tg.focus) || tts[0] : undefined
           const tBusy = tts.some(x => !x.ended && terms.busy_ids.includes(x.id))
           const file = isFileTab(id) ? parseFileTab(id) : null
+          const pn = !t ? extra[id] : undefined // a panel, or one of its participants' conversations
           return (
             <div key={id} role="tab" aria-selected={on} tabIndex={0} draggable
               className={`tab ${on ? 'on' : ''} ${drag === id ? 'dragging' : ''} ${t?.unread && !on ? 'unread' : ''} ${r.group ? `grouped tg-${r.group.color}` : ''} ${t?.pinned ? 'fav' : ''} ${colors[id] ? `tc tc-${colors[id]}` : ''}`}
-              title={file ? `${file.path} · ${file.host ? hosts.find(h => h.id === file.host)?.name || 'Server' : 'This server'}` : t ? threadTitle(t) : tLead ? `${tLead.title} · ${tLead.host_name}${tts.length > 1 ? ` · ${tts.length} panes` : ''}` : ''}
+              title={pn ? pn.title : file ? `${file.path} · ${file.host ? hosts.find(h => h.id === file.host)?.name || 'Server' : 'This server'}` : t ? threadTitle(t) : tLead ? `${tLead.title} · ${tLead.host_name}${tts.length > 1 ? ` · ${tts.length} panes` : ''}` : ''}
               onClick={() => navigate(tabPath(id))}
               onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(tabPath(id)) } }}
               onContextMenu={e => ctx.open(e, () => tabMenu(id, byId.get(id)))}
@@ -328,7 +333,8 @@ export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, i
                 if (into !== from) { if (into) joinGroup(drag, into); else leaveGroup(drag) }
                 move(drag, id)
               }}>
-              {file ? <span className="tab-ico term"><Icon name={fileIcon(file.path)} size={13} /></span> : isTermTab(id) ? <span className="tab-ico term">
+              {pn ? <span className={`tab-ico ${pn.provider || 'term'}`}>{pn.status === 'running' ? <span className="tab-busy" role="img" aria-label="Running" /> : <Icon name={pn.provider ? providerIcon(pn.provider) : KIND_ICON[pn.kind || ''] || 'panel'} size={13} />}</span>
+              : file ? <span className="tab-ico term"><Icon name={fileIcon(file.path)} size={13} /></span> : isTermTab(id) ? <span className="tab-ico term">
                 {tBusy ? <span className="tab-term-busy" role="img" aria-label="Running a command"><RunDots size={11} /></span> : <Icon name="terminal" size={13} />}
               </span> : <span className={`tab-ico ${t?.provider || ''}`}>
                 {busy ? <span className={`tab-busy ${t?.status === 'waiting' || (t?.pending || 0) > 0 ? 'waiting' : ''}`} role="img" aria-label="Working" />
@@ -337,7 +343,7 @@ export function TabBar({ tabs, active, close, move, moveGroup, closed, reopen, i
                   : <Icon name={providerIcon(t?.provider)} size={13} />}
               </span>}
               {t?.pinned && <Icon name="star" size={11} fill className="fav-star" title="Favorite" />}
-              <span className="tab-title">{file ? baseOf(file.path) : t ? threadTitle(t) : tLead ? tLead.title : '…'}</span>
+              <span className="tab-title">{pn ? pn.title : file ? baseOf(file.path) : t ? threadTitle(t) : tLead ? tLead.title : '…'}</span>
               {tts.length > 1 && <span className="tab-panes" title={`${tts.length} panes`}><Icon name="split-right" size={10} />{tts.length}</span>}
               {t && <span className={`tab-privacy ${t.shares?.length ? 'shared' : ''}`} title={t.shares?.length ? (t.owner_name && t.owner_id !== user?.id ? `Shared by ${t.owner_name}` : 'Shared') : 'Private'}>
                 <Icon name={t.shares?.length ? 'users' : 'lock'} size={10} /></span>}

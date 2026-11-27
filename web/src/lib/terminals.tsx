@@ -7,6 +7,7 @@ import { useApp } from './app-context'
 import { useNavigate } from 'react-router-dom'
 import { errMsg, type MenuItem, useToast } from '../components/ui'
 import { filePath, isFileTab, parseFileTab } from './files'
+import { isPanelTab, PANEL_TAB } from './panels'
 
 export interface Term { id: string; host_id: number; host_name: string; title: string; cwd?: string; created_at: string; ended: boolean; exit_code: number; viewers: number }
 
@@ -62,7 +63,7 @@ const newGroupID = () => 'g' + Date.now().toString(36) + Math.random().toString(
 /** Tab ids in the tab bar: conversations are their thread id, terminal tabs "term:<group id>", files "file:<host>:<path>". */
 export const TERM_TAB = 'term:'
 export const isTermTab = (id: string) => id.startsWith(TERM_TAB)
-export const tabPath = (id: string) => isTermTab(id) ? `/term/${id.slice(TERM_TAB.length)}` : isFileTab(id) ? (f => filePath(f.host, f.path))(parseFileTab(id)) : `/t/${id}`
+export const tabPath = (id: string) => isPanelTab(id) ? `/panels/${id.slice(PANEL_TAB.length)}` : isTermTab(id) ? `/term/${id.slice(TERM_TAB.length)}` : isFileTab(id) ? (f => filePath(f.host, f.path))(parseFileTab(id)) : `/t/${id}`
 
 interface Ctx {
   list: Term[] | null

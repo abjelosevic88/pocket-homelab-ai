@@ -135,6 +135,17 @@ func TestCouncilRunsItsSteps(t *testing.T) {
 	if len(got.Answers) != 5 || got.Seats[0].Who != "Claude, Sceptic (A)" {
 		t.Fatalf("view %+v", got)
 	}
+	// a rename sticks
+	c.want("PATCH", "/api/v1/panels/"+p.ID, map[string]string{"title": "  The rewrite  question "}, 200, nil)
+	if np, _ := s.store.GetPanelAny(ctx, p.ID); np.Title != "The rewrite question" {
+		t.Fatalf("renamed to %q", np.Title)
+	}
+	np, _ := s.store.GetPanelAny(ctx, p.ID)
+	np.Title = "stale copy the engine still holds"
+	_ = s.store.SavePanel(ctx, np)
+	if np, _ := s.store.GetPanelAny(ctx, p.ID); np.Title != "The rewrite question" {
+		t.Fatalf("a save by the engine put the old name back: %q", np.Title)
+	}
 	// deleting it takes its participants' conversations along
 	c.want("DELETE", "/api/v1/panels/"+p.ID, nil, 204, nil)
 	if _, err := s.store.GetThreadAny(ctx, seats[0].ThreadID); err == nil {
@@ -267,5 +278,16 @@ func TestPanelItemsBecomeMaterial(t *testing.T) {
 	// a note that cannot be read (no app connection here) stops the start with its name
 	if _, err := s.panelItemsText(ctx, u, []panelItem{{App: "notes", ID: "7", Title: "My plan", Attachable: true}}); err == nil || !strings.Contains(err.Error(), "“My plan” from Pocket Notes") {
 		t.Fatalf("unreadable note: %v", err)
+	}
+}
+
+// What a working participant is doing shows its long paths short.
+func TestLongPathsShowTheirEnd(t *testing.T) {
+	got := longPathRe.ReplaceAllString("Read /home/me/Projects/app/internal/server/panels.go", "…/$1")
+	if got != "Read …/server/panels.go" {
+		t.Fatal(got)
+	}
+	if got := longPathRe.ReplaceAllString("Run go test ./internal/...", "…/$1"); got != "Run go test ./internal/..." {
+		t.Fatal(got)
 	}
 }

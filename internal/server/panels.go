@@ -382,6 +382,9 @@ func (s *Server) startPanel(ctx context.Context, u *store.User, in panelStart) (
 	s.log.Info("panel started", "panel", p.ID, "kind", p.Kind, "seats", len(specs), "depth", panelDepthNames[depth], "from", p.FromThreadID)
 	s.panelChanged(p)
 	s.goPanel(p.ID)
+	if strings.TrimSpace(in.Title) == "" {
+		go s.namePanel(p.ID, p.UserID, p.Title, in.Question, in.Material)
+	}
 	return p, nil
 }
 
@@ -451,6 +454,31 @@ func panelMaterialLine(m string) string {
 	return m
 }
 
+// namePanel gives a new panel a short name instead of the first words of its
+// question (a small model, on the person's own login), unless the person
+// named it meanwhile.
+func (s *Server) namePanel(id string, uid int64, was, question, material string) {
+	ctx, cancel := context.WithTimeout(s.rt.ctx, 2*time.Minute)
+	defer cancel()
+	var b strings.Builder
+	b.WriteString("<conversation>\nFirst message:\n")
+	b.WriteString(clipRunes(firstNonEmpty(question, material), 2000))
+	if question != "" && material != "" {
+		b.WriteString("\n\nWhat it is about:\n" + clipRunes(material, 1200))
+	}
+	b.WriteString("\n</conversation>\n\nReply with its name only.")
+	name, err := s.titleFor(ctx, uid, "haiku", b.String())
+	if err != nil || name == "" || name == was {
+		return
+	}
+	if ok, _ := s.store.RenamePanel(ctx, uid, id, name, was); !ok {
+		return
+	}
+	if p, err := s.store.GetPanelAny(ctx, id); err == nil {
+		s.panelChanged(p)
+	}
+}
+
 // goPanel runs a panel in the background (once).
 func (s *Server) goPanel(id string) {
 	panelRunsMu.Lock()
@@ -491,7 +519,11 @@ func (s *Server) resumePanels(ctx context.Context) {
 
 // panelChanged tells the person's open pages that a panel moved on.
 func (s *Server) panelChanged(p *store.Panel) {
-	s.rt.toUser(p.UserID, sseEvent{Name: "panel", Data: map[string]any{"id": p.ID, "status": p.Status, "stage": p.Stage, "from_thread_id": p.FromThreadID}})
+	title := p.Title
+	if fresh, err := s.store.GetPanelAny(s.rt.ctx, p.ID); err == nil {
+		title = fresh.Title // the person may have renamed it while a step ran
+	}
+	s.rt.toUser(p.UserID, sseEvent{Name: "panel", Data: map[string]any{"id": p.ID, "status": p.Status, "stage": p.Stage, "title": title, "from_thread_id": p.FromThreadID}})
 }
 
 func (s *Server) runPanel(ctx context.Context, id string) {

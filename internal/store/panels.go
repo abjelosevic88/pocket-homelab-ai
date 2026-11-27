@@ -192,9 +192,26 @@ func (s *Store) panels(ctx context.Context, q string, args ...any) ([]*Panel, er
 func (s *Store) SavePanel(ctx context.Context, p *Panel) error {
 	spec, _ := json.Marshal(p.Spec)
 	p.UpdatedAt = Now()
-	_, err := s.DB.ExecContext(ctx, `UPDATE panels SET title = ?, spec = ?, status = ?, stage = ?, stage_at = ?, result = ?, error = ?, report = ?, updated_at = ?, finished_at = ? WHERE id = ?`,
-		p.Title, string(spec), p.Status, p.Stage, p.StageAt, p.Result, p.Error, boolInt(p.Report), p.UpdatedAt, p.FinishedAt, p.ID)
+	_, err := s.DB.ExecContext(ctx, `UPDATE panels SET spec = ?, status = ?, stage = ?, stage_at = ?, result = ?, error = ?, report = ?, updated_at = ?, finished_at = ? WHERE id = ?`,
+		string(spec), p.Status, p.Stage, p.StageAt, p.Result, p.Error, boolInt(p.Report), p.UpdatedAt, p.FinishedAt, p.ID)
 	return err
+}
+
+// RenamePanel gives a panel another title. was: only when it is still called
+// that ("" = whatever it is called), so a name the person typed is not
+// replaced by one found for them.
+func (s *Store) RenamePanel(ctx context.Context, userID int64, id, title, was string) (bool, error) {
+	q, args := `UPDATE panels SET title = ?, updated_at = ? WHERE id = ? AND user_id = ?`, []any{title, Now(), id, userID}
+	if was != "" {
+		q += ` AND title = ?`
+		args = append(args, was)
+	}
+	res, err := s.DB.ExecContext(ctx, q, args...)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 func (s *Store) DeletePanel(ctx context.Context, userID int64, id string) error {

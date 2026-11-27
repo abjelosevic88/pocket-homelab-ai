@@ -5,7 +5,8 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { ago, fmtCost, providerName } from '../lib/format'
-import { KIND_ICON, openPanelSheet, PANEL_EVENT, type Panel, type PanelSeat } from '../lib/panels'
+import { forgetPanelTab, KIND_ICON, openPanelSheet, PANEL_EVENT, panelTab, rememberTab, type Panel, type PanelSeat } from '../lib/panels'
+import { pathAfterDelete } from '../components/TabBar'
 import type { ProviderId, Thread } from '../lib/types'
 import { offeredProviders } from '../components/AgentPicker'
 import { Icon } from '../components/icons'
@@ -33,7 +34,7 @@ function usePanelEvents(fn: (d: { id: string; status: string }) => void) {
 }
 
 function SeatDots({ seats }: { seats: PanelSeat[] }) {
-  return <span className="pn-dots">{seats.filter(s => !s.chair).map(s => <span key={s.id} className={`pn-dot ${s.state}`} title={`${s.who}${s.error ? ' — ' + s.error : ''}`}><Icon name={s.provider} size={13} className={`prov-glyph ${s.provider}`} /></span>)}</span>
+  return <span className="pn-dots">{seats.filter(s => !s.chair).map(s => <span key={s.id} className={`pn-dot ${s.state}`} title={`${s.who}${s.error ? ' — ' + s.error : s.state === 'working' ? ' — working' : s.state === 'done' ? ' — answered' : ''}`}><Icon name={s.provider} size={12} className={`prov-glyph ${s.provider}`} /></span>)}</span>
 }
 
 export default function PanelsPage({ onMenu }: { onMenu?: () => void }) {
@@ -43,6 +44,7 @@ export default function PanelsPage({ onMenu }: { onMenu?: () => void }) {
   const [list, setList] = useState<Panel[] | null>(null)
   const [err, setErr] = useState('')
   const [del, setDel] = useState<Panel | null>(null)
+  const [ren, setRen] = useState<Panel | null>(null)
   const ctx = useContextMenu()
   const canRun = !!user && (user.role === 'admin' || user.can_run)
   const load = useCallback(() => api.get<Panel[]>(`${V1}/panels`).then(l => { setList(l || []); setErr('') }).catch(e => setErr(errMsg(e))), [])
@@ -88,6 +90,7 @@ export default function PanelsPage({ onMenu }: { onMenu?: () => void }) {
                   const st = STATUS[p.status]
                   const more: MenuItem[] = [
                     { label: 'Open', icon: 'external', onSelect: () => navigate(`/panels/${p.id}`) },
+                    { label: 'Rename…', icon: 'edit', onSelect: () => setRen(p) },
                     { label: 'Delete…', icon: 'trash', danger: true, onSelect: () => setDel(p) },
                   ]
                   const step = p.status === 'running' && p.spec.stages[p.stage]
@@ -115,19 +118,51 @@ export default function PanelsPage({ onMenu }: { onMenu?: () => void }) {
           </div>
         </div>
       </div>
+      {ren && <RenamePanel panel={ren} onClose={() => setRen(null)} onDone={() => { setRen(null); void load() }} />}
       {del && <Confirm title={`Delete “${del.title}”?`} message="The participants’ conversations are deleted with it." onCancel={() => setDel(null)}
-        onConfirm={async () => { const d = del; setDel(null); try { await api.del(`${V1}/panels/${d.id}`); void load(); toast('Panel deleted') } catch (e) { toast(errMsg(e), 'err') } }} />}
+        onConfirm={async () => { const d = del; setDel(null); try { await api.del(`${V1}/panels/${d.id}`); forgetPanelTab(d.id); void load(); toast('Panel deleted') } catch (e) { toast(errMsg(e), 'err') } }} />}
     </div>
+  )
+}
+
+/** Rename a panel. */
+function RenamePanel({ panel, onClose, onDone }: { panel: Panel; onClose: () => void; onDone: (p: Panel) => void }) {
+  const { toast } = useToast()
+  const [title, setTitle] = useState(panel.title)
+  const [busy, setBusy] = useState(false)
+  const save = async () => {
+    if (!title.trim() || busy) return
+    setBusy(true)
+    try { onDone(await api.patch<Panel>(`${V1}/panels/${panel.id}`, { title })) } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
+  }
+  return (
+    <Modal title="Rename the panel" onClose={onClose} size="sm" footer={<>
+      <button type="button" className="btn" onClick={onClose}>Cancel</button>
+      <button type="button" className="btn primary" disabled={!title.trim() || busy} onClick={save}>{busy && <Spinner />}Rename</button>
+    </>}>
+      <input autoFocus value={title} maxLength={140} aria-label="Name" onFocus={e => e.currentTarget.select()} onChange={e => setTitle(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void save() }} />
+    </Modal>
   )
 }
 
 const ACTIVITY: Record<string, string> = { starting: 'Starting…', working: 'Working…', waiting_for_person: 'Needs your answer', waiting: 'Waiting for its turn', skipped: 'Left out', failed: 'Dropped out', done: 'Done' }
 
+/** "1m 20s" since an ISO time, ticking. */
+function Elapsed({ since }: { since?: string }) {
+  const [, tick] = useState(0)
+  useEffect(() => { const t = setInterval(() => tick(n => n + 1), 1000); return () => clearInterval(t) }, [])
+  const ms = since ? Date.now() - new Date(since).getTime() : NaN
+  if (!(ms >= 0)) return null
+  const s = Math.floor(ms / 1000)
+  return <span className="tnum">{s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`}</span>
+}
+
 /** One participant's card in a step: its answer, what it is writing, or why it dropped out. */
 function SeatCard({ seat, text, live, current, onOpen }: { seat: PanelSeat; text?: string; live?: boolean; current: boolean; onOpen: () => void }) {
   const [copied, setCopied] = useState(false)
   const failed = !text && (seat.state === 'failed' || seat.state === 'skipped')
-  const working = current && !text && seat.state === 'working'
+  const working = current && seat.state === 'working'
+  const asks = seat.activity === 'waiting_for_person'
   return (
     <article className={`pn-answer ${failed ? 'failed' : ''} ${working ? 'working' : ''}`}>
       <header className="pn-answer-h">
@@ -136,14 +171,20 @@ function SeatCard({ seat, text, live, current, onOpen }: { seat: PanelSeat; text
           <div className="pn-who"><Icon name={seat.provider} size={14} className={`prov-glyph ${seat.provider}`} /><span className="ellipsis">{providerName(seat.provider)}{seat.model ? ` · ${seat.model}` : ''}</span></div>
           <div className="pn-sub muted xsmall">{[seat.role, seat.machine].filter(Boolean).join(' · ')}</div>
         </div>
-        {working && <span className={`badge ${seat.activity === 'waiting_for_person' ? 'warn' : 'accent-soft'}`}>{seat.activity === 'waiting_for_person' ? <Icon name="alert" size={10} /> : <Spinner size={9} />}{ACTIVITY[seat.activity] || 'Working…'}</span>}
-        {text && <button type="button" className="btn ghost icon-only xs" title={copied ? 'Copied' : 'Copy'} aria-label="Copy this answer" onClick={async () => { if (await copyText(text)) { setCopied(true); setTimeout(() => setCopied(false), 1500) } }}><Icon name={copied ? 'check' : 'copy'} size={14} /></button>}
-        {seat.thread_id && <button type="button" className="btn ghost icon-only xs" title="Open its conversation: see how it worked, or ask it more" aria-label="Open its conversation" onClick={onOpen}><Icon name="external" size={14} /></button>}
+        {text && !live && <button type="button" className="btn ghost icon-only xs" title={copied ? 'Copied' : 'Copy'} aria-label="Copy this answer" onClick={async () => { if (await copyText(text)) { setCopied(true); setTimeout(() => setCopied(false), 1500) } }}><Icon name={copied ? 'check' : 'copy'} size={14} /></button>}
+        {seat.thread_id && <button type="button" className="btn ghost icon-only xs" title="Open its conversation in a tab: see how it works, or ask it more" aria-label="Open its conversation" onClick={onOpen}><Icon name="external" size={14} /></button>}
       </header>
+      {working && (
+        <button type="button" className={`pn-doing ${asks ? 'asks' : ''}`} onClick={onOpen} title="Open its conversation in a tab to watch it work">
+          {asks ? <Icon name="alert" size={13} /> : <Spinner size={11} />}
+          <span className="pn-doing-what ellipsis">{asks ? 'It asked something — open it to answer' : seat.doing || (seat.activity === 'starting' ? 'Starting…' : text ? 'Writing…' : 'Thinking…')}</span>
+          <span className="pn-doing-meta">{!!seat.steps && <span>{seat.steps} {seat.steps === 1 ? 'step' : 'steps'}</span>}<Elapsed since={seat.since} /></span>
+        </button>
+      )}
       <div className="pn-answer-body">
         {text ? <Markdown text={text} className={live ? 'pn-live' : ''} />
           : failed ? <div className="pn-out"><Icon name="alert" size={14} /><span>{seat.error || ACTIVITY[seat.state]}</span></div>
-          : working ? <div className="pn-wait muted small">{seat.activity === 'waiting_for_person' ? 'It asked something. Open its conversation to answer.' : 'Nothing written yet…'}</div>
+          : working ? <div className="pn-skel" aria-hidden><span /><span /><span /></div>
           : <div className="pn-wait muted small">{current ? ACTIVITY[seat.state] || '' : 'No answer in this step'}</div>}
       </div>
     </article>
@@ -160,12 +201,15 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
   const [tab, setTab] = useState<number | null>(null)
   const [asked, setAsked] = useState(false)
   const [del, setDel] = useState(false)
+  const [ren, setRen] = useState(false)
   const [cont, setCont] = useState<{ text: string; provider: ProviderId | '' } | null>(null)
   const [busy, setBusy] = useState('')
   const load = useCallback(() => api.get<Panel>(`${V1}/panels/${id}`).then(x => { setP(x); setErr('') }).catch(e => setErr(errMsg(e))), [id])
   useEffect(() => { setP(null); setTab(null); void load() }, [load])
   usePanelEvents(d => { if (d.id === id) void load() })
   const running = p?.status === 'running'
+  // its tab: named after the question, a spinner while it runs
+  useEffect(() => { if (p) rememberTab(panelTab(p.id), { title: p.title, kind: p.kind, status: p.status }) }, [p?.id, p?.title, p?.kind, p?.status]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!running) return
     const t = setInterval(() => { if (!document.hidden) void load() }, 1500)
@@ -190,7 +234,11 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
   const writing = running && stages[p.stage]?.who === 'chair'
   const chairLive = writing ? chair?.live : ''
   const failedSeats = seats.filter(s => s.state === 'failed' || s.state === 'skipped')
-  const openThread = (tid: string) => navigate(`/t/${tid}`)
+  const openThread = (tid: string) => {
+    const s = p.seats.find(x => x.thread_id === tid)
+    if (s) rememberTab(tid, { title: `${p.spec.kind_name} · ${s.chair ? 'summary' : s.label}${s.role ? ' ' + s.role : ''}: ${p.title}`, provider: s.provider })
+    navigate(`/t/${tid}`)
+  }
 
   const act = async (what: string, fn: () => Promise<void>) => { setBusy(what); try { await fn() } catch (e) { toast(errMsg(e), 'err') } finally { setBusy('') } }
   const stop = () => act('stop', async () => { setP(await api.post<Panel>(`${V1}/panels/${p.id}/stop`)) })
@@ -201,6 +249,7 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
     upsertThread(t); setCont(null); navigate(`/t/${t.id}`)
   })
   const more: MenuItem[] = [
+    { label: 'Rename…', icon: 'edit', onSelect: () => setRen(true) },
     { label: 'Copy everything as Markdown', icon: 'copy', onSelect: () => void copyAll() },
     { label: 'Download as Markdown', icon: 'download', onSelect: () => download(`${V1}/panels/${p.id}/export.md?download=1`) },
     { label: 'Run it again', icon: 'refresh', onSelect: () => void again(), disabled: running },
@@ -212,7 +261,7 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
 
   return (
     <div className="page">
-      <PageHead title={p.spec.kind_name} icon={KIND_ICON[p.kind] || 'users'} onMenu={onMenu} sub={<span className="pn-head-sub">{p.title}</span>}
+      <PageHead title={p.spec.kind_name} icon={KIND_ICON[p.kind] || 'users'} onMenu={onMenu} sub={<button type="button" className="pn-head-sub" title="Rename" onClick={() => setRen(true)}>{p.title}</button>}
         actions={<>
           <button type="button" className="btn ghost sm pn-back" onClick={() => navigate('/panels')}><Icon name="chevron-left" size={14} />All panels</button>
           {running ? <button type="button" className="btn" disabled={busy === 'stop'} onClick={stop}>{busy === 'stop' ? <Spinner size={11} /> : <Icon name="x" size={13} />}Stop</button>
@@ -252,7 +301,8 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
                   : chair && <span className="muted xsmall pn-by" title="It got the answers by letter, without the models’ names"><Icon name={chair.provider} size={12} className={`prov-glyph ${chair.provider}`} />{providerName(chair.provider)}{chair.model ? ` · ${chair.model}` : ''}</span>}
                 {chair?.thread_id && <button type="button" className="btn ghost icon-only xs" title="Open the summary writer’s conversation" aria-label="Open the summary writer’s conversation" onClick={() => openThread(chair.thread_id)}><Icon name="external" size={14} /></button>}
               </header>
-              {outcome ? <Markdown text={outcome} className={writing ? 'pn-live' : ''} /> : <div className="pn-wait muted small">Reading the answers…</div>}
+              {writing && chair && <div className="pn-doing flat"><Spinner size={11} /><span className="pn-doing-what ellipsis">{chair.doing || (outcome ? 'Writing…' : 'Reading the answers…')}</span><span className="pn-doing-meta">{!!chair.steps && <span>{chair.steps} {chair.steps === 1 ? 'step' : 'steps'}</span>}<Elapsed since={chair.since} /></span></div>}
+              {outcome ? <Markdown text={outcome} className={writing ? 'pn-live' : ''} /> : <div className="pn-skel" aria-hidden><span /><span /><span /></div>}
               {p.result && !running && <div className="pn-outcome-foot">
                 <button type="button" className="btn primary sm" onClick={() => setCont({ text: '', provider: '' })}><Icon name="arrow-right" size={13} />Continue with this</button>
                 <button type="button" className="btn sm" onClick={async () => { if (await copyText(p.result)) toast('Copied') }}><Icon name="copy" size={13} />Copy</button>
@@ -283,8 +333,9 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
           </section>}
         </div>
       </div>
+      {ren && <RenamePanel panel={p} onClose={() => setRen(false)} onDone={np => { setRen(false); setP(np) }} />}
       {del && <Confirm title="Delete this panel?" message="The participants’ conversations are deleted with it." onCancel={() => setDel(false)}
-        onConfirm={async () => { setDel(false); try { await api.del(`${V1}/panels/${p.id}`); navigate('/panels'); toast('Panel deleted') } catch (e) { toast(errMsg(e), 'err') } }} />}
+        onConfirm={async () => { setDel(false); try { await api.del(`${V1}/panels/${p.id}`); const to = pathAfterDelete(panelTab(p.id)); forgetPanelTab(p.id); navigate(to === '/' ? '/panels' : to); toast('Panel deleted') } catch (e) { toast(errMsg(e), 'err') } }} />}
       {cont && <Modal title="Continue with this" onClose={() => setCont(null)} footer={<>
         <button type="button" className="btn" onClick={() => setCont(null)}>Cancel</button>
         <button type="button" className="btn primary" disabled={busy === 'cont'} onClick={goOn}>{busy === 'cont' && <Spinner />}Start the conversation</button>

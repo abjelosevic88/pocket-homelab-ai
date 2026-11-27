@@ -1,3 +1,4 @@
+import { panelTabEvent } from './panels'
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { api, V1 } from './api'
 import { openSSE } from './sse'
@@ -252,7 +253,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       terminals: d => setTerms({ ...noTerms, ...(d as TermSummary) }),
       away: () => reloadAway(),
       // a panel moved on: the Panels pages and the conversation it came from listen
-      panel: d => window.dispatchEvent(new CustomEvent('pai:panel', { detail: d })),
+      panel: d => { panelTabEvent(d as { id?: string; status?: string; title?: string }); window.dispatchEvent(new CustomEvent('pai:panel', { detail: d })) },
       ping: () => {},
     }, { onOpen: () => { setLive(true); reloadThreads().catch(() => {}); reloadRunning(); reloadTerms(); reloadAway() }, onDown: () => setLive(false) })
     return () => { close(); setLive(false) }

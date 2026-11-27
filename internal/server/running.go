@@ -39,7 +39,11 @@ func (s *Server) runningFor(ctx context.Context, u *store.User) []runningItem {
 	if u.MayRun() {
 		mine := s.accountIDsFor(ctx, u)
 		visible := s.sessionFilter(ctx, u)
+		sessions := s.store.SessionThreadsAll(ctx, u.ID)
 		for _, a := range s.rt.activeSnapshot() {
+			if sessions[a.Provider+":"+a.SessionID].Source == "panel" {
+				continue // a panel's participant: its panel shows it (Panels)
+			}
 			if !mine[a.Provider+"/"+strconv.FormatInt(a.Account, 10)] || !visible(a.Provider, a.SessionID, a.Account) {
 				continue // someone else's login or chat
 			}

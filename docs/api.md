@@ -277,6 +277,7 @@ Scheduled prompts get an instruction appended: finish with a first line `OK: …
 | `POST /panels/{id}/stop` · `/again` | stop it; run it once more with the same settings |
 | `POST /panels/{id}/continue` | start an ordinary conversation that carries the outcome (`text`, `provider`, `model`) |
 | `GET /panels/{id}/export.md` | the whole panel as Markdown (`?download=1`) |
+| `PATCH /panels/{id}` | rename it (`title`); a new panel gets a short name by itself |
 | `DELETE /panels/{id}` | with its participants' conversations |
 | `POST·PUT·DELETE /panels/lineups[/{id}]` | saved line-ups (`name`, `seats`, `chair`, `default`) |
 | `POST·PUT·DELETE /panels/kinds[/{id}]` | the person's own kinds (`name`, `description`, `stages`) |

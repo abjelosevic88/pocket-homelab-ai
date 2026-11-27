@@ -29,7 +29,7 @@ import { projectsPaused, projectsRef, refKey, reloadProjectsLink, useProjectsLin
 import { AttachIssueDialog } from '../components/AttachIssueDialog'
 import { Timeline } from '../components/Timeline'
 import { PanelParentChip, PanelsChip, reviewMaterial } from '../components/PanelChips'
-import { openPanelSheet, PANEL_COMMANDS } from '../lib/panels'
+import { openPanelSheet, PANEL_COMMANDS, rememberTab } from '../lib/panels'
 import { FileLinkContext } from '../components/Markdown'
 import { NotebookPane, withReading, type Reading } from '../components/Notebook'
 import { PrivacyBadge, ShareDialog } from '../components/ShareDialog'
@@ -161,6 +161,8 @@ export default function ThreadPage({ onMenu, threadId, embedded, reading }: { on
   // the list's copy is fresher while the detail loads
   const listCopy = threads?.find(t => t.id === id) || null
   const t = thread || listCopy
+  // a panel's participant is in no list: its tab gets its name from here
+  useEffect(() => { if (t?.source === 'panel') rememberTab(t.id, { title: t.title, provider: t.provider }) }, [t?.id, t?.source, t?.title, t?.provider]) // eslint-disable-line react-hooks/exhaustive-deps
   const hostName = useHostName(t?.host_id)
   // a Projects conversation whose workspace isn't the one open in Projects
   const projectsLink = useProjectsLink(useMemo(() => [projectsRef(t || undefined)].filter(Boolean), [t?.id]))

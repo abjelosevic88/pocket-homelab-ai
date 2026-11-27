@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/abjelosevic88/pocket-homelab-ai/internal/agent"
 	"github.com/abjelosevic88/pocket-homelab-ai/internal/store"
 )
 
@@ -25,6 +28,7 @@ func (s *Server) panelRoutes(r chi.Router) {
 	r.Put("/panels/kinds/{rid}", s.handleSavePanelKind)
 	r.Delete("/panels/kinds/{rid}", s.handleDeletePanelKind)
 	r.Get("/panels/{id}", s.handleGetPanel)
+	r.Patch("/panels/{id}", s.handleRenamePanel)
 	r.Delete("/panels/{id}", s.handleDeletePanel)
 	r.Post("/panels/{id}/stop", s.handleStopPanel)
 	r.Post("/panels/{id}/again", s.handlePanelAgain)
@@ -40,10 +44,15 @@ type panelSeatView struct {
 	Who     string `json:"who"`     // "Claude opus, Sceptic (A)"
 	Machine string `json:"machine"` // "" = this server
 	// Activity: starting | working | waiting_for_person | done | failed | skipped | waiting
-	Activity string  `json:"activity"`
-	Live     string  `json:"live,omitempty"` // what it has written so far in the step it is at
-	CostUSD  float64 `json:"cost_usd"`
-	Tokens   int64   `json:"tokens"`
+	Activity string `json:"activity"`
+	Live     string `json:"live,omitempty"` // what it has written so far in the step it is at
+	// While it works: how many things it has looked at or run in this step,
+	// the latest of them in a few words, and since when it is at it.
+	Steps   int     `json:"steps,omitempty"`
+	Doing   string  `json:"doing,omitempty"`
+	Since   string  `json:"since,omitempty"`
+	CostUSD float64 `json:"cost_usd"`
+	Tokens  int64   `json:"tokens"`
 }
 
 type panelView struct {
@@ -77,8 +86,10 @@ func (s *Server) viewPanel(ctx context.Context, p *store.Panel, full bool) panel
 					if !info.Finished {
 						sv.Activity = info.State
 					}
+					sv.Since = firstNonEmpty(th.PromptAt, th.ActivityAt)
 					if full {
 						sv.Live, _, _ = s.store.LastReply(ctx, th.ID)
+						sv.Steps, sv.Doing = s.seatDoing(ctx, th.ID)
 					}
 				}
 			}
@@ -97,6 +108,39 @@ func (s *Server) viewPanel(ctx context.Context, p *store.Panel, full bool) panel
 		}
 	}
 	return v
+}
+
+// longPathRe finds a long absolute path, to show only its last two parts.
+var longPathRe = regexp.MustCompile(`/(?:[^/\s]+/){2,}([^/\s]+/[^/\s]+)`)
+
+// seatDoing is what a participant has done since it was asked: how many tool
+// calls, and the latest one in a few words.
+func (s *Server) seatDoing(ctx context.Context, threadID string) (int, string) {
+	items, _, err := s.store.ListItemsTail(ctx, threadID, 0, 1, 300)
+	if err != nil {
+		return 0, ""
+	}
+	live := s.rt.liveItems(threadID)
+	n, last := 0, ""
+	for _, it := range items {
+		switch it.Kind {
+		case "user":
+			n, last = 0, ""
+		case "tool":
+			var v agent.Item
+			if lv, ok := live[it.Key]; ok {
+				v = lv
+			} else if json.Unmarshal(it.Data, &v) != nil {
+				continue
+			}
+			if v.Tool == nil {
+				continue
+			}
+			n++
+			last = oneLine(longPathRe.ReplaceAllString(firstNonEmpty(v.Tool.Title, v.Tool.Name), "…/$1"), 90)
+		}
+	}
+	return n, last
 }
 
 func (s *Server) handleListPanels(w http.ResponseWriter, r *http.Request) {
@@ -174,6 +218,32 @@ func (s *Server) handleStopPanel(w http.ResponseWriter, r *http.Request) {
 	if fresh, err := s.store.GetPanel(r.Context(), p.UserID, p.ID); err == nil {
 		p = fresh
 	}
+	writeJSON(w, http.StatusOK, s.viewPanel(r.Context(), p, true))
+}
+
+func (s *Server) handleRenamePanel(w http.ResponseWriter, r *http.Request) {
+	p := s.panel(w, r)
+	if p == nil {
+		return
+	}
+	var in struct {
+		Title string `json:"title"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	title := oneLine(in.Title, 140)
+	if title == "" {
+		writeErr(w, http.StatusBadRequest, "Give it a name")
+		return
+	}
+	if _, err := s.store.RenamePanel(r.Context(), p.UserID, p.ID, title, ""); err != nil {
+		s.fail(w, err, "rename panel")
+		return
+	}
+	p.Title = title
+	s.panelChanged(p)
 	writeJSON(w, http.StatusOK, s.viewPanel(r.Context(), p, true))
 }
 

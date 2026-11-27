@@ -1,4 +1,5 @@
 // Threads, grouped by time, with search (titles here, all messages on Enter), folder filter, favorites and archive.
+import { useRunningPanels } from '../lib/panels'
 import type React from 'react'
 import { RunDots, RunningList, elapsed, useNow } from './RunningList'
 import { idsOf, useTerminals } from '../lib/terminals'
@@ -189,6 +190,7 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
   }, [shown, showArchive, showFav, projIssues, shownIds])
   const sharedN = (threads || []).filter(t => !mine(t) || !!t.shares?.length).length
   const activeWt = worktrees.filter(w => w.status === 'active').length
+  const panelsRunning = useRunningPanels(!!user && (user.role === 'admin' || !!user.can_run))
   const needYou = (base || []).filter(t => t.status === 'waiting' || t.pending > 0).length
 
   const searchAll = async () => {
@@ -223,7 +225,8 @@ export function Sidebar({ onNavigate, onPalette }: { onNavigate: () => void; onP
       </div>
       <nav className="sb-nav">
         {menu.map(({ item }) => {
-          const extra = item.id === 'worktrees' ? (activeWt > 0 ? <span className="badge">{activeWt}</span> : undefined)
+          const extra = item.id === 'panels' ? (panelsRunning > 0 ? <span className="sb-term" title={`${panelsRunning} running`}><RunDots size={11} /><span className="badge accent-soft">{panelsRunning}</span></span> : undefined)
+            : item.id === 'worktrees' ? (activeWt > 0 ? <span className="badge">{activeWt}</span> : undefined)
             : item.id === 'shared' ? (sharedN > 0 ? <span className="badge">{sharedN}</span> : undefined)
             : item.id === 'terminal' && terms.open > 0 ? (
               <span className="sb-term" title={terms.busy ? `${terms.open} open · ${terms.busy} running a command` : `${terms.open} open`}>
