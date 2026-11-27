@@ -401,6 +401,15 @@
 .md .code-wrap > pre { margin: 0; }
 .md pre { position: relative; margin: 0 0 12px; background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 10px; padding: 12px 14px; overflow-x: auto; font-size: 12.5px; line-height: 1.5; }
 .md pre code { background: none; padding: 0; font-size: inherit; }
+/* a ```svg block an agent wrote: shown as the picture (lib/drawings.ts) */
+.md .md-drawing { margin: 4px 0 14px; display: flex; flex-direction: column; gap: 6px; width: 260px; max-width: 100%; }
+.md .md-drawing img { display: block; width: 100%; height: auto; max-height: 360px; object-fit: contain; border-radius: 12px; border: 1px solid var(--hairline); background: repeating-conic-gradient(var(--surface-2) 0 25%, var(--surface) 0 50%) 0 0 / 16px 16px; cursor: zoom-in; }
+.md .md-drawing.big { width: min(640px, 100%); }
+.md .md-drawing.big img { max-height: 80vh; cursor: zoom-out; }
+.md .md-drawing figcaption { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.md .md-drawing-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--text-2); }
+.md .md-drawing-btn { font: inherit; font-size: 11.5px; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); cursor: pointer; text-decoration: none; }
+.md .md-drawing-btn:hover { color: var(--text); }
 .code-copy { position: absolute; top: 7px; right: 7px; z-index: 1; font: inherit; font-family: var(--font); font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); cursor: pointer; opacity: 0; transition: opacity .12s;
   box-shadow: -14px 0 10px var(--surface-2), 6px 0 0 var(--surface-2); /* code scrolling under it fades out instead of clashing */ }
 .code-wrap.one-line .code-copy { top: 50%; transform: translateY(-50%); }

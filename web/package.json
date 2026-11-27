@@ -10,6 +10,7 @@
     "test:activity": "node --test tests/tool-activity.test.ts",
     "test:filelinks": "node --test tests/filelinks.test.ts",
     "test:codelines": "node --test tests/code-lines.test.ts",
+    "test:drawings": "node --test tests/drawings.test.ts",
     "test:mobile": "node tests/mobile.mjs",
     "test:worktrees": "node tests/worktree-cleanup.mjs"
   },

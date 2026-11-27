@@ -165,6 +165,9 @@ function OwnKindDialog({ kind, onClose, onSaved }: { kind: Partial<OwnKind>; onC
 /** Who takes part when nobody is picked: a "/" command, a panel an agent starts (/refine),
  *  and what a new panel's sheet starts with. Every agent that works on the server is listed;
  *  switch off the ones that should stay out. Saved as the person's default line-up. */
+// questions about something you look at: drawings come on by themselves
+const VISUAL = /\b(icons?|logos?|favicons?|mock-?ups?|wireframes?|layouts?|screens?|ui|ux|designs?|redesign|sketch(es)?|drawings?|illustrations?|posters?|diagrams?|charts?|colou?rs?|palettes?|brand(ing)?|visual|look and feel|landing page)\b/i
+
 export function PanelDefaults({ onClose }: { onClose: () => void }) {
   const { toast } = useToast()
   const { providers } = useApp()
@@ -269,6 +272,9 @@ export function PanelSetup({ draft, onClose }: { draft: PanelDraft; onClose: () 
   const [report, setReport] = useState(!!draft.fromThreadId)
   const [mode, setMode] = useState<'' | 'edit' | 'auto' | 'full'>('edit')
   const [access, setAccess] = useState<Access>('')
+  // Draw it: the models also sketch their ideas. Remembered; it comes on by itself when the question
+  // sounds visual, until the person sets it
+  const [drawSet, setDrawSet] = useState<boolean | null>(null)
   // things picked from the person's other Pocket apps; picking: which box "@" was typed in (to take it out again)
   const [picks, setPicks] = useState<PickedItem[]>([])
   const [picking, setPicking] = useState<'' | 'button' | 'question' | 'material'>('')
@@ -298,6 +304,7 @@ export function PanelSetup({ draft, onClose }: { draft: PanelDraft; onClose: () 
   const dnum = DEPTHS.indexOf(depth)
   const running = stages.filter(s => (s.depth || 0) <= dnum)
   const needsChair = running.some(s => s.who === 'chair')
+  const draw = drawSet ?? (localStorage.getItem('pai-panel-draw') === '1' || VISUAL.test(question + ' ' + material.slice(0, 2000)))
   const roles = ownKind ? (opts?.roles || []) : (k?.roles || [])
   const building = !ownKind && kind === 'build'
   const debate = !ownKind && kind === 'debate'
@@ -344,6 +351,7 @@ export function PanelSetup({ draft, onClose }: { draft: PanelDraft; onClose: () 
     setBusy(true)
     try {
       localStorage.setItem('pai-panel-depth-' + kind, depth)
+      if (!building && drawSet !== null) localStorage.setItem('pai-panel-draw', drawSet ? '1' : '0')
       const p = await api.post<Panel>(`${V1}/panels`, {
         kind: ownKind ? '' : kind, recipe_id: own || undefined, question, material, depth,
         seats, chair: needsChair ? chair : undefined,
@@ -351,6 +359,7 @@ export function PanelSetup({ draft, onClose }: { draft: PanelDraft; onClose: () 
         from_thread_id: draft.fromThreadId || undefined, report: !!draft.fromThreadId && report,
         mode: building ? mode : undefined, access: building ? undefined : access,
         items: picks.length ? picks : undefined,
+        draw: !building && draw ? true : undefined,
         upload_ids: pics.some(p => p.upload) ? pics.flatMap(p => p.upload ? [p.upload.id] : []) : undefined,
       })
       onClose()
@@ -469,6 +478,9 @@ export function PanelSetup({ draft, onClose }: { draft: PanelDraft; onClose: () 
               ))}
             </div>}
           </div>
+
+          {!building && <label className="inline-switch pn-draw-switch"><Switch checked={draw} onChange={setDrawSet} label="Draw it" />
+            <span><b>Draw it</b> <span className="muted">— each model also sketches its ideas as pictures. For icons, logos, screens, layouts, diagrams.</span></span></label>}
 
           <div className="stack tight">
             <div className="row">

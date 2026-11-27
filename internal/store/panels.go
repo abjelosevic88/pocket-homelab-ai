@@ -57,6 +57,8 @@ type PanelSpec struct {
 	// Images: pictures pasted or attached to the question (uploads the panel
 	// keeps); every participant gets its own copy with its first message.
 	Images []PanelImage `json:"images,omitempty"`
+	// Draw: the participants draw their ideas (SVG in ```svg blocks), shown as pictures.
+	Draw bool `json:"draw,omitempty"`
 }
 
 // PanelImage is a picture that comes with a panel's question.

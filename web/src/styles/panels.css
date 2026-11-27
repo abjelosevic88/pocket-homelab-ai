@@ -308,3 +308,25 @@ body.pn-dragging { cursor: col-resize; user-select: none; }
 .pn-question-pics { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .pn-question-pics a { display: block; width: 120px; height: 120px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--surface-2); }
 .pn-question-pics img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* Drawings: the models' sketches ("Draw it"); lib/drawings.ts */
+.pn-tile-pics { display: flex; gap: 5px; align-items: center; min-width: 0; overflow: hidden; }
+.pn-tile-pics img { width: 34px; height: 34px; flex: none; border-radius: 7px; border: 1px solid var(--hairline); background: var(--surface-2); object-fit: contain; }
+.pn-tile-more { font-size: 11px; color: var(--faint); padding-left: 2px; }
+.pn-tile-gist.short { -webkit-line-clamp: 2; min-height: 2.6em; }
+.pn-draw { display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr); }
+.pn-draw-group { display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr); }
+.pn-draw-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+.pn-draw-card { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 0; padding: 8px; text-align: left; font: inherit; color: inherit; border-radius: 14px; border: 1px solid var(--border); background: var(--surface); cursor: zoom-in; }
+.pn-draw-card:hover { border-color: var(--border-strong); background: var(--surface-2); }
+.pn-draw-pic { display: block; aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: var(--surface-2); }
+.pn-draw-pic img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.pn-draw-name { font-size: 13px; font-weight: 600; }
+.pn-draw-who { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--muted); }
+.pn-draw-who .pn-letter { transform: scale(.85); }
+.pn-draw-big { display: flex; align-items: center; justify-content: center; gap: 8px; outline: none; }
+.pn-draw-big img { display: block; width: min(560px, 100%); max-height: 70vh; object-fit: contain; border-radius: 14px; background: var(--surface-2); }
+@media (max-width: 640px) {
+  .pn-draw-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .pn-draw-big .btn { display: none; }
+}

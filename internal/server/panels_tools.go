@@ -33,7 +33,8 @@ func panelToolDefs() []struct {
 "material":{"type":"string","maxLength":200000,"description":"What is judged or reviewed, in full: the plan, the idea, the answer, the diff, the background. They can also read files in this conversation's folder."},
 "depth":{"type":"string","enum":["quick","standard","deep"],"description":"quick: one round and the summary. standard (default): they also see and answer each other. deep: one more round to revise; slower, more quota."},
 "title":{"type":"string","maxLength":120},
-"report":{"type":"boolean","description":"Send the outcome to this conversation as a message when it finishes (default true)."}
+"report":{"type":"boolean","description":"Send the outcome to this conversation as a message when it finishes (default true)."},
+"draw":{"type":"boolean","description":"The participants also draw their ideas as pictures (SVG sketches the person sees on the panel page). Use it for anything visual: icons, logos, layouts, screens, diagrams."}
 },"required":["kind","question"]}`, false},
 		{"pocket_panel_wait", "Wait until a panel started from this conversation has finished, up to timeout_seconds (default 300, at most 600). Returns its state, who took part and, when finished, the outcome. Call again to wait longer: a standard panel takes a few minutes.", `{"type":"object","properties":{"panel_id":{"type":"string"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":600}},"required":["panel_id"]}`, true},
 		{"pocket_panel_read", "Read one of the person's panels by its id or by words from its name: its state and outcome. For a plan or text they refined in a panel it returns the current version in full (or an earlier one with version), which is what they mean by \"the plan\" they worked on in Panels.", `{"type":"object","properties":{"panel_id":{"type":"string"},"query":{"type":"string","maxLength":120,"description":"Words from the panel's name, instead of its id."},"version":{"type":"integer","minimum":1,"description":"An earlier version instead of the current one."}}}`, true},
@@ -121,6 +122,7 @@ func (s *Server) callPanelTool(ctx, session context.Context, owner *store.User, 
 			Depth    string `json:"depth"`
 			Title    string `json:"title"`
 			Report   *bool  `json:"report"`
+			Draw     bool   `json:"draw"`
 		}
 		if json.Unmarshal(raw, &in) != nil || strings.TrimSpace(in.Question) == "" && strings.TrimSpace(in.Material) == "" {
 			return toolFailure("Write the question")
@@ -143,7 +145,7 @@ func (s *Server) callPanelTool(ctx, session context.Context, owner *store.User, 
 				return toolFailure("Two panels from this conversation are still running; wait for one with pocket_panel_wait")
 			}
 		}
-		start := panelStart{Kind: kind.ID, Question: in.Question, Material: in.Material, Depth: in.Depth, Title: in.Title, FromThreadID: t.ID, Report: in.Report == nil || *in.Report}
+		start := panelStart{Kind: kind.ID, Question: in.Question, Material: in.Material, Depth: in.Depth, Title: in.Title, FromThreadID: t.ID, Report: in.Report == nil || *in.Report, Draw: in.Draw}
 		seats, chair, access := s.defaultSeats(ctx, owner)
 		// never freer than this conversation's own agent
 		capLevel, known := modeLevel[t.Mode]

@@ -99,7 +99,9 @@ type panelStart struct {
 	Items []panelItem `json:"items"`
 	// UploadIDs: pictures pasted or attached to the question (POST /uploads first).
 	UploadIDs []string `json:"upload_ids"`
-	App       string   `json:"-"` // the Pocket app that starts it over a Core link (link_panels.go)
+	// Draw: every participant also draws its ideas (panels_draw.go).
+	Draw bool   `json:"draw"`
+	App  string `json:"-"` // the Pocket app that starts it over a Core link (link_panels.go)
 }
 
 func panelDepth(name string) int {
@@ -359,6 +361,7 @@ func (s *Server) startPanel(ctx context.Context, u *store.User, in panelStart) (
 	depth := panelDepth(in.Depth)
 	p := &store.Panel{ID: uuid.NewString(), UserID: u.ID, Kind: in.Kind, Question: in.Question, Material: in.Material, Status: "running", Report: in.Report}
 	p.Spec.Depth, p.Spec.App, p.Spec.Images = depth, in.App, images
+	p.Spec.Draw = in.Draw && in.Kind != "build"
 	var all []store.PanelStage
 	quorum := 2
 	if in.RecipeID != 0 {

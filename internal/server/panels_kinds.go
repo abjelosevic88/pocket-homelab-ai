@@ -309,7 +309,13 @@ func panelSeen(p *store.Panel, seats []*store.PanelSeat, answers []*store.PanelA
 			label[s.ID] = s
 		}
 	}
-	clip := func(t string) string { return tailHead(strings.TrimSpace(t), panelAnswerMax) }
+	// drawings are pictures for the person: the others get their names, not the SVG
+	clip := func(t string) string {
+		if p.Spec.Draw {
+			t = stripDrawings(t)
+		}
+		return tailHead(strings.TrimSpace(t), panelAnswerMax)
+	}
 	head := func(s *store.PanelSeat) string {
 		h := "Participant " + s.Label
 		if s.Role != "" {
@@ -407,6 +413,9 @@ func panelMessage(p *store.Panel, seats []*store.PanelSeat, answers []*store.Pan
 		b.WriteString("\n" + extra + "\n")
 	}
 	fmt.Fprintf(&b, "\n# What to do now: %s\n\n%s\n", sg.Name, sg.Prompt)
+	if p.Spec.Draw {
+		b.WriteString(panelDrawNote(sg.Who == "chair"))
+	}
 	return b.String()
 }
 

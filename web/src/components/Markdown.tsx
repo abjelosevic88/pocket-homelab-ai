@@ -4,6 +4,7 @@ import { codePath, type FileLinkPlace, linkPath } from '../lib/filelinks'
 import { filePath, filesPath } from '../lib/files'
 import { codeLang, commandRanges } from '../lib/codeLines'
 import { renderMarkdown } from '../lib/markdown'
+import { drawingName, isDrawing, svgFileName, svgUrl } from '../lib/drawings'
 import { copyText } from './ui'
 
 /** Set around agent Markdown: paths in it open in the file viewer on this machine (lib/filelinks.ts). */
@@ -145,6 +146,41 @@ function textPoint(el: HTMLElement, n: number): [Node, number] | null {
   return last ? [last, last.data.length] : null
 }
 
+// A finished ```svg block is a drawing: the picture shows above its code, the
+// code folds away (a button shows it again). Click the picture to see it large.
+function drawing(wrap: HTMLElement, pre: HTMLElement) {
+  const code = pre.querySelector('code.language-svg')
+  const svg = code?.textContent || ''
+  if (!code || !isDrawing(svg)) return
+  const prev = wrap.previousElementSibling
+  const name = drawingName(svg, prev ? (prev.querySelector('strong, b')?.textContent ? `**${prev.querySelector('strong, b')!.textContent}**` : /^H[1-6]$/.test(prev.tagName) ? `# ${prev.textContent}` : '') : '')
+  const fig = document.createElement('figure')
+  fig.className = 'md-drawing'
+  const img = document.createElement('img')
+  img.src = svgUrl(svg)
+  img.alt = name
+  img.title = 'Click to see it large'
+  img.addEventListener('click', () => fig.classList.toggle('big'))
+  const cap = document.createElement('figcaption')
+  const t = document.createElement('span')
+  t.className = 'md-drawing-name'
+  t.textContent = name === 'Drawing' ? '' : name
+  const show = document.createElement('button')
+  show.type = 'button'
+  show.className = 'md-drawing-btn'
+  show.textContent = 'Code'
+  show.addEventListener('click', () => { wrap.hidden = !wrap.hidden; show.textContent = wrap.hidden ? 'Code' : 'Hide code' })
+  const save = document.createElement('a')
+  save.className = 'md-drawing-btn'
+  save.textContent = 'Download'
+  save.href = img.src
+  save.download = svgFileName(name)
+  cap.append(t, show, save)
+  fig.append(img, cap)
+  wrap.before(fig)
+  wrap.hidden = true
+}
+
 /** Agent Markdown, sanitized, with a copy button on every code block. */
 export const Markdown = memo(function Markdown({ text, className = '' }: { text: string; className?: string }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -208,6 +244,7 @@ export const Markdown = memo(function Markdown({ text, className = '' }: { text:
       })
       wrap.appendChild(b)
       pre.addEventListener('mousedown', selectLine)
+      drawing(wrap, pre)
       if (wrap.classList.contains('one-line')) return
       const code = pre.querySelector('code') ?? pre
       splitLines(code)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -337,7 +338,7 @@ func (s *Server) handleDeletePanel(w http.ResponseWriter, r *http.Request) {
 func (s *Server) panelAgainStart(ctx context.Context, p *store.Panel) panelStart {
 	in := panelStart{Kind: p.Kind, RecipeID: p.Spec.RecipeID, Question: p.Question, Material: p.Material, Title: p.Title,
 		Depth: panelDepthNames[min(max(p.Spec.Depth, 0), panelDeep)], Cwd: p.Spec.Cwd, HostID: &p.Spec.HostID,
-		FromThreadID: p.FromThreadID, LimitMin: p.Spec.LimitMin, Mode: p.Spec.Mode, Access: &p.Spec.Access}
+		FromThreadID: p.FromThreadID, LimitMin: p.Spec.LimitMin, Mode: p.Spec.Mode, Access: &p.Spec.Access, Draw: p.Spec.Draw}
 	seats, _ := s.store.PanelSeats(ctx, p.ID)
 	for _, st := range seats {
 		sp := st.PanelSeatSpec
@@ -362,7 +363,15 @@ func (s *Server) handlePanelAgain(w http.ResponseWriter, r *http.Request) {
 	if p == nil {
 		return
 	}
-	np, err := s.startPanel(r.Context(), userFrom(r.Context()), s.panelAgainStart(r.Context(), p))
+	in := s.panelAgainStart(r.Context(), p)
+	// {"draw": true}: run it again, this time with drawings (no body: as it was)
+	var opt struct {
+		Draw *bool `json:"draw"`
+	}
+	if json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&opt) == nil && opt.Draw != nil {
+		in.Draw = *opt.Draw
+	}
+	np, err := s.startPanel(r.Context(), userFrom(r.Context()), in)
 	if err != nil {
 		s.fail(w, err, "start panel")
 		return

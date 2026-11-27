@@ -12,6 +12,7 @@ import type { ProviderId, Thread } from '../lib/types'
 import { offeredProviders } from '../components/AgentPicker'
 import { Icon } from '../components/icons'
 import { Markdown } from '../components/Markdown'
+import { drawingsIn, svgFileName, svgUrl, withoutDrawings, type Drawing } from '../lib/drawings'
 import { PageHead } from '../components/PageHead'
 import { Select } from '../components/Select'
 import { PanelDefaults } from '../components/PanelSetup'
@@ -208,13 +209,14 @@ function gist(text: string, max = 170): string {
   const plain = text.replace(/```[\s\S]*?```/g, ' ').split('\n').map(l => l.replace(/^\s*(#{1,6}|>|[-*+]|\d+[.)])\s+/, '').replace(/[*_`~]/g, '').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').trim()).filter(Boolean).join(' ')
   return plain.length > max ? plain.slice(0, max - 1).trimEnd() + '…' : plain
 }
-const words = (text: string) => text.trim() ? text.trim().split(/\s+/).length : 0
+const words = (text: string) => { const t = withoutDrawings(text).trim(); return t ? t.split(/\s+/).length : 0 }
 
 /** One participant as a small card in the row above the reading pane: who, how far, and how its answer begins. */
 function SeatTile({ seat, text, live, current, on, onPick }: { seat: PanelSeat; text?: string; live?: boolean; current: boolean; on: boolean; onPick: () => void }) {
   const failed = !text && (seat.state === 'failed' || seat.state === 'skipped')
   const working = current && seat.state === 'working'
   const asks = seat.activity === 'waiting_for_person'
+  const pics = live ? [] : drawingsIn(text)
   return (
     // a div, not a <button>: WebKit (Pocket Hub, Safari) wraps a button's children in its own centered box,
     // so this column of rows was centered and long names spilled out of the card on both sides
@@ -227,7 +229,8 @@ function SeatTile({ seat, text, live, current, on, onPick }: { seat: PanelSeat; 
         {working ? (asks ? <Icon name="alert" size={13} className="pn-tile-warn" /> : <Spinner size={11} />) : text ? <Icon name="check" size={13} className="pn-tile-ok" /> : failed ? <Icon name="x" size={13} className="pn-tile-bad" /> : null}
       </span>
       {seat.role && <span className="pn-tile-role ellipsis">{seat.role}</span>}
-      <span className="pn-tile-gist">
+      {pics.length > 0 && !working && <span className="pn-tile-pics" aria-hidden>{pics.slice(0, 5).map((d, i) => <img key={i} src={svgUrl(d.svg)} alt="" />)}{pics.length > 5 && <span className="pn-tile-more">+{pics.length - 5}</span>}</span>}
+      <span className={`pn-tile-gist ${pics.length > 0 && !working ? 'short' : ''}`}>
         {working ? <span className="pn-tile-doing">{asks ? 'It asked something — open it to answer' : seat.doing || (seat.activity === 'starting' ? 'Starting…' : text ? 'Writing…' : 'Thinking…')}</span>
           : text ? gist(text)
           : failed ? seat.error || 'Dropped out'
@@ -235,8 +238,72 @@ function SeatTile({ seat, text, live, current, on, onPick }: { seat: PanelSeat; 
       </span>
       <span className="pn-tile-foot">
         {working ? <><Elapsed since={seat.since} />{!!seat.steps && <span>{seat.steps} {seat.steps === 1 ? 'step' : 'steps'}</span>}{live && text ? <span>{words(text)} words so far</span> : null}</>
-          : text ? <span>{words(text)} words</span> : <span>&nbsp;</span>}
+          : text ? <><span>{words(text)} words</span>{pics.length > 0 && <span>{pics.length} {pics.length === 1 ? 'drawing' : 'drawings'}</span>}</> : <span>&nbsp;</span>}
       </span>
+    </div>
+  )
+}
+
+interface DrawnItem extends Drawing { seat?: PanelSeat }
+interface DrawnGroup { step: string; items: DrawnItem[] }
+
+/** Every finished drawing in a panel: one group per step, in the participants' order; the outcome's last. */
+function drawingGroups(p: Panel, stages: Panel['spec']['stages'], answers: NonNullable<Panel['answers']>, finalStage: number, result: string): DrawnGroup[] {
+  const out: DrawnGroup[] = []
+  stages.forEach((sg, i) => {
+    if (i === finalStage) return
+    const items: DrawnItem[] = []
+    for (const seat of p.seats) {
+      const a = answers.find(x => x.stage === i && x.seat_id === seat.id)
+      for (const d of drawingsIn(a?.text)) items.push({ ...d, seat })
+    }
+    if (items.length) out.push({ step: sg.name, items })
+  })
+  const fin = drawingsIn(result)
+  if (fin.length) out.push({ step: finalStage >= 0 ? stages[finalStage].name : 'Result', items: fin.map(d => ({ ...d, seat: p.seats.find(s => s.chair && s.state !== 'failed') })) })
+  return out
+}
+
+function drawnBy(d: DrawnItem): string {
+  if (!d.seat) return ''
+  return d.seat.chair ? 'Summary writer' : `${d.seat.label} · ${providerName(d.seat.provider)}${d.seat.model ? ` ${d.seat.model}` : ''}`
+}
+
+/** The Drawings tab: every picture the models drew, grouped by step; one opens large. */
+function DrawingGallery({ groups }: { groups: DrawnGroup[] }) {
+  const all = groups.flatMap(g => g.items)
+  const [open, setOpen] = useState<number | null>(null)
+  const { toast } = useToast()
+  const cur = open === null ? null : all[open]
+  const step = (by: number) => setOpen(i => i === null ? i : (i + by + all.length) % all.length)
+  let n = -1
+  return (
+    <div className="pn-draw">
+      {groups.map(g => <section key={g.step} className="pn-draw-group">
+        <div className="label muted xsmall">{g.step}</div>
+        <div className="pn-draw-grid">
+          {g.items.map(d => { n++; const at = n; return (
+            // a div: WebKit centres a <button>'s column of children (see SeatTile)
+            <div key={at} role="button" tabIndex={0} className="pn-draw-card" onClick={() => setOpen(at)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(at) } }} title={`${d.title} — open large`}>
+              <span className="pn-draw-pic"><img src={svgUrl(d.svg)} alt={d.title} loading="lazy" /></span>
+              <span className="pn-draw-name ellipsis">{d.title}</span>
+              {d.seat && <span className="pn-draw-who ellipsis">{!d.seat.chair && <span className="pn-letter">{d.seat.label}</span>}<Icon name={d.seat.provider} size={12} className={`prov-glyph ${d.seat.provider}`} />{d.seat.chair ? 'Summary writer' : `${providerName(d.seat.provider)}${d.seat.model ? ` · ${d.seat.model}` : ''}`}</span>}
+            </div>
+          ) })}
+        </div>
+      </section>)}
+      {cur && <Modal title={cur.title} size="lg" onClose={() => setOpen(null)} footer={<>
+        <span className="muted xsmall grow">{drawnBy(cur)}</span>
+        <button type="button" className="btn sm" onClick={async () => { if (await copyText(cur.svg)) toast('SVG copied') }}><Icon name="copy" size={13} />Copy SVG</button>
+        <a className="btn sm" href={svgUrl(cur.svg)} download={svgFileName(cur.title)}><Icon name="download" size={13} />Download</a>
+      </>}>
+        <div className="pn-draw-big" onKeyDown={e => { if (e.key === 'ArrowRight') step(1); else if (e.key === 'ArrowLeft') step(-1) }} tabIndex={-1}>
+          {all.length > 1 && <button type="button" className="btn ghost icon-only" aria-label="Previous drawing" onClick={() => step(-1)}><Icon name="chevron-left" size={18} /></button>}
+          <img src={svgUrl(cur.svg)} alt={cur.title} />
+          {all.length > 1 && <button type="button" className="btn ghost icon-only" aria-label="Next drawing" onClick={() => step(1)}><Icon name="chevron-right" size={18} /></button>}
+        </div>
+        {all.length > 1 && <div className="muted xsmall tnum" style={{ textAlign: 'center' }}>{(open ?? 0) + 1} / {all.length}</div>}
+      </Modal>}
     </div>
   )
 }
@@ -249,7 +316,7 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
   const [p, setP] = useState<Panel | null>(null)
   const [err, setErr] = useState('')
   // what the page shows: the result ('out'), the editor chat on narrow screens, the question, or a step by number
-  const [tab, setTab] = useState<'out' | 'chat' | 'asked' | number | null>(null)
+  const [tab, setTab] = useState<'out' | 'chat' | 'asked' | 'draw' | number | null>(null)
   // full screen: the app sidebar folds away and the page head goes, only the tab row stays
   const [full, setFull] = useState(() => localStorage.getItem('pai-panel-full') === '1')
   const mobile = useIsMobile()
@@ -320,7 +387,9 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
   // the default: the plan or the outcome when there is one, else the step being answered
   const picked = tab === 'chat' && wide ? 'out' : tab
   const pane = picked ?? (hasOut && outReady ? 'out' : auto)
-  const setPane = (v: 'out' | 'chat' | 'asked' | number) => setTab(v)
+  const setPane = (v: 'out' | 'chat' | 'asked' | 'draw' | number) => setTab(v)
+  // every drawing so far, by step and participant (the Drawings tab)
+  const drawn = drawingGroups(p, stages, answers, finalStage, p.result || '')
   const stepPane = typeof pane === 'number'
   // short tab names in a Refine panel: "Verdicts 2", "Rewrite 2" (the whole name is the tooltip)
   const stepName = (i: number) => {
@@ -338,7 +407,7 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
 
   const act = async (what: string, fn: () => Promise<void>) => { setBusy(what); try { await fn() } catch (e) { toast(errMsg(e), 'err') } finally { setBusy('') } }
   const stop = () => act('stop', async () => { setP(await api.post<Panel>(`${V1}/panels/${p.id}/stop`)) })
-  const again = () => act('again', async () => { const np = await api.post<Panel>(`${V1}/panels/${p.id}/again`); navigate(`/panels/${np.id}`) })
+  const again = (draw?: boolean) => act('again', async () => { const np = await api.post<Panel>(`${V1}/panels/${p.id}/again`, draw === undefined ? undefined : { draw }); navigate(`/panels/${np.id}`) })
   const copyAll = async () => { try { if (await copyText(await api.getText(`${V1}/panels/${p.id}/export.md`))) toast('Copied as Markdown') } catch (e) { toast(errMsg(e), 'err') } }
   const goOn = () => act('cont', async () => {
     const t = await api.post<Thread>(`${V1}/panels/${p.id}/continue`, { text: cont?.text || '', provider: cont?.provider || undefined })
@@ -349,6 +418,9 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
     { label: 'Copy everything as Markdown', icon: 'copy', onSelect: () => void copyAll() },
     { label: 'Download as Markdown', icon: 'download', onSelect: () => download(`${V1}/panels/${p.id}/export.md?download=1`) },
     { label: 'Run it again', icon: 'refresh', onSelect: () => void again(), disabled: running },
+    ...(p.kind !== 'build' ? [p.spec.draw
+      ? { label: 'Run it again without drawings', icon: 'refresh', onSelect: () => void again(false), disabled: running } as MenuItem
+      : { label: 'Run it again with drawings', icon: 'image', hint: 'Each model also sketches its ideas', onSelect: () => void again(true), disabled: running } as MenuItem] : []),
     ...(p.from_thread_id && p.from_title ? [{ label: 'Back to the conversation', icon: 'message', hint: p.from_title, onSelect: () => openThread(p.from_thread_id) } as MenuItem] : []),
     'sep',
     { label: 'Delete…', icon: 'trash', danger: true, onSelect: () => setDel(true) },
@@ -361,7 +433,7 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
         actions={<>
           <button type="button" className="btn ghost sm pn-back" onClick={() => navigate('/panels')}><Icon name="chevron-left" size={14} />All panels</button>
           {running ? <button type="button" className="btn" disabled={busy === 'stop'} onClick={stop}>{busy === 'stop' ? <Spinner size={11} /> : <Icon name="x" size={13} />}Stop</button>
-            : <button type="button" className="btn" disabled={busy === 'again'} onClick={again}>{busy === 'again' ? <Spinner size={11} /> : <Icon name="refresh" size={13} />}Run again</button>}
+            : <button type="button" className="btn" disabled={busy === 'again'} onClick={() => void again()}>{busy === 'again' ? <Spinner size={11} /> : <Icon name="refresh" size={13} />}Run again</button>}
           {!mobile && <button type="button" className="btn ghost icon-only" title="Full screen: fold the app sidebar and this header away" aria-label="Full screen" onClick={() => setFull(true)}><Icon name="maximize" size={15} /></button>}
           <MenuButton label="More" align="right" items={more}><Icon name="more" size={16} /></MenuButton>
         </>} />}
@@ -390,6 +462,9 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
                 {stepName(r.i)}
               </button>
             })}
+            {(drawn.length > 0 || p.spec.draw) && <button type="button" role="tab" aria-selected={pane === 'draw'} disabled={drawn.length === 0} title={drawn.length ? 'Every drawing the models made' : 'The models’ drawings show here when they have made some'} className={`pn-tab ${pane === 'draw' ? 'on' : ''}`} onClick={() => setPane('draw')}>
+              <Icon name="image" size={13} />Drawings{drawn.length > 0 && <span className="pn-tab-n tnum">{drawn.reduce((n, g) => n + g.items.length, 0)}</span>}
+            </button>}
             <button type="button" role="tab" aria-selected={pane === 'asked'} className={`pn-tab ${pane === 'asked' ? 'on' : ''}`} onClick={() => setPane('asked')}><Icon name="help-circle" size={13} />Question</button>
           </div>
           <span className="pn-bar-end">
@@ -415,9 +490,11 @@ export function PanelPage({ onMenu }: { onMenu?: () => void }) {
                 {p.question && <div className="pn-q">{p.question}</div>}
                 {!!p.spec.images?.length && <div className="pn-question-pics">{p.spec.images.map(im => <a key={im.id} href={`${V1}/uploads/${im.id}`} target="_blank" rel="noreferrer" title={im.name}><img src={`${V1}/uploads/${im.id}`} alt={im.name} loading="lazy" /></a>)}</div>}
                 {p.material && <><div className="label muted xsmall">The material</div><Markdown text={p.material} /></>}
-                <div className="muted xsmall">{p.depth[0].toUpperCase() + p.depth.slice(1)}{p.kind !== 'build' ? ` · ${ACCESS.find(a => a.value === (p.spec.access || ''))?.label.toLowerCase()}` : ''} · {ago(p.created_at)}{p.spec.cwd ? ` · ${p.spec.cwd}` : ''}
+                <div className="muted xsmall">{p.depth[0].toUpperCase() + p.depth.slice(1)}{p.kind !== 'build' ? ` · ${ACCESS.find(a => a.value === (p.spec.access || ''))?.label.toLowerCase()}` : ''}{p.spec.draw ? ' · with drawings' : ''} · {ago(p.created_at)}{p.spec.cwd ? ` · ${p.spec.cwd}` : ''}
                   {p.from_thread_id && p.from_title && <> · from <button type="button" className="link-btn" onClick={() => openThread(p.from_thread_id)}>{p.from_title}</button></>}</div>
               </div>
+            ) : pane === 'draw' ? (
+              <DrawingGallery groups={drawn} />
             ) : pane === 'chat' ? (
               <EditorChat p={p} onChange={setP} onOpenThread={openThread} />
             ) : pane === 'out' ? (versioned ? <PanelPlan p={p} onChange={setP} /> : (
