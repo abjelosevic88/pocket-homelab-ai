@@ -126,7 +126,7 @@
 .tab.unread .tab-title { color: var(--text); font-weight: 600; }
 .tab-ico { position: relative; display: grid; place-items: center; width: 16px; height: 16px; flex-shrink: 0; color: var(--faint); }
 .tab-ico.claude { color: var(--claude); } .tab-ico.codex { color: var(--codex); }
-.tab-ico.gemini { color: var(--gemini); } .tab-ico.opencode { color: var(--opencode); } .tab-ico.qwen { color: var(--qwen); }
+.tab-ico.antigravity { color: var(--antigravity); } .tab-ico.gemini { color: var(--gemini); } .tab-ico.opencode { color: var(--opencode); } .tab-ico.qwen { color: var(--qwen); }
 .tab:not(.on) .tab-ico { opacity: .8; }
 .tab-busy { width: 12px; height: 12px; border-radius: 50%; border: 1.8px solid currentColor; border-top-color: transparent; animation: spin .8s linear infinite; }
 .tab-busy.waiting { border-color: var(--warning); border-top-color: transparent; }

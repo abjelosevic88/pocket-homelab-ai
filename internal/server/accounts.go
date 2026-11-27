@@ -875,7 +875,7 @@ func (l *loginRun) feed(line string) {
 		if u := urlRe.FindString(line); u != "" {
 			l.URL = strings.TrimRight(u, ".,)")
 			l.State = "waiting"
-			l.NeedCode = l.provider == "claude" || l.provider == "gemini"
+			l.NeedCode = l.provider == "claude" || agent.IsACP(l.provider)
 		}
 	}
 	if l.provider == "gemini" && strings.Contains(strings.ToLower(line), "failed to authenticate") {

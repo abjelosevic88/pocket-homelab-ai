@@ -27,8 +27,8 @@ export type ProviderId = CliId | AcpId
 /** Claude Code and Codex: the CLIs with logins, machines and skills of their own. */
 export type CliId = 'claude' | 'codex'
 /** Agents driven over the Agent Client Protocol (Settings → Agents sets them up). */
-export type AcpId = 'gemini' | 'opencode' | 'qwen'
-export const ACP_IDS: AcpId[] = ['gemini', 'opencode', 'qwen']
+export type AcpId = 'antigravity' | 'gemini' | 'opencode' | 'qwen'
+export const ACP_IDS: AcpId[] = ['antigravity', 'gemini', 'opencode', 'qwen']
 export const isAcp = (p: string | undefined): p is AcpId => !!p && (ACP_IDS as string[]).includes(p)
 
 /** An ACP agent in Settings → Agents (GET /agents/acp, admin). */
@@ -48,6 +48,11 @@ export interface AcpAgent {
   account?: string
   models: number
   google_signed_in: boolean
+  /** Gemini CLI: Pocket AI can forget its Google sign-in (Antigravity: /logout in agy) */
+  can_sign_out: boolean
+  /** installed by the vendor's script; it updates itself */
+  self_updates: boolean
+  install_script?: string
   /** keys set: name → shown value (secrets masked) */
   set: Record<string, string>
 }

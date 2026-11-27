@@ -75,7 +75,7 @@ func (s *Server) linkCaller(w http.ResponseWriter, r *http.Request) (*store.User
 }
 
 // readonlyModes is the mode of each provider that cannot change files.
-var readonlyModes = map[string]string{"claude": "plan", "codex": "read-only", "gemini": "plan", "opencode": "plan", "qwen": "plan"}
+var readonlyModes = map[string]string{"claude": "plan", "codex": "read-only", "gemini": "plan", "opencode": "plan", "qwen": "plan", "antigravity": "plan"}
 
 type linkModel struct {
 	ID      string   `json:"id"`

@@ -91,6 +91,8 @@ type acpView struct {
 	Account        string            `json:"account,omitempty"`
 	Models         int               `json:"models"`
 	GoogleSignedIn bool              `json:"google_signed_in"`
+	CanSignOut     bool              `json:"can_sign_out"`
+	SelfUpdates    bool              `json:"self_updates"`
 	Set            map[string]string `json:"set"` // key → shown value (secrets masked)
 }
 
@@ -120,7 +122,9 @@ func (s *Server) handleACPList(w http.ResponseWriter, r *http.Request) {
 				v.Version, v.Available, v.Error, v.Account, v.Models = p.Version, p.Available, p.Error, p.Account, len(p.Models)
 			}
 		}
-		v.GoogleSignedIn = ag.GoogleSignedIn()
+		v.GoogleSignedIn = ag.GoogleSignedIn() || ag.LoginArgs != nil && v.Available
+		v.CanSignOut = ag.GoogleLogin && ag.LoginArgs == nil // Antigravity: /logout in agy itself
+		v.SelfUpdates = ag.InstallScript != ""
 		secret := map[string]bool{}
 		for _, k := range ag.Keys {
 			secret[k.Name] = k.Secret
@@ -209,14 +213,26 @@ func (s *Server) handleACPInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer acpInstalling.Delete(ag.ID)
-	npm, err := exec.LookPath("npm")
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, "npm (Node.js) is not installed on the server, so "+ag.Name+" cannot be installed from here")
-		return
-	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 8*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, npm, "install", "-g", ag.Package+"@latest")
+	var cmd *exec.Cmd
+	if ag.InstallScript != "" {
+		// the vendor's installer (it checks the download's checksum itself)
+		dir, err := os.MkdirTemp("", "pocket-acp-install-")
+		if err != nil {
+			s.fail(w, err, "install")
+			return
+		}
+		defer os.RemoveAll(dir)
+		cmd = exec.CommandContext(ctx, "sh", "-c", `curl -fsSL "$1" -o "$2/install.sh" && bash "$2/install.sh"`, "sh", ag.InstallScript, dir)
+	} else {
+		npm, err := exec.LookPath("npm")
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, "npm (Node.js) is not installed on the server, so "+ag.Name+" cannot be installed from here")
+			return
+		}
+		cmd = exec.CommandContext(ctx, npm, "install", "-g", ag.Package+"@latest")
+	}
 	cmd.Env = append(os.Environ(), "HOME="+s.cfg.Home)
 	cmd.Dir = s.cfg.Home
 	b, err := cmd.CombinedOutput()
@@ -260,9 +276,11 @@ func (s *Server) handleACPLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, ag.Name+" is not installed")
 		return
 	}
-	if err := agent.SetGeminiAuth(ag.ACPHome(), "oauth-personal"); err != nil {
-		s.fail(w, err, "gemini settings")
-		return
+	if ag.LoginArgs == nil {
+		if err := agent.SetGeminiAuth(ag.ACPHome(), "oauth-personal"); err != nil {
+			s.fail(w, err, "gemini settings")
+			return
+		}
 	}
 	creds := filepath.Join(ag.ACPHome(), "oauth_creds.json")
 	var before time.Time
@@ -273,7 +291,11 @@ func (s *Server) handleACPLogin(w http.ResponseWriter, r *http.Request) {
 	s.cancelLogin(key)
 	ctx, cancel := context.WithTimeout(s.rt.ctx, loginExpiry)
 	dir, _ := os.MkdirTemp("", "pocket-gemini-login-")
-	cmd := exec.CommandContext(ctx, script, "-qfec", shellQuote(bin), "/dev/null")
+	line := shellQuote(bin)
+	for _, a := range ag.LoginArgs { // Antigravity: agy acp --login signs in and exits
+		line += " " + shellQuote(a)
+	}
+	cmd := exec.CommandContext(ctx, script, "-qfec", line, "/dev/null")
 	cmd.Dir = firstNonEmpty(dir, s.cfg.Home)
 	cmd.Env = append(os.Environ(), "NO_BROWSER=true", "TERM=dumb", "NO_COLOR=1", "BROWSER=true")
 	l, err := s.beginLogin(ctx, cancel, key, ag.ID, cmd, func(ok bool) {
@@ -283,7 +305,7 @@ func (s *Server) handleACPLogin(w http.ResponseWriter, r *http.Request) {
 		if ok {
 			s.forgetProviders()
 			s.rt.stopProvider(ag.ID)
-			s.log.Info("gemini signed in with google")
+			s.log.Info("signed in with google", "agent", ag.ID)
 		}
 		s.rt.publishAccounts()
 	})
@@ -291,11 +313,13 @@ func (s *Server) handleACPLogin(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "login")
 		return
 	}
-	l.succeedWhen = func() bool { // a new credentials file
-		fi, err := os.Stat(creds)
-		return err == nil && fi.Size() > 0 && fi.ModTime().After(before)
+	if ag.LoginArgs == nil { // Gemini CLI goes on into its chat: done once the file is there
+		l.succeedWhen = func() bool {
+			fi, err := os.Stat(creds)
+			return err == nil && fi.Size() > 0 && fi.ModTime().After(before)
+		}
+		go l.watchSuccess(ctx)
 	}
-	go l.watchSuccess(ctx)
 	writeJSON(w, http.StatusOK, l.waitStarted())
 }
 
@@ -322,6 +346,10 @@ func (s *Server) handleACPLoginCancel(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleACPLogout(w http.ResponseWriter, r *http.Request) {
 	ag, ok := s.acpAgent(w, r)
 	if !ok {
+		return
+	}
+	if ag.LoginArgs != nil {
+		writeErr(w, http.StatusBadRequest, "Sign "+ag.Name+" out with /logout in "+ag.Bin+" itself")
 		return
 	}
 	if ag.GoogleLogin {

@@ -21,7 +21,7 @@ Everything is an environment variable (the systemd unit reads `~/.config/pocket-
 | `BWRAP_BIN` | `bwrap` on `PATH` | The bubblewrap binary. |
 | `AGENT_HOME` | your home | What `~` means, and the default folder. |
 | `CLAUDE_BIN`, `CODEX_BIN` | `claude`, `codex` | The CLIs. Use absolute paths when the service PATH differs from your shell's. |
-| `GEMINI_BIN`, `OPENCODE_BIN`, `QWEN_BIN` | `gemini`, `opencode`, `qwen` | The ACP agents (Settings → Agents → More agents installs them with npm). Their API keys are set in Settings, not here. |
+| `ANTIGRAVITY_BIN`, `GEMINI_BIN`, `OPENCODE_BIN`, `QWEN_BIN` | `agy`, `gemini`, `opencode`, `qwen` | The ACP agents (Settings → Agents → More agents installs them: Antigravity with Google's installer, the others with npm). Their API keys are set in Settings, not here. |
 | `CLAUDE_HOME`, `CODEX_HOME` | `~/.claude`, `~/.codex` | The server's own login (account 0): where its sessions are read from. More logins are added in Settings → Agents → Accounts, each in its own folder next to these. |
 | `IDLE_TIMEOUT` | `60m` | A thread's CLI process stops after this long idle; the next message resumes the session (slower: the model reads the whole chat again). 60m matches the 1-hour prompt cache. |
 | `MAX_LIVE` | `12` | Most CLI processes at once; the longest-idle ones are stopped first. |

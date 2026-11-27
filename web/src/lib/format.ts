@@ -83,9 +83,9 @@ export function fmtBytes(n: number): string {
   return `${(n / 1024 ** 3).toFixed(2)} GB`
 }
 
-export const PROVIDER_NAME: Record<ProviderId, string> = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini CLI', opencode: 'OpenCode', qwen: 'Qwen Code' }
+export const PROVIDER_NAME: Record<ProviderId, string> = { claude: 'Claude Code', codex: 'Codex', antigravity: 'Antigravity CLI', gemini: 'Gemini CLI', opencode: 'OpenCode', qwen: 'Qwen Code' }
 /** The short name ("Ask Claude…", chips): Claude, Codex, Gemini, OpenCode, Qwen. */
-export const SHORT_PROVIDER_NAME: Record<ProviderId, string> = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', opencode: 'OpenCode', qwen: 'Qwen' }
+export const SHORT_PROVIDER_NAME: Record<ProviderId, string> = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity', gemini: 'Gemini', opencode: 'OpenCode', qwen: 'Qwen' }
 export const shortProviderName = (p: string | undefined) => SHORT_PROVIDER_NAME[p as ProviderId] || 'Claude'
 /** The icon of a provider (the glyphs in icons.tsx are named after them). */
 export const providerIcon = (p: string | undefined): ProviderId => (p && p in SHORT_PROVIDER_NAME ? p : 'claude') as ProviderId

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -96,4 +97,46 @@ func TestACPThread(t *testing.T) {
 	}
 	// ACP agents run here only
 	owner.want("POST", "/api/v1/threads", map[string]any{"provider": "opencode", "text": "hi", "host_id": 5}, 400, nil)
+}
+
+// TestACPGoogleLoginAntigravity: "Sign in with Google" runs agy acp --login in
+// a terminal, shows its link, hands it the pasted code, and is done when it exits.
+func TestACPGoogleLoginAntigravity(t *testing.T) {
+	if _, err := exec.LookPath("script"); err != nil {
+		t.Skip("script (util-linux) not installed")
+	}
+	s, h, root := testServer(t)
+	bin := filepath.Join(root, "agy")
+	got := filepath.Join(root, "got")
+	_ = os.WriteFile(bin, []byte(`#!/bin/sh
+[ "$1 $2" = "acp --login" ] || exit 3
+echo "Open https://accounts.google.com/o/oauth2/auth?client_id=x to sign in"
+printf 'Paste the code: '
+read code
+echo "$code" > "`+got+`"
+echo "Signed in."
+`), 0o700)
+	t.Setenv("ANTIGRAVITY_BIN", bin)
+	owner, _ := person(t, s, h, "owner@example.test", "admin", true)
+	var st struct {
+		State    string `json:"state"`
+		URL      string `json:"url"`
+		NeedCode bool   `json:"need_code"`
+	}
+	owner.want("POST", "/api/v1/agents/acp/antigravity/login", nil, 200, &st)
+	if st.State != "waiting" || !st.NeedCode || !strings.HasPrefix(st.URL, "https://accounts.google.com/") {
+		t.Fatalf("start %+v", st)
+	}
+	owner.want("POST", "/api/v1/agents/acp/antigravity/login/code", map[string]string{"code": "4/abc-123"}, 200, &st)
+	for i := 0; i < 100 && st.State != "done"; i++ {
+		time.Sleep(50 * time.Millisecond)
+		owner.want("GET", "/api/v1/agents/acp/antigravity/login", nil, 200, &st)
+	}
+	if st.State != "done" {
+		t.Fatalf("state %+v", st)
+	}
+	if b, _ := os.ReadFile(got); strings.TrimSpace(string(b)) != "4/abc-123" {
+		t.Fatalf("code %q", b)
+	}
+	owner.want("POST", "/api/v1/agents/acp/antigravity/logout", nil, 400, nil)
 }

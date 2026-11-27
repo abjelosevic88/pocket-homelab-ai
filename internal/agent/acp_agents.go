@@ -23,8 +23,16 @@ type ACPAgent struct {
 	// endpoint): set in Settings → Agents, kept by Pocket AI, handed to the
 	// agent when it starts.
 	Keys []ACPKey `json:"keys"`
-	// GoogleLogin: it can sign in with a Google account (Gemini CLI).
+	// GoogleLogin: it can sign in with a Google account (Gemini CLI,
+	// Antigravity CLI).
 	GoogleLogin bool `json:"google_login"`
+	// LoginArgs sign it in with a pasted code and exit (Antigravity: acp
+	// --login); nil = Gemini CLI's way (its chat, until the credentials file
+	// is there).
+	LoginArgs []string `json:"-"`
+	// InstallScript: installed by the vendor's script instead of npm; such
+	// agents update themselves.
+	InstallScript string `json:"install_script,omitempty"`
 	// Note says how it is set up, for Settings.
 	Note string `json:"note"`
 	// Modes: Pocket AI's own permission modes for it, when the agent's are
@@ -66,9 +74,18 @@ type ACPKey struct {
 // ACPAgents are the ACP agents Pocket AI knows, in the order it shows them.
 var ACPAgents = []ACPAgent{
 	{
+		ID: "antigravity", Name: "Antigravity CLI", Bin: "agy", Args: []string{"acp"},
+		InstallScript: "https://antigravity.google/cli/install.sh", Site: "https://antigravity.google/docs/cli/acp",
+		GoogleLogin: true, LoginArgs: []string{"acp", "--login"},
+		// agy starts in auto, which needs its terminal sandbox: ask first instead
+		DefaultMode: "default",
+		Note:        "Google's agent on your Google AI plan (Free, Pro or Ultra): Gemini 4 Neon and more. Sign in with Google; it updates itself.",
+		Keys:        []ACPKey{},
+	},
+	{
 		ID: "gemini", Name: "Gemini CLI", Bin: "gemini", Args: []string{"--acp"}, Package: "@google/gemini-cli",
 		Site: "https://github.com/google-gemini/gemini-cli", GoogleLogin: true, DefaultMode: "default",
-		Note: "Google's agent. Sign in with a Google account (free daily allowance), or use a Gemini API key.",
+		Note: "Google's earlier agent, now for Gemini API keys (and Gemini Code Assist Standard/Enterprise sign-ins); personal Google accounts and Google AI plans moved to Antigravity CLI.",
 		Keys: []ACPKey{
 			{Name: "GEMINI_API_KEY", Label: "Gemini API key", URL: "https://aistudio.google.com/apikey", Secret: true,
 				Help: "Used when there is no Google sign-in."},
@@ -158,14 +175,16 @@ func (a ACPAgent) ACPHome() string {
 		return filepath.Join(h, ".qwen")
 	case "opencode":
 		return filepath.Join(h, ".local", "share", "opencode")
+	case "antigravity":
+		return filepath.Join(h, ".gemini", "antigravity-cli")
 	}
 	return ""
 }
 
 // GoogleSignedIn: Gemini CLI has a Google sign-in saved.
 func (a ACPAgent) GoogleSignedIn() bool {
-	if !a.GoogleLogin {
-		return false
+	if !a.GoogleLogin || a.LoginArgs != nil {
+		return false // Antigravity keeps it in the keyring: only a start tells
 	}
 	return fileExists(filepath.Join(a.ACPHome(), "oauth_creds.json"))
 }
@@ -356,6 +375,9 @@ func ProbeACP(ctx context.Context, ag ACPAgent, bin, dir string, env []string) P
 	}
 	if ag.ID == "gemini" && ag.GoogleSignedIn() {
 		p.Account = firstNonEmpty(ag.GoogleAccount(), "Google account")
+	}
+	if ag.LoginArgs != nil {
+		p.Account = "Google account"
 	}
 	if a.caps.Session.Close != nil && info.SessionID != "" {
 		cctx, ccancel := context.WithTimeout(ctx, 5*time.Second)

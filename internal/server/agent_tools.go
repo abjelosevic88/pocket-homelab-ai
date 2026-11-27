@@ -46,7 +46,7 @@ func agentTools() []askTool {
 		{"pocket_agent_start", "Start another coding agent as its own Pocket AI conversation with a task. The person approves the start unless they always allow it. It does not see this conversation, so the prompt must be complete and self-contained. Returns its agent_id; its answer comes back to you as a message when it finishes (report: false to skip), or wait for it with pocket_agent_wait.", `{"type":"object","properties":{
 "prompt":{"type":"string","maxLength":100000,"description":"The whole task: goal, context, relevant files, constraints and how to check the result."},
 "title":{"type":"string","maxLength":120,"description":"A short name for its conversation."},
-"provider":{"type":"string","enum":["claude","codex","gemini","opencode","qwen"],"description":"Default: the same agent as this conversation. gemini (Gemini CLI), opencode (OpenCode: many model providers) and qwen (Qwen Code) work only when set up on this server: see pocket_agent_options."},
+"provider":{"type":"string","enum":["claude","codex","antigravity","gemini","opencode","qwen"],"description":"Default: the same agent as this conversation. antigravity (Antigravity CLI: Gemini on the Google AI plan), gemini (Gemini CLI), opencode (OpenCode: many model providers) and qwen (Qwen Code) work only when set up on this server: see pocket_agent_options."},
 "model":{"type":"string","description":"A model id from pocket_agent_options. Default: the person's default for that agent."},
 "effort":{"type":"string","description":"Reasoning effort, e.g. low, medium, high."},
 "machine":{"type":"string","description":"Machine name or id from pocket_agent_options. Default: this conversation's machine."},
@@ -76,7 +76,7 @@ func agentTools() []askTool {
 "name":{"type":"string","maxLength":120,"description":"A short name (shown on the Schedules page and in notifications)."},
 "report":{"type":"boolean","description":"Send each run's answer to this conversation as a message (default: true when it runs once, false when it repeats)."},
 "notify":{"type":"string","enum":["always","attention","never"],"description":"Push notification after a run: always, only when it needs attention, or never (default: always once, attention when repeating)."},
-"provider":{"type":"string","enum":["claude","codex","gemini","opencode","qwen"],"description":"Default: the same agent as this conversation. gemini (Gemini CLI), opencode (OpenCode: many model providers) and qwen (Qwen Code) work only when set up on this server: see pocket_agent_options."},
+"provider":{"type":"string","enum":["claude","codex","antigravity","gemini","opencode","qwen"],"description":"Default: the same agent as this conversation. antigravity (Antigravity CLI: Gemini on the Google AI plan), gemini (Gemini CLI), opencode (OpenCode: many model providers) and qwen (Qwen Code) work only when set up on this server: see pocket_agent_options."},
 "model":{"type":"string","description":"A model id from pocket_agent_options. Default: this conversation's (same agent) or the person's default."},
 "effort":{"type":"string","description":"Reasoning effort, e.g. low, medium, high."},
 "machine":{"type":"string","description":"Machine name or id from pocket_agent_options. Default: this conversation's machine."},
@@ -248,7 +248,7 @@ var modeLevel = map[string]int{
 	"plan": 0, "default": 1, "acceptEdits": 2, "auto": 3, "bypassPermissions": 4,
 	"read-only": 0, "untrusted": 1, "on-request": 2, "full-access": 4,
 	// ACP agents: Gemini CLI, Qwen Code, OpenCode (Pocket AI's ask / build)
-	"autoEdit": 2, "auto-edit": 2, "yolo": 4, "ask": 1, "build": 4,
+	"autoEdit": 2, "auto-edit": 2, "accept-edits": 2, "yolo": 4, "ask": 1, "build": 4,
 }
 
 func modesOf(provider string) []agent.Mode {

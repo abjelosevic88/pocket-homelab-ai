@@ -68,16 +68,17 @@ function AcpCard({ a, onChanged }: { a: AcpAgent; onChanged: (next?: AcpAgent[])
           </div>
           <p className="muted small" style={{ margin: '2px 0 0' }}>{a.note} <a href={a.site} target="_blank" rel="noopener noreferrer">More</a></p>
         </div>
-        <button type="button" className="btn sm" onClick={install} disabled={!!busy} title={`npm install -g ${a.package}`}>
+        {!(a.installed && a.self_updates) && <button type="button" className="btn sm" onClick={install} disabled={!!busy} title={a.install_script ? `Runs ${a.install_script}` : `npm install -g ${a.package}`}>
           {busy === 'install' ? <Spinner /> : <Icon name={a.installed ? 'refresh' : 'download'} size={13} />}{busy === 'install' ? (a.installed ? 'Updating…' : 'Installing…') : a.installed ? 'Update' : 'Install'}
-        </button>
+        </button>}
       </div>
       {a.installed && <>
         {a.google_login && (
           <div className="acp-row">
-            <span className="grow small">{a.google_signed_in ? <>Signed in with Google{a.account && a.account !== 'Google account' ? <> as <b>{a.account}</b></> : null}</> : 'Google account (free daily allowance)'}</span>
+            <span className="grow small">{a.google_signed_in ? <>Signed in with Google{a.account && a.account !== 'Google account' ? <> as <b>{a.account}</b></> : null}</> : a.self_updates ? 'Your Google account and its Google AI plan' : 'Google account'}</span>
             {a.google_signed_in
-              ? <button type="button" className="btn sm ghost" onClick={signOut} disabled={!!busy}>{busy === 'logout' ? <Spinner /> : null}Sign out</button>
+              ? (a.can_sign_out ? <button type="button" className="btn sm ghost" onClick={signOut} disabled={!!busy}>{busy === 'logout' ? <Spinner /> : null}Sign out</button>
+                : <button type="button" className="btn sm ghost" onClick={() => setSignIn(true)} disabled={!!busy} title="Sign in with another Google account">Switch account</button>)
               : <button type="button" className="btn sm primary" onClick={() => setSignIn(true)} disabled={!!busy}><Icon name="user" size={13} />Sign in with Google</button>}
           </div>
         )}
